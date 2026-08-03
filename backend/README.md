@@ -1,6 +1,6 @@
 # Backend
 
-FastAPI service for __PROJECT_NAME__.
+FastAPI service for arc.
 
 ## Layout
 

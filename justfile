@@ -2,9 +2,6 @@
 default:
 	@just --list
 
-# One-time project initialization after creating a repo from the template
-init:
-	bash scripts/init.sh
 
 # --- Dev servers -------------------------------------------------------------
 

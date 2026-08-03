@@ -1,5 +1,5 @@
 {
-	"name": "__PROJECT_NAME__",
+	"name": "arc",
 	"image": "mcr.microsoft.com/devcontainers/python:3-3.13-trixie",
 	"features": {
 		"ghcr.io/devcontainers/features/docker-in-docker:4": {

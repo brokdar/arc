@@ -1,4 +1,4 @@
-# __PROJECT_NAME__
+# arc
 
 Full-stack monorepo: FastAPI backend + Next.js frontend with an end-to-end
 typed API contract.

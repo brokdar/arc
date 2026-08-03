@@ -1,32 +1,4 @@
-<!-- template-only:start -->
-# Full-Stack Template
-
-> **This is a GitHub template repository.** Click **Use this template** (or run
-> `gh repo create my-app --template brokdar/full-stack-template --private --clone`),
-> then follow the first-10-minutes checklist below. Everything between the
-> `template-only` markers is removed by `just init`.
-
-## First 10 minutes
-
-1. Create your repo from this template and clone it (or open it directly in a Codespace / devcontainer).
-2. Run `just init` — replaces placeholders with your project name, generates fresh secrets in `.env`, re-locks dependencies, and deletes itself.
-3. Run `bash scripts/setup-repo.sh` — applies the GitHub settings templates can't copy (branch rulesets, Actions permissions) via `gh`.
-4. Run `just up` and open http://localhost:3000.
-5. Delete the example `items` domain when you start your first real one — it exists to show the patterns (domain layout, migrations, API-type generation, tests).
-
-## Stack
-
-| Layer | Choice |
-|---|---|
-| Backend | Python 3.13, FastAPI, SQLAlchemy 2 (async), Alembic, ARQ, structlog |
-| Backend tooling | uv, ruff, pyrefly, pytest (+xdist), prek |
-| Frontend | Next.js 16 (App Router, Turbopack), React 19, TypeScript 5, Tailwind 4, shadcn/ui |
-| Frontend tooling | bun, Biome, TypeScript 7 (native), Vitest, Testing Library, MSW, Playwright |
-| Contract | FastAPI OpenAPI → openapi-typescript → openapi-fetch (drift blocked in CI + hooks) |
-| Infra | Docker Compose (Postgres, Redis, API, worker, web), devcontainer, GitHub Actions |
-<!-- template-only:end -->
-
-# __PROJECT_NAME__
+# arc
 
 One-sentence description of what this project does.
 

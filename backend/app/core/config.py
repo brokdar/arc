@@ -69,7 +69,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    application_name: str = "__PROJECT_NAME__"
+    application_name: str = "arc"
     environment: Literal["development", "test", "production"] = "development"
     api_path: str = "/api/v1"
     cors_origins: list[str] = ["http://localhost:3000"]

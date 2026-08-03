@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-description = "__PROJECT_NAME__ API service"
+description = "arc API service"
 readme = "README.md"
 requires-python = ">=3.13"
 dynamic = ["version"]
