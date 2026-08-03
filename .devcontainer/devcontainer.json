@@ -1,0 +1,61 @@
+{
+	"name": "__PROJECT_NAME__",
+	"image": "mcr.microsoft.com/devcontainers/python:3-3.13-trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:4": {
+			"moby": false
+		},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers/features/node:2": {},
+		"ghcr.io/shyim/devcontainers-features/bun:0": {},
+		"ghcr.io/va-h/devcontainers-features/uv:1": {}
+	},
+	"mounts": [
+		"type=volume,source=${localWorkspaceFolderBasename}-node_modules,target=${containerWorkspaceFolder}/frontend/node_modules",
+		"type=volume,source=${localWorkspaceFolderBasename}-backend-venv,target=${containerWorkspaceFolder}/backend/.venv",
+		"type=volume,source=${localWorkspaceFolderBasename}-next,target=${containerWorkspaceFolder}/frontend/.next"
+	],
+	"postCreateCommand": "bash .devcontainer/startup.sh",
+	"forwardPorts": [
+		8000,
+		5432,
+		3000
+	],
+	"portsAttributes": {
+		"8000": {
+			"label": "API Service",
+			"onAutoForward": "silent"
+		},
+		"5432": {
+			"label": "PostgreSQL Database",
+			"onAutoForward": "silent"
+		},
+		"3000": {
+			"label": "Frontend Service",
+			"onAutoForward": "silent"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"ms-python.debugpy",
+				"charliermarsh.ruff",
+				"meta.pyrefly",
+				"biomejs.biome",
+				"bradlc.vscode-tailwindcss",
+				"streetsidesoftware.code-spell-checker",
+				"fill-labs.dependi",
+				"tamasfe.even-better-toml",
+				"github.vscode-github-actions",
+				"DavidAnson.vscode-markdownlint",
+				"eamodio.gitlens",
+				"redhat.vscode-yaml",
+				"GitHub.copilot-chat",
+				"GitHub.codespaces",
+				"Anthropic.claude-code"
+			]
+		}
+	}
+}

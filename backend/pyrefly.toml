@@ -1,0 +1,4 @@
+python-version = "3.13"
+project-includes = ["app/**", "tests/**"]
+project-excludes = ["app/alembic/**"]
+permissive-ignores = true

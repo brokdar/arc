@@ -1,0 +1,99 @@
+# Hooks are managed by prek (https://prek.j178.dev), a drop-in pre-commit
+# replacement. Install shims once: prek install -t pre-commit -t pre-push
+#
+# Cheap checks run on commit; heavy checks (types, tests) run on push.
+default_install_hook_types: [pre-commit, pre-push]
+# Pin hooks that don't declare their own `stages` to pre-commit only —
+# otherwise they'd run at BOTH commit and push once the pre-push shim exists.
+default_stages: [pre-commit]
+
+repos:
+  # ============================================================================
+  # General checks
+  # ============================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # These declare `stages: [pre-commit, pre-push, manual]` upstream; pin
+      # to pre-commit so the fixers never mutate files mid-push.
+      - id: check-added-large-files
+        stages: [pre-commit]
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+        exclude: ^(\.vscode|\.devcontainer)/
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: trailing-whitespace
+        stages: [pre-commit]
+
+  # ============================================================================
+  # Backend (Python)
+  # ============================================================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff-check
+        name: backend-ruff-check
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        name: backend-ruff-format
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: backend-pyrefly
+        name: backend-pyrefly
+        entry: bash -c 'cd backend && uv run pyrefly check app tests'
+        types: [python]
+        pass_filenames: false
+        language: system
+        files: ^backend/
+        stages: [pre-push]
+      - id: backend-unit-tests
+        name: backend-unit-tests
+        entry: bash -c 'cd backend && uv run pytest tests/unit -n auto'
+        types: [python]
+        pass_filenames: false
+        language: system
+        files: ^backend/
+        stages: [pre-push]
+
+  # ============================================================================
+  # API contract synchronization
+  # ============================================================================
+  - repo: local
+    hooks:
+      - id: api-schema-sync-check
+        name: api-schema-sync-check
+        entry: ./scripts/check-api-schema-sync.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+
+  # ============================================================================
+  # Frontend (TypeScript/React)
+  # ============================================================================
+  - repo: local
+    hooks:
+      - id: frontend-check
+        name: frontend-check (biome)
+        entry: bash -c 'cd frontend && bun run lint'
+        pass_filenames: false
+        language: system
+        files: ^frontend/.*\.(tsx?|jsx?|mjs|json|css)$
+      - id: frontend-type-check
+        name: frontend-type-check
+        entry: bash -c 'cd frontend && bun run type-check'
+        pass_filenames: false
+        language: system
+        files: ^frontend/.*\.(tsx?)$
+        stages: [pre-push]
+      - id: frontend-unit-tests
+        name: frontend-unit-tests
+        entry: bash -c 'cd frontend && bun run test'
+        pass_filenames: false
+        language: system
+        files: ^frontend/(app|components|lib|tests)/.*\.(tsx?|jsx?)$
+        stages: [pre-push]

@@ -1,0 +1,106 @@
+# Full local stack. Project name defaults to the directory name, so no
+# per-project edits are needed here.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: always
+    expose:
+      - 5432
+    ports:
+      # Bound to loopback: reachable from the host for local dev tooling, but
+      # never exposed on the network.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES__USER:-postgres} -d ${POSTGRES__DB:-app}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES__PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES__USER:-postgres}
+      - POSTGRES_DB=${POSTGRES__DB:-app}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    restart: always
+    expose:
+      - 6379
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 5s
+    volumes:
+      - redis-data:/data
+
+  api:
+    restart: unless-stopped
+    command: bash -c "alembic upgrade head && fastapi run app/main.py"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  worker:
+    restart: unless-stopped
+    command: arq app.worker.main.WorkerSettings
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  frontend:
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_PATH: ${NEXT_PUBLIC_API_PATH:-/api/v1}
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -1,0 +1,8 @@
+node_modules
+.next
+test-results
+playwright-report
+blob-report
+coverage
+e2e
+.env.local

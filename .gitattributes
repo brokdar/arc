@@ -1,0 +1,7 @@
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+bun.lock -diff linguist-generated=true
+uv.lock -diff linguist-generated=true
+frontend/generated/** linguist-generated=true

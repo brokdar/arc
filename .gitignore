@@ -1,0 +1,54 @@
+# === Python ===
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# Test / coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
+.hypothesis/
+
+# Environments
+.env
+.env.local
+.envrc
+.venv
+venv/
+
+# Tooling caches
+.ruff_cache/
+.pyrefly/
+.mypy_cache/
+
+# === Node / Next.js ===
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+coverage/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# === Editors / OS ===
+.DS_Store
+.idea/
+*.log
+
+# === Project ===
+logs/
+.claude/scheduled_tasks.lock
+**/agent-memory/
