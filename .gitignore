@@ -51,6 +51,6 @@ playwright/.cache/
 
 # === Project ===
 logs/
-/data/
+data/
 .claude/scheduled_tasks.lock
 **/agent-memory/

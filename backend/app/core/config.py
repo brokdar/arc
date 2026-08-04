@@ -14,6 +14,17 @@ from typing import Literal, Self
 from pydantic import BaseModel, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+REPO_ROOT = Path(__file__).parents[3]
+"""Repository root: `<root>/backend/app/core/config.py` is three levels down.
+
+`just init` writes one `.env` and it lives here, but every host process starts
+in `backend/` (`just dev-api`, `uv run fastapi dev`, alembic), so a relative
+`.env` alone would silently miss it. Guarded by
+`tests/unit/test_config.py::test_repo_root_anchor_points_at_the_repository`.
+In the Docker image this resolves to `/` (WORKDIR is `/app`) and no `.env` is
+shipped — a missing env file is simply skipped, so containers are unaffected.
+"""
+
 
 class PostgresSettings(BaseModel):
     """PostgreSQL connection settings."""
@@ -84,10 +95,20 @@ class LogSettings(BaseModel):
 class Settings(BaseSettings):
     """Root application settings."""
 
+    # Two env files, lowest precedence first: the repo-root `.env` that
+    # `just init` writes, then a `.env` in whatever directory the process was
+    # started from (later entries win). Real environment variables still beat
+    # both, which is how the `dev-*`/`db-*` recipes override POSTGRES__HOST.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(REPO_ROOT / ".env", ".env"),
         env_nested_delimiter="__",
         extra="ignore",
+        # A ValidationError normally renders `input_value=` — here the whole
+        # env-derived settings dict, secrets and all (a truncated but real
+        # MCP__API_KEYS was observed in container logs when the production
+        # guard below tripped). The guard's own message names only env var
+        # names, so nothing is lost by suppressing the input.
+        hide_input_in_errors=True,
     )
 
     application_name: str = "arc"
@@ -113,8 +134,11 @@ class Settings(BaseSettings):
         if self.environment != "production":
             return self
         problems = []
-        if not self.auth.password_hash.get_secret_value():
+        password_hash = self.auth.password_hash.get_secret_value()
+        if not password_hash:
             problems.append("AUTH__PASSWORD_HASH is empty")
+        elif "change-me" in password_hash:
+            problems.append("AUTH__PASSWORD_HASH is still the placeholder")
         if not self.auth.session.secret_key.get_secret_value():
             problems.append("AUTH__SESSION__SECRET_KEY is empty")
         if self.postgres.password.get_secret_value() in ("", "postgres"):

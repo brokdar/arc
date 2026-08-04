@@ -3,7 +3,7 @@
 services:
   db:
     image: postgres:18-alpine
-    restart: always
+    restart: unless-stopped
     expose:
       - 5432
     ports:
@@ -29,11 +29,12 @@ services:
 
   # Bind-mounted host directories are created root-owned by the Docker daemon,
   # so hand ./data to the api image's non-root user (uid 1001, see
-  # backend/Dockerfile) once before the api boots. The api creates the
-  # subdirectories itself on startup.
+  # backend/Dockerfile) before the api boots. Recursive on purpose: a tree
+  # restored from a backup, or subdirectories an earlier root-run container
+  # created, would otherwise stay unwritable while /data itself looks correct.
   data-init:
     image: alpine:3
-    command: sh -c "chown 1001:1001 /data"
+    command: sh -c "chown -R 1001:1001 /data"
     volumes:
       - ./data:/data
 
@@ -41,15 +42,28 @@ services:
     restart: unless-stopped
     command: bash -c "alembic upgrade head && fastapi run app/main.py"
     ports:
-      - "8000:8000"
+      # Loopback only: the public path is Caddy's /api/* and /health routes.
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      # First boot runs `alembic upgrade head` before uvicorn binds; without a
+      # start period that window eats the interval*retries budget and
+      # `docker compose up --wait` fails on a stack that is merely migrating.
+      start_period: 30s
     env_file:
       - path: .env
         required: false
+    environment:
+      # An `environment:` entry beats env_file, so the container always runs
+      # the production config guard (app/core/config.py refuses to boot with an
+      # empty AUTH__PASSWORD_HASH / AUTH__SESSION__SECRET_KEY or the default
+      # POSTGRES__PASSWORD). Without this, ENVIRONMENT defaults to development
+      # and a hand-written .env missing the secret key would silently sign
+      # session cookies with "".
+      ENVIRONMENT: production
     depends_on:
       db:
         condition: service_healthy
@@ -69,7 +83,13 @@ services:
   # MCP__API_KEYS in .env (see .env.example): with no keys it logs an error and
   # exits 1 rather than serving an unauthenticated tool surface.
   mcp:
-    restart: unless-stopped
+    # Not `unless-stopped`: a bad or missing MCP__API_KEYS is a deliberate
+    # exit 1, and restarting forever turns one readable error line into an
+    # endless crash loop that buries it. Three attempts cover a transient
+    # failure and then leave the container stopped with its log intact —
+    # Caddy has no depends_on for mcp and serves 502 for /mcp meanwhile,
+    # so the rest of the stack is unaffected.
+    restart: on-failure:3
     command: python -m app.mcp.main
     ports:
       # Loopback only: the public path is Caddy's /mcp* route.
@@ -80,13 +100,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     env_file:
       - path: .env
         required: false
+    environment:
+      # Same as the api: pin production so the config guard actually runs in
+      # the shipped stack (an `environment:` entry overrides env_file).
+      ENVIRONMENT: production
     depends_on:
       db:
         condition: service_healthy
         restart: true
+      data-init:
+        condition: service_completed_successfully
+    volumes:
+      # Same mount as the api: MCP tools call the same services, which from
+      # WP-4 on read and write the data tree. Without it the container would
+      # see an empty /app/data and report nothing found rather than failing.
+      - ./data:/app/data
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -94,7 +126,8 @@ services:
   frontend:
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Loopback only: the public path is Caddy's catch-all route.
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
@@ -125,7 +158,17 @@ services:
       # hostname and Caddy provisions certificates and serves HTTPS.
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/health || exit 1"]
+      # Caddy's admin API, not /health: with CADDY_SITE_ADDRESS set to a
+      # hostname, Caddy redirects http://localhost/health (308) to
+      # https://localhost/, whose certificate is for the configured hostname —
+      # so the probe fails permanently in exactly the TLS deployment it is
+      # meant to watch (verified: TLS alert 80, connection reset). The admin
+      # endpoint is host-independent, and Caddy binds it inside the container
+      # only, so nothing is exposed. `127.0.0.1` spelled out, not `localhost`:
+      # the admin listener is IPv4-only and busybox wget tries [::1] first
+      # without falling back. This proves Caddy is up, not that routing works;
+      # CI's smoke job checks routing through the proxy explicitly.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:2019/config/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

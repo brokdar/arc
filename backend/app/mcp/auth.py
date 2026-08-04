@@ -9,6 +9,13 @@ The label names the client (it shows up in logs and in the request's
 authenticated identity), the scope bounds what that client may do, and the key
 is the bearer token itself.
 
+Key material has to earn its keep: a key must be at least
+:data:`MIN_KEY_LENGTH` characters, must not contain the ``change-me``
+placeholder text from ``.env.example``, and must not repeat another entry's key.
+Labels must be unique too. Every one of those is a hard parse error, which
+``app.mcp.main`` turns into exit 1 — a weak or copy-pasted key never reaches the
+wire, and error messages never quote the key itself.
+
 This module is deliberately framework-free — no FastMCP, no Starlette — so the
 parsing and comparison rules can be tested in isolation and reused by whatever
 adapter needs them. ``app.mcp.main`` adapts it to FastMCP's ``TokenVerifier``.
@@ -31,6 +38,15 @@ _ENTRY_FORMAT_HINT = (
     "expected 'label:scope:key' entries separated by commas, "
     "e.g. 'coach:write:<hex>,readonly:read:<hex>'"
 )
+
+#: Shortest key accepted. 32 characters is what `openssl rand -hex 16` yields;
+#: the documented recipe (`openssl rand -hex 32`) gives 64. Short keys are
+#: brute-forceable and are almost always a hand-typed stand-in.
+MIN_KEY_LENGTH = 32
+
+#: Placeholder text carried by `.env.example`. Refusing it keeps a copied
+#: example file from becoming a live credential.
+_PLACEHOLDER_MARKER = "change-me"
 
 
 class Scope(StrEnum):
@@ -68,11 +84,13 @@ def parse_api_keys(raw: str) -> list[McpKey]:
         The configured keys, in the order they appear.
 
     Raises:
-        ValueError: On a malformed entry, an unknown scope, or a duplicate
-            label. The message never contains the key material.
+        ValueError: On a malformed entry, an unknown scope, a key that is too
+            short or still the `.env.example` placeholder, or a duplicate label
+            or key. The message never contains the key material.
     """
     keys: list[McpKey] = []
     seen_labels: set[str] = set()
+    seen_keys: set[str] = set()
 
     for position, chunk in enumerate(raw.split(ENTRY_SEPARATOR), start=1):
         entry = chunk.strip()
@@ -105,12 +123,39 @@ def parse_api_keys(raw: str) -> list[McpKey]:
                 f"{raw_scope!r}; valid scopes are: {valid}"
             ) from exc
 
+        # Key-material rules. Every message names the entry by position and
+        # label only — never the key, since these errors get logged.
+        if _PLACEHOLDER_MARKER in raw_key:
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({raw_label!r}) still holds the "
+                f"{_PLACEHOLDER_MARKER!r} placeholder from .env.example; "
+                "generate a real key with 'openssl rand -hex 32'"
+            )
+        if len(raw_key) < MIN_KEY_LENGTH:
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({raw_label!r}) has a key of "
+                f"{len(raw_key)} characters; keys must be at least "
+                f"{MIN_KEY_LENGTH} characters — generate one with "
+                "'openssl rand -hex 32'"
+            )
+
         if raw_label in seen_labels:
             raise ValueError(
                 f"MCP__API_KEYS has a duplicate label {raw_label!r}; "
                 "labels must be unique"
             )
         seen_labels.add(raw_label)
+
+        # Duplicate key material would resolve order-dependently in
+        # verify_key (its loop runs to completion and keeps the LAST match), so
+        # the same secret shared by two labels/scopes is a configuration error,
+        # not a shorthand for "either identity".
+        if raw_key in seen_keys:
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({raw_label!r}) reuses the key "
+                "of an earlier entry; every key must be distinct"
+            )
+        seen_keys.add(raw_key)
 
         keys.append(McpKey(label=raw_label, scope=scope, key=raw_key))
 

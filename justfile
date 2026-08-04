@@ -21,13 +21,18 @@ hash-password:
 infra:
 	docker compose up -d db
 
+# Host processes read the repo-root .env (see backend/app/core/config.py), but
+# its POSTGRES__HOST=db is the compose network name — only reachable from inside
+# the Docker network. `just infra` publishes the database on localhost, so these
+# recipes override that one value; a real env var beats any .env entry.
+
 # Run the FastAPI dev server with hot reload
 dev-api: infra
-	cd backend && uv run fastapi dev app/main.py
+	cd backend && POSTGRES__HOST=localhost uv run fastapi dev app/main.py
 
-# Run the MCP server (needs MCP__API_KEYS in backend/.env or the environment)
+# Run the MCP server (needs MCP__API_KEYS in .env — `just init` writes it)
 dev-mcp: infra
-	cd backend && uv run python -m app.mcp.main
+	cd backend && POSTGRES__HOST=localhost uv run python -m app.mcp.main
 
 # Run the Next.js dev server
 dev-web:
@@ -86,13 +91,16 @@ check: lint typecheck test api-check
 
 # --- Database ----------------------------------------------------------------
 
+# POSTGRES__HOST=localhost for the same reason as the dev-* recipes above: the
+# .env value `db` only resolves inside the compose network.
+
 # Apply migrations to the dev database
 db-upgrade:
-	cd backend && uv run alembic upgrade head
+	cd backend && POSTGRES__HOST=localhost uv run alembic upgrade head
 
 # Autogenerate a migration from model changes: just db-revision "add items table"
 db-revision message:
-	cd backend && uv run alembic revision --autogenerate -m "{{message}}"
+	cd backend && POSTGRES__HOST=localhost uv run alembic revision --autogenerate -m "{{message}}"
 
 # --- API contract ------------------------------------------------------------
 

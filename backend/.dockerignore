@@ -6,3 +6,10 @@ __pycache__
 htmlcov
 .coverage*
 tests
+# The Dockerfile does `COPY . /app`, so a developer's local secrets or runtime
+# tree would otherwise be baked into the image (and into anything published
+# from it).
+.env
+.env.*
+data/
+logs/

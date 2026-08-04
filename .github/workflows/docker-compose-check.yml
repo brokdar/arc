@@ -29,11 +29,17 @@ jobs:
           persist-credentials: false
 
       - name: Create .env from example
+        # docker-compose.yml pins ENVIRONMENT=production on api and mcp, so
+        # every value below has to satisfy the production config guard
+        # (app/core/config.py): POSTGRES__PASSWORD neither empty nor
+        # 'postgres', and non-empty AUTH__PASSWORD_HASH and
+        # AUTH__SESSION__SECRET_KEY. The MCP key must also clear
+        # app/mcp/auth.py's rules: >= 32 characters and no 'change-me'.
         run: |
           cp .env.example .env
           sed -i 's/^POSTGRES__PASSWORD=.*/POSTGRES__PASSWORD=ci-test/' .env
           sed -i 's/^AUTH__SESSION__SECRET_KEY=.*/AUTH__SESSION__SECRET_KEY=ci-test-secret-key-0123456789abcdef/' .env
-          sed -i "s|^MCP__API_KEYS=.*|MCP__API_KEYS='ci:read:ci-test-mcp-key'|" .env
+          sed -i "s|^MCP__API_KEYS=.*|MCP__API_KEYS='ci:read:ci-test-mcp-key-0123456789abcdef0123456789abcdef'|" .env
           # Fixed bcrypt hash of "ci-test-password" (the E2E_PASSWORD below).
           # Appended with printf rather than substituted with sed: bcrypt
           # hashes are full of `$`, `/` and `.`, which sed would eat.

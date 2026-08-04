@@ -16,7 +16,9 @@ PLACEHOLDER_HASH="'change-me-to-a-bcrypt-hash'"
 
 if [ -e "$ENV_FILE" ]; then
   echo ".env already exists — leaving it alone."
-  echo "To start over: rm .env && just init"
+  # `rm .env && just init` alone crash-loops the api: a new POSTGRES__PASSWORD
+  # is only applied when the cluster is initialized, so the volume has to go too.
+  echo "To start over: rm .env && docker compose down -v && just init"
   exit 0
 fi
 
