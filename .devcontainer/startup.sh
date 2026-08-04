@@ -39,6 +39,12 @@ echo "📦 Installing backend dependencies..."
 cd "$WORKSPACE/backend"
 uv sync
 
+echo "🛠️  Installing just..."
+# Every workflow in this repo goes through the justfile, so the task runner has
+# to be present. `rust-just` is the just project's own PyPI distribution; uv
+# drops the binary in ~/.local/bin, which is already on PATH.
+uv tool install rust-just
+
 echo "🔧 Setting up prek hooks..."
 cd "$WORKSPACE"
 uv tool install prek

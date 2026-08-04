@@ -74,3 +74,15 @@ Scaffolding is in progress. Later phases append to this section.
   `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and
   bind-mounted into the api container at `/app/data` (a one-shot `data-init`
   service hands the root-owned bind mount to the api's non-root user first).
+- Made `just init` real (`scripts/bootstrap-env.sh`): it copies `.env.example`
+  to a mode-600 `.env`, generates `POSTGRES__PASSWORD`,
+  `AUTH__SESSION__SECRET_KEY` and both `MCP__API_KEYS`, and prompts (hidden,
+  twice) for the login password it bcrypt-hashes into `AUTH__PASSWORD_HASH`.
+  Values are substituted with Python rather than `sed`, so the `$` and `/` in
+  bcrypt hashes survive; the script is idempotent (an existing `.env` is left
+  alone) and degrades to a placeholder hash plus instructions when there is no
+  terminal to prompt on. `just hash-password` prints a ready-to-paste
+  single-quoted hash for rotating the password later. `just check` now also
+  runs `api-check`, so contract drift is part of the one local gate, and the
+  devcontainer installs `just` itself (`uv tool install rust-just`) — the
+  whole workflow depended on a tool that was not in the image.

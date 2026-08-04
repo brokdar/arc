@@ -4,13 +4,27 @@ One-sentence description of what this project does.
 
 ## Quick start
 
+Needs Docker and [just](https://just.systems) (`uv tool install rust-just`);
+the devcontainer installs both.
+
 ```bash
-cp .env.example .env   # done automatically by `just init`
-just up                # full stack in Docker
-# or for development:
-just infra             # Postgres only
-just dev-api           # FastAPI with hot reload → http://localhost:8000
-just dev-web           # Next.js dev server     → http://localhost:3000
+git clone <this repo> arc && cd arc
+just init   # writes .env: random secrets + the login password you pick
+just up     # full stack in Docker → http://localhost
+```
+
+Open http://localhost and log in with the password you chose. There is one
+user and no sign-up: `just init` stored a bcrypt hash of that password in
+`.env` as `AUTH__PASSWORD_HASH`, and nothing else. To change it later, run
+`just hash-password` and paste the line it prints over the one in `.env`.
+
+For day-to-day development, run the apps on the host with hot reload and only
+Postgres in Docker:
+
+```bash
+just infra     # Postgres only
+just dev-api   # FastAPI with hot reload → http://localhost:8000
+just dev-web   # Next.js dev server      → http://localhost:3000
 ```
 
 ## Services
@@ -32,13 +46,16 @@ container.
 ## Development
 
 ```bash
-just check        # lint + typecheck + unit tests (what CI runs)
+just check        # lint + typecheck + unit tests + API contract drift (what CI runs)
 just test-int     # backend integration tests + migration checks (real Postgres)
 just e2e          # Playwright UI tests (no backend needed)
-just smoke        # full Docker stack + @fullstack wiring smoke tests
 just db-revision "add widgets table"   # autogenerate a migration
 just db-upgrade   # apply migrations
 just api-sync     # regenerate frontend API types from the backend OpenAPI schema
+
+# full Docker stack + @fullstack wiring smoke tests; the password is the one
+# you gave `just init`, because the suite logs in through the real UI
+E2E_PASSWORD=... just smoke
 ```
 
 Git hooks are managed by [prek](https://prek.j178.dev/) (installed by the

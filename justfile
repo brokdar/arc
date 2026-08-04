@@ -2,6 +2,18 @@
 default:
 	@just --list
 
+# --- Setup -------------------------------------------------------------------
+
+# Create .env from .env.example: random secrets + the password you pick
+init:
+	bash scripts/bootstrap-env.sh
+
+# The printed line is single-quoted because bcrypt hashes are full of `$`,
+# which .env parsers and your shell would otherwise expand.
+
+# Print an AUTH__PASSWORD_HASH line for .env, for a password you type
+hash-password:
+	@cd backend && hash="$(uv run python -c 'import bcrypt, getpass, sys; pw = getpass.getpass("Password: "); sys.exit("passwords do not match, or the password is empty") if (not pw or pw != getpass.getpass("Confirm: ")) else None; print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode())')" && printf "AUTH__PASSWORD_HASH='%s'\n" "$hash"
 
 # --- Dev servers -------------------------------------------------------------
 
@@ -59,16 +71,18 @@ test-int:
 e2e:
 	cd frontend && bun run test:e2e
 
-# Boot the full Docker stack and run the @fullstack smoke suite against it
 # E2E_PASSWORD must be the password whose bcrypt hash is in .env as
-# AUTH__PASSWORD_HASH — the suite logs in through the real UI. (`just init`,
-# which generates both together, arrives in the next phase.)
+# AUTH__PASSWORD_HASH — the suite logs in through the real UI. With an .env
+# from `just init` that is the password you chose there, so pass it in:
+# E2E_PASSWORD=... just smoke
+
+# Boot the full Docker stack and run the @fullstack smoke suite against it
 smoke:
 	docker compose up --build --wait db api mcp frontend caddy
 	cd frontend && E2E_FULLSTACK=1 E2E_PASSWORD="${E2E_PASSWORD:-ci-test-password}" bun run test:e2e
 
 # Everything CI runs, locally
-check: lint typecheck test
+check: lint typecheck test api-check
 
 # --- Database ----------------------------------------------------------------
 
