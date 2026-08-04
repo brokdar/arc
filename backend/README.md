@@ -46,14 +46,21 @@ uv run alembic upgrade head
 
 From the repo root, `just dev-api`, `just dev-mcp`, `just test`, `just lint`,
 `just typecheck` and `just check` wrap these (and start Postgres first where
-it is needed).
+it is needed). The two that talk to Postgres also need
+`POSTGRES__HOST=localhost` in front of them when run by hand: `.env` holds the
+compose network name `db`, which only resolves inside Docker (the `dev-*` and
+`db-*` recipes set it for you).
 
 ## Configuration
 
 Settings live in `app/core/config.py` and are read from the repo-root `.env`
 with nested double-underscore keys (`POSTGRES__HOST` → `settings.postgres.host`).
-Every setting must also appear in `.env.example` — `test_env_example_completeness`
-fails otherwise. `just init` writes a working `.env`.
+The path is anchored on the package location, not the working directory, so
+processes started from `backend/` see it too; a `.env` in the working directory
+takes precedence over it, and real environment variables over both. Every
+setting must also appear in `.env.example` — `test_env_example_completeness`
+fails otherwise. `just init` writes a working `.env`. Tests never read it (see
+`tests/conftest.py`).
 
 ## Auth
 
@@ -66,14 +73,18 @@ Everything else under `/api/v1` is mounted on a router carrying
 `Depends(require_session)` (`app/api/deps.py`) plus a declared 401, so **a new
 router is protected unless it is deliberately mounted elsewhere**. `/health`
 stays open for container probes. In production the app refuses to boot without
-`AUTH__PASSWORD_HASH` and `AUTH__SESSION__SECRET_KEY`.
+`AUTH__PASSWORD_HASH` and `AUTH__SESSION__SECRET_KEY`, or with the default
+`POSTGRES__PASSWORD` — and `docker-compose.yml` pins `ENVIRONMENT=production`
+on the `api` and `mcp` services, so that guard always runs in the shipped
+stack.
 
 The MCP server authenticates separately: every request presents a bearer key
 from `MCP__API_KEYS` (comma-separated `label:scope:key`, scope `read` or
 `write`), parsed by the framework-free `app/mcp/auth.py` and compared in
-constant time. With no keys the server exits 1 rather than serve an
-unauthenticated tool surface. Its `/health` route is the one unauthenticated
-endpoint.
+constant time. With no keys — or with a key under 32 characters, one still
+holding the `change-me` placeholder, or two entries sharing a key or a label —
+the server exits 1 rather than serve an unauthenticated or ambiguous tool
+surface. Its `/health` route is the one unauthenticated endpoint.
 
 ## Migrations
 

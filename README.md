@@ -56,7 +56,8 @@ container.
 MCP clients authenticate with a bearer key from `MCP__API_KEYS` — comma-
 separated `label:scope:key` entries, scope `read` or `write`. `just init`
 generates a `coach` (write) and a `readonly` (read) key; the server refuses to
-start without any.
+start without any, and rejects keys under 32 characters, keys still holding the
+`change-me` placeholder, and two entries sharing a key.
 
 ## Development
 

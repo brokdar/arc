@@ -20,7 +20,9 @@ choice is recorded in `docs/decisions.md`.
   import-linter (`uv run lint-imports`, contracts in `backend/pyproject.toml`),
   which fails CI, `just lint` and pre-push — the domain-purity contract names
   forbidden packages explicitly, so adding an import there is a build error,
-  not a review comment. `items` is a worked example spread across the layers;
+  not a review comment; a unit test (`test_domain_purity_contract`) keeps that
+  list in step with `[project].dependencies`, so every new dependency has to be
+  classified. `items` is a worked example spread across the layers;
   WP-1 deletes it.
 - `frontend/` — Next.js (App Router), React, TypeScript, Tailwind 4, shadcn/ui
   (Base UI primitives — components use `render={...}`, NOT Radix `asChild`).
@@ -138,6 +140,7 @@ what this file is for); a machine-catchable mistake → a hook in
 `.claude/hooks/` or pre-commit; a command you had to reconstruct → a `justfile`
 recipe; a fact every session needs up front → a line in this file.
 
-Raise it in a sentence when it happens; build it only if the user agrees. One
-at a time, no end-of-session improvement retrospectives, and never a change
-whose effect is to widen permissions or weaken a guard.
+Build the fix directly when it happens — the operator has delegated this — and
+note what changed in the report. One at a time, no end-of-session improvement
+retrospectives, and never a change whose effect is to widen permissions or
+weaken a guard.

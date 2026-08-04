@@ -419,3 +419,153 @@ Code consumes *push* only, so TypeScript errors do not appear after an edit the
 way pyrefly's do. Navigation is unaffected, and type errors are still caught by
 `bun run type-check` in the pre-push hook and CI. Keeping a second compiler
 in the editor to close that gap would cost exactly what this decision buys.
+
+## D22 — Login runs bcrypt off the event loop and serializes attempts
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`POST /api/v1/auth/login` now verifies the password in a worker thread
+(`starlette.concurrency.run_in_threadpool`) and holds a module-level
+`asyncio.Lock` across both the verification and the 0.3s failed-login delay,
+displacing the original inline call plus a bare `await asyncio.sleep`.
+
+*Rationale:* bcrypt at cost 12 is ~0.15s of CPU per attempt. Called inline it
+blocks the single event loop, so a handful of unauthenticated POSTs freezes the
+whole process — measured with five concurrent failed logins in-process, worst
+event-loop lag was **0.807s**, during which nothing else is served, `/health`
+(watched by the container healthcheck) included. With the threadpool call the
+same storm leaves worst lag at **0.0012s** and `/health` round-trips at
+**≤6.8ms**.
+
+The lock is what makes the delay a throttle at all: unserialized, N guesses
+each wait out the same 0.3s in parallel, so an attacker pays 0.3s in total
+(measured 5 failures in 1.11s, 2.4x a single attempt). Serialized, the cost
+accumulates: 2.31s, 4.98x a single attempt. A process-wide lock is acceptable
+precisely because there is one user — no legitimate login ever queues behind
+another — which is also why a rate-limit middleware or library was not added.
+
+## D23 — Compose pins ENVIRONMENT=production and publishes app ports on loopback
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+The `api` and `mcp` services now set `ENVIRONMENT: production` in
+`environment:` (which overrides `env_file`), the `api` and `frontend` ports
+publish on `127.0.0.1` like `db` and `mcp` already did, and `backend/` and
+`frontend/.dockerignore` exclude `.env`/`.env.*` (plus `data/` and `logs/` on
+the backend, whose Dockerfile does `COPY . /app`).
+
+*Rationale:* `environment` defaults to `development` and nothing in the shipped
+stack set it, so the boot guard in `app/core/config.py` — the one that refuses
+an empty `AUTH__PASSWORD_HASH` or `AUTH__SESSION__SECRET_KEY` and the default
+`POSTGRES__PASSWORD` — never ran anywhere it mattered. A hand-written `.env`
+missing the session secret signed cookies with `""` and the stack came up
+looking healthy. Pinning it in compose rather than documenting it in
+`.env.example` means the guard cannot be switched off by an incomplete `.env`;
+the commented `ENVIRONMENT=development` line now says so, and only affects
+host-run processes (`just dev-api`, tests). Publishing on `0.0.0.0` gave every
+host on the LAN a direct line to the API and the Next.js server, bypassing
+Caddy — the reverse proxy is the only intended ingress, so only it keeps
+`80`/`443`. The `.dockerignore` entries close the matching leak in the other
+direction: a developer's `backend/.env` was being baked into the image.
+
+## D24 — MCP keys must be >= 32 chars, placeholder-free and distinct
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`parse_api_keys` now rejects any key shorter than 32 characters, any key still
+containing `change-me`, and any key that repeats an earlier entry's key —
+joining the existing duplicate-label rule. All are hard `ValueError`s, so
+`app/mcp/main.py` turns them into exit 1, and none of the messages quote the
+key.
+
+*Rationale:* the parser previously accepted anything non-empty, so
+`.env.example`'s `coach:write:change-me-random-hex` was a working credential
+for a copied example file, and a hand-typed stand-in was a brute-forceable
+bearer token on a service whose whole auth story is that string. Duplicate key
+material was worse than useless: `verify_key`'s loop deliberately runs to
+completion and keeps the *last* match, so `readonly:read:K,coach:write:K`
+resolved to whichever entry came last in the string — an identity and a scope
+decided by ordering. Rejecting it at parse time keeps the constant-time loop
+unchanged (an early return there would leak which key matched). 32 characters
+is `openssl rand -hex 16`; the documented recipe, `openssl rand -hex 32`, gives
+64.
+
+## D25 — Settings anchor `.env` at the repo root; tests never read it
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`Settings.model_config` now names two env files — `<repo root>/.env` (computed
+from the package location, `REPO_ROOT` in `app/core/config.py`) then a `.env`
+in the working directory — instead of the bare relative `.env`. The `dev-api`,
+`dev-mcp`, `db-upgrade` and `db-revision` recipes prefix `POSTGRES__HOST=localhost`,
+and `backend/tests/conftest.py` disables the dotenv source for the whole test
+suite.
+
+*Rationale:* the documented host dev loop could not read the only `.env` the
+repo has. Every one of those recipes does `cd backend` first, so the relative
+path resolved to `backend/.env`, which `just init` does not write: `just dev-api`
+connected as `postgres`/`postgres` against a cluster initialized with the random
+password (`InvalidPasswordError`), login was impossible with an empty
+`AUTH__PASSWORD_HASH`, and `just dev-mcp` exited 1 for missing keys. Anchoring in
+code rather than exporting the file from `just` (`set dotenv-load := true`) fixes
+`uv run fastapi dev` and `uv run alembic` run by hand as well, and keeps the
+`.env` out of unrelated recipes — dotenv-load would have injected a developer's
+secrets into `just test` too. Keeping the CWD entry second preserves the escape
+hatch of a local override, and the per-recipe `POSTGRES__HOST` covers the one
+value that is genuinely container-specific (`db` is a compose network name). The
+price of anchoring is that tests would inherit the developer's `.env`, so the
+suite disables it in one place at collection time: a run's outcome must not
+depend on whose machine it is on. In the image the anchor resolves to `/.env`,
+which does not exist (WORKDIR is `/app` and `.dockerignore` excludes `.env`), so
+containers still take configuration only from compose.
+
+## D26 — The domain-purity deny-list is checked against the dependency list
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`fastmcp`, `bcrypt` and `itsdangerous` join the forbidden modules of the
+"Domain is pure" import-linter contract, and
+`tests/unit/test_domain_purity_contract.py` now derives the expected list from
+`[project].dependencies`: each distribution is mapped to the import names it
+provides (`importlib.metadata.packages_distributions()`, inverted) and must be
+either forbidden in `app.domain` or on a small in-test allowlist that records
+why. Today the allowlist is `pydantic` alone.
+
+*Rationale:* a `forbidden` contract only bites for what it names, so the
+hand-written list silently rotted as dependencies were added — `import fastmcp`
+or `import bcrypt` inside `app/domain` passed `lint-imports`, CI and pre-push
+while the docs claimed the boundary was mechanical. A `layers` contract cannot
+express "no third-party I/O", and inverting to an allow-list of permitted
+imports is not something import-linter offers, so the deny-list stays and a test
+guards its completeness: adding a dependency without classifying it now fails
+the suite, with the failure message naming both places the decision can go. The
+allowlist is also checked for staleness and for contradicting the contract, and
+carries the note that WP-5's polars/pyarrow (metrics moving into the domain) are
+the next expected entries.
+
+## D27 — `pr-title` is the only required status check; CI is advisory
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`scripts/setup-repo.sh`'s `protect-main` ruleset requires exactly one status
+check context, `pr-title`, with `strict_required_status_checks_policy: false`
+and repository auto-merge enabled. The lint, test, schema-sync and compose
+jobs run on every PR but gate nothing: a PR whose CI is red is technically
+mergeable, and auto-merge fires as soon as `pr-title` reports. This displaces
+the obvious alternative of requiring the CI contexts too, which in turn would
+have required an always-reporting gate job in every workflow.
+
+*Rationale:* the CI workflows are path-filtered (a backend job does not run on
+a docs-only PR), and GitHub treats a required context that never reports as
+pending forever — so requiring them deadlocks exactly the small PRs this repo
+makes most. The standard escape is a gate job per workflow that always runs and
+succeeds-or-waits on the filtered jobs' results, i.e. a second layer of YAML to
+maintain in every workflow, protecting a single-operator repo from a merge only
+that operator can perform. `pr-title` is required because it is the one check
+that is *not* advisory: its subject becomes the squash commit on `main` and the
+changelog entry, and it is unfixable after the merge. Everything else is caught
+before the push by pre-commit and pre-push hooks, and is visible on the PR.
+
+**Revisit when:** a second contributor gains write access, or the first time a
+red PR is merged by mistake. Either one turns "the operator reads the checks"
+from a fact into an assumption, and the gate-job cost becomes worth paying.
