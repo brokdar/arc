@@ -8,8 +8,9 @@
 # hostname (e.g. arc.example.com) and Caddy obtains and renews a certificate
 # on its own, serving HTTPS on 443.
 #
-# The /mcp route points at a service that does not exist yet — it returns 502
-# until the MCP server lands in the next phase. That is expected.
+# The /mcp route reaches the MCP server, which authenticates every request
+# with a bearer key from MCP__API_KEYS — unauthenticated calls get a 401 from
+# the MCP server itself, not from Caddy.
 {$CADDY_SITE_ADDRESS::80} {
 	handle /api/* {
 		reverse_proxy api:8000

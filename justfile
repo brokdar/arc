@@ -13,6 +13,10 @@ infra:
 dev-api: infra
 	cd backend && uv run fastapi dev app/main.py
 
+# Run the MCP server (needs MCP__API_KEYS in backend/.env or the environment)
+dev-mcp: infra
+	cd backend && uv run python -m app.mcp.main
+
 # Run the Next.js dev server
 dev-web:
 	cd frontend && bun dev
@@ -57,7 +61,7 @@ e2e:
 
 # Boot the full Docker stack and run the @fullstack smoke suite against it
 smoke:
-	docker compose up --build --wait db api frontend caddy
+	docker compose up --build --wait db api mcp frontend caddy
 	cd frontend && E2E_FULLSTACK=1 bun run test:e2e
 
 # Everything CI runs, locally

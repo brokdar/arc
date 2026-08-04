@@ -55,6 +55,17 @@ class DataSettings(BaseModel):
     """Root of the runtime data tree — inbox/, originals/, streams/, quarantine/."""
 
 
+class McpSettings(BaseModel):
+    """MCP server settings.
+
+    Used only by the MCP server (`python -m app.mcp.main`); the API ignores
+    them. See `app/mcp/auth.py` for the key format.
+    """
+
+    api_keys: SecretStr = SecretStr("")
+    """Comma-separated `label:scope:key` entries; scope is `read` or `write`."""
+
+
 class LogSettings(BaseModel):
     """Logging settings."""
 
@@ -80,10 +91,17 @@ class Settings(BaseSettings):
     auth: AuthSettings = AuthSettings()
     data: DataSettings = DataSettings()
     log: LogSettings = LogSettings()
+    mcp: McpSettings = McpSettings()
 
     @model_validator(mode="after")
     def _no_insecure_defaults_in_production(self) -> Self:
-        """Refuse to boot in production with dev-convenience credentials."""
+        """Refuse to boot in production with dev-convenience credentials.
+
+        `mcp.api_keys` is deliberately not checked here: the MCP server is an
+        optional, separately deployed service, and the API must boot without
+        it. The MCP server does its own check and refuses to start with no
+        keys (see `app/mcp/main.py`).
+        """
         if self.environment != "production":
             return self
         problems = []

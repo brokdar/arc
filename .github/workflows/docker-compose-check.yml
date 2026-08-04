@@ -33,12 +33,13 @@ jobs:
           cp .env.example .env
           sed -i 's/^POSTGRES__PASSWORD=.*/POSTGRES__PASSWORD=ci-test/' .env
           sed -i 's/^AUTH__JWT__SECRET_KEY=.*/AUTH__JWT__SECRET_KEY=ci-test-secret-key-32-characters!/' .env
+          sed -i "s|^MCP__API_KEYS=.*|MCP__API_KEYS='ci:read:ci-test-mcp-key'|" .env
 
       - name: Validate compose config
         run: docker compose config --quiet
 
       - name: Build and start the full stack
-        run: docker compose up --build --wait db api frontend caddy
+        run: docker compose up --build --wait db api mcp frontend caddy
 
       - name: Check API health (direct)
         run: curl --fail --retry 5 --retry-delay 3 http://localhost:8000/health
@@ -48,6 +49,16 @@ jobs:
 
       - name: Check the frontend through the Caddy proxy
         run: curl --fail --retry 5 --retry-delay 3 http://localhost/
+
+      - name: Check the MCP server rejects unauthenticated calls through Caddy
+        # 401 proves the whole path is wired: Caddy -> mcp -> bearer auth.
+        # A 502 would mean the proxy route or the container is broken.
+        run: |
+          status=$(curl -sf --retry 5 --retry-delay 3 http://localhost/mcp \
+            -H 'Accept: application/json, text/event-stream' \
+            -o /dev/null -w '%{http_code}' || true)
+          echo "GET /mcp -> $status"
+          test "$status" = "401"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 

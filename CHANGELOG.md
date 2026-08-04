@@ -43,6 +43,17 @@ Scaffolding is in progress. Later phases append to this section.
   `NEXT_PUBLIC_API_BASE_URL`, so the browser calls the API same-origin
   through the proxy, and the `@fullstack` smoke suite runs against
   `http://localhost`.
+- Added the MCP server skeleton (`backend/app/mcp/`): a FastMCP 3 server run
+  from the backend image as the `mcp` compose service
+  (`python -m app.mcp.main`, streamable HTTP on :8001, behind Caddy's `/mcp*`).
+  Every MCP request must present a bearer key from `MCP__API_KEYS`
+  (`label:scope:key,...` with scope `read` or `write`); keys are parsed by the
+  framework-free `app/mcp/auth.py` and compared with `secrets.compare_digest`
+  by a `TokenVerifier` subclass, which puts the caller's label and scope on the
+  request identity for per-tool scope checks in WP-8. The server refuses to
+  start (exit 1) with no keys, so `MCP__API_KEYS` is required for
+  `docker compose up`. The surface is one `ping` tool plus an unauthenticated
+  `/health` route for the container healthcheck.
 - Added the runtime data tree: `DATA__ROOT` (default `data`) with
   `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and
   bind-mounted into the api container at `/app/data` (a one-shot `data-init`

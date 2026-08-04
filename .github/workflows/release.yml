@@ -1,8 +1,9 @@
 name: Release
 
 # Tag a release (e.g. `git tag v1.2.0 && git push --tags`) to build and
-# publish both images to GHCR as:
+# publish the images to GHCR as:
 #   ghcr.io/<owner>/<repo>/api:<version>       + :latest
+#   ghcr.io/<owner>/<repo>/mcp:<version>       + :latest
 #   ghcr.io/<owner>/<repo>/frontend:<version>  + :latest
 on:
   push:
@@ -21,6 +22,11 @@ jobs:
       matrix:
         include:
           - image: api
+            context: ./backend
+          # Same Dockerfile and context as the api — published separately so
+          # deployments can pin and scale the MCP server on its own. The
+          # compose `command` selects the entrypoint.
+          - image: mcp
             context: ./backend
           - image: frontend
             context: ./frontend
