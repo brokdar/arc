@@ -126,6 +126,10 @@ root_package = "app"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
+# A deny-list only bites for what it names, so every runtime dependency has to
+# appear here or on the explicit allowlist in
+# tests/unit/test_domain_purity_contract.py, which fails when a new dependency
+# is classified as neither.
 name = "Domain is pure (no I/O, no frameworks, no outer layers)"
 type = "forbidden"
 source_modules = ["app.domain"]
@@ -139,6 +143,9 @@ forbidden_modules = [
     "pydantic_settings",
     "apscheduler",
     "structlog",
+    "fastmcp",
+    "bcrypt",
+    "itsdangerous",
     "app.persistence",
     "app.services",
     "app.api",
@@ -156,7 +163,7 @@ modules = ["app.api", "app.mcp"]
 name = "Layered architecture"
 type = "layers"
 layers = [
-    "app.api : app.mcp",
+    "app.api | app.mcp",
     "app.ingest",
     "app.services",
     "app.persistence",
