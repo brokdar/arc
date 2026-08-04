@@ -15,3 +15,6 @@ Scaffolding is in progress. Later phases append to this section.
   (`packages/`, root `node_modules/`), ignored `/data/` and `.schemathesis/`,
   bumped the `ruff-pre-commit` hook to v0.16.1 to match the backend lockfile,
   and seeded this changelog plus `docs/decisions.md`.
+- Upgraded the backend from Python 3.13 to 3.14 (per D4) across
+  `pyproject.toml`, `.python-version`, `pyrefly.toml`, both `Dockerfile`
+  stages, and the devcontainer image, and relocked `uv.lock`.
