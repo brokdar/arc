@@ -80,9 +80,17 @@ and the two rules are easy to conflate because this skill hands off to the
 breaks on*, so every newline inside a paragraph becomes a literal `<br>` and
 wrapped prose renders as a ragged column. Write **one line per paragraph**, no
 matter how long, with a blank line between paragraphs; lists, headings and
-fenced blocks are block elements and are unaffected. The cost is long lines in
-`git log` on `main`, which the pager soft-wraps anyway — the PR page and the
-changelog draft are where this text is actually read.
+fenced blocks are block elements and are unaffected.
+
+This costs nothing on `main`: when GitHub builds the squash commit from
+`PR_BODY` it hard-wraps the body to 72 columns itself, so `git log` gets a
+conventionally wrapped message without you wrapping the source. Both ends of
+the round trip are handled — write for the web view and let GitHub wrap.
+
+That wrapper is also why the body must stay **flat**: it flattens nested lists
+to a single level, breaks table rows mid-row, and splits git trailers across
+lines so parsers stop seeing them. Use top-level lists and prose; keep tables
+and `Key: value` trailers out of a PR description entirely.
 
 Verify rather than eyeball it, since the raw file looks identical either way:
 
