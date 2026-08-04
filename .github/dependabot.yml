@@ -1,9 +1,19 @@
 version: 2
+
+# Every ecosystem sets `commit-message`: Dependabot's default title ("Bump X
+# from 4 to 5") starts with a capital and carries no conventional type, so it
+# fails the `pr-title` check that the `protect-main` ruleset requires and the PR
+# cannot be merged. `prefix: chore` + `include: scope` yields
+# `chore(deps): bump x from 4 to 5` — a type from pr-title.yml's list and a
+# lowercase subject, which is what its subjectPattern demands.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     groups:
       github-actions:
         patterns: ["*"]
@@ -12,6 +22,9 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     groups:
       devcontainers:
         patterns: ["*"]
@@ -20,6 +33,9 @@ updates:
     directory: "/backend"
     schedule:
       interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     groups:
       backend-deps:
         patterns: ["*"]
@@ -32,6 +48,9 @@ updates:
     directory: "/frontend"
     schedule:
       interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     groups:
       frontend-deps:
         patterns: ["*"]

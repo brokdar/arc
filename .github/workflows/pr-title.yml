@@ -15,8 +15,14 @@ on:
   # `pull_request`, not `pull_request_target`: the action only reads the title
   # from the event payload and needs no secrets, so there is no reason to run
   # it in the privileged context.
+  #
+  # `synchronize` and `ready_for_review` look redundant — a push cannot change
+  # the PR title — but `pr-title` is a check the `protect-main` ruleset
+  # REQUIRES, and GitHub resolves required checks against the PR's latest head
+  # SHA. Without a run per push, the first commit after opening leaves the merge
+  # box waiting forever on a check that never reported for that SHA.
   pull_request:
-    types: [opened, edited, reopened]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
