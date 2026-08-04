@@ -344,3 +344,30 @@ one developer and squash-only merges, forcing every branch up to date before
 merge buys nothing. The required context is the **job name** in
 `.github/workflows/pr-title.yml` (`name: pr-title`); renaming that job silently
 breaks the requirement, so the two must change together.
+
+## D20 — Repo improvement is trigger-based, not a session-end ritual
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`CLAUDE.md` gains an "Improving this repo" section telling agents to convert
+recurring friction into a durable artifact — skill, `.claude/rules/` file,
+hook, `justfile` recipe, CLAUDE.md line, or decision entry — displacing the
+implicit status quo where such improvements happened only when a human thought
+of them.
+
+*Rationale:* the tooling this repo already leans on (import-linter contracts,
+the `block_npm.py` hook, the `commit` skills) exists because someone noticed a
+repeated mistake and made it mechanical. Naming that loop makes it every
+agent's job. The guard against noise is the trigger: **the second occurrence**,
+not session end. An unconditional "suggest improvements before you finish"
+instruction produces a suggestion every time regardless of whether anything
+recurred, which trains the reader to skip the section; a second-occurrence
+trigger produces one only when there is evidence. Hence also: one proposal at
+a time, build only on agreement, and no proposal whose effect is to widen
+permissions or weaken a guard.
+
+The section documents only what an agent cannot derive — the trigger, the
+anti-noise rules, this repo's destinations, and the `paths:` frontmatter key
+that scopes a `.claude/rules/**/*.md` file to matching files instead of every
+session. Skill and hook mechanics are deliberately absent: general knowledge
+in a project file is context an agent already has, paid for on every load.

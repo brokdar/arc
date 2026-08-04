@@ -122,3 +122,22 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
    finds something, fix it AND pin the case as a unit test (see the
    "found by Schemathesis" tests in `test_items_api.py` and
    `test_auth.py`).
+
+## Improving this repo
+
+Recurring friction is a defect in the tooling. The trigger is **the second
+time**: hitting the same correction, lookup, or multi-step dance twice — in
+this session or an earlier one — is the signal to make the fix durable. Once
+is not a pattern.
+
+Route it to the cheapest artifact: a re-derived procedure → a skill; a
+convention that applies only to certain files → `.claude/rules/<name>.md` with
+a `paths:` frontmatter key (gitignore-style globs, comma-separated or a YAML
+list, matched repo-relative; a rule without it loads every session, which is
+what this file is for); a machine-catchable mistake → a hook in
+`.claude/hooks/` or pre-commit; a command you had to reconstruct → a `justfile`
+recipe; a fact every session needs up front → a line in this file.
+
+Raise it in a sentence when it happens; build it only if the user agrees. One
+at a time, no end-of-session improvement retrospectives, and never a change
+whose effect is to widen permissions or weaken a guard.
