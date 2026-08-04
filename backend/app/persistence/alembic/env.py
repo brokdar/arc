@@ -2,7 +2,7 @@
 
 import asyncio
 from logging.config import fileConfig
-from typing import Any
+from typing import Any, Literal
 
 from alembic import context
 from alembic.autogenerate.api import AutogenContext
@@ -33,7 +33,9 @@ config.set_main_option("sqlalchemy.url", get_settings().postgres.async_url)
 _TYPES_MODULE = app.persistence.types.__name__
 
 
-def render_item(item_type: str, obj: Any, autogen_context: AutogenContext) -> bool:
+def render_item(
+    item_type: str, obj: Any, autogen_context: AutogenContext
+) -> str | Literal[False]:
     """Make autogenerate emit an import for our own column types.
 
     Alembic renders a user-defined type module-qualified
