@@ -32,12 +32,6 @@ class PostgresSettings(BaseModel):
         )
 
 
-class RedisSettings(BaseModel):
-    """Redis connection settings."""
-
-    url: str = "redis://localhost:6379/0"
-
-
 class JwtSettings(BaseModel):
     """JWT signing and lifetime settings."""
 
@@ -75,7 +69,6 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
 
     postgres: PostgresSettings = PostgresSettings()
-    redis: RedisSettings = RedisSettings()
     auth: AuthSettings = AuthSettings()
     log: LogSettings = LogSettings()
 

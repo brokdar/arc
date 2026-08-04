@@ -1,8 +1,8 @@
 name: Full-Stack Smoke
 
-# Boots the real compose stack (Postgres, Redis, API + migrations, worker,
-# frontend) and runs the tiny @fullstack Playwright suite against it. This is
-# the top of the test pyramid — it verifies wiring, not logic.
+# Boots the real compose stack (Postgres, API + migrations, frontend) and runs
+# the tiny @fullstack Playwright suite against it. This is the top of the test
+# pyramid — it verifies wiring, not logic.
 on:
   pull_request:
     paths:
@@ -37,7 +37,7 @@ jobs:
         run: docker compose config --quiet
 
       - name: Build and start the full stack
-        run: docker compose up --build --wait db redis api worker frontend
+        run: docker compose up --build --wait db api frontend
 
       - name: Check API health
         run: curl --fail --retry 5 --retry-delay 3 http://localhost:8000/health

@@ -5,17 +5,13 @@ default:
 
 # --- Dev servers -------------------------------------------------------------
 
-# Start backing services (Postgres + Redis) in the background
+# Start backing services (Postgres) in the background
 infra:
-	docker compose up -d db redis
+	docker compose up -d db
 
 # Run the FastAPI dev server with hot reload
 dev-api: infra
 	cd backend && uv run fastapi dev app/main.py
-
-# Run the ARQ background worker
-dev-worker: infra
-	cd backend && uv run arq app.worker.main.WorkerSettings
 
 # Run the Next.js dev server
 dev-web:
@@ -61,7 +57,7 @@ e2e:
 
 # Boot the full Docker stack and run the @fullstack smoke suite against it
 smoke:
-	docker compose up --build --wait db redis api worker frontend
+	docker compose up --build --wait db api frontend
 	cd frontend && E2E_FULLSTACK=1 bun run test:e2e
 
 # Everything CI runs, locally

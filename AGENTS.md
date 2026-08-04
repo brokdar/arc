@@ -5,7 +5,8 @@ typed API contract.
 
 ## Architecture
 
-- `backend/` — Python 3.13, FastAPI, SQLAlchemy 2 (async), Alembic, ARQ worker.
+- `backend/` — Python 3.14, FastAPI, SQLAlchemy 2 (async), Alembic, in-process
+  APScheduler (`app/core/scheduler.py`).
   Domain-driven layout: `app/domains/<domain>/{endpoints,service,repository,models,schemas}.py`,
   cross-cutting code in `app/core/`. The `items` domain is a worked example.
 - `frontend/` — Next.js (App Router), React, TypeScript, Tailwind 4, shadcn/ui

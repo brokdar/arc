@@ -23,22 +23,6 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  redis:
-    image: redis:8-alpine
-    restart: always
-    expose:
-      - 6379
-    ports:
-      - "127.0.0.1:6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      retries: 5
-      start_period: 30s
-      timeout: 5s
-    volumes:
-      - redis-data:/data
-
   api:
     restart: unless-stopped
     command: bash -c "alembic upgrade head && fastapi run app/main.py"
@@ -54,26 +38,6 @@ services:
         required: false
     depends_on:
       db:
-        condition: service_healthy
-        restart: true
-      redis:
-        condition: service_healthy
-        restart: true
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-
-  worker:
-    restart: unless-stopped
-    command: arq app.worker.main.WorkerSettings
-    env_file:
-      - path: .env
-        required: false
-    depends_on:
-      api:
-        condition: service_healthy
-        restart: true
-      redis:
         condition: service_healthy
         restart: true
     build:
@@ -103,4 +67,3 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:

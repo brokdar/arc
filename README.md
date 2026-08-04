@@ -8,7 +8,7 @@ One-sentence description of what this project does.
 cp .env.example .env   # done automatically by `just init`
 just up                # full stack in Docker
 # or for development:
-just infra             # Postgres + Redis only
+just infra             # Postgres only
 just dev-api           # FastAPI with hot reload → http://localhost:8000
 just dev-web           # Next.js dev server     → http://localhost:3000
 ```
@@ -20,7 +20,6 @@ just dev-web           # Next.js dev server     → http://localhost:3000
 | Frontend | http://localhost:3000 | Next.js App Router |
 | API | http://localhost:8000 | OpenAPI docs at `/docs` |
 | Postgres | localhost:5432 | credentials in `.env` |
-| Redis | localhost:6379 | task queue + caching |
 
 ## Development
 

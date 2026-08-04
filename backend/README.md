@@ -7,14 +7,14 @@ FastAPI service for arc.
 ```
 app/
   main.py            app factory + lifespan
-  core/              cross-cutting: config, db, logging, exceptions, pagination
+  core/              cross-cutting: config, db, logging, exceptions,
+                     pagination, scheduler (in-process APScheduler)
   domains/<name>/    one package per business domain:
     endpoints.py     FastAPI router (thin — HTTP concerns only)
     service.py       business logic
     repository.py    data access (SQLAlchemy)
     models.py        ORM models
     schemas.py       Pydantic request/response schemas
-  worker/            ARQ background worker + tasks
   alembic/           migrations (async env)
 tests/
   unit/              fast, no external services (CI + pre-push)

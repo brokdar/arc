@@ -10,16 +10,19 @@ from fastapi.routing import APIRoute
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.core.scheduler import create_scheduler
 from app.domains.health.endpoints import router as health_router
 from app.domains.items.endpoints import router as items_router
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown."""
     configure_logging()
+    app.state.scheduler = create_scheduler()
     get_logger(__name__).info("application_started")
     yield
+    app.state.scheduler.shutdown(wait=False)
 
 
 def generate_operation_id(route: APIRoute) -> str:
