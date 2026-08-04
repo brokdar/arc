@@ -25,70 +25,105 @@ Out of MVP scope (do not build): vendor API adapters (Wahoo/Zwift/Strava/HealthK
 
 ---
 
-## 1. Stack (pinned, verified 2026-08-01)
+## 1. Stack (as built in WP-0, verified 2026-08-04)
 
-Backend: Python 3.14.6, FastAPI 0.141.x, Pydantic 2.13.x, SQLAlchemy 2.0.51 (2.1-clean style: typed `Mapped[]` only) + Alembic 1.18.x, PostgreSQL 18.4, uv 0.12.x, ruff 0.16.x, pyright (strict), pytest 9.1.x + pytest-asyncio + hypothesis, APScheduler 3.11.x, FastMCP 3.4.x, httpx 0.28.x, polars 1.43.x, pyarrow 25.x, garmin-fit-sdk (decode) with fitdecode fallback, gpxpy, tcxreader.
-Frontend: Next.js 16.2.x (App Router, Turbopack), React 19.2.x, TypeScript 7.0.x, Tailwind 4.3.x, shadcn CLI 4.16.x (Base UI), TanStack Query 5.101.x, uPlot 1.6.32 (ride streams), ECharts 6.1.x (dashboard charts), Node 24 LTS, pnpm 11.18.x, openapi-typescript + openapi-fetch (current at scaffold time), Vitest + Playwright (current at scaffold time).
-Infra: Docker Compose v5, Caddy 2.11.x. No Redis/Valkey, no Celery. Scheduling is in-process APScheduler.
+Pins are floors (`>=`) in `backend/pyproject.toml` and `frontend/package.json`; the exact resolution lives in `backend/uv.lock` and `frontend/bun.lock`. **The lockfile is the pin** — the versions below are what is installed today, and `uv sync --frozen` / `bun install --frozen-lockfile` reproduce them exactly.
 
-Conventions: ruff format + lint (line length 100), pyright strict passes with zero errors, `from __future__` never needed (3.14), all functions typed, domain layer has no I/O imports. Frontend: strict TS, ESLint (next config), no `any`.
+Backend: Python 3.14.6, FastAPI 0.141.1 (`fastapi[standard]`), Pydantic 2.13.4 + pydantic-settings 2.14.2, SQLAlchemy 2.0.51 async (2.1-clean style: typed `Mapped[]` only) + Alembic 1.18.5 over asyncpg 0.31, structlog 26.1 (structured logging), APScheduler 3.11.3 (in-process, started by the API lifespan), FastMCP 3.4.5, bcrypt 5.0 + itsdangerous 2.2 (single-user session cookie), uv (project + toolchain manager), ruff 0.16.1 (lint + format, line length 88), pyrefly 1.2 (type checking), import-linter 2.13 (architecture boundaries), pytest 9.1.1 + pytest-asyncio + pytest-xdist + pytest-cov, httpx 0.28.1, aiosqlite (in-memory unit-test database).
+
+Not installed yet — each arrives with the work package that first needs it: `hypothesis` (**WP-1**, with the first property-tested pure domain code), polars + pyarrow (WP-5), garmin-fit-sdk / fitdecode / gpxpy / tcxreader (WP-4), the Anthropic SDK (WP-8). Add them then, not now.
+
+Frontend: Next.js 16.2.12 (App Router, Turbopack), React 19.2.8, TypeScript 5.9 type-checked by `tsgo` (`@typescript/native-preview` 7.0.0-dev — the native TS 7 compiler; see D2), Tailwind 4, shadcn 4.16 over Base UI (`@base-ui/react` 1.6 — components take `render={...}`, **not** Radix `asChild`), TanStack Query 5.101, the typed API contract chain `openapi-typescript` 7.13 → `openapi-fetch` 0.17 + `openapi-react-query` 0.5 (+ `openapi-msw` 2.0 for typed test handlers), zod 4 + `@t3-oss/env-nextjs` (validated build-time env), bun (package manager and runner), Biome 2.5 (lint + format), Vitest 4.1 + MSW 2.15, Playwright 1.62. uPlot and ECharts arrive with WP-5.
+
+Infra: Docker Compose (`docker-compose.yml`: `db`, `data-init`, `api`, `mcp`, `frontend`, `caddy`), PostgreSQL 18 (`postgres:18-alpine`), Caddy 2.11 (`caddy:2.11-alpine`) as the one public origin. No Redis/Valkey, no Celery, no separate worker process — scheduling is in-process APScheduler.
+
+Conventions: ruff format + lint (line length 88), `uv run pyrefly check` clean, `from __future__` never needed (3.14), all functions typed, the domain layer has no I/O or framework imports — enforced mechanically by import-linter, not by review. Frontend: strict TS, Biome, no `any`. Where these differ from this plan's original preferences (pyright strict, line length 100, ESLint, `Makefile`, `/healthz`, `APP_`-prefixed env), the repo's choice and its reasoning are recorded in `docs/decisions.md` (D2, D3, D7).
 
 ---
 
-## 2. Repository layout (monorepo)
+## 2. Repository layout
+
+Two standalone projects — one uv project, one bun project — rather than a uv/pnpm workspace monorepo. The layer boundaries this plan asks for are kept, as modules inside `backend/app/` with the dependency direction enforced by import-linter. See `docs/decisions.md` D1.
 
 ```
-training-app/
-├── apps/
-│   ├── api/            # FastAPI app (thin: routers, deps, auth) — Python
-│   ├── mcp/            # FastMCP server (thin: tools → domain services) — Python
-│   └── web/            # Next.js 16 app — TypeScript
-├── packages/
-│   ├── domain/         # PURE Python: entities, value objects, scoring, matching,
-│   │                   # metrics, workout model, zone math. No SQLAlchemy, no I/O.
-│   ├── persistence/    # SQLAlchemy models, repositories, Alembic migrations
-│   ├── ingest/         # file watching, FIT/TCX/GPX parsing, quarantine, parquet writer
-│   └── client/         # generated TS client (openapi-typescript output)
-├── infra/
-│   ├── compose.yaml    # api, web, postgres, caddy, mcp
-│   ├── Caddyfile
-│   └── backup/         # pg_dump + originals backup scripts, restore-verify script
-├── data/               # runtime volumes (gitignored): originals/, inbox/, streams/, quarantine/
-├── pyproject.toml      # uv workspace root
-├── pnpm-workspace.yaml
-└── Makefile            # dev, test, lint, typecheck, migrate, seed, e2e — single entry points
+arc/
+├── backend/                # standalone uv project: the API *and* the MCP server
+│   ├── app/
+│   │   ├── main.py         # app factory + lifespan (scheduler, data dirs, middleware)
+│   │   ├── core/           # cross-cutting, any layer may use: config, logging,
+│   │   │                   # exceptions, scheduler
+│   │   ├── domain/         # PURE Python: entities, value objects, scoring, matching,
+│   │   │                   # metrics, workout model, zone math. No SQLAlchemy, no
+│   │   │                   # frameworks, no I/O. (Filled in from WP-1.)
+│   │   ├── persistence/    # db.py (engine/session), ORM models, repositories,
+│   │   │                   # alembic/ migrations (async env)
+│   │   ├── services/       # use-cases — the layer api/ and mcp/ both consume
+│   │   ├── ingest/         # file watching, FIT/TCX/GPX parsing, quarantine, parquet
+│   │   ├── api/            # HTTP adapter: routes/, schemas/, deps (session guard),
+│   │   │                   # pagination, validation
+│   │   └── mcp/            # FastMCP server (tools → services); sibling of api/
+│   ├── tests/unit/         # in-memory SQLite, no external services
+│   ├── tests/integration/  # real Postgres + the migration chain
+│   ├── Dockerfile          # one image, two entrypoints (api / mcp)
+│   └── pyproject.toml      # deps, ruff, pytest, coverage, import-linter contracts
+├── frontend/               # standalone bun project: Next.js 16 App Router
+│   ├── app/ components/ lib/
+│   ├── generated/api/      # openapi.json + schema.d.ts — committed, never hand-edited
+│   ├── tests/mocks/        # typed MSW handlers (openapi-msw)
+│   └── e2e/                # Playwright: UI-only specs + @fullstack specs
+├── caddy/Caddyfile         # /api/* + /health → api, /mcp* → mcp, everything else → frontend
+├── scripts/                # bootstrap-env, API type generation + drift check,
+│                           # integration-test runner
+├── data/                   # runtime tree (gitignored): inbox/, originals/, streams/,
+│                           # quarantine/ — bind-mounted into the api container
+├── docs/                   # this plan, tech-stack, decisions log, product description
+├── docker-compose.yml      # db, data-init, api, mcp, frontend, caddy
+├── .env.example            # every setting, kept in sync by a backend test
+└── justfile                # init, dev-*, up/down, format/lint/typecheck/test,
+                            # db-*, api-*, check, smoke — single entry points
 ```
 
-Dependency rule: `domain` imports nothing from the other packages. `persistence`, `ingest`, `api`, `mcp` import `domain`. `api` and `mcp` never import each other; both consume the same service layer in `persistence` (or a small `services/` module inside it).
+Dependency rule, enforced by the import-linter contracts in `backend/pyproject.toml` (`uv run lint-imports`, run in CI, `just lint` and the pre-push hook):
+
+- **`app.domain` is pure** — it may not import SQLAlchemy, Alembic, asyncpg, FastAPI, Starlette, httpx, pydantic-settings, APScheduler, structlog, or any other layer (including `app.core`).
+- **Layer stack:** `app.api | app.mcp` → `app.ingest` → `app.services` → `app.persistence` → `app.domain`. Imports point inward only.
+- **`app.api` and `app.mcp` are independent** — neither imports the other; both consume the same `app.services`. Nothing that matters lives in an adapter.
+- **`app.core` is deliberately outside the stack**: config, logging, exceptions and the scheduler are cross-cutting and any layer above the domain may use them.
 
 ---
 
 ## 3. Work packages
 
-Execute in order. Each WP ends with: tests green, `make lint typecheck test` clean, a short CHANGELOG entry, and a git commit. Do not start a WP with the previous one red.
+Execute in order. Each WP ends with: tests green, `just check` clean, a short CHANGELOG entry, and a git commit. Do not start a WP with the previous one red.
 
-### WP-0: Scaffold + infrastructure (day 0)
+### WP-0: Scaffold + infrastructure (day 0) — ✅ delivered
 
-1. Init monorepo: uv workspace (`pyproject.toml` with `[tool.uv.workspace] members = ["apps/api","apps/mcp","packages/*"]` for the Python packages), pnpm workspace for `apps/web` + `packages/client`.
-2. `packages/domain`, `packages/persistence`, `packages/ingest`: empty packages with py.typed, pytest wired.
-3. `apps/api`: FastAPI skeleton, `/healthz`, `/api/v1` router mount, settings via pydantic-settings (env-prefixed `APP_`), structured logging (stdlib logging + JSON formatter).
-4. `apps/web`: `create-next-app` (App Router, TS, Tailwind 4), shadcn init (Base UI), dark mode class strategy, one page rendering API health.
-5. `infra/compose.yaml`: services `postgres:18.4` (volume, healthcheck), `api` (uv-based multi-stage Dockerfile), `web` (standalone Next build), `mcp`, `caddy` (reverse proxy: `/` → web, `/api` → api, auto-HTTPS disabled for local, enabled via env for deployment). Bind-mount `data/` into api.
-6. Auth: single-user session cookie. `POST /api/v1/auth/login` with a bcrypt-hashed password from env; session middleware; every other route requires it. MCP uses static bearer API keys (`APP_MCP_API_KEYS`, comma-separated, each with a label) — scoped read/write flag per key.
-7. CI (GitHub Actions or equivalent): lint, typecheck, test, frontend build, `alembic upgrade head` against a service Postgres.
-8. Makefile targets working end-to-end. `docker compose up` yields a login page and healthy services.
+Built by adapting an existing, fully verified full-stack template rather than scaffolding a workspace monorepo from scratch (D1). What exists:
 
-**DoD:** fresh clone → `make dev` runs everything; CI green.
+1. **Projects.** `backend/` — a standalone uv project on Python 3.14.6 (D4) holding both the API and the MCP server; `frontend/` — a standalone bun project (Next.js 16.2 App Router, TS 5.9 + `tsgo`, Tailwind 4, shadcn over Base UI, Biome, Vitest + MSW, Playwright) (D2).
+2. **Layers.** `app/{core,domain,persistence,services,api,mcp,ingest}` with the §2 dependency rule enforced by import-linter contracts in CI, `just lint` and pre-push. `domain/` and `ingest/` are deliberately empty shells — WP-1 and WP-4 fill them.
+3. **API.** FastAPI skeleton: `/health` (open, used by every container healthcheck) and the `/api/v1` router mount, settings via pydantic-settings with unprefixed nested `__` keys (D7), structlog structured logging. `items` is a temporary worked example threaded through persistence → services → api, plus its tests and frontend page; **WP-1 deletes it** once real entities land.
+4. **Scheduling.** In-process APScheduler started by the API lifespan (`app/core/scheduler.py`) — no Redis, no worker service, no queue (D5).
+5. **Auth.** Single-user session cookie (D6): the credential store is one bcrypt hash, `AUTH__PASSWORD_HASH` (there is no user table). `POST /api/v1/auth/login` swaps it for a signed cookie from Starlette's `SessionMiddleware` (`arc_session`, `SameSite=Lax`, 14 days, `Secure` once `AUTH__SESSION__HTTPS_ONLY` is on); `/auth/logout` and `/auth/session` sit beside it, always open. **Everything else under `/api/v1` hangs off a router carrying `Depends(require_session)`** — new routers are protected by default, not by remembering to protect them. Failed logins sleep ~0.3 s; production refuses to boot without `AUTH__PASSWORD_HASH` and `AUTH__SESSION__SECRET_KEY`. The frontend has a `/login` page and an `AuthGuard`.
+6. **MCP.** A FastMCP 3 server (`backend/app/mcp/`) run from the same image as the API (`python -m app.mcp.main`, streamable HTTP on :8001, loopback-published, public path is Caddy's `/mcp*`). Every request presents a bearer key from `MCP__API_KEYS` — comma-separated `label:scope:key` entries, scope `read` or `write` — parsed by the framework-free `app/mcp/auth.py` and compared in constant time. The server exits 1 rather than serve an unauthenticated tool surface with no keys. Surface today: one `ping` tool plus an unauthenticated `/health`. WP-8 adds the real tools and per-tool scope checks.
+7. **Compose.** `db` (`postgres:18-alpine`, volume at `/var/lib/postgresql`, healthcheck), `data-init` (one-shot: hands the root-owned `./data` bind mount to the api's non-root uid), `api` (migrations on boot, then `fastapi run`), `mcp`, `frontend` (standalone Next build, built with an empty `NEXT_PUBLIC_API_BASE_URL` so the browser calls the API same-origin), `caddy` (`caddy:2.11-alpine`, `/api/*` + `/health` → api, `/mcp*` → mcp, everything else → frontend; `CADDY_SITE_ADDRESS` defaults to `:80` plain HTTP, set a hostname for automatic HTTPS).
+8. **Runtime data.** `DATA__ROOT` (default `data`) with `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and bind-mounted at `/app/data`. WP-4 ingests from it.
+9. **CI (GitHub Actions), path-filtered:** backend lint/typecheck/import-linter/unit tests, backend integration tests against a service Postgres including `alembic upgrade head` + `alembic check`, frontend lint/typecheck/test/build, Playwright e2e (sharded), OpenAPI↔generated-types drift check, Schemathesis fuzzing, Docker Compose validation, zizmor workflow linting, and a tagged release that publishes both images to GHCR.
+10. **Entry points.** `just init` writes a ready-to-run `.env` (random `POSTGRES__PASSWORD`, `AUTH__SESSION__SECRET_KEY`, both `MCP__API_KEYS`, plus a bcrypt hash of the password you type); `just up` brings the stack up on http://localhost; `just check` = lint + typecheck + unit tests + API-contract drift; `just smoke` boots the full stack and runs the `@fullstack` Playwright suite through Caddy.
+
+**DoD (met):** fresh clone → `just init && just up` → a login page on http://localhost with every service healthy; `just check` and `just smoke` green; CI green.
 
 ### WP-1: Domain core — athlete, anchors, zones, versioning primitives
 
-`packages/domain`:
+Add `hypothesis` to the backend dev dependencies here (the first property-tested code). Delete WP-0's `items` worked example — persistence, service, schemas, routes, tests and the frontend page — once the real entities exist.
+
+`backend/app/domain`:
 
 1. **Versioning primitives:** `Versioned[T]` pattern — every derived artefact type carries `artefact_id` (stable identity), `version` (int), `as_of` (UTC), `superseded_by | None`, `recompute_reason | None`. Helper for "current version" and "version as seen at time T".
 2. **Athlete:** profile (name, dob, sex, height), discipline capability stubs (free-form per-discipline dict for MVP).
 3. **Anchors:** `AnchorType` (FTP, LTHR, MAX_HR — CP/W′ reserved as enum values, unused), `AnchorVersion` (value, unit, provenance enum, protocol str, effective_date, ci_low/ci_high, created_at, source: athlete|agent). Append-only list per type. `staleness_state` field present (`fresh` hardcoded in MVP — the model is deferred, the column is not).
 4. **Zones:** declared zone model enum (`coggan_7` power, `lthr_5` HR for MVP), pure derivation `zones_for(anchor_version, model) -> list[Zone]`. Zones are always computed, never stored.
-5. Postgres schema + Alembic migration in `persistence`; repository functions; API routes: athlete get/update, anchor list/append (no update/delete — 405 with explanatory message), zones get (query param: anchor version, default current).
+5. Postgres schema + Alembic migration in `backend/app/persistence`; repository functions; API routes: athlete get/update, anchor list/append (no update/delete — 405 with explanatory message), zones get (query param: anchor version, default current).
 6. Audit log table from day one: `audit_log(actor{athlete|agent:<key-label>|system}, action, entity_type, entity_id, payload_json, at)`. Every write path appends. Reserved, used by all later WPs.
 
 **Tests:** hypothesis round-trips on zone derivation; append-only enforcement; audit rows on every mutation.
@@ -116,7 +151,7 @@ Execute in order. Each WP ends with: tests green, `make lint typecheck test` cle
 
 ### WP-4: Ingestion — watched folder, FIT parsing, sessions & recordings, streams
 
-1. `packages/ingest`: APScheduler job (30s interval) scanning `data/inbox/`; also `POST /api/v1/ingest/upload`. Pipeline per file: hash (sha256) → duplicate check (by hash) → parse (garmin-fit-sdk; fitdecode fallback; gpxpy/tcxreader for GPX/TCX) → validate (monotonic timestamps, plausible ranges: power 0–2500W, HR 25–230, speed <35 m/s; total duration >2min) → on failure move to `data/quarantine/` + create quarantine record with reason → on success: move original to `data/originals/YYYY/MM/<hash>.<ext>` (never modified again), create `recording` row, write per-second channels to `data/streams/<recording_id>.parquet` (schema: `t` (UTC), `power`, `hr`, `cadence`, `speed`, `elevation`, `temp`, `lat`, `lon`; nullable columns; source label per channel in parquet metadata).
+1. `backend/app/ingest`: APScheduler job (30s interval) scanning `data/inbox/`; also `POST /api/v1/ingest/upload`. Pipeline per file: hash (sha256) → duplicate check (by hash) → parse (garmin-fit-sdk; fitdecode fallback; gpxpy/tcxreader for GPX/TCX) → validate (monotonic timestamps, plausible ranges: power 0–2500W, HR 25–230, speed <35 m/s; total duration >2min) → on failure move to `data/quarantine/` + create quarantine record with reason → on success: move original to `data/originals/YYYY/MM/<hash>.<ext>` (never modified again), create `recording` row, write per-second channels to `data/streams/<recording_id>.parquet` (schema: `t` (UTC), `power`, `hr`, `cadence`, `speed`, `elevation`, `temp`, `lat`, `lon`; nullable columns; source label per channel in parquet metadata).
 2. **Session vs recording:** MVP is single-recording, but the schema separates `session` (real-world event: start, end, discipline guess, timezone at start) from `recording` (device account, FK → session) 1:1 for now. Dedup: a new file whose time range overlaps an existing session >70% → quarantine as `suspected_duplicate` with a confirm/reject UI action (confirm = discard file with log; reject = create separate session). No channel merging in MVP.
 3. Discipline classification: FIT sport field; fallback heuristics (has power/speed → ride; short + no GPS + no power → strength candidate); always athlete-overridable.
 4. Session date = start time in athlete's local timezone at start (store tz name on session). Midnight-crossers belong to start date.
@@ -127,8 +162,8 @@ Execute in order. Each WP ends with: tests green, `make lint typecheck test` cle
 
 ### WP-5: Metrics + session analysis (minimal) + stream charts
 
-1. `domain/metrics.py` — pure functions over polars frames: normalized power (30s rolling 4th-power mean), IF (NP/FTP using pinned-or-current anchor per invariant), training load (TSS-style: `(dur_s × NP × IF)/(FTP×3600)×100`), average/max per channel, work (kJ), time-in-zone per zone model, simple elevation gain. Strength: volume load (Σ sets×reps×load), sets completed. Every metric result stored as a versioned artefact recording `anchor_version_id` inputs and `computed_at`. Reference values cross-checked in tests against hand-computed fixtures (document formulas in docstrings; GoldenCheetah is the reference implementation for NP).
-2. **Structure alignment** (`domain/alignment.py`): map planned flattened steps onto the recording timeline. MVP algorithm: work-interval detection via power/HR threshold crossing smoothed at 10s, then order-preserving assignment to planned work steps (dynamic programming on duration similarity); each aligned step gets `alignment_confidence` (0–1, from duration + intensity mismatch); steps below 0.5 confidence are excluded from adherence scoring with reason `alignment_low_confidence`. For strength: alignment unit is the logged set list vs. prescription (no timeline).
+1. `backend/app/domain/metrics.py` — pure functions over polars frames: normalized power (30s rolling 4th-power mean), IF (NP/FTP using pinned-or-current anchor per invariant), training load (TSS-style: `(dur_s × NP × IF)/(FTP×3600)×100`), average/max per channel, work (kJ), time-in-zone per zone model, simple elevation gain. Strength: volume load (Σ sets×reps×load), sets completed. Every metric result stored as a versioned artefact recording `anchor_version_id` inputs and `computed_at`. Reference values cross-checked in tests against hand-computed fixtures (document formulas in docstrings; GoldenCheetah is the reference implementation for NP).
+2. **Structure alignment** (`backend/app/domain/alignment.py`): map planned flattened steps onto the recording timeline. MVP algorithm: work-interval detection via power/HR threshold crossing smoothed at 10s, then order-preserving assignment to planned work steps (dynamic programming on duration similarity); each aligned step gets `alignment_confidence` (0–1, from duration + intensity mismatch); steps below 0.5 confidence are excluded from adherence scoring with reason `alignment_low_confidence`. For strength: alignment unit is the logged set list vs. prescription (no timeline).
 3. Web: **Session detail page** — uPlot stacked channel charts (power/HR/cadence/speed/elevation) with synced cursors, zoom/pan; zone-distribution bar (ECharts); laps/detected-intervals table; metric summary header (duration, NP, IF, load, work, TiZ); planned-vs-actual overlay when matched (planned step bands rendered behind the power trace).
 
 **Tests:** NP/IF/TSS fixtures; alignment on synthetic recordings (hypothesis: generate plan + noisy execution, assert assignment); alignment confidence monotonicity.
@@ -166,7 +201,7 @@ Semantics (from spec — implement exactly):
 
 ### WP-8: Agent layer v0 — MCP server + proposals + guardrails
 
-1. `apps/mcp` (FastMCP 3): tools, all delegating to the same service layer as the API — no separate logic:
+1. `backend/app/mcp` (FastMCP 3, scaffolded in WP-0): tools, all delegating to the same `app.services` layer as the API — no separate logic. Enforce the key's scope (`read`/`write`, already on the authenticated identity) per tool:
    - Reads: `get_athlete`, `get_anchors`, `get_plan_week`, `get_session_detail` (incl. axis scores, alignment, metrics), `list_sessions(filter)`, `get_workout_library`, `search_history` (date-range summaries).
    - Writes (guarded): `append_anchor` (provenance required; `tested` provenance requires protocol string), `create_workout`, `propose_plan_change` (see 2), `write_session_evaluation` (interpretive text attached to a session — Tier 1), `annotate` (free commentary, Tier 0).
    - Explicitly absent: any tool that mutates recordings, streams, declared verdicts, or reasons.
@@ -180,30 +215,30 @@ Semantics (from spec — implement exactly):
 
 ### WP-9: Hardening, seeds, backup, acceptance
 
-1. Seed script (`make seed`): demo athlete, anchors (FTP 250 `estimated`), 2-week plan, 6 golden FIT files pre-ingested and matched — the app demos in one command.
-2. Backup: nightly APScheduler job → `pg_dump` + tar of `data/originals` to `data/backups/` (operator points a volume/restic at it); `make verify-restore` spins an ephemeral Postgres container, restores latest dump, runs smoke queries, reports. Document in `docs/operations.md`.
+1. Seed script (add a `just seed` recipe): demo athlete, anchors (FTP 250 `estimated`), 2-week plan, 6 golden FIT files pre-ingested and matched — the app demos in one command.
+2. Backup: nightly APScheduler job → `pg_dump` + tar of `data/originals` to `data/backups/` (operator points a volume/restic at it); a `just verify-restore` recipe spins an ephemeral Postgres container, restores latest dump, runs smoke queries, reports. Document in `docs/operations.md`.
 3. Retention/version GC: none — MVP keeps all versions (single user; revisit at MMP).
 4. Playwright E2E (the critical path only): login → create workout → plan week → upload FIT → confirm match → declare verdict with reason → see week strip update → receive and accept an MCP-created proposal (drive MCP via test client).
 5. Performance sanity: session detail with a 4h ride (14k points) renders <1.5s on a laptop; ingest of a 4h FIT <10s.
-6. `README.md`: architecture sketch, setup, invariants (§0 verbatim), decision log of every `DECIDE:` taken.
+6. `README.md`: architecture sketch, setup, invariants (§0 verbatim), and a pointer to the running decision log in `docs/decisions.md`.
 
 **MVP acceptance checklist (all must pass):**
-- [ ] Fresh machine: `git clone && make dev` → usable app in <15 min
+- [ ] Fresh machine: `git clone && just init && just up` → usable app in <15 min
 - [ ] Plan a week with intents in UI in <10 min
 - [ ] Drop a FIT in the inbox → session appears, matched or pending, within 60s
 - [ ] Scored session shows axis detail + suggested verdict; override works; reasons captured; contested flow works after an intent edit
 - [ ] All matching case-table tests green (day-late, double-day, swap, unplanned, merge, displaced)
 - [ ] Claude connected via MCP can: read the week, evaluate a session, propose a plan change with dry-run then commit; proposal appears in UI with diff; red-flag mode blocks intensification proposals
 - [ ] Kill the LLM: every screen and every computed value still works
-- [ ] `make verify-restore` passes
-- [ ] pyright strict + ruff + all tests green; no `TODO` without an issue reference
+- [ ] `just verify-restore` passes
+- [ ] `just check` green (ruff, pyrefly, import-linter, unit tests, API-contract drift) plus `just test-int` and `just smoke`; no `TODO` without an issue reference
 
 ---
 
 ## 4. Execution guidance for the model
 
-- Work WP by WP; commit per WP; keep a running `docs/decisions.md` for every `DECIDE:` and any ambiguity resolved (state the choice and why — the operator reviews these).
-- When a library pin conflicts with reality at build time (e.g. a newer patch), take the newest patch within the pinned minor and note it.
+- Work WP by WP; commit per WP; append to `docs/decisions.md` (it exists, entries D1–… are append-only) for every `DECIDE:` and any ambiguity resolved — state the choice, the alternative it displaced, and why. The operator reviews these. Supersede a decision with a new entry; never rewrite one.
+- When a library pin conflicts with reality at build time (e.g. a newer patch), take the newest patch within the pinned minor, let the lockfile record it, and note it.
 - Golden FIT files: if none are provided by the operator, generate synthetic FIT files with the fit-tool fork or construct parquet-level fixtures and mark the FIT-parse tests as operator-pending — do not silently skip the pipeline tests.
 - Do not add features from later phases (weather, wellness, PMC, availability) even where they'd be easy — schema reservations only where this plan says so.
 - Ask the operator only when a `DECIDE:` default is unworkable or credentials/files are needed (Google Maps key is NOT needed in MVP — no maps in MVP).
