@@ -34,7 +34,7 @@ format:
 
 # Lint backend + frontend
 lint:
-	cd backend && uv run ruff check . && uv run ruff format --check .
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run lint-imports
 	cd frontend && bun run lint
 
 # Type-check backend + frontend

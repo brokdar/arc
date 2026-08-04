@@ -1,4 +1,4 @@
-"""Alembic environment — async engine, models discovered via app.core.db.Base."""
+"""Alembic environment — async engine, models discovered via app.persistence.db.Base."""
 
 import asyncio
 from logging.config import fileConfig
@@ -9,10 +9,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import get_settings
-from app.core.db import Base
+from app.persistence.db import Base
 
 # Import all model modules so their tables register on Base.metadata.
-from app.domains.items import models as _items_models  # noqa: F401
+from app.persistence import items as _items_models  # noqa: F401
 
 config = context.config
 

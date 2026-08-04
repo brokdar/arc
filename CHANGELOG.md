@@ -22,3 +22,10 @@ Scaffolding is in progress. Later phases append to this section.
   an in-process APScheduler started by the API lifespan
   (`backend/app/core/scheduler.py`); dropped the `redis` and `worker` services
   from Compose, the `dev-worker` recipe, and the `REDIS__URL` setting.
+- Restructured the backend from `app/domains/<domain>/` into layered modules —
+  `app/domain` (pure, filled in by WP-1), `app/persistence` (db, ORM models,
+  repositories, Alembic), `app/services`, `app/ingest` and `app/mcp`
+  skeletons, and `app/api` (routes, schemas, pagination, validation) — with
+  `app/core` reduced to genuinely cross-cutting code. Boundaries are now
+  enforced by import-linter contracts (`uv run lint-imports`) wired into CI,
+  `just lint` and pre-push. The OpenAPI contract is unchanged.

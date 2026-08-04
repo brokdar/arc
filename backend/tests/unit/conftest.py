@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.db import Base, get_session
 from app.main import create_app
+from app.persistence.db import Base, get_session
 
 
 @pytest.fixture

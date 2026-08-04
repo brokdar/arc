@@ -7,12 +7,12 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
+from app.api.routes.health import router as health_router
+from app.api.routes.items import router as items_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
-from app.domains.health.endpoints import router as health_router
-from app.domains.items.endpoints import router as items_router
 
 
 @asynccontextmanager

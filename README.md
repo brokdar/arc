@@ -53,7 +53,7 @@ point at your real API — the values are baked in at build time.
 ## Layout
 
 ```
-backend/    FastAPI app — DDD layout: app/domains/<domain>/{endpoints,service,repository,models,schemas}
+backend/    FastAPI app — layered: app/{domain,persistence,services,ingest,api,mcp} + cross-cutting app/core
 frontend/   Next.js app — generated/api/ holds the OpenAPI-derived types (never edit by hand)
 scripts/    cross-cutting automation (API type generation, integration tests)
 .github/    CI workflows — path-filtered, no per-project edits needed

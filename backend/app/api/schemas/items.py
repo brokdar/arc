@@ -1,4 +1,4 @@
-"""Request/response schemas for the items domain."""
+"""Request/response schemas for items."""
 
 import uuid
 from datetime import datetime
@@ -7,8 +7,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
-from app.core.pagination import Page
-from app.core.validation import PostgresText
+from app.api.pagination import Page
+from app.api.validation import PostgresText
 
 # Constraints live INSIDE the union member: applied to the union itself,
 # pydantic would try `min_length` against None and 500 with a TypeError.

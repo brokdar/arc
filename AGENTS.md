@@ -7,8 +7,13 @@ typed API contract.
 
 - `backend/` — Python 3.14, FastAPI, SQLAlchemy 2 (async), Alembic, in-process
   APScheduler (`app/core/scheduler.py`).
-  Domain-driven layout: `app/domains/<domain>/{endpoints,service,repository,models,schemas}.py`,
-  cross-cutting code in `app/core/`. The `items` domain is a worked example.
+  Layered layout: `app/domain/` (pure business rules — no I/O, no frameworks)
+  → `app/persistence/` (ORM models, repositories, Alembic) → `app/services/`
+  (use-cases) → `app/ingest/` → the adapters `app/api/` (routes, schemas) and
+  `app/mcp/`, with `app/core/` cross-cutting (config, logging, exceptions,
+  scheduler) and usable from anywhere. Boundaries are enforced by
+  import-linter (`uv run lint-imports`, contracts in `backend/pyproject.toml`);
+  `items` is a worked example spread across the layers.
 - `frontend/` — Next.js (App Router), React, TypeScript, Tailwind 4, shadcn/ui
   (Base UI primitives — components use `render={...}`, NOT Radix `asChild`).
 - **API contract**: backend OpenAPI → `frontend/generated/api/` (committed,

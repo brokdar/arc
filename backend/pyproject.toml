@@ -26,6 +26,7 @@ dev = [
     "aiosqlite>=0.21.0",
     "ruff>=0.15.0",
     "pyrefly>=1.1.0",
+    "import-linter>=2.3",
 ]
 
 [build-system]
@@ -47,7 +48,7 @@ link-mode = "copy"
 line-length = 88
 target-version = "py314"
 fix = true
-extend-exclude = ["app/alembic"]
+extend-exclude = ["app/persistence/alembic"]
 
 [tool.ruff.lint]
 select = [
@@ -103,7 +104,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/alembic/*"]
+omit = ["app/persistence/alembic/*"]
 # SQLAlchemy's asyncio layer switches greenlets; without this, code awaited
 # across the sync/async bridge is reported as uncovered.
 concurrency = ["greenlet", "thread"]
@@ -111,3 +112,50 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 fail_under = 80
 show_missing = true
+
+# --- Architecture boundaries (import-linter) ---------------------------------
+# `uv run lint-imports` — enforced in CI, the `just lint` recipe and pre-push.
+# `app.core` is deliberately absent from the layer stack: it is cross-cutting
+# (config, logging, exceptions, scheduler) and every layer may use it.
+[tool.importlinter]
+root_package = "app"
+# Needed so the forbidden contract below can name third-party packages.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Domain is pure (no I/O, no frameworks, no outer layers)"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "sqlalchemy",
+    "alembic",
+    "asyncpg",
+    "fastapi",
+    "starlette",
+    "httpx",
+    "pydantic_settings",
+    "apscheduler",
+    "structlog",
+    "app.persistence",
+    "app.services",
+    "app.api",
+    "app.mcp",
+    "app.ingest",
+    "app.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "API and MCP adapters are independent"
+type = "independence"
+modules = ["app.api", "app.mcp"]
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "app.api : app.mcp",
+    "app.ingest",
+    "app.services",
+    "app.persistence",
+    "app.domain",
+]
