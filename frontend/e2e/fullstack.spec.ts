@@ -10,6 +10,10 @@ import { expect, test } from "@playwright/test";
  * URLs are relative: both the UI and the API are reached through the Caddy
  * reverse proxy at the config's baseURL (http://localhost), which is exactly
  * the same-origin path the browser takes.
+ *
+ * Every test here starts authenticated: the `setup` project (e2e/auth.setup.ts)
+ * logs in once and its storageState is applied to both the browser context
+ * and the `request` fixture, so API calls carry the session cookie too.
  */
 
 test("items page talks to the real API @fullstack", async ({ page }) => {

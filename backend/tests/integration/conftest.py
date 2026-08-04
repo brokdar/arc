@@ -46,10 +46,24 @@ async def _clean_tables(_migrated_database: None) -> AsyncIterator[None]:
     await engine.dispose()
 
 
+#: Matches the AUTH__PASSWORD_HASH exported by scripts/run-integration-tests.sh.
+TEST_PASSWORD = "integration-test-password"
+
+
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    """HTTP client against the app using the real database."""
+async def anon_client() -> AsyncIterator[AsyncClient]:
+    """HTTP client against the app using the real database, with no session."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
+
+
+@pytest.fixture
+async def client(anon_client: AsyncClient) -> AsyncClient:
+    """Authenticated HTTP client — logs in for real, keeping the cookie."""
+    response = await anon_client.post(
+        "/api/v1/auth/login", json={"password": TEST_PASSWORD}
+    )
+    assert response.status_code == 204, response.text
+    return anon_client

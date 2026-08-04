@@ -33,19 +33,27 @@ class PostgresSettings(BaseModel):
         )
 
 
-class JwtSettings(BaseModel):
-    """JWT signing and lifetime settings."""
+class SessionSettings(BaseModel):
+    """Signed session-cookie settings.
+
+    The cookie is issued by Starlette's ``SessionMiddleware``, signed (not
+    encrypted) with ``secret_key``. Rotating the key invalidates every
+    outstanding session.
+    """
 
     secret_key: SecretStr = SecretStr("")
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 15
-    refresh_token_expire_days: int = 7
+    cookie_name: str = "arc_session"
+    max_age_seconds: int = 1_209_600  # 14 days
+    https_only: bool = False  # set true when Caddy serves TLS
 
 
 class AuthSettings(BaseModel):
-    """Authentication settings."""
+    """Authentication settings for the single-user login."""
 
-    jwt: JwtSettings = JwtSettings()
+    password_hash: SecretStr = SecretStr("")
+    """bcrypt hash of the single user's password (`just hash-password`)."""
+
+    session: SessionSettings = SessionSettings()
 
 
 class DataSettings(BaseModel):
@@ -105,8 +113,10 @@ class Settings(BaseSettings):
         if self.environment != "production":
             return self
         problems = []
-        if not self.auth.jwt.secret_key.get_secret_value():
-            problems.append("AUTH__JWT__SECRET_KEY is empty")
+        if not self.auth.password_hash.get_secret_value():
+            problems.append("AUTH__PASSWORD_HASH is empty")
+        if not self.auth.session.secret_key.get_secret_value():
+            problems.append("AUTH__SESSION__SECRET_KEY is empty")
         if self.postgres.password.get_secret_value() in ("", "postgres"):
             problems.append("POSTGRES__PASSWORD is empty or the dev default")
         if problems:

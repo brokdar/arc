@@ -54,6 +54,22 @@ Scaffolding is in progress. Later phases append to this section.
   start (exit 1) with no keys, so `MCP__API_KEYS` is required for
   `docker compose up`. The surface is one `ping` tool plus an unauthenticated
   `/health` route for the container healthcheck.
+- Added single-user session-cookie authentication end to end. The credential
+  store is one setting, `AUTH__PASSWORD_HASH` (a bcrypt hash — there is no
+  user table); `POST /api/v1/auth/login` swaps it for a signed session cookie
+  issued by Starlette's `SessionMiddleware` (`arc_session`, `SameSite=Lax`,
+  14 days, `AUTH__SESSION__HTTPS_ONLY` once Caddy serves TLS), with
+  `POST /api/v1/auth/logout` and an always-open `GET /api/v1/auth/session`
+  alongside it. Everything else under `/api/v1` is mounted on a router
+  carrying `Depends(require_session)` and a declared 401, so new routers are
+  protected by default; `/health` stays open. Failed logins sleep ~0.3s to
+  blunt guessing, and production now refuses to boot without
+  `AUTH__PASSWORD_HASH` and `AUTH__SESSION__SECRET_KEY` (the unused
+  `AUTH__JWT__*` shell is gone). On the frontend the API client sends
+  credentials, a `/login` page posts the password, and an `AuthGuard` client
+  component bounces unauthenticated visitors off the protected pages. The
+  Playwright `@fullstack` suite logs in once in a `setup` project and replays
+  the session via `storageState`.
 - Added the runtime data tree: `DATA__ROOT` (default `data`) with
   `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and
   bind-mounted into the api container at `/app/data` (a one-shot `data-init`

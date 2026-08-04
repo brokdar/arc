@@ -13,6 +13,11 @@ export const http = createOpenApiHttp<paths>({
 
 /** Default happy-path handlers. Override per-test with server.use(...). */
 export const handlers = [
+  // Authenticated by default, so component tests don't each have to log in.
+  http.get("/api/v1/auth/session", ({ response }) =>
+    response(200).json({ authenticated: true }),
+  ),
+  http.post("/api/v1/auth/login", ({ response }) => response(204).empty()),
   http.get("/api/v1/items", ({ response }) =>
     response(200).json({
       items: [

@@ -5,4 +5,7 @@ playwright-report
 blob-report
 coverage
 e2e
+# Ships nothing to the image and imports e2e/ (excluded above), which would
+# break the build's type-check.
+playwright.config.ts
 .env.local

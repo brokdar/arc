@@ -14,6 +14,8 @@ dependencies = [
     "pydantic>=2.13.0",
     "pydantic-settings>=2.14.0",
     "structlog>=25.5.0",
+    "bcrypt>=5",
+    "itsdangerous>=2.2",
 ]
 
 [dependency-groups]

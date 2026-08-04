@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { STORAGE_STATE } from "./e2e/storage-state";
+
 const isCI = !!process.env.CI;
 
 /**
@@ -28,12 +30,24 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "off",
   },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+  // Fullstack mode logs in once in a setup project and replays the session
+  // cookie into every test. UI-only mode has no API to log into, so it keeps
+  // the plain single-project layout.
+  projects: fullstack
+    ? [
+        { name: "setup", testMatch: /auth\.setup\.ts/ },
+        {
+          name: "chromium",
+          use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+          dependencies: ["setup"],
+        },
+      ]
+    : [
+        {
+          name: "chromium",
+          use: { ...devices["Desktop Chrome"] },
+        },
+      ],
   webServer: fullstack
     ? undefined
     : {

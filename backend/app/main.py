@@ -2,15 +2,19 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
+from starlette.middleware.sessions import SessionMiddleware
 
+from app.api.deps import require_session
+from app.api.routes.auth import router as auth_router
 from app.api.routes.health import router as health_router
 from app.api.routes.items import router as items_router
 from app.core.config import get_settings
-from app.core.exceptions import register_exception_handlers
+from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
 
@@ -54,6 +58,20 @@ def create_app() -> FastAPI:
         generate_unique_id_function=generate_operation_id,
     )
 
+    # Middleware order matters: Starlette applies the LAST added first, so
+    # adding the session before CORS leaves CORS outermost. Every response —
+    # including the 401s the session guard produces — then carries the CORS
+    # headers the browser needs to read it, and `allow_credentials=True` lets
+    # the cross-origin dev setup (localhost:3000 -> localhost:8000) send the
+    # cookie at all. Behind Caddy everything is same-origin and CORS is moot.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.auth.session.secret_key.get_secret_value(),
+        session_cookie=settings.auth.session.cookie_name,
+        max_age=settings.auth.session.max_age_seconds,
+        same_site="lax",
+        https_only=settings.auth.session.https_only,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -66,7 +84,21 @@ def create_app() -> FastAPI:
     # Unversioned health endpoint for Docker/load-balancer probes.
     app.include_router(health_router)
 
-    api = APIRouter(prefix=settings.api_path)
+    # Open: logging in cannot itself require a session.
+    open_api = APIRouter(prefix=settings.api_path)
+    open_api.include_router(auth_router)
+    app.include_router(open_api)
+
+    # Everything else is behind the session cookie. Mount new routers here
+    # unless they have a deliberate reason to be public.
+    unauthorized: dict[int | str, dict[str, Any]] = {
+        401: {"model": ErrorDetail, "description": "No valid session"}
+    }
+    api = APIRouter(
+        prefix=settings.api_path,
+        dependencies=[Depends(require_session)],
+        responses=unauthorized,
+    )
     api.include_router(items_router)
     app.include_router(api)
 

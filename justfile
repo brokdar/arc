@@ -60,9 +60,12 @@ e2e:
 	cd frontend && bun run test:e2e
 
 # Boot the full Docker stack and run the @fullstack smoke suite against it
+# E2E_PASSWORD must be the password whose bcrypt hash is in .env as
+# AUTH__PASSWORD_HASH — the suite logs in through the real UI. (`just init`,
+# which generates both together, arrives in the next phase.)
 smoke:
 	docker compose up --build --wait db api mcp frontend caddy
-	cd frontend && E2E_FULLSTACK=1 bun run test:e2e
+	cd frontend && E2E_FULLSTACK=1 E2E_PASSWORD="${E2E_PASSWORD:-ci-test-password}" bun run test:e2e
 
 # Everything CI runs, locally
 check: lint typecheck test

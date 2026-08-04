@@ -34,6 +34,12 @@ class AppError(Exception):
         super().__init__(detail)
 
 
+class UnauthorizedError(AppError):
+    """The caller has no valid session (or presented bad credentials)."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+
+
 class NotFoundError(AppError):
     """The requested resource does not exist."""
 

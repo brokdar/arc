@@ -3,9 +3,10 @@
 The only logic here is HTTP: parsing input schemas and serializing the
 service's persistence objects into response schemas.
 
-NOTE: These example endpoints are unauthenticated. When you add auth, protect
-your routers with a dependency (e.g. ``Depends(get_current_user)``) — don't
-ship unauthenticated write endpoints to production.
+This router carries no auth dependency of its own: `app.main` mounts it on
+the protected `/api/v1` router (``Depends(require_session)``), which also
+declares the shared 401 response. New routers go there too unless they have a
+deliberate reason to be public.
 """
 
 import uuid
