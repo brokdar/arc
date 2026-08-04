@@ -2,8 +2,9 @@
 
 The application has exactly one user; there is no user table. The password is
 configured as a bcrypt hash in ``AUTH__PASSWORD_HASH`` and checked here. Keep
-this module pure and synchronous — the artificial delay that blunts online
-guessing lives in the route, not in the verification function.
+this module pure and synchronous — the throttling of guesses (serialized
+attempts plus a fixed penalty) lives in the route, not in the verification
+function, and so does moving this CPU-bound call off the event loop.
 """
 
 import bcrypt

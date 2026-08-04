@@ -27,6 +27,34 @@ async def test_login_with_correct_password_sets_the_session_cookie(
     assert anon_client.cookies.get(DOCUMENTED_COOKIE_NAME)
 
 
+async def test_session_cookie_is_httponly_lax_and_two_weeks_long(
+    anon_client: AsyncClient,
+) -> None:
+    """The cookie's flags are the whole session-security story — pin them."""
+    response = await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
+
+    set_cookie = response.headers["set-cookie"]
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+    assert "Max-Age=1209600" in set_cookie  # 14 days
+    assert "secure" not in set_cookie  # plain HTTP by default (dev)
+
+
+async def test_session_cookie_is_secure_when_https_only_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deployments behind Caddy's TLS set HTTPS_ONLY and get a Secure cookie."""
+    monkeypatch.setenv("AUTH__SESSION__HTTPS_ONLY", "true")
+    get_settings.cache_clear()
+
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="https://test") as tls:
+        response = await tls.post(LOGIN, json={"password": TEST_PASSWORD})
+
+    assert response.status_code == 204
+    assert "secure" in response.headers["set-cookie"]
+
+
 async def test_login_with_wrong_password_is_rejected_and_slow(
     anon_client: AsyncClient,
 ) -> None:

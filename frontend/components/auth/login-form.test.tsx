@@ -8,10 +8,10 @@ import { LoginForm } from "@/components/auth/login-form";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
-const push = vi.fn();
+const replace = vi.fn();
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace }),
 }));
 
 function renderWithQuery(ui: React.ReactElement) {
@@ -32,13 +32,13 @@ async function submitPassword(password: string) {
 
 describe("LoginForm", () => {
   beforeEach(() => {
-    push.mockClear();
+    replace.mockClear();
   });
 
   it("navigates home after a successful login", async () => {
     await submitPassword("correct-horse");
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -54,7 +54,7 @@ describe("LoginForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Incorrect password.",
     );
-    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("distinguishes an unreachable API from a bad password", async () => {
@@ -69,7 +69,7 @@ describe("LoginForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not reach the server.",
     );
-    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("disables the form while the request is in flight", async () => {
@@ -93,6 +93,6 @@ describe("LoginForm", () => {
     expect(pending).toBeDisabled();
 
     release();
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
 });
