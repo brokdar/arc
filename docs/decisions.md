@@ -371,3 +371,51 @@ anti-noise rules, this repo's destinations, and the `paths:` frontmatter key
 that scopes a `.claude/rules/**/*.md` file to matching files instead of every
 session. Skill and hook mechanics are deliberately absent: general knowledge
 in a project file is context an agent already has, paid for on every load.
+
+## D21 — Language servers are the build's own checkers, run through uv and bun
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+Both language servers are the tool the build type-checks with, launched through
+the project's package manager: `uv run --project backend pyrefly lsp` and `bun
+run tsgo --lsp -stdio`, in the local plugins `pyrefly-lsp` and `tsgo-lsp`. The
+official `typescript-lsp` and `pyright-lsp` plugins are uninstalled. This
+displaces `typescript-lsp`, which was the enabled TypeScript server.
+
+*Rationale:* `typescript-lsp` runs `typescript-language-server`, driving
+**tsserver** from the TypeScript 5.9 workspace package, while `bun run
+type-check`, the pre-push hook and CI all run **tsgo** (D2). Two compilers means
+editor diagnostics that disagree with the build. It also could not work as
+configured: the server starts at the repo root, which has no `node_modules`, and
+exits with "Could not find a valid TypeScript installation" — TypeScript lives
+in `frontend/node_modules`. Invoking through `uv run` and `bun run` rather than a
+binary path means the server resolves from `uv.lock` and `bun.lock`, so the
+language server cannot drift from the version CI installs.
+
+Two mechanics were load-bearing and cost a debugging session to find:
+
+- **`lspServers` belongs in the plugin's `plugin.json`, not the marketplace
+  entry.** Under `strict: true` (the default) `plugin.json` is the authority for
+  component definitions. `pyrefly-lsp` declared its server only in
+  `marketplace.json`, which `claude plugin details` happily listed while
+  `claude --debug` showed `Total LSP servers loaded: 1` — the Python server had
+  never started, and `.py` files had no language server at all. The official
+  plugins get away with the marketplace entry because they set `strict: false`.
+- **The plugin cache is keyed by version.** Editing a local plugin in place
+  changes nothing until the version is bumped and `claude plugin update` runs;
+  otherwise the stale cached copy keeps loading.
+- **`${CLAUDE_PROJECT_DIR}` is the launch directory, not the git root**, and
+  `.claude/settings.json` is only applied when Claude Code starts at the repo
+  root. Started from `frontend/`, the official `typescript-lsp` — enabled at
+  user scope, where this repo's settings do not reach — claimed `.ts` before
+  tsgo (first server registered for an extension wins) and answered hovers as
+  `any` from a tsserver with no `tsconfig.json` in scope. Uninstalling it
+  removes that contest; the launch-directory sensitivity remains, so both
+  servers start through `bash -c` wrappers that `cd` first, making a
+  subdirectory session fail at spawn instead of serving the wrong project.
+
+Accepted limitation: tsgo implements LSP 3.17 *pull* diagnostics, and Claude
+Code consumes *push* only, so TypeScript errors do not appear after an edit the
+way pyrefly's do. Navigation is unaffected, and type errors are still caught by
+`bun run type-check` in the pre-push hook and CI. Keeping a second compiler
+in the editor to close that gap would cost exactly what this decision buys.

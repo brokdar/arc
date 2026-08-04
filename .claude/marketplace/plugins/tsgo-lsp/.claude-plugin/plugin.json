@@ -1,0 +1,29 @@
+{
+  "name": "tsgo-lsp",
+  "description": "TypeScript language server backed by tsgo",
+  "version": "1.1.0",
+  "author": {
+    "name": "arc"
+  },
+  "lspServers": {
+    "tsgo": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd \"${CLAUDE_PROJECT_DIR}/frontend\" 2>/dev/null || { echo 'tsgo-lsp: no frontend/ below CLAUDE_PROJECT_DIR — start Claude Code from the repo root' >&2; exit 1; }; exec bun run tsgo --lsp -stdio"
+      ],
+      "workspaceFolder": "${CLAUDE_PROJECT_DIR}/frontend",
+      "startupTimeout": 60000,
+      "extensionToLanguage": {
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascriptreact",
+        ".mjs": "javascript",
+        ".cjs": "javascript"
+      }
+    }
+  }
+}

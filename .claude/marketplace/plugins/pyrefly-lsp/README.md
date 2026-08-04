@@ -10,3 +10,9 @@ with the build — errors that CI never reports, and misses that it does.
 Needs no extra binary. `uv run --project backend pyrefly lsp` resolves pyrefly
 from `backend/.venv`, which `uv sync` in `.devcontainer/startup.sh` already
 populates, so the language server and the build always use the same version.
+
+`lspServers` lives in this plugin's `plugin.json`, **not** in the marketplace
+entry. Under `strict: true` (the default) `plugin.json` is the authority for
+component definitions, and an `lspServers` block in the marketplace entry is
+silently ignored — the plugin still lists the server in `claude plugin details`
+while `claude --debug` shows it was never loaded. See D21.

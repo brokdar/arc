@@ -1,5 +1,6 @@
 {
   "name": "arc-local",
+  "description": "Language servers for this repo, each one the same tool the build type-checks with",
   "owner": {
     "name": "arc"
   },
@@ -7,18 +8,16 @@
     {
       "name": "pyrefly-lsp",
       "description": "Python language server backed by pyrefly — the same type checker just typecheck and CI run, so editor diagnostics never disagree with the build",
-      "version": "1.0.0",
+      "version": "1.2.0",
       "source": "./plugins/pyrefly-lsp",
-      "lspServers": {
-        "pyrefly": {
-          "command": "uv",
-          "args": ["run", "--project", "backend", "pyrefly", "lsp"],
-          "extensionToLanguage": {
-            ".py": "python",
-            ".pyi": "python"
-          }
-        }
-      }
+      "category": "development"
+    },
+    {
+      "name": "tsgo-lsp",
+      "description": "TypeScript language server backed by tsgo — the same compiler just typecheck and CI run, so editor diagnostics never disagree with the build",
+      "version": "1.1.0",
+      "source": "./plugins/tsgo-lsp",
+      "category": "development"
     }
   ]
 }

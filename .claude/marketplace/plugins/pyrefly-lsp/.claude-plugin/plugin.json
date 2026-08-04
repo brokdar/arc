@@ -1,5 +1,23 @@
 {
   "name": "pyrefly-lsp",
   "description": "Python language server backed by pyrefly",
-  "version": "1.0.0"
+  "version": "1.2.0",
+  "author": {
+    "name": "arc"
+  },
+  "lspServers": {
+    "pyrefly": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd \"${CLAUDE_PROJECT_DIR}/backend\" 2>/dev/null || { echo 'pyrefly-lsp: no backend/ below CLAUDE_PROJECT_DIR — start Claude Code from the repo root' >&2; exit 1; }; exec uv run pyrefly lsp"
+      ],
+      "workspaceFolder": "${CLAUDE_PROJECT_DIR}/backend",
+      "startupTimeout": 60000,
+      "extensionToLanguage": {
+        ".py": "python",
+        ".pyi": "python"
+      }
+    }
+  }
 }
