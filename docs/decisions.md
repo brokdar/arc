@@ -264,3 +264,83 @@ and the task runner was not in the image — so the documentation described a to
 the container did not have. `rust-just` is the just project's own PyPI
 distribution, so it needs no new package manager or feature, and uv puts the
 binary on a directory already in `PATH`.
+
+## D17 — Agent instructions live in `CLAUDE.md`; `AGENTS.md` dropped
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+The scaffold shipped the conventions in `AGENTS.md` with `CLAUDE.md` as a
+one-line `@AGENTS.md` include, at both the repo root and in `frontend/`. The
+content now lives directly in `CLAUDE.md` and the `AGENTS.md` files are gone;
+`README.md` and `frontend/README.md` point at `CLAUDE.md` instead. Vendored
+third-party skill packages under `.agents/skills/` keep their own `AGENTS.md`
+(compiled output of those packages, not project scaffolding).
+
+*Rationale:* this project is developed with Claude Code only, so the
+vendor-neutral filename bought nothing and the include indirection meant every
+edit touched a file whose name no longer described who reads it. Reinstating
+`AGENTS.md` later is a `git mv` plus a one-line include if another agent tool is
+ever added.
+
+## D18 — Changelog stays hand-curated; git-cliff drafts, two lint layers protect it
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`CHANGELOG.md` remains hand-written Keep a Changelog. `just changelog`
+(git-cliff, `cliff.toml`) prints a *draft* from conventional commits — commit
+bodies included, mapped onto Keep a Changelog headings — which is edited down
+and pasted under `## [Unreleased]`. Nothing writes to the file. Conventional
+Commit format is now enforced in two places: a `commit-msg` hook
+(`conventional-pre-commit`) on branch commits, and
+`.github/workflows/pr-title.yml` on the PR title.
+
+*Displaces:* release-please and semantic-release, both of which were considered
+and rejected; also the implicit status quo of writing every entry from scratch.
+
+*Rationale:* release-please would own `CHANGELOG.md` in its own
+`### Features` format and automate version bumping and tagging — real value,
+but this repo has no package consumers, `release.yml` already publishes on a
+manual `v*` tag, and its tag would be pushed with `GITHUB_TOKEN`, which does
+not trigger `release.yml` (a PAT or a `workflow_call` refactor would be
+needed). The cost outweighed the benefit pre-1.0. Fragment-based tools
+(towncrier, changesets) solve merge conflicts between many contributors, which
+a single-developer repo does not have.
+
+The two lint layers are not redundant. `cliff.toml` sets
+`filter_unconventional = true`, so an unparseable subject is dropped from the
+draft with no error — the failure mode is a change silently missing from a
+release. The `commit-msg` hook cannot cover the case that matters most: the
+`protect-main` ruleset allows **squash merges only**, so what lands on `main`
+is one commit per PR whose subject comes from the PR title, which is never seen
+by a local hook. Hence the CI check on the title.
+
+*Consequence:* changelog granularity is one entry per PR, not per commit. The
+PR title and description are therefore the load-bearing artifacts; branch
+commits remain the review unit and the source of that prose. The type list is
+duplicated across `.pre-commit-config.yaml`, `cliff.toml` and `pr-title.yml`
+and must be changed in all three.
+
+## D19 — Squash-merge settings changed to `PR_TITLE` + `PR_BODY`
+
+**Date:** 2026-08-04 · **Status:** accepted · **WP:** WP-0
+
+`brokdar/arc` now sets `squash_merge_commit_title = PR_TITLE` and
+`squash_merge_commit_message = PR_BODY`, displacing `COMMIT_OR_PR_TITLE` +
+`COMMIT_MESSAGES`.
+
+*Rationale:* under `COMMIT_MESSAGES` the squashed commit body was a concatenated
+bullet dump of every branch commit, which makes a poor changelog entry.
+`PR_BODY` puts the curated PR description — the thing a human already wrote for
+a reader — on `main`, where `just changelog` quotes it. GitHub rejects
+`PR_BODY` unless the title is `PR_TITLE` (only four combinations are valid), and
+that pairing is better anyway: under `COMMIT_OR_PR_TITLE` a single-commit PR
+took its subject from the commit and bypassed `pr-title.yml` entirely, so the
+lint governed only some merges. It now governs all of them.
+
+The `protect-main` ruleset now also carries a `required_status_checks` rule
+naming the `pr-title` check, so a non-conventional title blocks the merge rather
+than merely annotating it. `strict_required_status_checks_policy` is off — with
+one developer and squash-only merges, forcing every branch up to date before
+merge buys nothing. The required context is the **job name** in
+`.github/workflows/pr-title.yml` (`name: pr-title`); renaming that job silently
+breaks the requirement, so the two must change together.

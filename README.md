@@ -30,6 +30,12 @@ user and no sign-up: `just init` stored a bcrypt hash of that password in
 `.env` as `AUTH__PASSWORD_HASH`, and nothing else. To change it later, run
 `just hash-password` and paste the line it prints over the one in `.env`.
 
+> **Re-running `just init` on a machine that already ran the stack?** It mints
+> a *new* random `POSTGRES__PASSWORD`, but Postgres only applies that when the
+> cluster is first created — the existing `postgres-data` volume keeps the old
+> one and the api crash-loops on `InvalidPasswordError`. Wipe the volume too:
+> `docker compose down -v && just up`.
+
 ## Services
 
 | Service | URL | Notes |
@@ -119,16 +125,18 @@ pre-push, so the architecture fails the build rather than drifting.
 | `docs/decisions.md` | Running decision log — what was chosen, over what, and why |
 | `docs/training-application-description-v2.md` | Full product description (beyond the MVP) |
 | `docs/training-application-delivery-plan.md` | Phased delivery plan |
-| `AGENTS.md` | Conventions and commands for humans and coding agents |
+| `CLAUDE.md` | Conventions and commands for humans and coding agents |
 | `backend/README.md`, `frontend/README.md` | Per-project detail |
 
 ## Releases
 
-Push a semver tag to publish both Docker images to GHCR:
+Push a semver tag to publish all three Docker images to GHCR:
 
 ```bash
 git tag v1.0.0 && git push --tags
-# → ghcr.io/<owner>/<repo>/api:1.0.0 and ghcr.io/<owner>/<repo>/frontend:1.0.0
+# → ghcr.io/<owner>/<repo>/api:1.0.0
+#   ghcr.io/<owner>/<repo>/mcp:1.0.0        (same image as api, other entrypoint)
+#   ghcr.io/<owner>/<repo>/frontend:1.0.0
 ```
 
 Set `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_API_PATH` as repository

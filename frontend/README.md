@@ -9,7 +9,7 @@ are the direct equivalents.
 
 > This Next.js major is not the one in your training data: APIs, conventions
 > and file layout differ. Read the relevant guide in
-> `node_modules/next/dist/docs/` before writing app code — see `AGENTS.md`.
+> `node_modules/next/dist/docs/` before writing app code — see `CLAUDE.md`.
 
 ## Commands
 
@@ -92,5 +92,5 @@ API), which is the default outside Docker.
 
 ## See also
 
-`../README.md` (quick start, services, layout) and `../AGENTS.md` (conventions
+`../README.md` (quick start, services, layout) and `../CLAUDE.md` (conventions
 and commands across both projects).

@@ -1,13 +1,28 @@
 # Hooks are managed by prek (https://prek.j178.dev), a drop-in pre-commit
-# replacement. Install shims once: prek install -t pre-commit -t pre-push
+# replacement. Install shims once:
+#   prek install -t pre-commit -t pre-push -t commit-msg
 #
 # Cheap checks run on commit; heavy checks (types, tests) run on push.
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
 # Pin hooks that don't declare their own `stages` to pre-commit only —
 # otherwise they'd run at BOTH commit and push once the pre-push shim exists.
 default_stages: [pre-commit]
 
 repos:
+  # ============================================================================
+  # Commit messages
+  # ============================================================================
+  # Conventional commits are the input `just changelog` parses (cliff.toml), and
+  # `filter_unconventional` drops anything it cannot parse — a malformed subject
+  # would vanish from the draft silently. The format is enforced, not documented.
+  # The type list mirrors cliff.toml's commit_parsers exactly.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, perf, refactor, revert, docs, chore, build, ci, test, style]
+
   # ============================================================================
   # General checks
   # ============================================================================

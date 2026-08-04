@@ -103,3 +103,25 @@ api-sync:
 # Fail if generated API types are out of sync with the backend
 api-check:
 	bash scripts/check-api-schema-sync.sh
+
+# --- Changelog ---------------------------------------------------------------
+
+# git-cliff (cliff.toml) turns conventional commits into DRAFT entries, commit
+# bodies included. CHANGELOG.md stays hand-curated and nothing writes to it:
+# pipe a draft out, cut it down, and merge the ENTRIES into the existing
+# `## [Unreleased]` section — the draft prints that heading itself, so don't
+# paste it wholesale or you get the heading twice.
+#
+# Note the repo has no tags yet, so `--unreleased` is the whole history and
+# re-emits what is already curated in CHANGELOG.md. That stops once the first
+# `v*` tag exists. git-cliff prints "N commit(s) were skipped" on stderr for
+# anything it could not parse — those are silently missing from the draft, so
+# read that line; `git-cliff --unreleased -vv` names them.
+
+# Draft changelog entries for every commit since the last release tag
+changelog:
+	@git-cliff --unreleased
+
+# Draft changelog entries for a commit range: just changelog-range main..HEAD
+changelog-range range:
+	@git-cliff {{range}}

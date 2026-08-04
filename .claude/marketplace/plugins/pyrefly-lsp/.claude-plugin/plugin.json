@@ -1,0 +1,5 @@
+{
+  "name": "pyrefly-lsp",
+  "description": "Python language server backed by pyrefly",
+  "version": "1.0.0"
+}

@@ -11,5 +11,17 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "arc-local": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/marketplace"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "pyrefly-lsp@arc-local": true,
+    "commit-commands@claude-plugins-official": false
   }
 }

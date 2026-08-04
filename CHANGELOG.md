@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The scaffold was built by adapting the full-stack template rather than
 scaffolding the build plan's `apps/`+`packages/` workspace monorepo; the
 reasoning for this and every other departure is in `docs/decisions.md`
-(D1–D16).
+(D1–D19).
 
 **Backend architecture**
 
@@ -114,11 +114,62 @@ reasoning for this and every other departure is in `docs/decisions.md`
   and bumped the `ruff-pre-commit` hook to v0.16.1 to match the backend
   lockfile.
 
+- Added changelog tooling (D18). `just changelog` runs git-cliff (`cliff.toml`)
+  over the conventional commits since the last tag and prints a **draft** —
+  commit bodies included, grouped under Keep a Changelog headings — whose
+  entries are edited down by hand into the `## [Unreleased]` section above;
+  `just changelog-range main..HEAD` does the same for a branch. Nothing writes
+  to `CHANGELOG.md`. Conventional Commit format is now enforced rather than
+  documented, in two deliberately unequal layers: a `commit-msg` hook
+  (`conventional-pre-commit`, plus the `commit-msg` prek shim) rejects branch
+  subjects it cannot parse, and `.github/workflows/pr-title.yml` additionally
+  requires the PR title to start lowercase and not end in a period. The title
+  is the one that matters — the `protect-main` ruleset allows only squash
+  merges, so it becomes the commit subject on `main`, where
+  `filter_unconventional` would otherwise drop an unparseable subject from
+  every draft with no error. git-cliff installs in the devcontainer via
+  `uv tool install git-cliff`.
+- Switched the repository's squash-merge settings to `PR_TITLE` + `PR_BODY`
+  (D19), so a merged PR's description — not a bullet dump of its commits —
+  becomes the commit body on `main` and the raw material for a changelog entry.
+  The `protect-main` ruleset gained a `required_status_checks` rule naming the
+  `pr-title` check, so a non-conventional title now blocks the merge instead of
+  only annotating it.
+- Replaced the `commit-commands` plugin with project skills (`.claude/skills/`:
+  `commit`, `commit-push-pr`, `clean-gone`), disabling the plugin in the repo's
+  `.claude/settings.json` so the swap travels with the checkout. The plugin's
+  generic "create a commit with an appropriate message" knew nothing of this
+  repo's conventional format, work-package scopes, hooks that rewrite files
+  mid-commit, or the squash-only PR title rule; its `clean_gone` also grepped
+  `git branch -v` for `[gone]`, which that command never prints (only `-vv`
+  does), so it matched nothing.
+
 **Documentation**
 
-- Seeded `CHANGELOG.md` and the decision log `docs/decisions.md` (D1–D16).
+- Seeded `CHANGELOG.md` and the decision log `docs/decisions.md` (D1–D18).
 - Aligned `docs/mvp-build-plan.md` (stack, repository layout, WP-0),
   `docs/tech-stack.md`, `README.md`, `AGENTS.md`, `backend/README.md` and
   `frontend/README.md` with what was actually built, and corrected the stale
   references in WP-1…WP-9 (`packages/*` paths, `make` targets) so later work
   packages execute against the real repository.
+- Folded `AGENTS.md` and `frontend/AGENTS.md` into `CLAUDE.md` and
+  `frontend/CLAUDE.md`, which previously only `@`-included them, and dropped the
+  `AGENTS.md` files — this project is worked on with Claude Code only (D17).
+- Re-verified the WP-0 scaffold against the running stack and corrected the
+  drift it exposed. `scripts/setup-repo.sh` did not reproduce the repository
+  configuration D19 describes — it left `squash_merge_commit_title`/`_message`
+  at their defaults and created a `protect-main` ruleset with no
+  `required_status_checks` rule, so a fresh clone of this template got neither
+  `PR_TITLE`+`PR_BODY` squash commits nor a blocking `pr-title` check; both are
+  now applied, with a note that an existing ruleset is skipped rather than
+  updated. In the docs: the Python pin is the *minor* (`3.14`, patch floats —
+  3.14.4 in the devcontainer, 3.14.6 in the runtime image), not the "3.14.6"
+  the plan and tech stack claimed; the release publishes three images
+  (`api`, `mcp`, `frontend`), not two; WP-0's CI summary described the
+  integration job's throwaway Postgres as a service container and the
+  full-stack smoke job as "Docker Compose validation"; and WP-0 gained the
+  repo-governance/dev-workflow item (devcontainer, prek hooks, squash-only
+  ruleset, changelog tooling) that D16–D19 recorded but the plan never listed.
+  Documented the first-run trap that `just init` + a pre-existing
+  `postgres-data` volume produces: a new random `POSTGRES__PASSWORD` that
+  Postgres ignores, surfacing as an api crash-loop on `InvalidPasswordError`.

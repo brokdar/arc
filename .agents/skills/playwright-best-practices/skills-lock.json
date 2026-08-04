@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "alembic": {
+      "source": "bm629/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/alembic/SKILL.md",
+      "computedHash": "d6bfd1624712094b346ecfd4da1b42cfbd37658b9df526c6feb4bf2f1e46cad5"
+    },
+    "multi-stage-dockerfile": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/multi-stage-dockerfile/SKILL.md",
+      "computedHash": "698bf93a84dae18fd7bd0b1d35c21427307fde78fbdf4624be9726f5f98189ca"
+    },
+    "sqlalchemy": {
+      "source": "bm629/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/sqlalchemy/SKILL.md",
+      "computedHash": "6fd81a03e2cb99a1152494aa56855a31137091c0720e5bb15535d9c266ce02c8"
+    }
+  }
+}

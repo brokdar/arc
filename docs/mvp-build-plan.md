@@ -29,7 +29,7 @@ Out of MVP scope (do not build): vendor API adapters (Wahoo/Zwift/Strava/HealthK
 
 Pins are floors (`>=`) in `backend/pyproject.toml` and `frontend/package.json`; the exact resolution lives in `backend/uv.lock` and `frontend/bun.lock`. **The lockfile is the pin** — the versions below are what is installed today, and `uv sync --frozen` / `bun install --frozen-lockfile` reproduce them exactly.
 
-Backend: Python 3.14.6, FastAPI 0.141.1 (`fastapi[standard]`), Pydantic 2.13.4 + pydantic-settings 2.14.2, SQLAlchemy 2.0.51 async (2.1-clean style: typed `Mapped[]` only) + Alembic 1.18.5 over asyncpg 0.31, structlog 26.1 (structured logging), APScheduler 3.11.3 (in-process, started by the API lifespan), FastMCP 3.4.5, bcrypt 5.0 + itsdangerous 2.2 (single-user session cookie), uv (project + toolchain manager), ruff 0.16.1 (lint + format, line length 88), pyrefly 1.2 (type checking), import-linter 2.13 (architecture boundaries), pytest 9.1.1 + pytest-asyncio + pytest-xdist + pytest-cov, httpx 0.28.1, aiosqlite (in-memory unit-test database).
+Backend: Python 3.14 (`backend/.python-version` pins the *minor*, so the patch floats: 3.14.4 in the devcontainer, 3.14.6 in the `python:3.14-alpine` runtime image — nothing depends on a specific patch), FastAPI 0.141.1 (`fastapi[standard]`), Pydantic 2.13.4 + pydantic-settings 2.14.2, SQLAlchemy 2.0.51 async (2.1-clean style: typed `Mapped[]` only) + Alembic 1.18.5 over asyncpg 0.31, structlog 26.1 (structured logging), APScheduler 3.11.3 (in-process, started by the API lifespan), FastMCP 3.4.5, bcrypt 5.0 + itsdangerous 2.2 (single-user session cookie), uv (project + toolchain manager), ruff 0.16.1 (lint + format, line length 88), pyrefly 1.2 (type checking), import-linter 2.13 (architecture boundaries), pytest 9.1.1 + pytest-asyncio + pytest-xdist + pytest-cov + pytest-mock + asgi-lifespan, httpx 0.28.1, aiosqlite (in-memory unit-test database).
 
 Not installed yet — each arrives with the work package that first needs it: `hypothesis` (**WP-1**, with the first property-tested pure domain code), polars + pyarrow (WP-5), garmin-fit-sdk / fitdecode / gpxpy / tcxreader (WP-4), the Anthropic SDK (WP-8). Add them then, not now.
 
@@ -65,22 +65,31 @@ arc/
 │   ├── tests/unit/         # in-memory SQLite, no external services
 │   ├── tests/integration/  # real Postgres + the migration chain
 │   ├── Dockerfile          # one image, two entrypoints (api / mcp)
+│   ├── docker-compose.test.yml  # throwaway Postgres for the integration suite
 │   └── pyproject.toml      # deps, ruff, pytest, coverage, import-linter contracts
 ├── frontend/               # standalone bun project: Next.js 16 App Router
 │   ├── app/ components/ lib/
+│   ├── env.ts              # zod + @t3-oss/env-nextjs: validated build-time env
 │   ├── generated/api/      # openapi.json + schema.d.ts — committed, never hand-edited
 │   ├── tests/mocks/        # typed MSW handlers (openapi-msw)
 │   └── e2e/                # Playwright: UI-only specs + @fullstack specs
 ├── caddy/Caddyfile         # /api/* + /health → api, /mcp* → mcp, everything else → frontend
 ├── scripts/                # bootstrap-env, API type generation + drift check,
-│                           # integration-test runner
+│                           # integration-test runner, setup-repo (GitHub ruleset
+│                           # + merge settings that a template cannot copy)
 ├── data/                   # runtime tree (gitignored): inbox/, originals/, streams/,
 │                           # quarantine/ — bind-mounted into the api container
 ├── docs/                   # this plan, tech-stack, decisions log, product description
+├── .devcontainer/          # uv, bun, just, prek, git-cliff, Playwright browsers
+├── .github/workflows/      # path-filtered CI (see WP-0 §9)
 ├── docker-compose.yml      # db, data-init, api, mcp, frontend, caddy
 ├── .env.example            # every setting, kept in sync by a backend test
-└── justfile                # init, dev-*, up/down, format/lint/typecheck/test,
-                            # db-*, api-*, check, smoke — single entry points
+├── .pre-commit-config.yaml # prek hooks: pre-commit, commit-msg, pre-push
+├── cliff.toml              # git-cliff config — drafts changelog entries, writes nothing
+├── CHANGELOG.md            # hand-curated Keep a Changelog
+└── justfile                # init/hash-password, dev-*, infra, up/down,
+                            # format/lint/typecheck/test/test-int/e2e,
+                            # db-*, api-*, check, smoke, changelog-* — single entry points
 ```
 
 Dependency rule, enforced by the import-linter contracts in `backend/pyproject.toml` (`uv run lint-imports`, run in CI, `just lint` and the pre-push hook):
@@ -108,10 +117,11 @@ Built by adapting an existing, fully verified full-stack template rather than sc
 6. **MCP.** A FastMCP 3 server (`backend/app/mcp/`) run from the same image as the API (`python -m app.mcp.main`, streamable HTTP on :8001, loopback-published, public path is Caddy's `/mcp*`). Every request presents a bearer key from `MCP__API_KEYS` — comma-separated `label:scope:key` entries, scope `read` or `write` — parsed by the framework-free `app/mcp/auth.py` and compared in constant time. The server exits 1 rather than serve an unauthenticated tool surface with no keys. Surface today: one `ping` tool plus an unauthenticated `/health`. WP-8 adds the real tools and per-tool scope checks.
 7. **Compose.** `db` (`postgres:18-alpine`, volume at `/var/lib/postgresql`, healthcheck), `data-init` (one-shot: hands the root-owned `./data` bind mount to the api's non-root uid), `api` (migrations on boot, then `fastapi run`), `mcp`, `frontend` (standalone Next build, built with an empty `NEXT_PUBLIC_API_BASE_URL` so the browser calls the API same-origin), `caddy` (`caddy:2.11-alpine`, `/api/*` + `/health` → api, `/mcp*` → mcp, everything else → frontend; `CADDY_SITE_ADDRESS` defaults to `:80` plain HTTP, set a hostname for automatic HTTPS).
 8. **Runtime data.** `DATA__ROOT` (default `data`) with `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and bind-mounted at `/app/data`. WP-4 ingests from it.
-9. **CI (GitHub Actions), path-filtered:** backend lint/typecheck/import-linter/unit tests, backend integration tests against a service Postgres including `alembic upgrade head` + `alembic check`, frontend lint/typecheck/test/build, Playwright e2e (sharded), OpenAPI↔generated-types drift check, Schemathesis fuzzing, Docker Compose validation, zizmor workflow linting, and a tagged release that publishes both images to GHCR.
-10. **Entry points.** `just init` writes a ready-to-run `.env` (random `POSTGRES__PASSWORD`, `AUTH__SESSION__SECRET_KEY`, both `MCP__API_KEYS`, plus a bcrypt hash of the password you type); `just up` brings the stack up on http://localhost; `just check` = lint + typecheck + unit tests + API-contract drift; `just smoke` boots the full stack and runs the `@fullstack` Playwright suite through Caddy.
+9. **CI (GitHub Actions), path-filtered:** backend lint/typecheck/import-linter/unit tests; backend integration tests against a throwaway Postgres started from `backend/docker-compose.test.yml` by `scripts/run-integration-tests.sh`, including `alembic upgrade head`, `alembic check` and a head→base→head round-trip; frontend lint/typecheck/test/build; Playwright e2e (sharded, reports merged); OpenAPI↔generated-types drift check; Schemathesis fuzzing; a full-stack smoke job (`docker-compose-check.yml`) that validates the compose config, boots the whole stack and runs the `@fullstack` Playwright suite through Caddy, asserting 401s on `/api/v1/*` and `/mcp`; a `pr-title` lint on the PR title (required by the `protect-main` ruleset); zizmor workflow linting; and a tagged release that publishes three images to GHCR — `api`, `mcp` (same Dockerfile, different entrypoint) and `frontend`.
+10. **Entry points.** `just init` writes a ready-to-run `.env` (random `POSTGRES__PASSWORD`, `AUTH__SESSION__SECRET_KEY`, both `MCP__API_KEYS`, plus a bcrypt hash of the password you type — or a placeholder plus instructions when there is no TTY, D15); `just up` brings the stack up on http://localhost; `just check` = lint + typecheck + unit tests + API-contract drift; `just smoke` boots the full stack and runs the `@fullstack` Playwright suite through Caddy. Note `just init` mints a *new* random `POSTGRES__PASSWORD`, and Postgres only applies it when the cluster is first created — so `rm .env && just init` on a machine that has already run the stack needs `docker compose down -v` too, or the api crash-loops on `InvalidPasswordError`.
+11. **Repo governance and dev workflow.** The devcontainer (`.devcontainer/`) installs uv, bun, `just` (`uv tool install rust-just`, D16), prek, git-cliff and both projects' dependencies. Git hooks run through prek: cheap checks plus a `commit-msg` conventional-commit check on commit, typecheck and unit tests on push. `main` is squash-only with PRs required (the `protect-main` ruleset, applied by `scripts/setup-repo.sh`), `squash_merge_commit_title = PR_TITLE` / `..._message = PR_BODY`, so a merged PR becomes one commit whose subject is the PR title — which `.github/workflows/pr-title.yml` lints as a required status check (D18, D19). `CHANGELOG.md` stays hand-curated; `just changelog` (git-cliff, `cliff.toml`) prints a draft from conventional commits. The eleven-type list is duplicated in `.pre-commit-config.yaml`, `cliff.toml` and `pr-title.yml` — change all three together.
 
-**DoD (met):** fresh clone → `just init && just up` → a login page on http://localhost with every service healthy; `just check` and `just smoke` green; CI green.
+**DoD (met, re-verified 2026-08-04):** fresh clone → `just init && just up` → a login page on http://localhost with every service healthy; `just check` and `just smoke` green; CI green.
 
 ### WP-1: Domain core — athlete, anchors, zones, versioning primitives
 

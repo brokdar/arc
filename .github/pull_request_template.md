@@ -1,6 +1,13 @@
+<!--
+The PR title must be a Conventional Commit — `feat(wp-1): add session matching`.
+`main` is squash-only, so this title becomes the commit subject on main and is
+what the changelog is generated from. CI fails the PR if it does not parse.
+-->
+
 ## What
 
-<!-- What does this PR change, and why? -->
+<!-- What does this PR change, and why? Write it as prose: this is the raw
+     material for the CHANGELOG.md entry. -->
 
 ## Checklist
 

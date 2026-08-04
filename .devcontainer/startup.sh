@@ -45,12 +45,41 @@ echo "🛠️  Installing just..."
 # drops the binary in ~/.local/bin, which is already on PATH.
 uv tool install rust-just
 
+echo "📝 Installing git-cliff..."
+# Drafts CHANGELOG.md entries from conventional commits (`just changelog`,
+# config in cliff.toml). Published to PyPI as a wheel with the binary, so it
+# needs no Rust toolchain.
+uv tool install git-cliff
+
 echo "🔧 Setting up prek hooks..."
 cd "$WORKSPACE"
 uv tool install prek
-# Install both shims: cheap checks run on commit, heavy checks (pyrefly, unit
-# tests, type-check) run on push.
-prek install -t pre-commit -t pre-push
+# Install all three shims: cheap checks run on commit, heavy checks (pyrefly,
+# unit tests, type-check) on push, and conventional-commit subject linting on
+# commit-msg.
+prek install -t pre-commit -t pre-push -t commit-msg
+
+echo "🔎 Installing language servers for Claude Code..."
+# The typescript-lsp plugin shells out to `typescript-language-server`, which is
+# not bundled — without it the plugin loads but never starts a server. Installed
+# via bun (never npm -g; .claude/hooks/block_npm.py blocks that anyway) into
+# ~/.bun/bin, already on PATH from the top of this script. The server prefers the
+# workspace's own TypeScript from frontend/node_modules, so the pinned project
+# version is what actually type-checks.
+# Python needs nothing here: the pyrefly LSP configured in .claude/settings.json
+# runs `uv run pyrefly lsp` out of backend/.venv, so it always matches the
+# pyrefly that `just typecheck` and CI use.
+bun add -g typescript-language-server typescript
+
+# Python: pyrefly, not pyright. The repo type-checks with pyrefly (just
+# typecheck, pre-push, CI), and pyright infers differently — running both means
+# editor diagnostics that contradict the build. `.claude/marketplace/` holds a
+# one-plugin local marketplace pointing the LSP at `uv run --project backend
+# pyrefly lsp`, so the language server is the exact pyrefly from backend/.venv.
+# No binary to install; just register the marketplace and enable the plugin.
+# `|| true` because both are idempotent and must not fail a container rebuild.
+claude plugin marketplace add "$WORKSPACE/.claude/marketplace" || true
+claude plugin install pyrefly-lsp@arc-local || true
 
 echo "🎭 Setting up frontend dependencies..."
 cd "$WORKSPACE/frontend"
