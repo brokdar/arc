@@ -7,7 +7,10 @@ what the changelog is generated from. CI fails the PR if it does not parse.
 ## What
 
 <!-- What does this PR change, and why? Write it as prose: this is the raw
-     material for the CHANGELOG.md entry. -->
+     material for the CHANGELOG.md entry.
+
+     One line per paragraph, no hard wrapping — GitHub renders every newline
+     inside a paragraph as a line break, so wrapped prose comes out ragged. -->
 
 ## Checklist
 

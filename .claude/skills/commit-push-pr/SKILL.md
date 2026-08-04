@@ -74,6 +74,26 @@ check — retitle it `revert: <what was reverted>`.
 `main` and what the changelog draft quotes. Write it as prose a reader outside
 the branch can follow.
 
+**Do NOT hard-wrap it.** Commit bodies wrap at ~76 columns; a PR body must not,
+and the two rules are easy to conflate because this skill hands off to the
+`commit` skill. GitHub renders pull-request descriptions with GFM *hard line
+breaks on*, so every newline inside a paragraph becomes a literal `<br>` and
+wrapped prose renders as a ragged column. Write **one line per paragraph**, no
+matter how long, with a blank line between paragraphs; lists, headings and
+fenced blocks are block elements and are unaffected. The cost is long lines in
+`git log` on `main`, which the pager soft-wraps anyway — the PR page and the
+changelog draft are where this text is actually read.
+
+Verify rather than eyeball it, since the raw file looks identical either way:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<n> -H "Accept: application/vnd.github.html+json" \
+  --jq .body_html | grep -c '<br>'
+```
+
+Zero is correct. Anything else means a paragraph is hard-wrapped; rewrite the
+body file and `gh pr edit <n> --body-file <path>`.
+
 Fill in `.github/pull_request_template.md`: read it, complete the **What**
 section, and tick only the checklist items you actually verified.
 
