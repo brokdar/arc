@@ -17,9 +17,17 @@ just dev-web           # Next.js dev server     → http://localhost:3000
 
 | Service | URL | Notes |
 |---|---|---|
+| Caddy | http://localhost | reverse proxy — one origin for UI + `/api/*` |
 | Frontend | http://localhost:3000 | Next.js App Router |
 | API | http://localhost:8000 | OpenAPI docs at `/docs` |
 | Postgres | localhost:5432 | credentials in `.env` |
+
+With `just up`, use http://localhost: Caddy routes `/api/*` and `/health` to
+the API, `/mcp*` to the MCP server, and everything else to the frontend, so
+the browser never makes a cross-origin request. Set `CADDY_SITE_ADDRESS` to a
+hostname for automatic HTTPS. Runtime files live in `./data`
+(`inbox/`, `originals/`, `streams/`, `quarantine/`), bind-mounted into the API
+container.
 
 ## Development
 
@@ -48,13 +56,16 @@ git tag v1.0.0 && git push --tags
 
 Set `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_API_PATH` as repository
 **variables** (Settings → Secrets and variables → Actions) so release builds
-point at your real API — the values are baked in at build time.
+point at your real API — the values are baked in at build time. Leave
+`NEXT_PUBLIC_API_BASE_URL` empty when the frontend is served behind the
+bundled Caddy proxy (same origin).
 
 ## Layout
 
 ```
 backend/    FastAPI app — layered: app/{domain,persistence,services,ingest,api,mcp} + cross-cutting app/core
 frontend/   Next.js app — generated/api/ holds the OpenAPI-derived types (never edit by hand)
+caddy/      Caddyfile for the reverse proxy that fronts the stack
 scripts/    cross-cutting automation (API type generation, integration tests)
 .github/    CI workflows — path-filtered, no per-project edits needed
 ```

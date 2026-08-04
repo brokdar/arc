@@ -14,11 +14,22 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
 
+#: Runtime data tree created on startup, relative to `settings.data.root`.
+DATA_SUBDIRECTORIES = ("inbox", "originals", "streams", "quarantine")
+
+
+def ensure_data_directories() -> None:
+    """Create the runtime data tree so ingest never races on a missing dir."""
+    root = get_settings().data.root
+    for name in DATA_SUBDIRECTORIES:
+        (root / name).mkdir(parents=True, exist_ok=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown."""
     configure_logging()
+    ensure_data_directories()
     app.state.scheduler = create_scheduler()
     get_logger(__name__).info("application_started")
     yield

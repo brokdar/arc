@@ -29,3 +29,21 @@ Scaffolding is in progress. Later phases append to this section.
   `app/core` reduced to genuinely cross-cutting code. Boundaries are now
   enforced by import-linter contracts (`uv run lint-imports`) wired into CI,
   `just lint` and pre-push. The OpenAPI contract is unchanged.
+- Upgraded Postgres from 17 to 18 (dev stack and the integration-test
+  database). Postgres 18 moved the image's `VOLUME` to `/var/lib/postgresql`
+  (`PGDATA` is now `/var/lib/postgresql/18/docker`), so the `postgres-data`
+  volume and the test tmpfs mount that path instead of `.../data`. Existing
+  local volumes hold a 17 cluster and must be recreated
+  (`docker compose down -v`).
+- Added a Caddy reverse proxy (`caddy/Caddyfile`, `caddy` service on :80/:443)
+  that fronts the whole stack from one origin: `/api/*` and `/health` to the
+  API, `/mcp*` to the (not yet existing) MCP server, everything else to the
+  frontend. `CADDY_SITE_ADDRESS` defaults to `:80` (plain HTTP); set a
+  hostname for automatic HTTPS. The frontend is now built with an empty
+  `NEXT_PUBLIC_API_BASE_URL`, so the browser calls the API same-origin
+  through the proxy, and the `@fullstack` smoke suite runs against
+  `http://localhost`.
+- Added the runtime data tree: `DATA__ROOT` (default `data`) with
+  `inbox/`, `originals/`, `streams/`, `quarantine/` created on API startup and
+  bind-mounted into the api container at `/app/data` (a one-shot `data-init`
+  service hands the root-owned bind mount to the api's non-root user first).

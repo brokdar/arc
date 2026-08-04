@@ -2,7 +2,7 @@
 # per-project edits are needed here.
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: always
     expose:
       - 5432
@@ -21,7 +21,21 @@ services:
       - POSTGRES_USER=${POSTGRES__USER:-postgres}
       - POSTGRES_DB=${POSTGRES__DB:-app}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # Postgres 18 moved the image's VOLUME up one level (PGDATA is now the
+      # version-specific /var/lib/postgresql/18/docker) so that pg_upgrade
+      # --link works across major versions. Mounting the old .../data path
+      # would leave the database outside the volume.
+      - postgres-data:/var/lib/postgresql
+
+  # Bind-mounted host directories are created root-owned by the Docker daemon,
+  # so hand ./data to the api image's non-root user (uid 1001, see
+  # backend/Dockerfile) once before the api boots. The api creates the
+  # subdirectories itself on startup.
+  data-init:
+    image: alpine:3
+    command: sh -c "chown 1001:1001 /data"
+    volumes:
+      - ./data:/data
 
   api:
     restart: unless-stopped
@@ -40,6 +54,13 @@ services:
       db:
         condition: service_healthy
         restart: true
+      data-init:
+        condition: service_completed_successfully
+    volumes:
+      # Runtime data tree (inbox/, originals/, streams/, quarantine/). The
+      # container WORKDIR is /app, so the DATA__ROOT default of `data`
+      # resolves here.
+      - ./data:/app/data
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -62,8 +83,40 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        # Empty = same origin: the browser calls /api/... on whatever host
+        # served the page and Caddy proxies it to the API.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
         NEXT_PUBLIC_API_PATH: ${NEXT_PUBLIC_API_PATH:-/api/v1}
+
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # `:80` = plain HTTP, no automatic TLS. Set CADDY_SITE_ADDRESS to a
+      # hostname and Caddy provisions certificates and serves HTTPS.
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+      frontend:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
 
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:

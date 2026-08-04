@@ -1,14 +1,15 @@
 name: Full-Stack Smoke
 
-# Boots the real compose stack (Postgres, API + migrations, frontend) and runs
-# the tiny @fullstack Playwright suite against it. This is the top of the test
-# pyramid — it verifies wiring, not logic.
+# Boots the real compose stack (Postgres, API + migrations, frontend, Caddy)
+# and runs the tiny @fullstack Playwright suite against it — through the proxy
+# on :80. This is the top of the test pyramid — it verifies wiring, not logic.
 on:
   pull_request:
     paths:
       - "backend/**"
       - "frontend/**"
       - "docker-compose.yml"
+      - "caddy/Caddyfile"
       - ".env.example"
       - ".github/workflows/docker-compose-check.yml"
 
@@ -37,10 +38,16 @@ jobs:
         run: docker compose config --quiet
 
       - name: Build and start the full stack
-        run: docker compose up --build --wait db api frontend
+        run: docker compose up --build --wait db api frontend caddy
 
-      - name: Check API health
+      - name: Check API health (direct)
         run: curl --fail --retry 5 --retry-delay 3 http://localhost:8000/health
+
+      - name: Check API health through the Caddy proxy
+        run: curl --fail --retry 5 --retry-delay 3 http://localhost/health
+
+      - name: Check the frontend through the Caddy proxy
+        run: curl --fail --retry 5 --retry-delay 3 http://localhost/
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 

@@ -57,7 +57,7 @@ e2e:
 
 # Boot the full Docker stack and run the @fullstack smoke suite against it
 smoke:
-	docker compose up --build --wait db api frontend
+	docker compose up --build --wait db api frontend caddy
 	cd frontend && E2E_FULLSTACK=1 bun run test:e2e
 
 # Everything CI runs, locally

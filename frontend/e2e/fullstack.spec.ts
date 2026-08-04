@@ -6,9 +6,11 @@ import { expect, test } from "@playwright/test";
  * networking, migrations-on-boot), not business logic. If one of these fails
  * for a reason a cheaper layer could catch, add the lower-layer test instead
  * of growing this suite. Keep it under ~5 tests.
+ *
+ * URLs are relative: both the UI and the API are reached through the Caddy
+ * reverse proxy at the config's baseURL (http://localhost), which is exactly
+ * the same-origin path the browser takes.
  */
-
-const API = "http://localhost:8000";
 
 test("items page talks to the real API @fullstack", async ({ page }) => {
   await page.goto("/items");
@@ -24,7 +26,7 @@ test("item created via API appears in the UI @fullstack", async ({
   request,
 }) => {
   const name = `smoke-item-${Date.now()}`;
-  const created = await request.post(`${API}/api/v1/items`, {
+  const created = await request.post("/api/v1/items", {
     data: { name, description: "created by the smoke test" },
   });
   expect(created.status()).toBe(201);
@@ -34,6 +36,6 @@ test("item created via API appears in the UI @fullstack", async ({
     await page.goto("/items");
     await expect(page.getByText(name)).toBeVisible();
   } finally {
-    await request.delete(`${API}/api/v1/items/${id}`);
+    await request.delete(`/api/v1/items/${id}`);
   }
 });

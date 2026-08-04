@@ -15,5 +15,9 @@ max_line_length = 88
 [{justfile,Makefile}]
 indent_style = tab
 
+# `caddy fmt` emits tabs
+[Caddyfile]
+indent_style = tab
+
 [*.md]
 trim_trailing_whitespace = false

@@ -1,0 +1,29 @@
+# Reverse proxy in front of the stack: one origin for the browser, so the
+# frontend can call the API with relative URLs (no CORS, no baked-in host).
+#
+# `{$CADDY_SITE_ADDRESS::80}` is Caddy's environment-variable placeholder with
+# a default value — the second colon starts the default, which is `:80`. That
+# default serves plain HTTP on port 80 with no automatic TLS, which is what
+# local `docker compose up` wants. Deployments set CADDY_SITE_ADDRESS to a
+# hostname (e.g. arc.example.com) and Caddy obtains and renews a certificate
+# on its own, serving HTTPS on 443.
+#
+# The /mcp route points at a service that does not exist yet — it returns 502
+# until the MCP server lands in the next phase. That is expected.
+{$CADDY_SITE_ADDRESS::80} {
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	handle /mcp* {
+		reverse_proxy mcp:8001
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

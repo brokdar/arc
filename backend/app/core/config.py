@@ -8,6 +8,7 @@ enforces it.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, SecretStr, model_validator
@@ -47,6 +48,13 @@ class AuthSettings(BaseModel):
     jwt: JwtSettings = JwtSettings()
 
 
+class DataSettings(BaseModel):
+    """Runtime data settings."""
+
+    root: Path = Path("data")
+    """Root of the runtime data tree — inbox/, originals/, streams/, quarantine/."""
+
+
 class LogSettings(BaseModel):
     """Logging settings."""
 
@@ -70,6 +78,7 @@ class Settings(BaseSettings):
 
     postgres: PostgresSettings = PostgresSettings()
     auth: AuthSettings = AuthSettings()
+    data: DataSettings = DataSettings()
     log: LogSettings = LogSettings()
 
     @model_validator(mode="after")
