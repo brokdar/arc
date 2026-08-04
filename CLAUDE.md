@@ -67,7 +67,23 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
   services, never a repository or another adapter. Services raise `AppError`
   subclasses (`app/core/exceptions.py`) — never `HTTPException` outside
   endpoints. New settings go in `app/core/config.py` AND `.env.example` (a test
-  enforces this), using nested `__` keys, unprefixed.
+  enforces this), using nested `__` keys, unprefixed. Service wiring lives in
+  the service (`X.from_session(session)`), not in a route — `app.mcp` cannot
+  import `app.api`.
+- **Transactions**: the **service** commits (`persistence.db.commit`) at the
+  end of a mutating use-case; `get_session` and `session_scope()` only roll
+  back and close. Non-HTTP callers (MCP, scheduler, ingest) use
+  `session_scope()`; tests bind it with `set_session_factory` (fixtures
+  `session_factory` / `db_session`).
+- **Models**: timestamps are `UtcDateTime` (aware UTC on SQLite *and*
+  Postgres), JSON is `JSONColumn` (JSONB on Postgres), enums are
+  `enum_column(X)` (non-native), ids default to `uuid.uuid7` — all from
+  `app/persistence/types.py`. Constraints are named by the `Base` metadata
+  convention. Modules under `app/persistence/` are swept by `load_models()`;
+  never hand-list them in `alembic/env.py` or a conftest.
+- **Actor**: every mutating service method takes `actor: Actor`
+  (`app/domain/actor.py`) — `ActorDep` in the API, `app.mcp.identity`
+  (`current_actor()` / `require_scope()`) in MCP tools.
 - **Auth**: protected routes come from the guarded router, not per-route
   dependencies. In backend tests, `client` is logged in and `anon_client` is
   not — use `anon_client` to assert a 401. In `.env`, `AUTH__PASSWORD_HASH`

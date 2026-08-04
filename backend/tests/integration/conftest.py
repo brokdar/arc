@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
 from app.main import create_app
+from app.persistence import load_models
 from app.persistence.db import Base
+
+# `_clean_tables` truncates `Base.metadata.sorted_tables`; without the sweep it
+# would silently skip any model `app.main`'s import graph does not reach.
+load_models()
 
 
 @pytest.fixture(scope="session")

@@ -14,11 +14,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 
+from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.schemas.items import ItemCreate, ItemRead, ItemsPage, ItemUpdate
 from app.core.exceptions import ErrorDetail
 from app.persistence.db import SessionDep
-from app.persistence.items import ItemRepository
 from app.services.items import ItemService
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -33,8 +33,12 @@ BAD_BODY: Responses = {400: {"model": ErrorDetail, "description": "Malformed bod
 
 
 def get_service(session: SessionDep) -> ItemService:
-    """Wire the service to a request-scoped session."""
-    return ItemService(ItemRepository(session))
+    """Bind the service to a request-scoped session.
+
+    The wiring itself lives in the service layer, so `app.mcp` — which may not
+    import `app.api` — builds the same object the same way.
+    """
+    return ItemService.from_session(session)
 
 
 ServiceDep = Annotated[ItemService, Depends(get_service)]
@@ -53,9 +57,13 @@ async def list_items(service: ServiceDep, page: PageParamsDep) -> ItemsPage:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, responses=CONFLICT | BAD_BODY)
-async def create_item(service: ServiceDep, payload: ItemCreate) -> ItemRead:
+async def create_item(
+    service: ServiceDep, actor: ActorDep, payload: ItemCreate
+) -> ItemRead:
     """Create a new item."""
-    item = await service.create(name=payload.name, description=payload.description)
+    item = await service.create(
+        actor=actor, name=payload.name, description=payload.description
+    )
     return ItemRead.model_validate(item)
 
 
@@ -67,16 +75,18 @@ async def get_item(service: ServiceDep, item_id: uuid.UUID) -> ItemRead:
 
 @router.patch("/{item_id}", responses=NOT_FOUND | CONFLICT | BAD_BODY)
 async def update_item(
-    service: ServiceDep, item_id: uuid.UUID, payload: ItemUpdate
+    service: ServiceDep, actor: ActorDep, item_id: uuid.UUID, payload: ItemUpdate
 ) -> ItemRead:
     """Partially update an item."""
-    item = await service.update(item_id, payload.model_dump(exclude_unset=True))
+    item = await service.update(
+        item_id, payload.model_dump(exclude_unset=True), actor=actor
+    )
     return ItemRead.model_validate(item)
 
 
 @router.delete(
     "/{item_id}", status_code=status.HTTP_204_NO_CONTENT, responses=NOT_FOUND
 )
-async def delete_item(service: ServiceDep, item_id: uuid.UUID) -> None:
+async def delete_item(service: ServiceDep, actor: ActorDep, item_id: uuid.UUID) -> None:
     """Delete an item."""
-    await service.delete(item_id)
+    await service.delete(item_id, actor=actor)

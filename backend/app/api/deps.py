@@ -1,16 +1,17 @@
-"""Shared API dependencies.
+"""Shared API dependencies: the session guard and the caller's identity.
 
-Currently just the session guard applied to every protected router in
-`app.main`.
+The guard is applied to every protected router in `app.main`; the identity is
+what mutating services record on the audit trail.
 """
 
 from typing import Annotated
 
-from fastapi import Request, Security
+from fastapi import Depends, Request, Security
 from fastapi.security import APIKeyCookie
 
 from app.core.config import SessionSettings
 from app.core.exceptions import UnauthorizedError
+from app.domain.actor import Actor
 
 #: The cookie name published in the OpenAPI security scheme.
 #
@@ -41,3 +42,17 @@ async def require_session(
     """
     if not request.session.get("auth"):
         raise UnauthorizedError("Not authenticated")
+
+
+async def current_actor() -> Actor:
+    """Identify the caller behind an HTTP request.
+
+    There is exactly one, by design (single-user app, no user table): a request
+    that got past `require_session` is the athlete. The MCP adapter has its own
+    provider (`app.mcp.identity`) resolving the key label to `agent:<label>`.
+    """
+    return Actor.athlete()
+
+
+#: Inject into any endpoint that calls a mutating service.
+ActorDep = Annotated[Actor, Depends(current_actor)]
