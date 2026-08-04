@@ -1,4 +1,16 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(just:*)",
+      "Bash(uv:*)",
+      "Bash(bun:*)",
+      "Bash(bunx:*)",
+      "Bash(docker compose:*)",
+      "Bash(git:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

@@ -76,7 +76,8 @@ just dev-mcp   # MCP server              → http://localhost:8001
 ```
 
 ```bash
-just check        # lint + typecheck + unit tests + API contract drift (what CI runs)
+just check        # lint + typecheck + unit tests + frontend build + API contract drift
+just check-all    # the above plus the integration suite (needs Docker)
 just test-int     # backend integration tests + migration checks (real Postgres)
 just e2e          # Playwright UI tests (no backend needed)
 just db-revision "add widgets table"   # autogenerate a migration
@@ -140,8 +141,8 @@ git tag v1.0.0 && git push --tags
 #   ghcr.io/<owner>/<repo>/frontend:1.0.0
 ```
 
-Set `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_API_PATH` as repository
-**variables** (Settings → Secrets and variables → Actions) so release builds
-point at your real API — the values are baked in at build time. Leave
+Set `NEXT_PUBLIC_API_BASE_URL` as a repository **variable** (Settings →
+Secrets and variables → Actions) so release builds point at your real API —
+the value is baked in at build time. Leave
 `NEXT_PUBLIC_API_BASE_URL` empty when the frontend is served behind the
 bundled Caddy proxy (same origin).

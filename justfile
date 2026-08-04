@@ -72,6 +72,10 @@ test:
 test-int:
 	bash scripts/run-integration-tests.sh
 
+# Production build of the frontend (catches what `tsgo --noEmit` cannot)
+build:
+	cd frontend && bun run build
+
 # Run Playwright end-to-end tests (UI-only, no backend needed)
 e2e:
 	cd frontend && bun run test:e2e
@@ -86,8 +90,17 @@ smoke:
 	docker compose up --build --wait db api mcp frontend caddy
 	cd frontend && E2E_FULLSTACK=1 E2E_PASSWORD="${E2E_PASSWORD:-ci-test-password}" bun run test:e2e
 
-# Everything CI runs, locally
-check: lint typecheck test api-check
+# The gates that need nothing but this checkout: lint, type-check, unit tests,
+# the production frontend build and API-contract drift. NOT covered — each
+# needs a service or a long run: `test-int` (Postgres; the only place
+# `alembic check` runs), `e2e` (Playwright browsers), `smoke` (the Docker
+# stack). `check-all` adds the integration suite; CI runs all of them.
+
+# Everything that runs without Docker or a browser
+check: lint typecheck test build api-check
+
+# `check` plus the integration suite (needs Docker for Postgres)
+check-all: check test-int
 
 # --- Database ----------------------------------------------------------------
 

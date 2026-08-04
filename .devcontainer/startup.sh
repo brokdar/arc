@@ -60,26 +60,19 @@ uv tool install prek
 prek install -t pre-commit -t pre-push -t commit-msg
 
 echo "🔎 Installing language servers for Claude Code..."
-# The typescript-lsp plugin shells out to `typescript-language-server`, which is
-# not bundled — without it the plugin loads but never starts a server. Installed
-# via bun (never npm -g; .claude/hooks/block_npm.py blocks that anyway) into
-# ~/.bun/bin, already on PATH from the top of this script. The server prefers the
-# workspace's own TypeScript from frontend/node_modules, so the pinned project
-# version is what actually type-checks.
-# Python needs nothing here: the pyrefly LSP configured in .claude/settings.json
-# runs `uv run pyrefly lsp` out of backend/.venv, so it always matches the
-# pyrefly that `just typecheck` and CI use.
-bun add -g typescript-language-server typescript
-
-# Python: pyrefly, not pyright. The repo type-checks with pyrefly (just
-# typecheck, pre-push, CI), and pyright infers differently — running both means
-# editor diagnostics that contradict the build. `.claude/marketplace/` holds a
-# one-plugin local marketplace pointing the LSP at `uv run --project backend
-# pyrefly lsp`, so the language server is the exact pyrefly from backend/.venv.
-# No binary to install; just register the marketplace and enable the plugin.
-# `|| true` because both are idempotent and must not fail a container rebuild.
+# Each language server is the tool the build type-checks with, launched through
+# the project's package manager (D21): pyrefly, not pyright, and tsgo, not
+# tsserver — the repo checks with pyrefly and tsgo (`just typecheck`, pre-push,
+# CI), and a second checker means editor diagnostics that contradict the build.
+# `.claude/marketplace/` holds both plugins; each runs its server out of the
+# project (`uv run --project backend pyrefly lsp`, `bun run tsgo --lsp`), so a
+# language server cannot drift from the version CI installs. No binaries to
+# install — `uv sync` above and `bun install` below already provide them; just
+# register the marketplace and enable the plugins.
+# `|| true` because these are idempotent and must not fail a container rebuild.
 claude plugin marketplace add "$WORKSPACE/.claude/marketplace" || true
 claude plugin install pyrefly-lsp@arc-local || true
+claude plugin install tsgo-lsp@arc-local || true
 
 echo "🎭 Setting up frontend dependencies..."
 cd "$WORKSPACE/frontend"

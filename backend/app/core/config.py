@@ -89,7 +89,6 @@ class LogSettings(BaseModel):
     """Logging settings."""
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    file_path: str | None = None
 
 
 class Settings(BaseSettings):

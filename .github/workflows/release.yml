@@ -63,9 +63,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
-          # For the frontend, NEXT_PUBLIC_* is baked at build time. Set these
-          # as repository *variables* (Settings → Secrets and variables →
+          # For the frontend, NEXT_PUBLIC_* is baked at build time. Set it as
+          # a repository *variable* (Settings → Secrets and variables →
           # Actions → Variables) to point releases at your real API.
           build-args: |
             NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
-            NEXT_PUBLIC_API_PATH=${{ vars.NEXT_PUBLIC_API_PATH }}
