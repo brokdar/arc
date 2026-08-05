@@ -31,7 +31,7 @@ from app.core.exceptions import ConflictError
 #: Deterministic names for every index and constraint.
 #:
 #: Without this, unnamed constraints get whatever the backend invents
-#: (`items_pkey` on Postgres, nothing usable on SQLite), and Alembic then
+#: (`athlete_pkey` on Postgres, nothing usable on SQLite), and Alembic then
 #: cannot emit a `DROP CONSTRAINT` for them — a downgrade or a batch migration
 #: on SQLite fails on a constraint it has no name for. The convention has to be
 #: set before the first migration, because renaming constraints later is itself

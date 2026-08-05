@@ -22,8 +22,8 @@ choice is recorded in `docs/decisions.md`.
   forbidden packages explicitly, so adding an import there is a build error,
   not a review comment; a unit test (`test_domain_purity_contract`) keeps that
   list in step with `[project].dependencies`, so every new dependency has to be
-  classified. `items` is a worked example spread across the layers;
-  WP-1 deletes it.
+  classified. Only `[project].dependencies` are checked — a dev-only tool
+  (`hypothesis`) needs no entry.
 - `frontend/` — Next.js (App Router), React, TypeScript, Tailwind 4, shadcn/ui
   (Base UI primitives — components use `render={...}`, NOT Radix `asChild`).
   See `frontend/CLAUDE.md`: this Next.js major differs from older ones, so read
@@ -138,8 +138,17 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
    lower, add the lower-layer test instead of growing this suite.
 6. **Schemathesis** (CI): fuzzes the API from the OpenAPI schema. When it
    finds something, fix it AND pin the case as a unit test (see the
-   "found by Schemathesis" tests in `test_items_api.py` and
-   `test_auth.py`).
+   "found by Schemathesis" tests in `test_auth.py` and `test_athlete_api.py`).
+   An endpoint that refuses schema-valid input by design (a 405, a domain-rule
+   422) is narrowed per operation in `backend/schemathesis.toml`, never by
+   excluding a check globally. Reproduce locally: run the API against the
+   compose test database, log in for a cookie, then
+   `uvx schemathesis run http://localhost:8000/openapi.json --max-examples 100
+   --header "Cookie: …" --exclude-checks negative_data_rejection,ignored_auth`
+   from `backend/` (the config is picked up from the working directory).
+7. **Property tests** (hypothesis, backend unit): for pure domain code whose
+   invariants are stated more usefully than its outputs are enumerated — see
+   `test_domain_zones.py`.
 
 ## Improving this repo
 

@@ -14,7 +14,8 @@ from tests.unit.conftest import TEST_PASSWORD
 LOGIN = "/api/v1/auth/login"
 LOGOUT = "/api/v1/auth/logout"
 SESSION = "/api/v1/auth/session"
-ITEMS = "/api/v1/items"
+#: Any endpoint on the guarded router; the guard is what is under test.
+PROTECTED = "/api/v1/anchors"
 
 
 async def test_login_with_correct_password_sets_the_session_cookie(
@@ -97,7 +98,7 @@ async def test_login_with_an_unparseable_body_returns_documented_400(
 async def test_protected_route_rejects_anonymous_calls(
     anon_client: AsyncClient,
 ) -> None:
-    response = await anon_client.get(ITEMS)
+    response = await anon_client.get(PROTECTED)
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Not authenticated"}
@@ -106,14 +107,14 @@ async def test_protected_route_rejects_anonymous_calls(
 async def test_protected_route_accepts_a_logged_in_client(
     client: AsyncClient,
 ) -> None:
-    assert (await client.get(ITEMS)).status_code == 200
+    assert (await client.get(PROTECTED)).status_code == 200
 
 
 async def test_tampered_cookie_is_rejected(anon_client: AsyncClient) -> None:
     await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
     anon_client.cookies.set(DOCUMENTED_COOKIE_NAME, "garbage.not-a-signature")
 
-    response = await anon_client.get(ITEMS)
+    response = await anon_client.get(PROTECTED)
 
     assert response.status_code == 401
 
@@ -130,7 +131,7 @@ async def test_cookie_signed_with_another_key_is_rejected(
     transport = ASGITransport(app=create_app())
     async with AsyncClient(transport=transport, base_url="http://test") as other:
         other.cookies.set(DOCUMENTED_COOKIE_NAME, stolen)
-        response = await other.get(ITEMS)
+        response = await other.get(PROTECTED)
 
     assert response.status_code == 401
 
@@ -157,7 +158,7 @@ async def test_logout_ends_the_session(client: AsyncClient) -> None:
     assert (await client.post(LOGOUT)).status_code == 204
 
     assert (await client.get(SESSION)).json() == {"authenticated": False}
-    assert (await client.get(ITEMS)).status_code == 401
+    assert (await client.get(PROTECTED)).status_code == 401
 
 
 async def test_logout_without_a_session_is_a_noop(anon_client: AsyncClient) -> None:

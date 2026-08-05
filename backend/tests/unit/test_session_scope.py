@@ -5,15 +5,23 @@ so `set_session_factory` is the only seam that keeps them off a real Postgres
 in the unit suite.
 """
 
+import datetime as dt
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.actor import Actor
+from app.domain.anchors import (
+    AnchorSource,
+    AnchorType,
+    AnchorUnit,
+    Provenance,
+)
 from app.persistence import db
+from app.persistence.anchors import AnchorVersionRow
 from app.persistence.db import get_session_factory, session_scope, set_session_factory
-from app.persistence.items import Item
-from app.services.items import ItemService
+from app.services.anchors import AnchorService
 
 
 async def test_session_scope_uses_the_installed_factory(
@@ -22,18 +30,31 @@ async def test_session_scope_uses_the_installed_factory(
     # What an MCP tool or scheduler job will do: open a scope, call the same
     # service the API calls, let the service commit.
     async with session_scope() as session:
-        await ItemService.from_session(session).create(
-            actor=Actor.agent("coach"), name="from-a-job", description=None
+        await AnchorService.from_session(session).append(
+            actor=Actor.agent("coach"),
+            anchor_type=AnchorType.FTP,
+            value=250,
+            provenance=Provenance.ESTIMATED,
+            source=AnchorSource.AGENT,
         )
 
-    names = (await db_session.execute(select(Item.name))).scalars().all()
-    assert list(names) == ["from-a-job"]
+    values = (await db_session.execute(select(AnchorVersionRow.value))).scalars().all()
+    assert list(values) == [250]
 
 
 async def _job_that_writes_then_fails() -> None:
     """A non-HTTP caller that dies with uncommitted work pending."""
     async with session_scope() as session:
-        session.add(Item(name="never-committed", description=None))
+        session.add(
+            AnchorVersionRow(
+                anchor_type=AnchorType.FTP,
+                value=999,
+                unit=AnchorUnit.WATT,
+                provenance=Provenance.ASSUMED,
+                effective_date=dt.date(2026, 3, 1),
+                source=AnchorSource.AGENT,
+            )
+        )
         await session.flush()
         raise RuntimeError("job failed")
 
@@ -42,7 +63,7 @@ async def test_session_scope_rolls_back_on_error(db_session: AsyncSession) -> No
     with pytest.raises(RuntimeError, match="job failed"):
         await _job_that_writes_then_fails()
 
-    assert (await db_session.execute(select(Item))).scalars().all() == []
+    assert (await db_session.execute(select(AnchorVersionRow))).scalars().all() == []
 
 
 def test_the_factory_override_is_resettable(

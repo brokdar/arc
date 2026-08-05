@@ -65,9 +65,9 @@ jobs:
         # 401 proves the session guard is actually mounted in the shipped
         # image; a 200 here would mean the API is wide open.
         run: |
-          status=$(curl -s --retry 5 --retry-delay 3 http://localhost/api/v1/items \
+          status=$(curl -s --retry 5 --retry-delay 3 http://localhost/api/v1/athlete \
             -o /dev/null -w '%{http_code}')
-          echo "GET /api/v1/items -> $status"
+          echo "GET /api/v1/athlete -> $status"
           test "$status" = "401"
 
       - name: Check the MCP server rejects unauthenticated calls through Caddy

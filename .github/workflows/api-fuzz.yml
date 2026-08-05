@@ -77,10 +77,17 @@ jobs:
         # operation looks unauthenticated-but-accepted. The property it tests
         # is covered directly by tests/unit/test_auth.py.
         #
-        # Expect a standing "schema validation mismatch" warning for
-        # POST /api/v1/auth/login: a login endpoint rejects essentially every
+        # positive_data_acceptance is NOT excluded, but narrowed per operation
+        # in backend/schemathesis.toml (auto-discovered from this job's
+        # working directory) for the handful that refuse schema-valid input on
+        # purpose — the append-only 405s and the domain-rule 422s. That file
+        # states which, and why.
+        #
+        # Expect standing "schema validation mismatch" warnings: for
+        # POST /api/v1/auth/login (a login endpoint rejects essentially every
         # generated password, which the heuristic reads as over-strict
-        # validation. It is a warning, not a failure.
+        # validation), and for the operations whose domain rules the schema
+        # cannot express. Warnings, not failures.
         #
         # schemathesis runs unpinned via `uvx` (floats to the latest release),
         # and current versions intermittently hang on exit AFTER finishing

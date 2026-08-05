@@ -1,0 +1,191 @@
+"""Use-cases for anchors: read the history, append to it. Never edit it.
+
+There is no `update` and no `delete` here, and there is none in
+`app.persistence.anchors` either (build-plan invariant 3). The API's 405
+handlers state the rule; these two absences are what enforce it.
+"""
+
+import datetime as dt
+import uuid
+from collections.abc import Sequence
+from typing import Any, Self
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFoundError, domain_rules
+from app.domain.actor import Actor
+from app.domain.anchors import (
+    ANCHOR_UNITS,
+    MVP_STALENESS_STATE,
+    AnchorSource,
+    AnchorType,
+    AnchorUnit,
+    AnchorVersion,
+    Provenance,
+    anchor_as_of,
+)
+from app.persistence.anchors import AnchorRepository, AnchorVersionRow
+from app.persistence.audit import AuditRepository
+from app.persistence.db import commit
+
+#: `entity_type` written on this use-case's audit rows.
+ENTITY_TYPE = "anchor_version"
+
+
+class AnchorService:
+    """Use-cases for anchor versions. Raises AppError subclasses."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        repository: AnchorRepository,
+        audit: AuditRepository,
+    ) -> None:
+        self._session = session
+        self._repository = repository
+        self._audit = audit
+
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> Self:
+        """Wire the service and its repositories to one session."""
+        return cls(session, AnchorRepository(session), AuditRepository(session))
+
+    async def list(
+        self,
+        *,
+        anchor_type: AnchorType | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[Sequence[AnchorVersionRow], int]:
+        """Return a page of anchor history, newest first, plus the total."""
+        return await self._repository.list(
+            anchor_type=anchor_type, offset=offset, limit=limit
+        )
+
+    async def get(self, anchor_version_id: uuid.UUID) -> AnchorVersionRow:
+        """Return one anchor version by id.
+
+        Raises:
+            NotFoundError: When no version has that id.
+        """
+        row = await self._repository.get(anchor_version_id)
+        if row is None:
+            raise NotFoundError(f"Anchor version {anchor_version_id} not found")
+        return row
+
+    async def current(
+        self, anchor_type: AnchorType, *, moment: dt.datetime | None = None
+    ) -> AnchorVersionRow:
+        """Return the version of ``anchor_type`` in force at ``moment`` (now).
+
+        The choice is made by `app.domain.anchors.anchor_as_of` over the whole
+        history rather than by an ``ORDER BY ... LIMIT 1``: future-dated and
+        back-dated versions both exist, and the rule for which one counts is a
+        domain rule that scoring and metrics will reuse.
+
+        Raises:
+            NotFoundError: When no version of that type is in force.
+        """
+        at = moment or dt.datetime.now(dt.UTC)
+        rows = await self._repository.history(anchor_type)
+        # Paired rather than keyed by the domain value: two versions can be
+        # equal in every field the domain models and still be distinct rows.
+        pairs = [(row.to_domain(), row) for row in rows]
+        with domain_rules():
+            in_force = anchor_as_of((version for version, _ in pairs), at)
+        if in_force is None:
+            raise NotFoundError(
+                f"No {anchor_type.value} anchor is in force at "
+                f"{at.isoformat()}; append one first"
+            )
+        return next(row for version, row in pairs if version is in_force)
+
+    async def append(
+        self,
+        *,
+        actor: Actor,
+        anchor_type: AnchorType,
+        value: float,
+        provenance: Provenance,
+        source: AnchorSource,
+        effective_date: dt.date | None = None,
+        unit: AnchorUnit | None = None,
+        protocol: str | None = None,
+        ci_low: float | None = None,
+        ci_high: float | None = None,
+    ) -> AnchorVersionRow:
+        """Append a new version to an anchor's history.
+
+        Args:
+            actor: Who is writing; recorded on the audit trail.
+            anchor_type: Which anchor this is a version of.
+            value: The measurement.
+            provenance: How the value was arrived at. `tested` additionally
+                requires ``protocol``.
+            source: Whether the athlete or the agent is appending.
+            effective_date: The date the value applies from; today when
+                omitted.
+            unit: The anchor type's own unit when omitted — supplying a
+                different one is an error, not a conversion request.
+            protocol: How the value was measured.
+            ci_low: Lower bound of the confidence interval.
+            ci_high: Upper bound of the confidence interval.
+
+        Raises:
+            ValidationError: When the version breaks a domain rule.
+        """
+        created_at = dt.datetime.now(dt.UTC)
+        with domain_rules():
+            version = AnchorVersion(
+                anchor_type=anchor_type,
+                value=value,
+                unit=unit or ANCHOR_UNITS[anchor_type],
+                provenance=provenance,
+                protocol=protocol,
+                effective_date=effective_date or created_at.date(),
+                ci_low=ci_low,
+                ci_high=ci_high,
+                created_at=created_at,
+                source=source,
+                staleness_state=MVP_STALENESS_STATE,
+            )
+
+        row = await self._repository.add(
+            AnchorVersionRow(
+                anchor_type=version.anchor_type,
+                value=version.value,
+                unit=version.unit,
+                provenance=version.provenance,
+                protocol=version.protocol,
+                effective_date=version.effective_date,
+                ci_low=version.ci_low,
+                ci_high=version.ci_high,
+                source=version.source,
+                staleness_state=version.staleness_state,
+                created_at=version.created_at,
+            )
+        )
+        await self._audit.record(
+            actor=actor,
+            action="anchor.appended",
+            entity_type=ENTITY_TYPE,
+            entity_id=row.id,
+            payload=_payload(row),
+        )
+        await commit(self._session)
+        return row
+
+
+def _payload(row: AnchorVersionRow) -> dict[str, Any]:
+    """The appended value, as JSON, for the audit trail."""
+    return {
+        "anchor_type": row.anchor_type.value,
+        "value": row.value,
+        "unit": row.unit.value,
+        "provenance": row.provenance.value,
+        "protocol": row.protocol,
+        "effective_date": row.effective_date.isoformat(),
+        "ci_low": row.ci_low,
+        "ci_high": row.ci_high,
+        "source": row.source.value,
+    }

@@ -35,11 +35,10 @@ bun run test:e2e       # Playwright
 ## Structure
 
 ```
-app/                 App Router: layout, providers, pages (/, /login, /items)
+app/                 App Router: layout, providers, pages (/, /login)
 components/
   ui/                shadcn/ui primitives (Base UI — `render={...}`, NOT `asChild`)
   auth/              login form + AuthGuard
-  items/             WP-0 worked example; deleted in WP-1
 lib/api/client.ts    openapi-fetch client + `$api` TanStack Query bindings
 env.ts               validated, build-time-baked env (@t3-oss/env-nextjs + zod)
 generated/api/       openapi.json + schema.d.ts — GENERATED, never hand-edit

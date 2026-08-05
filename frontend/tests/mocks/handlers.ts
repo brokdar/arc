@@ -18,20 +18,15 @@ export const handlers = [
     response(200).json({ authenticated: true }),
   ),
   http.post("/api/v1/auth/login", ({ response }) => response(204).empty()),
-  http.get("/api/v1/items", ({ response }) =>
+  http.get("/api/v1/athlete", ({ response }) =>
     response(200).json({
-      items: [
-        {
-          id: "0198c5b6-0000-7000-8000-000000000001",
-          name: "First item",
-          description: "from msw",
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-      total: 1,
-      offset: 0,
-      limit: 50,
+      name: "Alex Rider",
+      date_of_birth: "1990-06-15",
+      sex: "male",
+      height_cm: 181.5,
+      capabilities: {},
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
     }),
   ),
 ];

@@ -2,7 +2,7 @@
 
 Unit tests run on SQLite and production runs on Postgres, so anything that
 diverges between the two is a bug the suite cannot see. These tests pin the
-SQLite half; `tests/integration/test_items_postgres.py` pins the other.
+SQLite half; `tests/integration/test_anchors_postgres.py` pins the other.
 """
 
 import datetime as dt
@@ -106,7 +106,7 @@ async def test_null_timestamps_survive_both_directions(engine: AsyncEngine) -> N
 async def test_api_timestamps_are_aware_utc_iso_strings(client: AsyncClient) -> None:
     # The end-to-end consequence: the JSON the frontend parses carries an
     # offset. Serializing a naive datetime would silently emit local time.
-    created = (await client.post("/api/v1/items", json={"name": "stamped"})).json()
+    created = (await client.get("/api/v1/athlete")).json()
 
     for field in ("created_at", "updated_at"):
         parsed = dt.datetime.fromisoformat(created[field])
@@ -147,15 +147,30 @@ async def test_enums_round_trip_as_members(
         assert await conn.scalar(sa.select(probe.c.colour)) is Colour.BLUE
 
 
+async def test_enums_are_stored_as_their_value_not_their_name(
+    engine: AsyncEngine, probe: sa.Table
+) -> None:
+    # `MAX_HR` in the database while every JSON payload says `max_hr` would be
+    # two spellings of one vocabulary. Read as raw text, bypassing the ORM
+    # conversion, so this sees what is really on disk.
+    async with engine.begin() as conn:
+        await conn.execute(probe.insert().values(id=uuid.uuid7(), colour=Colour.BLUE))
+
+        stored = await conn.scalar(sa.text("SELECT colour FROM probe"))
+
+    assert stored == "blue"
+
+
 def test_enums_are_stored_non_native() -> None:
     # A native Postgres ENUM needs ALTER TYPE to gain a member and has no
     # SQLite equivalent; a VARCHAR + CHECK is the portable storage.
     assert enum_column(Colour).native_enum is False
 
 
-async def test_item_ids_are_time_ordered_uuid7(client: AsyncClient) -> None:
-    first = (await client.post("/api/v1/items", json={"name": "a"})).json()["id"]
-    second = (await client.post("/api/v1/items", json={"name": "b"})).json()["id"]
+async def test_ids_are_time_ordered_uuid7(client: AsyncClient) -> None:
+    anchor = {"anchor_type": "ftp", "value": 250, "provenance": "estimated"}
+    first = (await client.post("/api/v1/anchors", json=anchor)).json()["id"]
+    second = (await client.post("/api/v1/anchors", json=anchor)).json()["id"]
 
     assert uuid.UUID(first).version == 7
     # uuid7's leading 48 bits are a millisecond timestamp, so ids sort by

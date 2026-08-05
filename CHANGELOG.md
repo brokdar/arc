@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-1 — domain core: athlete, anchors, zones, versioning primitives
+
+The first real entities, and the first code the build plan's invariants are
+enforced by rather than described in. Decisions D31–D37.
+
+**Domain (`backend/app/domain/`, pure)**
+
+- Added **versioning primitives** (`versioning.py`): the `VersionRecord`
+  protocol and the `Versioned[T]` envelope fixing the vocabulary every derived
+  artefact will carry — `artefact_id`, `version`, `as_of`, `superseded_by`,
+  `recompute_reason` — plus `current_version`, `version_as_seen_at` and
+  `next_version`. Recomputation returns both halves of the change (the closed
+  old version and the new tip), so a chain cannot be left with a dangling link.
+  Nothing in WP-1 is versioned yet; scores, metrics and alignment are, from
+  WP-5.
+- Added the **athlete profile** (`athlete.py`): name, date of birth, sex,
+  height, and a free-form per-discipline capability stub. Every field is
+  optional — an empty profile is a legal state, not an error.
+- Added **anchors** (`anchors.py`): `AnchorType` (FTP, LTHR, MAX_HR, with CP
+  and W′ reserved and unused), `Provenance`, `AnchorSource`, `AnchorUnit`,
+  `StalenessState` (hardcoded `fresh`; `aging`/`stale` reserved), and the
+  immutable `AnchorVersion`. Legality is enforced where it belongs (D35): the
+  unit must be the anchor type's own, values must be plausible per type,
+  `tested` provenance requires a protocol, and a confidence interval must
+  bracket its value. `anchor_as_of` computes which version was in force at a
+  moment — effective date *and* creation time — so a back-dated correction
+  changes the present without rewriting the past.
+- Added **zones** (`zones.py`): `zones_for(anchor_version, model)`, with
+  `coggan_7` (%FTP) and `lthr_5` (%LTHR) boundary tables documented in D32.
+  Zones are always computed, never stored. Bands are half-open and contiguous,
+  the top zone is open-ended, and a model may only be applied to the anchor
+  type it derives from.
+- Domain values are frozen dataclasses rather than pydantic models (D31);
+  `app.core.exceptions.domain_rules()` translates their `ValueError`s into the
+  documented 422 envelope.
+
+**Persistence**
+
+- Added the `athlete`, `anchor_versions` and `audit_log` tables with their
+  repositories, and migration `0002` creating them. The athlete row is a
+  singleton with a fixed primary key, bootstrapped on first access rather than
+  seeded by the migration (D33). Neither the anchor nor the audit repository
+  offers an update or a delete.
+- `enum_column` now stores the enum member's **value** (`max_hr`), not
+  SQLAlchemy's default of its name (`MAX_HR`), so the database, the API and the
+  generated frontend types share one vocabulary (D34). WP-1 is its first user,
+  so nothing needed migrating.
+
+**API**
+
+- Added `GET`/`PATCH /api/v1/athlete`, `GET`/`POST /api/v1/anchors`,
+  `GET /api/v1/anchors/current` and `GET /api/v1/anchors/{id}`, all on the
+  guarded router.
+- Added zones as two endpoints, each addressed by what it derives from (D38):
+  `GET /api/v1/zones?anchor_type=…` uses the version in force,
+  `GET /api/v1/anchors/{id}/zones` uses one pinned version. The zone model is
+  derived from the anchor type or named explicitly.
+- `PUT`, `PATCH` and `DELETE` on an anchor version return **405 with an
+  explanation** and an `Allow` header, because FastAPI answers an undefined
+  method+path with 404 — which reads as "wrong id" (D36).
+- Hardened the new surface against what Schemathesis found (D39): the 422
+  contract now admits both shapes the status really has
+  (`ValidationErrorDetail`), the append-only refusals answer 405 for any id
+  rather than 422 for a malformed one, and free-form `capabilities` JSON is
+  validated for driver-safe text at every depth, not just at the top level.
+  `backend/schemathesis.toml` narrows the `positive_data_acceptance` check for
+  the handful of operations that refuse schema-valid input by design, instead
+  of switching it off everywhere.
+
+**Audit log**
+
+- Every mutating service path now appends an `audit_log` row — actor (`athlete`
+  / `agent:<label>` / `system`), action, entity type and id, JSON payload, and
+  timestamp — in the same transaction as the write it describes, so a rejected
+  write leaves no trail and no write escapes one.
+
+**Removed**
+
+- Deleted WP-0's `items` worked example end to end: backend persistence,
+  service, schemas, routes and tests; the frontend page, component and MSW
+  handler; and the table itself, dropped by migration `0002` rather than by
+  rewriting the already-shipped `0001` (whose `downgrade` recreates it, so the
+  chain still round-trips).
+
+**Testing**
+
+- Added `hypothesis` (dev-only, D37) and the repo's first property tests: zone
+  schemes must partition, stay ordered, scale linearly with the anchor, and
+  keep percentages and absolute bounds in agreement — properties that hold for
+  any scheme added later, not just the two shipped.
+
 ### WP-0 — scaffold + infrastructure
 
 The scaffold was built by adapting the full-stack template rather than
