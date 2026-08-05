@@ -262,3 +262,22 @@ async def test_anchors_need_a_session(anon_client: AsyncClient) -> None:
     assert (await anon_client.get(ANCHORS)).status_code == 401
     assert (await anon_client.post(ANCHORS, json={})).status_code == 401
     assert (await anon_client.delete(f"{ANCHORS}/{uuid.uuid4()}")).status_code == 401
+
+
+# Found by Schemathesis fuzzing in CI — keep it: an optional query parameter
+# typed `X | None` advertises `null` as a legal value in the contract, but a
+# query string delivers `anchor_type=null` as a four-letter string the enum
+# rejects with a 422. Optional-by-omission parameters use
+# `SkipJsonSchema[None]` so the contract only promises what the parser accepts.
+async def test_optional_query_params_do_not_advertise_null(
+    client: AsyncClient,
+) -> None:
+    spec = (await client.get("/openapi.json")).json()
+    offenders = [
+        (path, param["name"])
+        for path, methods in spec["paths"].items()
+        for operation in methods.values()
+        for param in operation.get("parameters", [])
+        if param["in"] == "query" and "null" in str(param["schema"])
+    ]
+    assert offenders == []

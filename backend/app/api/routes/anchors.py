@@ -15,6 +15,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic.json_schema import SkipJsonSchema
 
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
@@ -68,8 +69,12 @@ def get_service(session: SessionDep) -> AnchorService:
 
 ServiceDep = Annotated[AnchorService, Depends(get_service)]
 
+# `SkipJsonSchema[None]`: the parameter is optional by *omission*. Without it
+# the contract advertises `null` as a legal value, but a query string carries
+# `anchor_type=null` as the four-letter string, which the enum rejects with a
+# 422 — a schema/validation mismatch Schemathesis flags (found in CI).
 AnchorTypeFilter = Annotated[
-    AnchorType | None,
+    AnchorType | SkipJsonSchema[None],
     Query(description="Restrict to one anchor type; omit for all of them."),
 ]
 

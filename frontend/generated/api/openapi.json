@@ -598,16 +598,8 @@
             "name": "anchor_type",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/AnchorType"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Restrict to one anchor type; omit for all of them.",
-              "title": "Anchor Type"
+              "$ref": "#/components/schemas/AnchorType",
+              "description": "Restrict to one anchor type; omit for all of them."
             }
           },
           {
@@ -1056,16 +1048,8 @@
             "name": "zone_model",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ZoneModel"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Defaults to the model that derives from the anchor type.",
-              "title": "Zone Model"
+              "$ref": "#/components/schemas/ZoneModel",
+              "description": "Defaults to the model that derives from the anchor type."
             }
           }
         ],
@@ -1325,16 +1309,8 @@
             "name": "zone_model",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ZoneModel"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Defaults to the model that derives from the anchor type.",
-              "title": "Zone Model"
+              "$ref": "#/components/schemas/ZoneModel",
+              "description": "Defaults to the model that derives from the anchor type."
             }
           }
         ],

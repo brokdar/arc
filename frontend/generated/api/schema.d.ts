@@ -537,7 +537,7 @@ export interface operations {
     parameters: {
       query?: {
         /** @description Restrict to one anchor type; omit for all of them. */
-        anchor_type?: components["schemas"]["AnchorType"] | null;
+        anchor_type?: components["schemas"]["AnchorType"];
         offset?: number;
         limit?: number;
       };
@@ -850,7 +850,7 @@ export interface operations {
     parameters: {
       query?: {
         /** @description Defaults to the model that derives from the anchor type. */
-        zone_model?: components["schemas"]["ZoneModel"] | null;
+        zone_model?: components["schemas"]["ZoneModel"];
       };
       header?: never;
       path: {
@@ -1071,7 +1071,7 @@ export interface operations {
         /** @description Whose version in force to derive from. */
         anchor_type: components["schemas"]["AnchorType"];
         /** @description Defaults to the model that derives from the anchor type. */
-        zone_model?: components["schemas"]["ZoneModel"] | null;
+        zone_model?: components["schemas"]["ZoneModel"];
       };
       header?: never;
       path?: never;

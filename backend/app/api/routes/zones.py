@@ -17,6 +17,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic.json_schema import SkipJsonSchema
 
 from app.api.schemas.zones import ZonesRead
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
@@ -49,8 +50,11 @@ def get_service(session: SessionDep) -> ZoneService:
 
 ServiceDep = Annotated[ZoneService, Depends(get_service)]
 
+# `SkipJsonSchema[None]`: optional by omission — advertising `null` would
+# promise a value the query-string enum parser rejects (see the same pattern
+# in `app.api.routes.anchors`).
 ZoneModelQuery = Annotated[
-    ZoneModel | None,
+    ZoneModel | SkipJsonSchema[None],
     Query(description="Defaults to the model that derives from the anchor type."),
 ]
 
