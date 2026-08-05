@@ -910,3 +910,332 @@ Two refinements to D33's lazy bootstrap, both from the PR #2 review:
    (`athlete.created`, `athlete.updated`). A rejected `PATCH` on an empty
    database is a pure no-op, pinned by
    `test_a_rejected_update_does_not_bootstrap_the_profile`.
+
+## D42 — The step tree flattens by expanding repeats and leaving ramps whole
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`app.domain.workout.flatten` turns a `EnduranceWorkout` into a list of
+`FlatStep`s. Two representation choices, both stated as properties in
+`tests/unit/test_domain_workout.py` rather than left implicit:
+
+1. **Repeat blocks expand.** The fifth rep of a 5x block becomes its own flat
+   step. Each flat step carries `path` (its position in the *tree*) and
+   `repetition` (the 1-based iteration of each enclosing block, outermost
+   first).
+2. **Ramps stay ramps.** A flat step carries `start_targets` and `end_targets`,
+   equal for a steady step and different for a ramp. Ramps are *not* sliced
+   into steady sub-steps.
+
+The round trip this makes testable is `flatten(w) == flatten(expand(w))` step
+for step, with `expand` idempotent — which is what the hypothesis property
+test asserts over random trees.
+
+*Rationale:* expansion is what the athlete actually does and what a recording
+can be aligned against (WP-5), so a scorer that had to re-walk the tree would
+be re-deriving the same list per axis. `repetition` exists because WP-7's
+`pacing` axis is defined as "last rep versus first rep" and would otherwise
+need the tree as well as the flat list. Slicing ramps was rejected because it
+invents a step count nobody rode and a precision the prescription does not
+have: a 20-minute ramp cut into 20 one-minute blocks looks like twenty
+prescribed intervals in every UI and every alignment. Carrying both ends
+instead lets a consumer that only understands steady blocks take the midpoint,
+and one that understands ramps do better.
+
+## D43 — Percentages are fractions everywhere, and a channel may only take its own anchor
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+Every percentage in the domain is stored as a **fraction**: `0.88` is 88 %.
+That covers workout targets (`PercentOfAnchor.pct_low`), ceiling limits
+(`PercentLimit.pct`), band bounds, `sets_completed(min_fraction)`,
+`load_within(pct_tolerance)` and strength `percent_e1rm` loads. It matches
+`app.domain.zones`, which was already written that way (D32).
+
+Alongside it, `CHANNEL_ANCHORS` fixes which anchor each channel may be a
+percentage of — power off FTP, heart rate off LTHR or MAX_HR, cadence off
+nothing — and `CHANNEL_UNITS` fixes the unit of an absolute target. Both are
+checked at construction.
+
+*Rationale:* one convention, or every consumer has to know which of two
+scales a given number is on, and the mistake is invisible: 88 and 0.88 are
+both plausible-looking. The channel/anchor pairing is D32's rule one level
+out — "80 % of FTP rpm" is not a quantity, and 90 %FTP applied to a heart
+rate is a number, just not anyone's threshold. Cadence deliberately has no
+anchor rather than a permissive one, so the API contract cannot offer a
+target nothing could resolve.
+
+## D44 — A band is a tolerance around the step's own target, not an absolute range
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`app.domain.criteria.Band` states `low`/`high` as **fractions of the target
+the step itself prescribes** for a channel: `low=0.95, high=1.05` means
+"within ±5 % of what was asked for". It is not an absolute watt range and not
+a percentage of an anchor.
+
+*Rationale:* `time_in_band` has to be expressible in a **purpose template**,
+which is written once for the athlete and knows nothing about a particular
+session — an absolute band could not be. A relative band also stays
+meaningful across a workout whose steps sit at different intensities, so one
+criterion covers the whole session instead of one per step. The alternative,
+a band expressed as a percentage of an anchor, was rejected because it
+duplicates what the step's own target already says and would silently
+disagree with it after an edit.
+
+## D45 — Purpose templates: a JSON file, validated at boot, complete by construction
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+Templates live in `backend/app/resources/purpose_templates.json`, are parsed
+by the pure `app.domain.templates.parse_templates`, and are read exactly once
+by `app.services.templates.load_purpose_templates` — which `app.main`'s
+lifespan calls through `verify_bundled_resources()`, so a bad file stops the
+boot. Failure is a `ResourceError` (a `RuntimeError`), deliberately **not** an
+`AppError`: no status code helps a client, and the only correct response is to
+fail to start.
+
+The parser refuses a file that omits any purpose, names an unknown purpose or
+axis, gives a purpose an axis from the other discipline, omits `completion`,
+or carries a criterion that discipline could never evaluate.
+
+The MVP templates list **no deferred axis**: `response` and `fuelling` are in
+`ScoringAxis` so WP-7's shape exists, but a template naming one would promise
+a score the MVP cannot produce. WP-7 reports them as `not_assessed(deferred)`
+independently of the templates.
+
+*Rationale:* the build plan says "stored as data, not code", and the value of
+that is only realised if the data is checked as hard as code would be —
+otherwise the failure moves from a compile error to a session that cannot be
+scored, discovered weeks later. Requiring completeness rather than defaulting
+a missing purpose is the same argument: a silent default is a purpose whose
+scoring nobody chose. Keeping the parser in `app.domain` and the file reading
+in `app.services` is what the purity contract requires, and it means the
+template format is testable without touching a filesystem.
+
+## D46 — The exercise catalogue is a hand-curated JSON file, keyed by slug, seeded lazily
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+Three decisions the build plan's `DECIDE:` and its "startup or migration"
+choice come down to:
+
+1. **Source:** the plan's default — a hand-curated JSON file in the repo
+   (`backend/app/resources/exercise_catalogue.json`, 98 movements across
+   squat / hinge / lunge / press / pull / core / carry / mobility /
+   conditioning). A wger import is a later phase.
+2. **Key:** the `exercises` table's primary key is the **slug**
+   (`back_squat`), not a `uuid.uuid7` — the one departure from the D29
+   convention. Prescriptions reference an exercise from inside a workout's
+   JSON structure, where a foreign key cannot reach, so the identifier has to
+   be stable and readable on its own and identical in every deployment.
+3. **Seeding:** **lazily and idempotently on first access of the catalogue**
+   (`ExerciseService.ensure_seeded`), matched by slug — missing rows inserted,
+   changed rows updated, nothing ever deleted. One audit row
+   (`exercise_catalogue.seeded`, `actor=system`) and only when something
+   changed.
+
+*Displaces:* both options the plan offered. A **migration** cannot own it: the
+integration suite truncates every table between tests and a restore from dump
+or a support `TRUNCATE` would leave an application whose strength
+prescriptions reference nothing — exactly D33's argument for not seeding the
+athlete row. The **lifespan** cannot own it either without making a successful
+boot depend on a writable, migrated database, which today it does not: the API
+comes up and serves `/health` with the database down. What the lifespan does
+own is *validating* the bundled file, so a malformed catalogue is a failed
+deploy rather than a failed request.
+
+Nothing is ever deleted by a reseed because a slug that leaves the file may
+still be referenced by a stored prescription, and losing the row would make
+that prescription unreadable. A lost seeding race is caught and treated as
+success (the winner wrote the same rows), following D41.
+
+## D47 — A planned session's intent is versioned; its date and status are not
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`planned_sessions` holds identity (date, discipline, status);
+`planned_session_intents` holds an append-only chain of everything the session
+is *for* — purpose, intent text, coach notes, success criteria, pinned anchor
+versions, and a **snapshot of the prescription itself**. The intent row
+carries WP-1's vocabulary verbatim (`version`, `as_of`, `superseded_by`,
+`recompute_reason`) plus `edited_post_hoc`, and satisfies
+`app.domain.versioning.VersionRecord` structurally, so the domain's
+`current_version` / `next_version` work on ORM rows unchanged.
+
+The freeze rule (invariant 4) is implemented as three cases in
+`PlannedSessionService`:
+
+| Edit | New version | `edited_post_hoc` | Anchors |
+|---|---|---|---|
+| create | 1 | false | pinned to what is in force |
+| intent edit, no match yet | n+1 | false | **re-pinned** |
+| intent edit, match exists | n+1 | **true** | **kept**, rescore triggered |
+| date or status only | none | — | unchanged |
+
+*Rationale:* the plan says "frozen at creation or last pre-execution edit", so
+a session re-planned after a new FTP test must use the new FTP — but a session
+the athlete has already ridden must keep the numbers it was ridden against, or
+the score is measured against a prescription that never existed. Putting the
+workout **snapshot** in the intent version (rather than only a `workout_id`)
+is what makes that true when the prescription came from the library: editing
+the library entry afterwards would otherwise silently rewrite what was
+prescribed on a past date. `workout_id` survives as provenance and is nulled
+by `ON DELETE SET NULL` if the library entry goes.
+
+Date and status are excluded from intent because they are facts about the
+calendar, not about what the session is for; versioning them would make every
+drag on WP-3's week view a new prescription.
+
+## D48 — Matching and rescoring are explicit seams, not silence
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+The freeze rule needs two things that do not exist yet: "has this session been
+matched?" (WP-6) and "rescore it" (WP-7). Both are module-level hooks in
+`app.services.planned_sessions` with an MVP default and a setter —
+`set_match_probe` / `set_rescore_trigger` — in the same idiom as
+`app.persistence.db.set_session_factory`. The defaults are honest: nothing is
+matched, because no activity can be linked to a session yet, and there is
+nothing to rescore.
+
+*Rationale:* the alternative is to build the `edited_post_hoc` machinery in
+WP-6 or WP-7, in the work package that can least afford it, and to ship WP-2
+with a freeze rule that is documented but never executed. With the seams, the
+whole rule is written and *tested* now — `tests/unit/test_planned_sessions_api.py`
+installs a probe that says "matched" and asserts the flag, the kept pins and
+the rescore call — and the later work packages supply one function each. The
+hooks are functions rather than a registry because there is exactly one of
+each, and taking the session as a parameter means WP-6's implementation runs
+inside the same transaction as the edit that triggered it.
+
+## D49 — A prescription that refers to an anchor with no version in force is refused
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`POST /api/v1/planned-sessions` answers **422** when the prescription — the
+workout's targets *or* the success criteria — is expressed as a percentage of
+an anchor that has no version in force, naming the anchor and what to do about
+it. Anchors referenced by criteria count: the `endurance` template's ceiling
+of 100 % FTP makes an FTP necessary even for an absolutely prescribed
+endurance ride.
+
+*Rationale:* invariant 4 says a planned session pins the anchor version its
+targets derive from. There is no honest way to pin nothing: storing an empty
+map would make the prescription unresolvable and the eventual score
+irreproducible, and resolving it later against whatever anchor exists then is
+exactly the retroactive reinterpretation the invariant forbids. Refusing is
+loud, actionable (the message says "append one first, or prescribe absolute
+targets"), and one-time — the athlete enters anchors once. The shape checks
+(purpose/discipline agreement, criterion applicability) deliberately run
+*before* pinning, so the anchor message cannot mask a more fundamental error.
+
+## D50 — Workout tags get a table, folders get a column, labels get their own path
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+The workout library stores the prescription as one JSON document
+(`structure`), tags in a `workout_tags` association table, and the folder as a
+plain nullable string column. The folder and tag lists are served from
+`GET /api/v1/workout-labels`, a sibling of the collection, **not**
+`/workouts/folders` and `/workouts/tags`.
+
+*Rationale:* a step tree is recursive and only ever read whole, so shredding
+it into rows would be a join per nesting level for no query anyone makes;
+JSONB keeps it queryable where it matters (the integration suite asserts
+`structure->'steps'->1->>'times'`). Tags are the opposite: "which workouts are
+tagged X" *is* a query, and array containment is spelled differently on SQLite
+and Postgres — the divergence `app.persistence.types` exists to prevent.
+Folders stay a column because an MVP folder is a label, not a hierarchy with
+its own lifecycle.
+
+The path move was found by Schemathesis and is the same class of defect as
+D39's second item. Any single extra segment under `/workouts` also matches
+`/workouts/{workout_id}`, so `PATCH /api/v1/workouts/tags` fell through to the
+id route and answered 422 about uuid syntax where 405 is the true answer.
+Moving the facet out of the id namespace removes the collision, rather than
+papering over it with four more refusal handlers per path; the 405s are now
+Starlette's own, and `tests/unit/test_workouts_api.py` pins them.
+
+## D51 — The unit suite turns SQLite's foreign keys on
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`tests/unit/conftest.py` attaches a `connect` listener to the in-memory SQLite
+engine issuing `PRAGMA foreign_keys=ON`.
+
+*Rationale:* SQLite ignores foreign keys unless asked, per connection. Without
+the pragma, `ON DELETE CASCADE` and `ON DELETE SET NULL` are inert in the unit
+suite and enforced in production — so the cheap test layer tests a different
+application than the one that ships, which is exactly what D29 fixed for
+column types, one level down in the schema. It was not hypothetical: the test
+asserting that deleting a library workout nulls the intent's provenance link
+(D47) passed against Postgres and failed silently on SQLite until the pragma
+went in.
+
+## D52 — Domain JSON is decoded by hand, with located error messages
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`app.domain.coding` holds a handful of decoding helpers (`as_int`, `as_enum`,
+`no_extra_fields`, …) that every `*_from_json` in the domain uses. Unknown
+fields are refused, not ignored, and every message names its position in the
+document — `groups[0].items[0].sets: expected an integer, got str`. Services
+wrap decoding in `domain_rules()`, so that text reaches the client verbatim as
+a 422.
+
+*Rationale:* the domain may not import pydantic-settings or a framework, and
+D31 keeps it on frozen dataclasses, so there is no schema library to lean on
+below the API layer — but the same documents arrive from three places (an HTTP
+body, a stored row being read back, WP-8's MCP tools) and only one of them has
+pydantic in front of it. Hand-written decoders otherwise rot into inconsistent
+messages and bare `KeyError`s; the helpers make the failure mode uniform for
+one afternoon's work. Refusing unknown fields matters more here than usual: a
+silently ignored key in a prescription is a lost edit to a training plan, and
+the client cannot tell a typo from an unsupported feature.
+
+## D53 — A ramp's two ends must be the same kind of target
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`RampStep` refuses a channel whose start and end targets disagree in kind — a
+ramp from `60 % FTP` to `250 W` — and refuses two percentage ends that name
+different anchors, `60 % LTHR` to `90 % max_hr`. Both ends of a channel are a
+percentage of one anchor, or both are absolute.
+
+This displaces allowing the mixed form and defining an interpolation for it in
+WP-7, which is what the model did until now: the rule was "same channels", and
+nothing said the quantities had to be comparable.
+
+*Rationale:* there is no interpolation between a fraction of an unresolved
+number and an absolute one. Whatever WP-7 chose, the answer would depend on
+when the anchor resolves — the prescription would mean one thing against
+today's FTP and another against the FTP pinned at planning time — and a
+prescription whose meaning depends on resolution order is not frozen, which is
+the whole of invariant 4. Refusing it at construction costs a planner nothing:
+two steps say the same thing unambiguously. The rule is enforced in
+`__post_init__`, so it reaches the API, the MCP tools and a stored document
+being read back identically.
+
+## D54 — A post-hoc edit keeps the pins it still needs, drops the rest, and pins what it introduces
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+Editing a matched session's intent keeps the pinned anchor versions — but only
+for the anchors the *new* version still refers to. A pin whose anchor the edit
+removed is dropped, and an anchor the edit introduced is pinned at the version
+in force today, not left unpinned.
+
+This displaces the simpler reading of invariant 4's "keep the original pins",
+which would carry the whole map forward unchanged.
+
+*Rationale:* the map cannot be carried wholesale, because `SessionIntent`
+rejects both an unpinned required anchor and a pin nothing refers to — the two
+rules that make a stored intent resolvable and its score reproducible. So the
+question is only what to do at the edges, and each edge has one honest answer.
+A dropped anchor has nothing left to resolve; keeping its pin would claim a
+resolution the prescription has no use for. An introduced anchor has no older
+answer to preserve: it was never part of what the athlete executed against, so
+"the version in force when it entered the prescription" is the only version it
+was ever judged by. The pins that carry the athlete's actual execution — the
+ones still required — are untouched, which is what the invariant is protecting.

@@ -13,12 +13,18 @@ from app.api.deps import require_session
 from app.api.routes.anchors import router as anchors_router
 from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.exercises import router as exercises_router
 from app.api.routes.health import router as health_router
+from app.api.routes.planned_sessions import router as planned_sessions_router
+from app.api.routes.purposes import router as purposes_router
+from app.api.routes.workouts import labels_router as workout_labels_router
+from app.api.routes.workouts import router as workouts_router
 from app.api.routes.zones import router as zones_router
 from app.core.config import get_settings
 from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
+from app.services.templates import verify_bundled_resources
 
 #: Runtime data tree created on startup, relative to `settings.data.root`.
 DATA_SUBDIRECTORIES = ("inbox", "originals", "streams", "quarantine")
@@ -36,6 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup/shutdown."""
     configure_logging()
     ensure_data_directories()
+    # Loud and early: a purpose template or catalogue entry the domain rejects
+    # stops the boot, rather than surfacing months later as a session that
+    # cannot be scored. Reading files only — nothing here touches the database,
+    # so a successful boot still does not depend on one.
+    verify_bundled_resources()
     app.state.scheduler = create_scheduler()
     get_logger(__name__).info("application_started")
     yield
@@ -104,6 +115,11 @@ def create_app() -> FastAPI:
     api.include_router(athlete_router)
     api.include_router(anchors_router)
     api.include_router(zones_router)
+    api.include_router(exercises_router)
+    api.include_router(purposes_router)
+    api.include_router(workouts_router)
+    api.include_router(workout_labels_router)
+    api.include_router(planned_sessions_router)
     app.include_router(api)
 
     return app

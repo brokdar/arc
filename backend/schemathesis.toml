@@ -57,3 +57,34 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/anchors/{anchor_version_id}/zones"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# WP-2 adds four more write operations whose grammar a JSON schema cannot
+# express, all pinned by unit tests (test_workouts_api, test_planned_sessions_api):
+#
+#   * a step states exactly one of duration_s and distance_m, repeat blocks
+#     nest at most four deep, a percentage target names an anchor its channel
+#     derives from, an absolute one uses that channel's unit (app.domain.workout),
+#   * a strength prescription references the bundled exercise catalogue,
+#   * a planned session takes exactly one of workout_id and structure, its
+#     purpose and workout agree on a discipline, and every anchor it refers to
+#     has a version in force (build-plan invariant 4).
+
+[[operations]]
+include-name = "POST /api/v1/workouts"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/workouts/{workout_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "POST /api/v1/planned-sessions"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/planned-sessions/{planned_session_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

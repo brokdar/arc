@@ -1,6 +1,54 @@
 {
   "components": {
     "schemas": {
+      "AbsoluteLimitSchema": {
+        "additionalProperties": false,
+        "description": "A ceiling expressed in the channel's own unit.",
+        "properties": {
+          "kind": {
+            "const": "absolute",
+            "default": "absolute",
+            "title": "Kind",
+            "type": "string"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/ChannelUnit"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": ["value", "unit"],
+        "title": "AbsoluteLimitSchema",
+        "type": "object"
+      },
+      "AbsoluteRangeSchema": {
+        "additionalProperties": false,
+        "description": "A target expressed as an absolute range in the channel's unit.",
+        "properties": {
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "kind": {
+            "const": "absolute",
+            "default": "absolute",
+            "title": "Kind",
+            "type": "string"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/ChannelUnit"
+          }
+        },
+        "required": ["low", "high", "unit"],
+        "title": "AbsoluteRangeSchema",
+        "type": "object"
+      },
       "AnchorSource": {
         "description": "Who appended the version. Distinct from :class:`Provenance`.\n\nProvenance is about the *value*; source is about the *writer*, and the\nagent may never disguise itself as the athlete (build plan \u00a70.7).",
         "enum": ["athlete", "agent"],
@@ -329,6 +377,183 @@
         "title": "AthleteUpdate",
         "type": "object"
       },
+      "BandSchema": {
+        "additionalProperties": false,
+        "description": "An acceptable range around a step's prescribed target, as fractions.",
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          }
+        },
+        "required": ["channel", "low", "high"],
+        "title": "BandSchema",
+        "type": "object"
+      },
+      "CeilingSchema": {
+        "additionalProperties": false,
+        "description": "No more than this long spent above this limit on this channel.",
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "kind": {
+            "const": "ceiling",
+            "default": "ceiling",
+            "title": "Kind",
+            "type": "string"
+          },
+          "limit": {
+            "discriminator": {
+              "mapping": {
+                "absolute": "#/components/schemas/AbsoluteLimitSchema",
+                "percent_of_anchor": "#/components/schemas/PercentLimitSchema"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PercentLimitSchema"
+              },
+              {
+                "$ref": "#/components/schemas/AbsoluteLimitSchema"
+              }
+            ],
+            "title": "Limit"
+          },
+          "max_seconds_above": {
+            "title": "Max Seconds Above",
+            "type": "integer"
+          }
+        },
+        "required": ["channel", "limit", "max_seconds_above"],
+        "title": "CeilingSchema",
+        "type": "object"
+      },
+      "Channel": {
+        "description": "A prescribable (and recordable) measurement channel.",
+        "enum": ["power", "hr", "cadence"],
+        "title": "Channel",
+        "type": "string"
+      },
+      "ChannelUnit": {
+        "description": "The unit each channel is measured in.",
+        "enum": ["W", "bpm", "rpm"],
+        "title": "ChannelUnit",
+        "type": "string"
+      },
+      "Discipline": {
+        "description": "The two disciplines the MVP trains.",
+        "enum": ["cycling", "strength"],
+        "title": "Discipline",
+        "type": "string"
+      },
+      "DurationFloorSchema": {
+        "additionalProperties": false,
+        "description": "The session must last at least this long.",
+        "properties": {
+          "kind": {
+            "const": "duration_floor",
+            "default": "duration_floor",
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_seconds": {
+            "title": "Min Seconds",
+            "type": "integer"
+          }
+        },
+        "required": ["min_seconds"],
+        "title": "DurationFloorSchema",
+        "type": "object"
+      },
+      "EnduranceStructureSchema-Input": {
+        "additionalProperties": false,
+        "description": "A structured endurance prescription.",
+        "properties": {
+          "discipline": {
+            "const": "cycling",
+            "default": "cycling",
+            "title": "Discipline",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ramp": "#/components/schemas/RampStepSchema",
+                  "repeat": "#/components/schemas/RepeatBlockSchema-Input",
+                  "steady": "#/components/schemas/SteadyStepSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SteadyStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RampStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RepeatBlockSchema-Input"
+                }
+              ]
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": ["steps"],
+        "title": "EnduranceStructureSchema",
+        "type": "object"
+      },
+      "EnduranceStructureSchema-Output": {
+        "additionalProperties": false,
+        "description": "A structured endurance prescription.",
+        "properties": {
+          "discipline": {
+            "const": "cycling",
+            "default": "cycling",
+            "title": "Discipline",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ramp": "#/components/schemas/RampStepSchema",
+                  "repeat": "#/components/schemas/RepeatBlockSchema-Output",
+                  "steady": "#/components/schemas/SteadyStepSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SteadyStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RampStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RepeatBlockSchema-Output"
+                }
+              ]
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": ["steps"],
+        "title": "EnduranceStructureSchema",
+        "type": "object"
+      },
       "ErrorDetail": {
         "description": "Error response body, as produced by the AppError handler.\n\nReference it in endpoint ``responses={...}`` declarations so error\nstatuses are part of the OpenAPI contract (and the generated frontend\ntypes).",
         "properties": {
@@ -339,6 +564,62 @@
         },
         "required": ["detail"],
         "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ExerciseCategory": {
+        "description": "Movement families the catalogue is organised by.\n\nPatterns rather than muscles: the build plan names squat/hinge/press/pull/\ncore, and the remaining four cover what a general strength programme needs\nwithout inviting a taxonomy argument.",
+        "enum": [
+          "squat",
+          "hinge",
+          "lunge",
+          "press",
+          "pull",
+          "core",
+          "carry",
+          "mobility",
+          "conditioning"
+        ],
+        "title": "ExerciseCategory",
+        "type": "string"
+      },
+      "ExerciseRead": {
+        "description": "One catalogue movement as returned by the API.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/ExerciseCategory"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "unilateral": {
+            "title": "Unilateral",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "category",
+          "unilateral",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ExerciseRead",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -364,6 +645,54 @@
         },
         "required": ["status"],
         "title": "HealthStatus",
+        "type": "object"
+      },
+      "LoadKind": {
+        "description": "How the load of a prescribed set is expressed.\n\nFour kinds because four are genuinely different questions: an absolute\nweight, a fraction of a one-rep max, a target effort, and \"your own body\".\nScoring treats them differently \u2014 `load_within` tolerance is meaningless\nfor bodyweight \u2014 so the kind is part of the value, not a formatting hint.",
+        "enum": ["kg", "percent_e1rm", "rpe", "bodyweight"],
+        "title": "LoadKind",
+        "type": "string"
+      },
+      "LoadSchema": {
+        "additionalProperties": false,
+        "description": "How heavy a prescribed set is.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/LoadKind"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": ["kind"],
+        "title": "LoadSchema",
+        "type": "object"
+      },
+      "LoadWithinSchema": {
+        "additionalProperties": false,
+        "description": "Loads used within this relative tolerance of what was prescribed.",
+        "properties": {
+          "kind": {
+            "const": "load_within",
+            "default": "load_within",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pct_tolerance": {
+            "title": "Pct Tolerance",
+            "type": "number"
+          }
+        },
+        "required": ["pct_tolerance"],
+        "title": "LoadWithinSchema",
         "type": "object"
       },
       "LoginRequest": {
@@ -404,22 +733,975 @@
         "title": "Page[AnchorVersionRead]",
         "type": "object"
       },
+      "Page_ExerciseRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[ExerciseRead]",
+        "type": "object"
+      },
+      "Page_PlannedSessionRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedSessionRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[PlannedSessionRead]",
+        "type": "object"
+      },
+      "Page_WorkoutRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkoutRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[WorkoutRead]",
+        "type": "object"
+      },
+      "PercentLimitSchema": {
+        "additionalProperties": false,
+        "description": "A ceiling expressed as a fraction of an anchor.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "kind": {
+            "const": "percent_of_anchor",
+            "default": "percent_of_anchor",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pct": {
+            "title": "Pct",
+            "type": "number"
+          }
+        },
+        "required": ["anchor_type", "pct"],
+        "title": "PercentLimitSchema",
+        "type": "object"
+      },
+      "PercentOfAnchorSchema": {
+        "additionalProperties": false,
+        "description": "A target expressed as a fraction range of an anchor.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "kind": {
+            "const": "percent_of_anchor",
+            "default": "percent_of_anchor",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pct_high": {
+            "title": "Pct High",
+            "type": "number"
+          },
+          "pct_low": {
+            "title": "Pct Low",
+            "type": "number"
+          }
+        },
+        "required": ["anchor_type", "pct_low", "pct_high"],
+        "title": "PercentOfAnchorSchema",
+        "type": "object"
+      },
+      "PlannedSessionCreate": {
+        "additionalProperties": false,
+        "description": "Payload for planning a session.",
+        "properties": {
+          "coach_notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Notes"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "cycling": "#/components/schemas/EnduranceStructureSchema-Input",
+                    "strength": "#/components/schemas/StrengthStructureSchema"
+                  },
+                  "propertyName": "discipline"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/EnduranceStructureSchema-Input"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StrengthStructureSchema"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure"
+          },
+          "success_criteria": {
+            "anyOf": [
+              {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "ceiling": "#/components/schemas/CeilingSchema",
+                      "duration_floor": "#/components/schemas/DurationFloorSchema",
+                      "load_within": "#/components/schemas/LoadWithinSchema",
+                      "sets_completed": "#/components/schemas/SetsCompletedSchema",
+                      "time_in_band": "#/components/schemas/TimeInBandSchema"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TimeInBandSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DurationFloorSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CeilingSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SetsCompletedSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/LoadWithinSchema"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Criteria"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": ["date", "purpose"],
+        "title": "PlannedSessionCreate",
+        "type": "object"
+      },
+      "PlannedSessionRead": {
+        "description": "One planned session, with the intent version in force.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/SessionIntentRead"
+          },
+          "intent_versions": {
+            "title": "Intent Versions",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "status",
+          "intent",
+          "intent_versions",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PlannedSessionRead",
+        "type": "object"
+      },
+      "PlannedSessionUpdate": {
+        "additionalProperties": false,
+        "description": "Payload for updating a planned session. Omitted fields are unchanged.\n\nTouching ``purpose``, ``intent_text``, ``coach_notes``,\n``success_criteria``, ``workout_id`` or ``structure`` appends a new intent\nversion. Touching only ``date`` or ``status`` does not.",
+        "properties": {
+          "coach_notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Notes"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Purpose"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionStatus-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "cycling": "#/components/schemas/EnduranceStructureSchema-Input",
+                    "strength": "#/components/schemas/StrengthStructureSchema"
+                  },
+                  "propertyName": "discipline"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/EnduranceStructureSchema-Input"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StrengthStructureSchema"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure"
+          },
+          "success_criteria": {
+            "anyOf": [
+              {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "ceiling": "#/components/schemas/CeilingSchema",
+                      "duration_floor": "#/components/schemas/DurationFloorSchema",
+                      "load_within": "#/components/schemas/LoadWithinSchema",
+                      "sets_completed": "#/components/schemas/SetsCompletedSchema",
+                      "time_in_band": "#/components/schemas/TimeInBandSchema"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TimeInBandSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DurationFloorSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CeilingSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SetsCompletedSchema"
+                    },
+                    {
+                      "$ref": "#/components/schemas/LoadWithinSchema"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Criteria"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "title": "PlannedSessionUpdate",
+        "type": "object"
+      },
       "Provenance": {
         "description": "Where an anchor value came from \u2014 ordered weakest to strongest.\n\nThe order matters: it is what later work packages compare when deciding\nwhether a new value should displace the one in use.",
         "enum": ["assumed", "estimated", "athlete_reported", "tested"],
         "title": "Provenance",
         "type": "string"
       },
-      "SessionStatus": {
-        "description": "Whether the caller currently holds an authenticated session.",
+      "Purpose": {
+        "description": "Why a session exists. One vocabulary, two disciplines.",
+        "enum": [
+          "recovery",
+          "endurance",
+          "tempo",
+          "sweet_spot",
+          "threshold",
+          "vo2max",
+          "anaerobic",
+          "neuromuscular",
+          "unstructured",
+          "technique",
+          "test",
+          "max_strength",
+          "strength_endurance",
+          "hypertrophy",
+          "power",
+          "core",
+          "mobility",
+          "conditioning"
+        ],
+        "title": "Purpose",
+        "type": "string"
+      },
+      "PurposeTemplateRead": {
+        "description": "One purpose, with what it starts with and how it is judged.",
         "properties": {
-          "authenticated": {
-            "title": "Authenticated",
-            "type": "boolean"
+          "axes": {
+            "items": {
+              "$ref": "#/components/schemas/ScoringAxis"
+            },
+            "title": "Axes",
+            "type": "array"
+          },
+          "default_criteria": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ceiling": "#/components/schemas/CeilingSchema",
+                  "duration_floor": "#/components/schemas/DurationFloorSchema",
+                  "load_within": "#/components/schemas/LoadWithinSchema",
+                  "sets_completed": "#/components/schemas/SetsCompletedSchema",
+                  "time_in_band": "#/components/schemas/TimeInBandSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TimeInBandSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/DurationFloorSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/CeilingSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/SetsCompletedSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/LoadWithinSchema"
+                }
+              ]
+            },
+            "title": "Default Criteria",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
           }
         },
-        "required": ["authenticated"],
+        "required": ["purpose", "discipline", "axes", "default_criteria"],
+        "title": "PurposeTemplateRead",
+        "type": "object"
+      },
+      "PurposeTemplatesRead": {
+        "description": "The whole vocabulary, in the order the build plan states it.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PurposeTemplateRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "PurposeTemplatesRead",
+        "type": "object"
+      },
+      "RampStepSchema": {
+        "additionalProperties": false,
+        "description": "Move from one set of targets to another over a duration or distance.",
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "end_targets": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "absolute": "#/components/schemas/AbsoluteRangeSchema",
+                  "percent_of_anchor": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/AbsoluteRangeSchema"
+                }
+              ]
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "title": "End Targets",
+            "type": "object"
+          },
+          "kind": {
+            "const": "ramp",
+            "default": "ramp",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/StepRole",
+            "default": "work"
+          },
+          "start_targets": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "absolute": "#/components/schemas/AbsoluteRangeSchema",
+                  "percent_of_anchor": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/AbsoluteRangeSchema"
+                }
+              ]
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "title": "Start Targets",
+            "type": "object"
+          }
+        },
+        "required": ["start_targets", "end_targets"],
+        "title": "RampStepSchema",
+        "type": "object"
+      },
+      "RepeatBlockSchema-Input": {
+        "additionalProperties": false,
+        "description": "Perform ``children`` ``times`` over.",
+        "properties": {
+          "children": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ramp": "#/components/schemas/RampStepSchema",
+                  "repeat": "#/components/schemas/RepeatBlockSchema-Input",
+                  "steady": "#/components/schemas/SteadyStepSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SteadyStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RampStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RepeatBlockSchema-Input"
+                }
+              ]
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "kind": {
+            "const": "repeat",
+            "default": "repeat",
+            "title": "Kind",
+            "type": "string"
+          },
+          "times": {
+            "title": "Times",
+            "type": "integer"
+          }
+        },
+        "required": ["times", "children"],
+        "title": "RepeatBlockSchema",
+        "type": "object"
+      },
+      "RepeatBlockSchema-Output": {
+        "additionalProperties": false,
+        "description": "Perform ``children`` ``times`` over.",
+        "properties": {
+          "children": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ramp": "#/components/schemas/RampStepSchema",
+                  "repeat": "#/components/schemas/RepeatBlockSchema-Output",
+                  "steady": "#/components/schemas/SteadyStepSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SteadyStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RampStepSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/RepeatBlockSchema-Output"
+                }
+              ]
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "kind": {
+            "const": "repeat",
+            "default": "repeat",
+            "title": "Kind",
+            "type": "string"
+          },
+          "times": {
+            "title": "Times",
+            "type": "integer"
+          }
+        },
+        "required": ["times", "children"],
+        "title": "RepeatBlockSchema",
+        "type": "object"
+      },
+      "ScoringAxis": {
+        "description": "The axes WP-7 scores a session on.\n\nNamed here rather than in WP-7 because the templates reference them, and\nthe templates are written now. ``RESPONSE`` and ``FUELLING`` are in the\nvocabulary but out of MVP scope: WP-7 returns ``not_assessed(deferred)``\nfor them, so the shape exists without the behaviour.",
+        "enum": [
+          "completion",
+          "adherence",
+          "discipline",
+          "pacing",
+          "sets_load",
+          "response",
+          "fuelling"
+        ],
+        "title": "ScoringAxis",
+        "type": "string"
+      },
+      "SessionIntentRead": {
+        "description": "One version of a planned session's intent.\n\nCarries WP-1's versioning vocabulary verbatim, because it is one of the\nversioned artefacts invariant 1 describes.",
+        "properties": {
+          "artefact_id": {
+            "format": "uuid",
+            "title": "Artefact Id",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "coach_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Notes"
+          },
+          "edited_post_hoc": {
+            "title": "Edited Post Hoc",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "pinned_anchor_versions": {
+            "additionalProperties": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/AnchorType"
+            },
+            "title": "Pinned Anchor Versions",
+            "type": "object"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "recompute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recompute Reason"
+          },
+          "structure": {
+            "discriminator": {
+              "mapping": {
+                "cycling": "#/components/schemas/EnduranceStructureSchema-Output",
+                "strength": "#/components/schemas/StrengthStructureSchema"
+              },
+              "propertyName": "discipline"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnduranceStructureSchema-Output"
+              },
+              {
+                "$ref": "#/components/schemas/StrengthStructureSchema"
+              }
+            ],
+            "title": "Structure"
+          },
+          "success_criteria": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "ceiling": "#/components/schemas/CeilingSchema",
+                  "duration_floor": "#/components/schemas/DurationFloorSchema",
+                  "load_within": "#/components/schemas/LoadWithinSchema",
+                  "sets_completed": "#/components/schemas/SetsCompletedSchema",
+                  "time_in_band": "#/components/schemas/TimeInBandSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TimeInBandSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/DurationFloorSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/CeilingSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/SetsCompletedSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/LoadWithinSchema"
+                }
+              ]
+            },
+            "title": "Success Criteria",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/WorkoutSummarySchema"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": [
+          "id",
+          "artefact_id",
+          "version",
+          "as_of",
+          "superseded_by",
+          "recompute_reason",
+          "edited_post_hoc",
+          "purpose",
+          "intent_text",
+          "coach_notes",
+          "success_criteria",
+          "pinned_anchor_versions",
+          "workout_id",
+          "structure",
+          "summary"
+        ],
+        "title": "SessionIntentRead",
+        "type": "object"
+      },
+      "SessionIntentsRead": {
+        "description": "Every intent version of one session, oldest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionIntentRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "SessionIntentsRead",
+        "type": "object"
+      },
+      "SessionStatus-Input": {
+        "description": "Where a planned session ended up.\n\n``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6\nsets it when a low-similarity activity is deliberately linked; the member\nexists now so the column does not need a migration then.",
+        "enum": ["planned", "completed", "missed", "displaced"],
         "title": "SessionStatus",
+        "type": "string"
+      },
+      "SetsCompletedSchema": {
+        "additionalProperties": false,
+        "description": "At least this fraction of the prescribed strength sets performed.",
+        "properties": {
+          "kind": {
+            "const": "sets_completed",
+            "default": "sets_completed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_fraction": {
+            "title": "Min Fraction",
+            "type": "number"
+          }
+        },
+        "required": ["min_fraction"],
+        "title": "SetsCompletedSchema",
         "type": "object"
       },
       "Sex": {
@@ -433,6 +1715,283 @@
         "enum": ["fresh", "aging", "stale"],
         "title": "StalenessState",
         "type": "string"
+      },
+      "SteadyStepSchema": {
+        "additionalProperties": false,
+        "description": "Hold a set of targets for a duration or a distance.",
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "kind": {
+            "const": "steady",
+            "default": "steady",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/StepRole",
+            "default": "work"
+          },
+          "targets": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "absolute": "#/components/schemas/AbsoluteRangeSchema",
+                  "percent_of_anchor": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PercentOfAnchorSchema"
+                },
+                {
+                  "$ref": "#/components/schemas/AbsoluteRangeSchema"
+                }
+              ]
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "title": "Targets",
+            "type": "object"
+          }
+        },
+        "title": "SteadyStepSchema",
+        "type": "object"
+      },
+      "StepRole": {
+        "description": "What a step is for within the session.\n\nRoles are what a success criterion selects on (``time in band across the\nwork steps``) and what WP-5's alignment matches against, so they are part\nof the prescription rather than a display hint.",
+        "enum": ["warmup", "work", "recovery", "rest", "cooldown"],
+        "title": "StepRole",
+        "type": "string"
+      },
+      "StepSelectorKind": {
+        "description": "How a criterion picks the steps it applies to.",
+        "enum": ["all", "role", "index"],
+        "title": "StepSelectorKind",
+        "type": "string"
+      },
+      "StepSelectorSchema": {
+        "additionalProperties": false,
+        "description": "Which flattened steps a criterion applies to.",
+        "properties": {
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StepSelectorKind"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["kind"],
+        "title": "StepSelectorSchema",
+        "type": "object"
+      },
+      "StrengthGroupSchema": {
+        "additionalProperties": false,
+        "description": "One or more lines performed together; more than one is a superset.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StrengthSetSchema"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": ["items"],
+        "title": "StrengthGroupSchema",
+        "type": "object"
+      },
+      "StrengthSetSchema": {
+        "additionalProperties": false,
+        "description": "One line of a strength prescription.",
+        "properties": {
+          "exercise_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "load": {
+            "$ref": "#/components/schemas/LoadSchema"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "rest_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rest S"
+          },
+          "rir": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rir"
+          },
+          "sets": {
+            "title": "Sets",
+            "type": "integer"
+          },
+          "tempo": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tempo"
+          }
+        },
+        "required": ["exercise_id", "sets", "reps", "load"],
+        "title": "StrengthSetSchema",
+        "type": "object"
+      },
+      "StrengthStructureSchema": {
+        "additionalProperties": false,
+        "description": "A strength prescription.",
+        "properties": {
+          "discipline": {
+            "const": "strength",
+            "default": "strength",
+            "title": "Discipline",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/StrengthGroupSchema"
+            },
+            "title": "Groups",
+            "type": "array"
+          }
+        },
+        "required": ["groups"],
+        "title": "StrengthStructureSchema",
+        "type": "object"
+      },
+      "TimeInBandSchema": {
+        "additionalProperties": false,
+        "description": "At least ``min_fraction`` of the selected steps' time inside the band.",
+        "properties": {
+          "band": {
+            "$ref": "#/components/schemas/BandSchema"
+          },
+          "kind": {
+            "const": "time_in_band",
+            "default": "time_in_band",
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_fraction": {
+            "title": "Min Fraction",
+            "type": "number"
+          },
+          "selector": {
+            "$ref": "#/components/schemas/StepSelectorSchema"
+          }
+        },
+        "required": ["selector", "band", "min_fraction"],
+        "title": "TimeInBandSchema",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -488,6 +2047,317 @@
         },
         "required": ["detail"],
         "title": "ValidationErrorDetail",
+        "type": "object"
+      },
+      "WorkoutCreate": {
+        "additionalProperties": false,
+        "description": "Payload for adding a workout to the library.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "structure": {
+            "discriminator": {
+              "mapping": {
+                "cycling": "#/components/schemas/EnduranceStructureSchema-Input",
+                "strength": "#/components/schemas/StrengthStructureSchema"
+              },
+              "propertyName": "discipline"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnduranceStructureSchema-Input"
+              },
+              {
+                "$ref": "#/components/schemas/StrengthStructureSchema"
+              }
+            ],
+            "title": "Structure"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 60,
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": ["name", "structure"],
+        "title": "WorkoutCreate",
+        "type": "object"
+      },
+      "WorkoutLabelsRead": {
+        "description": "The folder labels and tags currently in use across the library.",
+        "properties": {
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": ["folders", "tags"],
+        "title": "WorkoutLabelsRead",
+        "type": "object"
+      },
+      "WorkoutRead": {
+        "description": "One library workout as returned by the API.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "structure": {
+            "discriminator": {
+              "mapping": {
+                "cycling": "#/components/schemas/EnduranceStructureSchema-Output",
+                "strength": "#/components/schemas/StrengthStructureSchema"
+              },
+              "propertyName": "discipline"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EnduranceStructureSchema-Output"
+              },
+              {
+                "$ref": "#/components/schemas/StrengthStructureSchema"
+              }
+            ],
+            "title": "Structure"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/WorkoutSummarySchema"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "discipline",
+          "folder",
+          "tags",
+          "structure",
+          "summary",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "WorkoutRead",
+        "type": "object"
+      },
+      "WorkoutSummarySchema": {
+        "description": "Derived facts about a prescription. Computed on read, never stored.",
+        "properties": {
+          "step_count": {
+            "title": "Step Count",
+            "type": "integer"
+          },
+          "total_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Duration S"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          }
+        },
+        "required": ["step_count", "total_duration_s", "total_sets"],
+        "title": "WorkoutSummarySchema",
+        "type": "object"
+      },
+      "WorkoutUpdate": {
+        "additionalProperties": false,
+        "description": "Payload for partially updating a workout. Omitted fields are unchanged.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "cycling": "#/components/schemas/EnduranceStructureSchema-Input",
+                    "strength": "#/components/schemas/StrengthStructureSchema"
+                  },
+                  "propertyName": "discipline"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/EnduranceStructureSchema-Input"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StrengthStructureSchema"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structure"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 60,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "title": "WorkoutUpdate",
         "type": "object"
       },
       "ZoneModel": {
@@ -573,6 +2443,24 @@
         "required": ["anchor_version", "model", "zones"],
         "title": "ZonesRead",
         "type": "object"
+      },
+      "app__api__schemas__auth__SessionStatus": {
+        "description": "Whether the caller currently holds an authenticated session.",
+        "properties": {
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          }
+        },
+        "required": ["authenticated"],
+        "title": "SessionStatus",
+        "type": "object"
+      },
+      "app__domain__sessions__SessionStatus": {
+        "description": "Where a planned session ended up.\n\n``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6\nsets it when a low-similarity activity is deliberately linked; the member\nexists now so the column does not need a migration then.",
+        "enum": ["planned", "completed", "missed", "displaced"],
+        "title": "SessionStatus",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -1279,7 +3167,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionStatus"
+                  "$ref": "#/components/schemas/app__api__schemas__auth__SessionStatus"
                 }
               }
             },
@@ -1288,6 +3176,1215 @@
         },
         "summary": "Read Session",
         "tags": ["auth"]
+      }
+    },
+    "/api/v1/exercises": {
+      "get": {
+        "description": "List catalogue exercises, by family then name.",
+        "operationId": "exercises-list_exercises",
+        "parameters": [
+          {
+            "description": "Restrict to one movement family; omit for all of them.",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExerciseCategory",
+              "description": "Restrict to one movement family; omit for all of them."
+            }
+          },
+          {
+            "description": "Case-insensitive substring of the name.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "description": "Case-insensitive substring of the name.",
+              "maxLength": 100,
+              "pattern": "^[^\\x00]*$",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ExerciseRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Exercises",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exercises/{exercise_id}": {
+      "get": {
+        "description": "Get one catalogue exercise by its slug.",
+        "operationId": "exercises-get_exercise",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExerciseRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Exercise",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/planned-sessions": {
+      "get": {
+        "description": "List planned sessions in date order, optionally within a date range.",
+        "operationId": "planned-sessions-list_planned_sessions",
+        "parameters": [
+          {
+            "description": "Earliest athlete-local date to include (inclusive).",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "description": "Earliest athlete-local date to include (inclusive).",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Latest athlete-local date to include (inclusive).",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "description": "Latest athlete-local date to include (inclusive).",
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to one status; omit for all of them.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SessionStatus-Input",
+              "description": "Restrict to one status; omit for all of them."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PlannedSessionRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Planned Sessions",
+        "tags": ["planned-sessions"]
+      },
+      "post": {
+        "description": "Plan a session, freezing its prescription and pinning its anchors.",
+        "operationId": "planned-sessions-create_planned_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Planned Session",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/planned-sessions/{planned_session_id}": {
+      "delete": {
+        "description": "Remove a planned session and its whole intent chain.",
+        "operationId": "planned-sessions-delete_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Planned Session",
+        "tags": ["planned-sessions"]
+      },
+      "get": {
+        "description": "Get one planned session with the intent version in force.",
+        "operationId": "planned-sessions-get_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Planned Session",
+        "tags": ["planned-sessions"]
+      },
+      "patch": {
+        "description": "Update a planned session, appending an intent version if intent changed.\n\nEditing intent before the session has been matched re-pins its anchors;\nediting it afterwards keeps the pins, flags the new version\n`edited_post_hoc`, and triggers a rescore (build-plan invariant 4).",
+        "operationId": "planned-sessions-update_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Planned Session",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/planned-sessions/{planned_session_id}/intents": {
+      "get": {
+        "description": "List every intent version of one session, oldest first.\n\nUnpaged: intent versions are the history of one session's prescription,\nand there are a handful even for a much-edited one.",
+        "operationId": "planned-sessions-list_planned_session_intents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionIntentsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Planned Session Intents",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/planned-sessions/{planned_session_id}/intents/{version}": {
+      "get": {
+        "description": "Get one intent version \u2014 what was prescribed at that point.",
+        "operationId": "planned-sessions-get_planned_session_intent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionIntentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Planned Session Intent",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/purposes": {
+      "get": {
+        "description": "List every purpose with its scoring axes and default success criteria.",
+        "operationId": "purposes-list_purposes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurposeTemplatesRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Purposes",
+        "tags": ["purposes"]
+      }
+    },
+    "/api/v1/purposes/{purpose}": {
+      "get": {
+        "description": "Get one purpose's template.\n\nNo 404 is declared because none is reachable: the path parameter is the\npurpose enum, so an unknown value is a 422 from the parser, and every\nknown value has a template or the application would not have booted.",
+        "operationId": "purposes-get_purpose",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Purpose"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurposeTemplateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Purpose",
+        "tags": ["purposes"]
+      }
+    },
+    "/api/v1/workout-labels": {
+      "get": {
+        "description": "List the folder labels and tags in use across the library.\n\nOne call rather than two: the workout creator needs both at once, to offer\nwhat already exists instead of inviting a fourth spelling of \"base\".",
+        "operationId": "workouts-list_workout_labels",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutLabelsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Workout Labels",
+        "tags": ["workouts"]
+      }
+    },
+    "/api/v1/workouts": {
+      "get": {
+        "description": "List library workouts, newest first, with optional search and filters.",
+        "operationId": "workouts-list_workouts",
+        "parameters": [
+          {
+            "description": "Case-insensitive substring of name or description.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "description": "Case-insensitive substring of name or description.",
+              "maxLength": 200,
+              "pattern": "^[^\\x00]*$",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to one folder label.",
+            "in": "query",
+            "name": "folder",
+            "required": false,
+            "schema": {
+              "description": "Restrict to one folder label.",
+              "maxLength": 200,
+              "pattern": "^[^\\x00]*$",
+              "title": "Folder",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to workouts carrying this tag.",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "description": "Restrict to workouts carrying this tag.",
+              "maxLength": 60,
+              "pattern": "^[^\\x00]*$",
+              "title": "Tag",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to one discipline; omit for both.",
+            "in": "query",
+            "name": "discipline",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Discipline",
+              "description": "Restrict to one discipline; omit for both."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkoutRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Workouts",
+        "tags": ["workouts"]
+      },
+      "post": {
+        "description": "Add a workout to the library.",
+        "operationId": "workouts-create_workout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkoutCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Workout violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Workout",
+        "tags": ["workouts"]
+      }
+    },
+    "/api/v1/workouts/{workout_id}": {
+      "delete": {
+        "description": "Remove a workout from the library.\n\nPlanned sessions built from it keep their own frozen snapshot; only the\nprovenance link is nulled.",
+        "operationId": "workouts-delete_workout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workout_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workout Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such workout"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Workout",
+        "tags": ["workouts"]
+      },
+      "get": {
+        "description": "Get one library workout by id.",
+        "operationId": "workouts-get_workout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workout_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workout Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such workout"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Workout",
+        "tags": ["workouts"]
+      },
+      "patch": {
+        "description": "Partially update a library workout.",
+        "operationId": "workouts-update_workout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workout_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workout Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkoutUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such workout"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Workout violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Workout",
+        "tags": ["workouts"]
       }
     },
     "/api/v1/zones": {

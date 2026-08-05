@@ -201,6 +201,267 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/exercises": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Exercises
+     * @description List catalogue exercises, by family then name.
+     */
+    get: operations["exercises-list_exercises"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exercises/{exercise_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Exercise
+     * @description Get one catalogue exercise by its slug.
+     */
+    get: operations["exercises-get_exercise"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/planned-sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Planned Sessions
+     * @description List planned sessions in date order, optionally within a date range.
+     */
+    get: operations["planned-sessions-list_planned_sessions"];
+    put?: never;
+    /**
+     * Create Planned Session
+     * @description Plan a session, freezing its prescription and pinning its anchors.
+     */
+    post: operations["planned-sessions-create_planned_session"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/planned-sessions/{planned_session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Planned Session
+     * @description Get one planned session with the intent version in force.
+     */
+    get: operations["planned-sessions-get_planned_session"];
+    put?: never;
+    post?: never;
+    /**
+     * Delete Planned Session
+     * @description Remove a planned session and its whole intent chain.
+     */
+    delete: operations["planned-sessions-delete_planned_session"];
+    options?: never;
+    head?: never;
+    /**
+     * Update Planned Session
+     * @description Update a planned session, appending an intent version if intent changed.
+     *
+     *     Editing intent before the session has been matched re-pins its anchors;
+     *     editing it afterwards keeps the pins, flags the new version
+     *     `edited_post_hoc`, and triggers a rescore (build-plan invariant 4).
+     */
+    patch: operations["planned-sessions-update_planned_session"];
+    trace?: never;
+  };
+  "/api/v1/planned-sessions/{planned_session_id}/intents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Planned Session Intents
+     * @description List every intent version of one session, oldest first.
+     *
+     *     Unpaged: intent versions are the history of one session's prescription,
+     *     and there are a handful even for a much-edited one.
+     */
+    get: operations["planned-sessions-list_planned_session_intents"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/planned-sessions/{planned_session_id}/intents/{version}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Planned Session Intent
+     * @description Get one intent version — what was prescribed at that point.
+     */
+    get: operations["planned-sessions-get_planned_session_intent"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/purposes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Purposes
+     * @description List every purpose with its scoring axes and default success criteria.
+     */
+    get: operations["purposes-list_purposes"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/purposes/{purpose}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Purpose
+     * @description Get one purpose's template.
+     *
+     *     No 404 is declared because none is reachable: the path parameter is the
+     *     purpose enum, so an unknown value is a 422 from the parser, and every
+     *     known value has a template or the application would not have booted.
+     */
+    get: operations["purposes-get_purpose"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workout-labels": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workout Labels
+     * @description List the folder labels and tags in use across the library.
+     *
+     *     One call rather than two: the workout creator needs both at once, to offer
+     *     what already exists instead of inviting a fourth spelling of "base".
+     */
+    get: operations["workouts-list_workout_labels"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workouts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workouts
+     * @description List library workouts, newest first, with optional search and filters.
+     */
+    get: operations["workouts-list_workouts"];
+    put?: never;
+    /**
+     * Create Workout
+     * @description Add a workout to the library.
+     */
+    post: operations["workouts-create_workout"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/workouts/{workout_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Workout
+     * @description Get one library workout by id.
+     */
+    get: operations["workouts-get_workout"];
+    put?: never;
+    post?: never;
+    /**
+     * Delete Workout
+     * @description Remove a workout from the library.
+     *
+     *     Planned sessions built from it keep their own frozen snapshot; only the
+     *     provenance link is nulled.
+     */
+    delete: operations["workouts-delete_workout"];
+    options?: never;
+    head?: never;
+    /**
+     * Update Workout
+     * @description Partially update a library workout.
+     */
+    patch: operations["workouts-update_workout"];
+    trace?: never;
+  };
   "/api/v1/zones": {
     parameters: {
       query?: never;
@@ -245,6 +506,36 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AbsoluteLimitSchema
+     * @description A ceiling expressed in the channel's own unit.
+     */
+    AbsoluteLimitSchema: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "absolute";
+      unit: components["schemas"]["ChannelUnit"];
+      /** Value */
+      value: number;
+    };
+    /**
+     * AbsoluteRangeSchema
+     * @description A target expressed as an absolute range in the channel's unit.
+     */
+    AbsoluteRangeSchema: {
+      /** High */
+      high: number;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "absolute";
+      /** Low */
+      low: number;
+      unit: components["schemas"]["ChannelUnit"];
+    };
     /**
      * AnchorSource
      * @description Who appended the version. Distinct from :class:`Provenance`.
@@ -380,6 +671,100 @@ export interface components {
       sex?: components["schemas"]["Sex"] | null;
     };
     /**
+     * BandSchema
+     * @description An acceptable range around a step's prescribed target, as fractions.
+     */
+    BandSchema: {
+      channel: components["schemas"]["Channel"];
+      /** High */
+      high: number;
+      /** Low */
+      low: number;
+    };
+    /**
+     * CeilingSchema
+     * @description No more than this long spent above this limit on this channel.
+     */
+    CeilingSchema: {
+      channel: components["schemas"]["Channel"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "ceiling";
+      /** Limit */
+      limit:
+        | components["schemas"]["PercentLimitSchema"]
+        | components["schemas"]["AbsoluteLimitSchema"];
+      /** Max Seconds Above */
+      max_seconds_above: number;
+    };
+    /**
+     * Channel
+     * @description A prescribable (and recordable) measurement channel.
+     * @enum {string}
+     */
+    Channel: "power" | "hr" | "cadence";
+    /**
+     * ChannelUnit
+     * @description The unit each channel is measured in.
+     * @enum {string}
+     */
+    ChannelUnit: "W" | "bpm" | "rpm";
+    /**
+     * Discipline
+     * @description The two disciplines the MVP trains.
+     * @enum {string}
+     */
+    Discipline: "cycling" | "strength";
+    /**
+     * DurationFloorSchema
+     * @description The session must last at least this long.
+     */
+    DurationFloorSchema: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "duration_floor";
+      /** Min Seconds */
+      min_seconds: number;
+    };
+    /**
+     * EnduranceStructureSchema
+     * @description A structured endurance prescription.
+     */
+    "EnduranceStructureSchema-Input": {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      discipline: "cycling";
+      /** Steps */
+      steps: (
+        | components["schemas"]["SteadyStepSchema"]
+        | components["schemas"]["RampStepSchema"]
+        | components["schemas"]["RepeatBlockSchema-Input"]
+      )[];
+    };
+    /**
+     * EnduranceStructureSchema
+     * @description A structured endurance prescription.
+     */
+    "EnduranceStructureSchema-Output": {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      discipline: "cycling";
+      /** Steps */
+      steps: (
+        | components["schemas"]["SteadyStepSchema"]
+        | components["schemas"]["RampStepSchema"]
+        | components["schemas"]["RepeatBlockSchema-Output"]
+      )[];
+    };
+    /**
      * ErrorDetail
      * @description Error response body, as produced by the AppError handler.
      *
@@ -390,6 +775,48 @@ export interface components {
     ErrorDetail: {
       /** Detail */
       detail: string;
+    };
+    /**
+     * ExerciseCategory
+     * @description Movement families the catalogue is organised by.
+     *
+     *     Patterns rather than muscles: the build plan names squat/hinge/press/pull/
+     *     core, and the remaining four cover what a general strength programme needs
+     *     without inviting a taxonomy argument.
+     * @enum {string}
+     */
+    ExerciseCategory:
+      | "squat"
+      | "hinge"
+      | "lunge"
+      | "press"
+      | "pull"
+      | "core"
+      | "carry"
+      | "mobility"
+      | "conditioning";
+    /**
+     * ExerciseRead
+     * @description One catalogue movement as returned by the API.
+     */
+    ExerciseRead: {
+      category: components["schemas"]["ExerciseCategory"];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Id */
+      id: string;
+      /** Name */
+      name: string;
+      /** Unilateral */
+      unilateral: boolean;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -403,6 +830,39 @@ export interface components {
     HealthStatus: {
       /** Status */
       status: string;
+    };
+    /**
+     * LoadKind
+     * @description How the load of a prescribed set is expressed.
+     *
+     *     Four kinds because four are genuinely different questions: an absolute
+     *     weight, a fraction of a one-rep max, a target effort, and "your own body".
+     *     Scoring treats them differently — `load_within` tolerance is meaningless
+     *     for bodyweight — so the kind is part of the value, not a formatting hint.
+     * @enum {string}
+     */
+    LoadKind: "kg" | "percent_e1rm" | "rpe" | "bodyweight";
+    /**
+     * LoadSchema
+     * @description How heavy a prescribed set is.
+     */
+    LoadSchema: {
+      kind: components["schemas"]["LoadKind"];
+      /** Value */
+      value?: number | null;
+    };
+    /**
+     * LoadWithinSchema
+     * @description Loads used within this relative tolerance of what was prescribed.
+     */
+    LoadWithinSchema: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "load_within";
+      /** Pct Tolerance */
+      pct_tolerance: number;
     };
     /**
      * LoginRequest
@@ -423,6 +883,172 @@ export interface components {
       /** Total */
       total: number;
     };
+    /** Page[ExerciseRead] */
+    Page_ExerciseRead_: {
+      /** Items */
+      items: components["schemas"]["ExerciseRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[PlannedSessionRead] */
+    Page_PlannedSessionRead_: {
+      /** Items */
+      items: components["schemas"]["PlannedSessionRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[WorkoutRead] */
+    Page_WorkoutRead_: {
+      /** Items */
+      items: components["schemas"]["WorkoutRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /**
+     * PercentLimitSchema
+     * @description A ceiling expressed as a fraction of an anchor.
+     */
+    PercentLimitSchema: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "percent_of_anchor";
+      /** Pct */
+      pct: number;
+    };
+    /**
+     * PercentOfAnchorSchema
+     * @description A target expressed as a fraction range of an anchor.
+     */
+    PercentOfAnchorSchema: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "percent_of_anchor";
+      /** Pct High */
+      pct_high: number;
+      /** Pct Low */
+      pct_low: number;
+    };
+    /**
+     * PlannedSessionCreate
+     * @description Payload for planning a session.
+     */
+    PlannedSessionCreate: {
+      /** Coach Notes */
+      coach_notes?: string | null;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Intent Text */
+      intent_text?: string | null;
+      purpose: components["schemas"]["Purpose"];
+      /** Structure */
+      structure?:
+        | (
+            | components["schemas"]["EnduranceStructureSchema-Input"]
+            | components["schemas"]["StrengthStructureSchema"]
+          )
+        | null;
+      /** Success Criteria */
+      success_criteria?:
+        | (
+            | components["schemas"]["TimeInBandSchema"]
+            | components["schemas"]["DurationFloorSchema"]
+            | components["schemas"]["CeilingSchema"]
+            | components["schemas"]["SetsCompletedSchema"]
+            | components["schemas"]["LoadWithinSchema"]
+          )[]
+        | null;
+      /** Workout Id */
+      workout_id?: string | null;
+    };
+    /**
+     * PlannedSessionRead
+     * @description One planned session, with the intent version in force.
+     */
+    PlannedSessionRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      intent: components["schemas"]["SessionIntentRead"];
+      /** Intent Versions */
+      intent_versions: number;
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * PlannedSessionUpdate
+     * @description Payload for updating a planned session. Omitted fields are unchanged.
+     *
+     *     Touching ``purpose``, ``intent_text``, ``coach_notes``,
+     *     ``success_criteria``, ``workout_id`` or ``structure`` appends a new intent
+     *     version. Touching only ``date`` or ``status`` does not.
+     */
+    PlannedSessionUpdate: {
+      /** Coach Notes */
+      coach_notes?: string | null;
+      /** Date */
+      date?: string | null;
+      /** Intent Text */
+      intent_text?: string | null;
+      purpose?: components["schemas"]["Purpose"] | null;
+      status?: components["schemas"]["SessionStatus-Input"] | null;
+      /** Structure */
+      structure?:
+        | (
+            | components["schemas"]["EnduranceStructureSchema-Input"]
+            | components["schemas"]["StrengthStructureSchema"]
+          )
+        | null;
+      /** Success Criteria */
+      success_criteria?:
+        | (
+            | components["schemas"]["TimeInBandSchema"]
+            | components["schemas"]["DurationFloorSchema"]
+            | components["schemas"]["CeilingSchema"]
+            | components["schemas"]["SetsCompletedSchema"]
+            | components["schemas"]["LoadWithinSchema"]
+          )[]
+        | null;
+      /** Workout Id */
+      workout_id?: string | null;
+    };
     /**
      * Provenance
      * @description Where an anchor value came from — ordered weakest to strongest.
@@ -433,12 +1059,230 @@ export interface components {
      */
     Provenance: "assumed" | "estimated" | "athlete_reported" | "tested";
     /**
-     * SessionStatus
-     * @description Whether the caller currently holds an authenticated session.
+     * Purpose
+     * @description Why a session exists. One vocabulary, two disciplines.
+     * @enum {string}
      */
-    SessionStatus: {
-      /** Authenticated */
-      authenticated: boolean;
+    Purpose:
+      | "recovery"
+      | "endurance"
+      | "tempo"
+      | "sweet_spot"
+      | "threshold"
+      | "vo2max"
+      | "anaerobic"
+      | "neuromuscular"
+      | "unstructured"
+      | "technique"
+      | "test"
+      | "max_strength"
+      | "strength_endurance"
+      | "hypertrophy"
+      | "power"
+      | "core"
+      | "mobility"
+      | "conditioning";
+    /**
+     * PurposeTemplateRead
+     * @description One purpose, with what it starts with and how it is judged.
+     */
+    PurposeTemplateRead: {
+      /** Axes */
+      axes: components["schemas"]["ScoringAxis"][];
+      /** Default Criteria */
+      default_criteria: (
+        | components["schemas"]["TimeInBandSchema"]
+        | components["schemas"]["DurationFloorSchema"]
+        | components["schemas"]["CeilingSchema"]
+        | components["schemas"]["SetsCompletedSchema"]
+        | components["schemas"]["LoadWithinSchema"]
+      )[];
+      /** Description */
+      description?: string | null;
+      discipline: components["schemas"]["Discipline"];
+      purpose: components["schemas"]["Purpose"];
+    };
+    /**
+     * PurposeTemplatesRead
+     * @description The whole vocabulary, in the order the build plan states it.
+     */
+    PurposeTemplatesRead: {
+      /** Items */
+      items: components["schemas"]["PurposeTemplateRead"][];
+    };
+    /**
+     * RampStepSchema
+     * @description Move from one set of targets to another over a duration or distance.
+     */
+    RampStepSchema: {
+      /** Distance M */
+      distance_m?: number | null;
+      /** Duration S */
+      duration_s?: number | null;
+      /** End Targets */
+      end_targets: {
+        [key: string]:
+          | components["schemas"]["PercentOfAnchorSchema"]
+          | components["schemas"]["AbsoluteRangeSchema"];
+      };
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "ramp";
+      /** Name */
+      name?: string | null;
+      /** @default work */
+      role: components["schemas"]["StepRole"];
+      /** Start Targets */
+      start_targets: {
+        [key: string]:
+          | components["schemas"]["PercentOfAnchorSchema"]
+          | components["schemas"]["AbsoluteRangeSchema"];
+      };
+    };
+    /**
+     * RepeatBlockSchema
+     * @description Perform ``children`` ``times`` over.
+     */
+    "RepeatBlockSchema-Input": {
+      /** Children */
+      children: (
+        | components["schemas"]["SteadyStepSchema"]
+        | components["schemas"]["RampStepSchema"]
+        | components["schemas"]["RepeatBlockSchema-Input"]
+      )[];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "repeat";
+      /** Times */
+      times: number;
+    };
+    /**
+     * RepeatBlockSchema
+     * @description Perform ``children`` ``times`` over.
+     */
+    "RepeatBlockSchema-Output": {
+      /** Children */
+      children: (
+        | components["schemas"]["SteadyStepSchema"]
+        | components["schemas"]["RampStepSchema"]
+        | components["schemas"]["RepeatBlockSchema-Output"]
+      )[];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "repeat";
+      /** Times */
+      times: number;
+    };
+    /**
+     * ScoringAxis
+     * @description The axes WP-7 scores a session on.
+     *
+     *     Named here rather than in WP-7 because the templates reference them, and
+     *     the templates are written now. ``RESPONSE`` and ``FUELLING`` are in the
+     *     vocabulary but out of MVP scope: WP-7 returns ``not_assessed(deferred)``
+     *     for them, so the shape exists without the behaviour.
+     * @enum {string}
+     */
+    ScoringAxis:
+      | "completion"
+      | "adherence"
+      | "discipline"
+      | "pacing"
+      | "sets_load"
+      | "response"
+      | "fuelling";
+    /**
+     * SessionIntentRead
+     * @description One version of a planned session's intent.
+     *
+     *     Carries WP-1's versioning vocabulary verbatim, because it is one of the
+     *     versioned artefacts invariant 1 describes.
+     */
+    SessionIntentRead: {
+      /**
+       * Artefact Id
+       * Format: uuid
+       */
+      artefact_id: string;
+      /**
+       * As Of
+       * Format: date-time
+       */
+      as_of: string;
+      /** Coach Notes */
+      coach_notes: string | null;
+      /** Edited Post Hoc */
+      edited_post_hoc: boolean;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Intent Text */
+      intent_text: string | null;
+      /** Pinned Anchor Versions */
+      pinned_anchor_versions: {
+        [key: string]: string;
+      };
+      purpose: components["schemas"]["Purpose"];
+      /** Recompute Reason */
+      recompute_reason: string | null;
+      /** Structure */
+      structure:
+        | components["schemas"]["EnduranceStructureSchema-Output"]
+        | components["schemas"]["StrengthStructureSchema"];
+      /** Success Criteria */
+      success_criteria: (
+        | components["schemas"]["TimeInBandSchema"]
+        | components["schemas"]["DurationFloorSchema"]
+        | components["schemas"]["CeilingSchema"]
+        | components["schemas"]["SetsCompletedSchema"]
+        | components["schemas"]["LoadWithinSchema"]
+      )[];
+      summary: components["schemas"]["WorkoutSummarySchema"];
+      /** Superseded By */
+      superseded_by: string | null;
+      /** Version */
+      version: number;
+      /** Workout Id */
+      workout_id: string | null;
+    };
+    /**
+     * SessionIntentsRead
+     * @description Every intent version of one session, oldest first.
+     */
+    SessionIntentsRead: {
+      /** Items */
+      items: components["schemas"]["SessionIntentRead"][];
+    };
+    /**
+     * SessionStatus
+     * @description Where a planned session ended up.
+     *
+     *     ``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6
+     *     sets it when a low-similarity activity is deliberately linked; the member
+     *     exists now so the column does not need a migration then.
+     * @enum {string}
+     */
+    "SessionStatus-Input": "planned" | "completed" | "missed" | "displaced";
+    /**
+     * SetsCompletedSchema
+     * @description At least this fraction of the prescribed strength sets performed.
+     */
+    SetsCompletedSchema: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "sets_completed";
+      /** Min Fraction */
+      min_fraction: number;
     };
     /**
      * Sex
@@ -460,6 +1304,116 @@ export interface components {
      * @enum {string}
      */
     StalenessState: "fresh" | "aging" | "stale";
+    /**
+     * SteadyStepSchema
+     * @description Hold a set of targets for a duration or a distance.
+     */
+    SteadyStepSchema: {
+      /** Distance M */
+      distance_m?: number | null;
+      /** Duration S */
+      duration_s?: number | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "steady";
+      /** Name */
+      name?: string | null;
+      /** @default work */
+      role: components["schemas"]["StepRole"];
+      /** Targets */
+      targets?: {
+        [key: string]:
+          | components["schemas"]["PercentOfAnchorSchema"]
+          | components["schemas"]["AbsoluteRangeSchema"];
+      };
+    };
+    /**
+     * StepRole
+     * @description What a step is for within the session.
+     *
+     *     Roles are what a success criterion selects on (``time in band across the
+     *     work steps``) and what WP-5's alignment matches against, so they are part
+     *     of the prescription rather than a display hint.
+     * @enum {string}
+     */
+    StepRole: "warmup" | "work" | "recovery" | "rest" | "cooldown";
+    /**
+     * StepSelectorKind
+     * @description How a criterion picks the steps it applies to.
+     * @enum {string}
+     */
+    StepSelectorKind: "all" | "role" | "index";
+    /**
+     * StepSelectorSchema
+     * @description Which flattened steps a criterion applies to.
+     */
+    StepSelectorSchema: {
+      /** Index */
+      index?: number | null;
+      kind: components["schemas"]["StepSelectorKind"];
+      role?: components["schemas"]["StepRole"] | null;
+    };
+    /**
+     * StrengthGroupSchema
+     * @description One or more lines performed together; more than one is a superset.
+     */
+    StrengthGroupSchema: {
+      /** Items */
+      items: components["schemas"]["StrengthSetSchema"][];
+      /** Label */
+      label?: string | null;
+    };
+    /**
+     * StrengthSetSchema
+     * @description One line of a strength prescription.
+     */
+    StrengthSetSchema: {
+      /** Exercise Id */
+      exercise_id: string;
+      load: components["schemas"]["LoadSchema"];
+      /** Notes */
+      notes?: string | null;
+      /** Reps */
+      reps: number;
+      /** Rest S */
+      rest_s?: number | null;
+      /** Rir */
+      rir?: number | null;
+      /** Sets */
+      sets: number;
+      /** Tempo */
+      tempo?: string | null;
+    };
+    /**
+     * StrengthStructureSchema
+     * @description A strength prescription.
+     */
+    StrengthStructureSchema: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      discipline: "strength";
+      /** Groups */
+      groups: components["schemas"]["StrengthGroupSchema"][];
+    };
+    /**
+     * TimeInBandSchema
+     * @description At least ``min_fraction`` of the selected steps' time inside the band.
+     */
+    TimeInBandSchema: {
+      band: components["schemas"]["BandSchema"];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "time_in_band";
+      /** Min Fraction */
+      min_fraction: number;
+      selector: components["schemas"]["StepSelectorSchema"];
+    };
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -485,6 +1439,102 @@ export interface components {
     ValidationErrorDetail: {
       /** Detail */
       detail: string | unknown[];
+    };
+    /**
+     * WorkoutCreate
+     * @description Payload for adding a workout to the library.
+     */
+    WorkoutCreate: {
+      /** Description */
+      description?: string | null;
+      /** Folder */
+      folder?: string | null;
+      /** Name */
+      name: string;
+      /** Structure */
+      structure:
+        | components["schemas"]["EnduranceStructureSchema-Input"]
+        | components["schemas"]["StrengthStructureSchema"];
+      /** Tags */
+      tags?: string[];
+    };
+    /**
+     * WorkoutLabelsRead
+     * @description The folder labels and tags currently in use across the library.
+     */
+    WorkoutLabelsRead: {
+      /** Folders */
+      folders: string[];
+      /** Tags */
+      tags: string[];
+    };
+    /**
+     * WorkoutRead
+     * @description One library workout as returned by the API.
+     */
+    WorkoutRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Description */
+      description: string | null;
+      discipline: components["schemas"]["Discipline"];
+      /** Folder */
+      folder: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Name */
+      name: string;
+      /** Structure */
+      structure:
+        | components["schemas"]["EnduranceStructureSchema-Output"]
+        | components["schemas"]["StrengthStructureSchema"];
+      summary: components["schemas"]["WorkoutSummarySchema"];
+      /** Tags */
+      tags: string[];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * WorkoutSummarySchema
+     * @description Derived facts about a prescription. Computed on read, never stored.
+     */
+    WorkoutSummarySchema: {
+      /** Step Count */
+      step_count: number;
+      /** Total Duration S */
+      total_duration_s: number | null;
+      /** Total Sets */
+      total_sets: number | null;
+    };
+    /**
+     * WorkoutUpdate
+     * @description Payload for partially updating a workout. Omitted fields are unchanged.
+     */
+    WorkoutUpdate: {
+      /** Description */
+      description?: string | null;
+      /** Folder */
+      folder?: string | null;
+      /** Name */
+      name?: string | null;
+      /** Structure */
+      structure?:
+        | (
+            | components["schemas"]["EnduranceStructureSchema-Input"]
+            | components["schemas"]["StrengthStructureSchema"]
+          )
+        | null;
+      /** Tags */
+      tags?: string[] | null;
     };
     /**
      * ZoneModel
@@ -528,6 +1578,28 @@ export interface components {
       /** Zones */
       zones: components["schemas"]["ZoneRead"][];
     };
+    /**
+     * SessionStatus
+     * @description Whether the caller currently holds an authenticated session.
+     */
+    app__api__schemas__auth__SessionStatus: {
+      /** Authenticated */
+      authenticated: boolean;
+    };
+    /**
+     * SessionStatus
+     * @description Where a planned session ended up.
+     *
+     *     ``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6
+     *     sets it when a low-similarity activity is deliberately linked; the member
+     *     exists now so the column does not need a migration then.
+     * @enum {string}
+     */
+    app__domain__sessions__SessionStatus:
+      | "planned"
+      | "completed"
+      | "missed"
+      | "displaced";
   };
   responses: never;
   parameters: never;
@@ -1064,7 +2136,821 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["SessionStatus"];
+          "application/json": components["schemas"]["app__api__schemas__auth__SessionStatus"];
+        };
+      };
+    };
+  };
+  "exercises-list_exercises": {
+    parameters: {
+      query?: {
+        /** @description Restrict to one movement family; omit for all of them. */
+        category?: components["schemas"]["ExerciseCategory"];
+        /** @description Case-insensitive substring of the name. */
+        q?: string;
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_ExerciseRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-get_exercise": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExerciseRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-list_planned_sessions": {
+    parameters: {
+      query?: {
+        /** @description Earliest athlete-local date to include (inclusive). */
+        start?: string;
+        /** @description Latest athlete-local date to include (inclusive). */
+        end?: string;
+        /** @description Restrict to one status; omit for all of them. */
+        status?: components["schemas"]["SessionStatus-Input"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_PlannedSessionRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-create_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "planned-sessions-get_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-delete_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-update_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "planned-sessions-list_planned_session_intents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionIntentsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-get_planned_session_intent": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+        version: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionIntentRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "purposes-list_purposes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PurposeTemplatesRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "purposes-get_purpose": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        purpose: components["schemas"]["Purpose"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PurposeTemplateRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "workouts-list_workout_labels": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkoutLabelsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "workouts-list_workouts": {
+    parameters: {
+      query?: {
+        /** @description Case-insensitive substring of name or description. */
+        q?: string;
+        /** @description Restrict to one folder label. */
+        folder?: string;
+        /** @description Restrict to workouts carrying this tag. */
+        tag?: string;
+        /** @description Restrict to one discipline; omit for both. */
+        discipline?: components["schemas"]["Discipline"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_WorkoutRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "workouts-create_workout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WorkoutCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkoutRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Workout violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "workouts-get_workout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workout_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkoutRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such workout */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "workouts-delete_workout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workout_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such workout */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "workouts-update_workout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workout_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WorkoutUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkoutRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such workout */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Workout violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

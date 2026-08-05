@@ -5,11 +5,13 @@ Postgres belongs in tests/integration.
 """
 
 from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import bcrypt
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -58,6 +60,17 @@ async def engine() -> AsyncIterator[AsyncEngine]:
     """
     load_models()
     engine = create_async_engine("sqlite+aiosqlite://")
+
+    # SQLite ignores foreign keys unless asked, per connection. Without this,
+    # `ON DELETE CASCADE` and `ON DELETE SET NULL` are inert in the unit suite
+    # and enforced in production — the exact divergence `app.persistence.types`
+    # exists to prevent (D29), one layer down in the schema.
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_foreign_keys(connection: Any, _record: Any) -> None:
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine
