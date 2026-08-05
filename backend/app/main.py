@@ -10,9 +10,11 @@ from fastapi.routing import APIRoute
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.deps import require_session
+from app.api.routes.anchors import router as anchors_router
+from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.health import router as health_router
-from app.api.routes.items import router as items_router
+from app.api.routes.zones import router as zones_router
 from app.core.config import get_settings
 from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
@@ -41,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def generate_operation_id(route: APIRoute) -> str:
-    """Readable OpenAPI operationIds (items-list_items, not the path-mangled default).
+    """Readable OpenAPI operationIds (anchors-get_zones, not the mangled default).
 
     These become the function/hook names in generated API clients.
     """
@@ -99,7 +101,9 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_session)],
         responses=unauthorized,
     )
-    api.include_router(items_router)
+    api.include_router(athlete_router)
+    api.include_router(anchors_router)
+    api.include_router(zones_router)
     app.include_router(api)
 
     return app

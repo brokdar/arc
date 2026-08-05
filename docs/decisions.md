@@ -648,3 +648,265 @@ unused argument. The domain is the only home that works: `app.api` and
 type, so anything adapter-shaped would have violated the layering contract.
 The string form is the storage format, which is why `agent` labels may not
 contain `:` — `agent:my:key` would not survive `Actor.parse`.
+
+## D31 — Domain values are frozen dataclasses, not pydantic models
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+Everything in `app/domain/` is a frozen, slotted `dataclass` plus `StrEnum`,
+with invariants enforced in `__post_init__` and signalled as `ValueError`.
+Pydantic is *permitted* there — `tests/unit/test_domain_purity_contract.py`
+allowlists it as "pure data modelling, no I/O" (D26) — so this displaces the
+available alternative of pydantic `BaseModel`s in the domain.
+
+*Rationale:* the API layer already speaks pydantic, and the two jobs are
+different. A schema's job is to accept and coerce whatever arrives on the
+wire; a domain value's job is to be impossible to construct in an illegal
+state. Using one type for both means the coercion rules (string-to-date,
+int-to-float, extra-field handling) become domain semantics by accident, and
+the domain inherits `model_config` decisions made for HTTP reasons. Frozen
+dataclasses also give free structural sharing with `dataclasses.replace`,
+hashability, and — the deciding factor — they cost nothing to construct, which
+matters because WP-5 constructs them per data point.
+
+The price is that domain violations arrive as `ValueError`, which is not an
+`AppError` (the domain may not import `app.core`). `app.core.exceptions.
+domain_rules()` is the one-line context manager services wrap construction in,
+turning them into 422s with the domain's own message. That keeps the rule and
+its wording in one place instead of restating every bound in a schema.
+
+## D32 — Zone boundaries: Coggan 7 off FTP, a 5-zone Friel scheme off LTHR
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`app/domain/zones.py` ships two schemes, as lower bounds in percent of the
+anchor:
+
+| Model | Zone lower bounds | Source |
+|---|---|---|
+| `coggan_7` (%FTP) | 0 / 55 / 75 / 90 / 105 / 120 / 150 | Allen & Coggan, *Training and Racing with a Power Meter* |
+| `lthr_5` (%LTHR) | 0 / 81 / 90 / 94 / 100 | Friel's cycling HR zones, 5a/5b/5c merged into one Z5 |
+
+Three conventions come with them. Bands are **half-open and contiguous**
+(`lower <= x < upper`), so the zones partition `[0, ∞)` for any value; the
+**top zone is open-ended** (`upper is None`); and a zone model is **paired with
+one anchor type** (`ZONE_MODEL_ANCHOR`), so `zones_for` rejects %FTP
+percentages applied to a heart rate instead of returning plausible nonsense.
+`MAX_HR` deliberately has no scheme — it is stored for later use, not a zone
+basis.
+
+*Rationale:* published tables state inclusive integer bands with one-point gaps
+(Friel runs 81–89 then 90–93), which leaves 89.4 %LTHR in no zone at all.
+Closing the gaps upward onto the next lower bound is the only reading that
+makes "time in zone" total to the recording's duration — a property WP-5's
+metrics depend on and WP-7 scores against, so it is fixed now rather than
+discovered later. Collapsing Friel's 5a/5b/5c is honest about the MVP: nothing
+computed distinguishes them, and inventing three zones the scoring cannot use
+would imply a precision the data does not carry. The pairing check exists
+because the failure it prevents is silent: 90 %FTP of an LTHR value is a
+number, just not anyone's threshold.
+
+## D33 — One athlete, fixed primary key, bootstrapped on first access
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+The `athlete` table holds exactly one row whose primary key is the constant
+`SINGLETON_ATHLETE_ID` (`00000000-...-0001`), and `AthleteService.get`
+**creates it on first access** — read or write — writing an `athlete.created`
+audit row. Every profile field is nullable. This displaces two alternatives:
+seeding the row in the migration, and create-on-first-update with `GET`
+returning 404 until then.
+
+*Rationale:* a migration-seeded row is data, and data does not survive the
+things that happen to data — the integration suite truncates every table
+between tests, and a restore-from-dump or a `TRUNCATE` in support would leave
+an application with no profile and no way to make one. Lazy bootstrap is
+idempotent and self-healing. `GET` returning 404 until the first `PATCH` was
+rejected because the frontend would have to treat "no profile yet" as a
+distinct state everywhere, forever, to save one insert. The fixed primary key
+is what makes "at most one athlete" a database fact rather than a convention:
+two concurrent bootstraps collide on the key and the loser gets a 409 (proven
+in `test_error_envelope.py`), where a generated id would have produced two
+athletes and no error. It also means no layer needs a lookup to address the
+row. A `GET` that writes is the one oddity; it is why the endpoint takes an
+`ActorDep` like a mutation, and the write happens exactly once.
+
+## D34 — `enum_column` stores the member value, not its name
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`app/persistence/types.py:enum_column` now passes `values_callable`, so a
+`StrEnum` column stores `max_hr`, not SQLAlchemy's default of the member *name*
+`MAX_HR`. WP-1 is the first code to use the helper, so nothing is migrated.
+
+*Rationale:* the API, the OpenAPI schema, the generated frontend types and
+every JSON payload use the value. Storing the name means one vocabulary with
+two spellings, and every hand-written query, `psql` session, backup grep and
+future data migration has to know which side of the ORM it is standing on. The
+divergence is invisible in tests that go through the ORM, which is most of
+them — `tests/unit/test_persistence_types.py` therefore reads the column as raw
+text, and the integration suite does the same on Postgres.
+
+## D35 — Anchor legality is a domain rule, and "in force" is a computation
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`AnchorVersion.__post_init__` enforces four rules: the unit must be the anchor
+type's own (`ANCHOR_UNITS` — a mismatch is rejected, never converted), the
+value must be within per-type plausibility bounds (`ANCHOR_BOUNDS`, e.g. FTP
+30–700 W), `tested` provenance requires a non-empty `protocol`, and a
+confidence interval must bracket the value. Which version is **in force** at a
+moment is computed by `anchor_as_of`: effective on or before that day *and*
+created on or before that instant, ties broken by `created_at`.
+
+*Rationale:* the bounds are a typo guard, not medicine — an FTP entered as
+25000 W poisons every zone, target, IF and TSS derived from it, and the cost of
+catching it at the boundary is one comparison. Requiring a protocol for tested
+values is WP-8's stated guardrail for the `append_anchor` MCP tool; putting it
+in the domain now means the API and the future tool cannot disagree about it,
+which is the entire reason the rule lives below both adapters. The two-clause
+"in force" rule is what makes derived values reproducible under invariant 1: a
+back-dated correction entered today must change what is current, and must
+*not* change what a score computed last week was looking at. `ORDER BY
+created_at DESC LIMIT 1` gets both of those wrong, and a future-dated version
+(planned test result, seasonal reset) wrong as well.
+
+## D36 — Append-only is enforced three times, and the 405s are real handlers
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+Invariant 3 is stated in three places: `AnchorRepository` has no update or
+delete method, `AnchorService` has no use-case for one, and
+`app/api/routes/anchors.py` answers PUT, PATCH and DELETE on an anchor version
+with **405 and a sentence explaining what to do instead**. The three refusals
+are three separate endpoint functions, not one function with three decorators.
+
+*Rationale:* FastAPI answers an undefined method+path combination with **404**,
+which reads as "wrong id" — the one message guaranteed to send a client
+looking in the wrong place. A real handler is the only way to say "this
+operation does not exist here, and here is the operation that does". The other
+two enforcement points are what make the rule true rather than polite: a 405 is
+a statement about one adapter, while a repository with no `delete` is a
+statement about the whole application, including the MCP tools WP-8 adds. Three
+handler functions because `generate_operation_id` (`app/main.py`) derives the
+OpenAPI operation id from the endpoint's *name*, so one shared function would
+have produced three colliding ids in the generated frontend client.
+
+## D37 — `hypothesis` is a dev dependency, so the purity contract ignores it
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`hypothesis` was added with `uv add --dev`, landing in `[dependency-groups].dev`
+rather than `[project].dependencies`. `test_domain_purity_contract.py` reads
+only the latter, so no entry in the import-linter deny-list or in
+`DOMAIN_MAY_IMPORT` is needed — and none was added.
+
+*Rationale:* recorded because the absence looks like an oversight against D26,
+which says every new dependency must be classified. The rule is about what
+ships: a test-only library cannot be imported by `app.domain` at runtime
+because it is not installed at runtime, so classifying it would be a decision
+about nothing. The distinction is worth stating once, since WP-5's polars
+(a runtime dependency) is the next addition and does need an entry.
+
+## D38 — Zones are addressed by what they derive from, in two endpoints
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`GET /api/v1/zones?anchor_type=…` derives from the version in force;
+`GET /api/v1/anchors/{id}/zones` derives from one pinned version. This
+displaces the first implementation, a single `GET /zones` taking
+`anchor_version_id` *or* `anchor_type` and answering 422 when given both or
+neither.
+
+*Rationale:* the single endpoint could express a request with no meaning, so
+it had to reject one at runtime — and that rejection is invisible in the
+OpenAPI contract, which advertises both parameters as independently optional.
+Schemathesis found it immediately (a schema-compliant request refused with
+422), which is the fuzzer doing exactly its job: the schema was lying. Two
+endpoints make the contract true, make each selector required where it
+belongs, and say something the query-parameter version could not — that zones
+of a specific anchor version are a sub-resource of that version, which is why
+a frozen prescription can keep pointing at them.
+
+## D39 — What the fuzzer changed about WP-1's contract
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+Running Schemathesis against the new endpoints (a real Postgres, as CI does)
+produced four fixes and one configuration file:
+
+1. **422 has two shapes, so the contract says so.** A service raising
+   `ValidationError` returns `{"detail": "<sentence>"}`; FastAPI's own request
+   validation returns `{"detail": [<per-field errors>]}`. Both are 422s on the
+   same operation, and declaring `ErrorDetail` (a string) made the second one
+   a documented lie. `ValidationErrorDetail` (`str | list`) is now the declared
+   422 model wherever domain rules can fire. The alternative — flattening
+   FastAPI's list into a sentence in the handler — was rejected as a WP-0
+   behaviour change made for a WP-1 reason.
+2. **The append-only refusals take a `str` path parameter, not a `uuid.UUID`.**
+   `PUT /api/v1/anchors/current` was answering 422 about UUID syntax: true,
+   and beside the point, since the method is what does not exist there. The
+   handlers never look at the id.
+3. **The 405s carry `Allow: GET`,** which RFC 9110 requires and which turns
+   "you cannot do that" into "you cannot do that, here is what you can".
+   `AppError` grew an optional `headers` for it.
+4. **Free-form JSON is validated as deeply as it is stored.** A lone surrogate
+   or NUL byte in a `capabilities` *key*, three levels down, reached the driver
+   as a 500 — the same class of bug `PostgresText` already covered for string
+   columns, one level of nesting deeper. `PostgresJsonObject` walks the
+   document. Unlike `PostgresText`, the restriction cannot be expressed in
+   JSON Schema, so it is enforced without being documented.
+
+The configuration is `backend/schemathesis.toml`: the `positive_data_acceptance`
+check is narrowed **per operation** for the endpoints that refuse
+schema-compliant input on purpose (the 405s; the domain-rule 422s on anchor
+append, profile update and zones). Narrowing per operation rather than
+excluding the check globally (as D13 does for two others) keeps it armed for
+every endpoint added later, which is where the next unguarded 500 will be. All
+five refusals are pinned by unit tests, which is the standing condition for
+narrowing a check at all.
+
+## D40 — Reserved anchor types cannot be appended
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`cp` and `w_prime` exist in `AnchorType` so that WP-5's critical-power model
+arrives as code, not a data migration (D32 spirit). But existence in the enum
+had left them **appendable**: `POST /api/v1/anchors` with `anchor_type: "cp"`
+succeeded, which the review of PR #2 flagged as unaddressed by D35. They are
+now refused twice: the create schema's `anchor_type` is a `Literal` of the
+MVP three, so the contract does not offer them, and
+`AnchorService.append` rejects `RESERVED_ANCHOR_TYPES`
+(`app/domain/anchors.py`) with a 422 naming the work package that will accept
+them — the service check is what covers WP-8's MCP tools, which do not pass
+through the schema. This displaces the alternative of accepting early CP
+measurements as harmless storage.
+
+*Rationale:* nothing can consume the value (zones reject CP, no model exists),
+and the CP protocols that make one measurement comparable with the next are
+exactly what WP-5 defines. Rows accepted before those rules exist would be
+history the model must either trust unvetted or awkwardly disown. The domain
+`AnchorVersion` itself still accepts CP — reserved-ness is MVP write policy,
+not a timeless domain rule, so it lives in the write path.
+
+## D41 — Bootstrap is race-tolerant, and never a side effect of a rejected write
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+Two refinements to D33's lazy bootstrap, both from the PR #2 review:
+
+1. **The lost race self-heals.** Two concurrent first-ever accesses both saw
+   no row and both inserted the fixed primary key; the loser surfaced a 409 —
+   on a `GET`. `AthleteService.get` now catches the `ConflictError`, re-reads,
+   and returns the winner's row; it re-raises only when the re-read finds
+   nothing (a genuinely broken state that should be loud). D33's "the loser
+   gets a 409" is superseded for reads; a conflicting concurrent `PATCH`
+   still 409s, since that is a real concurrent-write signal.
+2. **`update` validates before it bootstraps.** It previously called `get`,
+   committing the bootstrap (plus audit row) before domain validation — so a
+   422'd first-ever `PATCH` left a profile behind. It now merges the update
+   into the not-yet-persisted defaults, validates, and only then creates and
+   updates the row in **one** transaction with both audit rows
+   (`athlete.created`, `athlete.updated`). A rejected `PATCH` on an empty
+   database is a pure no-op, pinned by
+   `test_a_rejected_update_does_not_bootstrap_the_profile`.

@@ -5,6 +5,8 @@ consistent JSON responses so endpoints never need try/except for domain
 errors.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -24,13 +26,27 @@ class ErrorDetail(BaseModel):
     detail: str
 
 
+class ValidationErrorDetail(BaseModel):
+    """422 response body — the one status with two shapes.
+
+    A service raising :class:`ValidationError` produces a sentence; FastAPI's
+    own request validation produces its list of per-field errors. Both are
+    422s on the same endpoint, so the declared contract has to admit both, or
+    a schema-conformance fuzzer is right to call one of them a lie.
+    """
+
+    detail: str | list[Any]
+
+
 class AppError(Exception):
     """Base class for domain errors carrying an HTTP status."""
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: str, headers: dict[str, str] | None = None) -> None:
         self.detail = detail
+        #: Response headers the status requires (e.g. `Allow` on a 405).
+        self.headers = headers
         super().__init__(detail)
 
 
@@ -56,6 +72,34 @@ class ValidationError(AppError):
     """The request is semantically invalid beyond schema validation."""
 
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class MethodNotAllowedError(AppError):
+    """The resource exists but the method is refused on principle.
+
+    Not the same as an undefined route: FastAPI answers an unknown
+    method+path combination with 404, so a resource that must say "this
+    operation will never exist here" — an append-only anchor history, say —
+    needs a real handler raising this.
+    """
+
+    status_code = status.HTTP_405_METHOD_NOT_ALLOWED
+
+
+@contextmanager
+def domain_rules() -> Iterator[None]:
+    """Translate a domain rule violation into a 422.
+
+    `app.domain` is pure, so it cannot raise `AppError` (that lives in
+    `app.core`, which the purity contract forbids it): it signals a broken
+    invariant with `ValueError`. Services wrap the construction of domain
+    values in this, so "FTP must be between 30 and 700 W" reaches the client
+    as a 422 with that sentence, rather than as a 500 with a stack trace.
+    """
+    try:
+        yield
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -85,6 +129,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

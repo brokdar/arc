@@ -1,6 +1,334 @@
 {
   "components": {
     "schemas": {
+      "AnchorSource": {
+        "description": "Who appended the version. Distinct from :class:`Provenance`.\n\nProvenance is about the *value*; source is about the *writer*, and the\nagent may never disguise itself as the athlete (build plan \u00a70.7).",
+        "enum": ["athlete", "agent"],
+        "title": "AnchorSource",
+        "type": "string"
+      },
+      "AnchorType": {
+        "description": "Anchor quantities the application knows about.\n\n``CP`` and ``W_PRIME`` are reserved by the build plan: the critical-power\nmodel is out of MVP scope, but the enum member exists so adding it later\nis not a migration of stored values. Nothing produces or consumes them\nyet, and :func:`app.domain.zones.zones_for` rejects them.",
+        "enum": ["ftp", "lthr", "max_hr", "cp", "w_prime"],
+        "title": "AnchorType",
+        "type": "string"
+      },
+      "AnchorUnit": {
+        "description": "Units an anchor value can be expressed in.",
+        "enum": ["W", "bpm", "J"],
+        "title": "AnchorUnit",
+        "type": "string"
+      },
+      "AnchorVersionCreate": {
+        "additionalProperties": false,
+        "description": "Payload for appending a version to an anchor's history.",
+        "properties": {
+          "anchor_type": {
+            "enum": ["ftp", "lthr", "max_hr"],
+            "title": "Anchor Type",
+            "type": "string"
+          },
+          "ci_high": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci Low"
+          },
+          "effective_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Date"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnchorUnit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": ["anchor_type", "value", "provenance"],
+        "title": "AnchorVersionCreate",
+        "type": "object"
+      },
+      "AnchorVersionRead": {
+        "description": "One anchor version as returned by the API.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci Low"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AnchorSource"
+          },
+          "staleness_state": {
+            "$ref": "#/components/schemas/StalenessState"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/AnchorUnit"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "anchor_type",
+          "value",
+          "unit",
+          "provenance",
+          "protocol",
+          "effective_date",
+          "ci_low",
+          "ci_high",
+          "source",
+          "staleness_state",
+          "created_at"
+        ],
+        "title": "AnchorVersionRead",
+        "type": "object"
+      },
+      "AthleteRead": {
+        "description": "The athlete profile as returned by the API.\n\nEvery field is nullable: the profile is bootstrapped empty on first access\nand filled in from the UI.",
+        "properties": {
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "date_of_birth": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Of Birth"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sex": {
+            "$ref": "#/components/schemas/Sex"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "date_of_birth",
+          "sex",
+          "height_cm",
+          "capabilities",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AthleteRead",
+        "type": "object"
+      },
+      "AthleteUpdate": {
+        "additionalProperties": false,
+        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex`` and ``capabilities``, \"clear\" means back to ``unspecified``\nand ``{}`` \u2014 those two have an empty value rather than an absent one).",
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "date_of_birth": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Of Birth"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "maximum": 250.0,
+                "minimum": 100.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sex": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sex"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "AthleteUpdate",
+        "type": "object"
+      },
       "ErrorDetail": {
         "description": "Error response body, as produced by the AppError handler.\n\nReference it in endpoint ``responses={...}`` declarations so error\nstatuses are part of the OpenAPI contract (and the generated frontend\ntypes).",
         "properties": {
@@ -38,99 +366,6 @@
         "title": "HealthStatus",
         "type": "object"
       },
-      "ItemCreate": {
-        "description": "Payload for creating an item.",
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "pattern": "^[^\\x00]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "name": {
-            "maxLength": 255,
-            "minLength": 1,
-            "pattern": "^[^\\x00]*$",
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": ["name"],
-        "title": "ItemCreate",
-        "type": "object"
-      },
-      "ItemRead": {
-        "description": "Item as returned by the API.",
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": ["id", "name", "description", "created_at", "updated_at"],
-        "title": "ItemRead",
-        "type": "object"
-      },
-      "ItemUpdate": {
-        "description": "Payload for partially updating an item.\n\nOmitted fields are left unchanged; ``description`` may be set to null to\nclear it, but ``name`` is non-nullable.",
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "pattern": "^[^\\x00]*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "name": {
-            "maxLength": 255,
-            "minLength": 1,
-            "pattern": "^[^\\x00]*$",
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "title": "ItemUpdate",
-        "type": "object"
-      },
       "LoginRequest": {
         "description": "Credentials for the single-user login.",
         "properties": {
@@ -143,11 +378,11 @@
         "title": "LoginRequest",
         "type": "object"
       },
-      "Page_ItemRead_": {
+      "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/ItemRead"
+              "$ref": "#/components/schemas/AnchorVersionRead"
             },
             "title": "Items",
             "type": "array"
@@ -166,8 +401,14 @@
           }
         },
         "required": ["items", "total", "offset", "limit"],
-        "title": "Page[ItemRead]",
+        "title": "Page[AnchorVersionRead]",
         "type": "object"
+      },
+      "Provenance": {
+        "description": "Where an anchor value came from \u2014 ordered weakest to strongest.\n\nThe order matters: it is what later work packages compare when deciding\nwhether a new value should displace the one in use.",
+        "enum": ["assumed", "estimated", "athlete_reported", "tested"],
+        "title": "Provenance",
+        "type": "string"
       },
       "SessionStatus": {
         "description": "Whether the caller currently holds an authenticated session.",
@@ -180,6 +421,18 @@
         "required": ["authenticated"],
         "title": "SessionStatus",
         "type": "object"
+      },
+      "Sex": {
+        "description": "Biological sex, as it affects physiological reference values.\n\n``UNSPECIFIED`` is a real member rather than ``None`` so the column is\nnever null and reads state \"not answered\" instead of \"unknown why\".",
+        "enum": ["female", "male", "unspecified"],
+        "title": "Sex",
+        "type": "string"
+      },
+      "StalenessState": {
+        "description": "How much an anchor version is still to be trusted.\n\nThe staleness *model* is deferred past the MVP, but the field is not:\nevery version stores one, hardcoded to ``FRESH`` today (see\n:data:`MVP_STALENESS_STATE`). ``AGING`` and ``STALE`` are reserved so that\nturning the model on later is code, not a data migration.",
+        "enum": ["fresh", "aging", "stale"],
+        "title": "StalenessState",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -216,6 +469,110 @@
         "required": ["loc", "msg", "type"],
         "title": "ValidationError",
         "type": "object"
+      },
+      "ValidationErrorDetail": {
+        "description": "422 response body \u2014 the one status with two shapes.\n\nA service raising :class:`ValidationError` produces a sentence; FastAPI's\nown request validation produces its list of per-field errors. Both are\n422s on the same endpoint, so the declared contract has to admit both, or\na schema-conformance fuzzer is right to call one of them a lie.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {},
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": ["detail"],
+        "title": "ValidationErrorDetail",
+        "type": "object"
+      },
+      "ZoneModel": {
+        "description": "The zone schemes the MVP supports.\n\nOne per channel: power zones off FTP, heart-rate zones off LTHR. Adding a\nmodel is adding a member plus a row in :data:`_ZONE_SCHEMES`.",
+        "enum": ["coggan_7", "lthr_5"],
+        "title": "ZoneModel",
+        "type": "string"
+      },
+      "ZoneRead": {
+        "description": "One half-open zone band ``[lower, upper)``.",
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "lower": {
+            "title": "Lower",
+            "type": "number"
+          },
+          "lower_pct": {
+            "title": "Lower Pct",
+            "type": "number"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/AnchorUnit"
+          },
+          "upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upper"
+          },
+          "upper_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upper Pct"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "lower_pct",
+          "upper_pct",
+          "lower",
+          "upper",
+          "unit"
+        ],
+        "title": "ZoneRead",
+        "type": "object"
+      },
+      "ZonesRead": {
+        "description": "The computed zones, with the two inputs they came from.\n\nThe anchor version is returned in full because it is the provenance of\nevery number in ``zones``; a client that caches the zones caches the\nversion id with them.",
+        "properties": {
+          "anchor_version": {
+            "$ref": "#/components/schemas/AnchorVersionRead"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ZoneModel"
+          },
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/ZoneRead"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": ["anchor_version", "model", "zones"],
+        "title": "ZonesRead",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -232,6 +589,621 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/anchors": {
+      "get": {
+        "description": "List anchor versions, newest first, optionally for one anchor type.",
+        "operationId": "anchors-list_anchor_versions",
+        "parameters": [
+          {
+            "description": "Restrict to one anchor type; omit for all of them.",
+            "in": "query",
+            "name": "anchor_type",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AnchorType",
+              "description": "Restrict to one anchor type; omit for all of them."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AnchorVersionRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Anchor Versions",
+        "tags": ["anchors"]
+      },
+      "post": {
+        "description": "Append a new version to an anchor's history.",
+        "operationId": "anchors-append_anchor_version",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnchorVersionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnchorVersionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Version violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Append Anchor Version",
+        "tags": ["anchors"]
+      }
+    },
+    "/api/v1/anchors/current": {
+      "get": {
+        "description": "Get the version of one anchor currently in force.\n\n\"In force\" is a domain rule, not `ORDER BY created_at DESC`: a version\neffective from a future date does not count yet, and a back-dated\ncorrection does.",
+        "operationId": "anchors-get_current_anchor_version",
+        "parameters": [
+          {
+            "description": "Which anchor to resolve.",
+            "in": "query",
+            "name": "anchor_type",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AnchorType",
+              "description": "Which anchor to resolve."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnchorVersionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Anchor version not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Current Anchor Version",
+        "tags": ["anchors"]
+      }
+    },
+    "/api/v1/anchors/{anchor_version_id}": {
+      "delete": {
+        "description": "Refuse to delete an anchor version (405).\n\nRaises:\n    MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.",
+        "operationId": "anchors-delete_anchor_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "anchor_version_id",
+            "required": true,
+            "schema": {
+              "title": "Anchor Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Anchor history is append-only"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Anchor Version",
+        "tags": ["anchors"]
+      },
+      "get": {
+        "description": "Get one anchor version by id.",
+        "operationId": "anchors-get_anchor_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "anchor_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Anchor Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnchorVersionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Anchor version not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Anchor Version",
+        "tags": ["anchors"]
+      },
+      "patch": {
+        "description": "Refuse to edit an anchor version (405).\n\nRaises:\n    MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.",
+        "operationId": "anchors-update_anchor_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "anchor_version_id",
+            "required": true,
+            "schema": {
+              "title": "Anchor Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Anchor history is append-only"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Anchor Version",
+        "tags": ["anchors"]
+      },
+      "put": {
+        "description": "Refuse to replace an anchor version (405).\n\nRaises:\n    MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.",
+        "operationId": "anchors-replace_anchor_version",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "anchor_version_id",
+            "required": true,
+            "schema": {
+              "title": "Anchor Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "405": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Anchor history is append-only"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Replace Anchor Version",
+        "tags": ["anchors"]
+      }
+    },
+    "/api/v1/anchors/{anchor_version_id}/zones": {
+      "get": {
+        "description": "Compute zones from one specific, frozen anchor version.",
+        "operationId": "zones-get_anchor_version_zones",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "anchor_version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Anchor Version Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to the model that derives from the anchor type.",
+            "in": "query",
+            "name": "zone_model",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ZoneModel",
+              "description": "Defaults to the model that derives from the anchor type."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZonesRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such anchor version, or none in force"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "No zone model derives from this anchor type"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Anchor Version Zones",
+        "tags": ["zones"]
+      }
+    },
+    "/api/v1/athlete": {
+      "get": {
+        "description": "Get the athlete profile.\n\nCreates it, empty, on the first call \u2014 the profile is bootstrapped\nlazily rather than seeded by a migration, so this read takes an actor and\naudits that one write.",
+        "operationId": "athlete-get_athlete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AthleteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Athlete",
+        "tags": ["athlete"]
+      },
+      "patch": {
+        "description": "Partially update the athlete profile.",
+        "operationId": "athlete-update_athlete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AthleteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AthleteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Profile violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Athlete",
+        "tags": ["athlete"]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "description": "Exchange the configured password for a signed session cookie.",
@@ -318,33 +1290,29 @@
         "tags": ["auth"]
       }
     },
-    "/api/v1/items": {
+    "/api/v1/zones": {
       "get": {
-        "description": "List items, newest first.",
-        "operationId": "items-list_items",
+        "description": "Compute zones from the anchor version currently in force.",
+        "operationId": "zones-get_zones",
         "parameters": [
           {
+            "description": "Whose version in force to derive from.",
             "in": "query",
-            "name": "offset",
+            "name": "anchor_type",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AnchorType",
+              "description": "Whose version in force to derive from."
+            }
+          },
+          {
+            "description": "Defaults to the model that derives from the anchor type.",
+            "in": "query",
+            "name": "zone_model",
             "required": false,
             "schema": {
-              "default": 0,
-              "maximum": 2147483647,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
+              "$ref": "#/components/schemas/ZoneModel",
+              "description": "Defaults to the model that derives from the anchor type."
             }
           }
         ],
@@ -353,195 +1321,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_ItemRead_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "List Items",
-        "tags": ["items"]
-      },
-      "post": {
-        "description": "Create a new item.",
-        "operationId": "items-create_item",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ItemRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Malformed body"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Name already taken"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Create Item",
-        "tags": ["items"]
-      }
-    },
-    "/api/v1/items/{item_id}": {
-      "delete": {
-        "description": "Delete an item.",
-        "operationId": "items-delete_item",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Item Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Item not found"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Delete Item",
-        "tags": ["items"]
-      },
-      "get": {
-        "description": "Get a single item.",
-        "operationId": "items-get_item",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Item Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ItemRead"
+                  "$ref": "#/components/schemas/ZonesRead"
                 }
               }
             },
@@ -565,17 +1345,17 @@
                 }
               }
             },
-            "description": "Item not found"
+            "description": "No such anchor version, or none in force"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "No zone model derives from this anchor type"
           }
         },
         "security": [
@@ -583,103 +1363,8 @@
             "APIKeyCookie": []
           }
         ],
-        "summary": "Get Item",
-        "tags": ["items"]
-      },
-      "patch": {
-        "description": "Partially update an item.",
-        "operationId": "items-update_item",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Item Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ItemRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Malformed body"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Item not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Name already taken"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Update Item",
-        "tags": ["items"]
+        "summary": "Get Zones",
+        "tags": ["zones"]
       }
     },
     "/health": {

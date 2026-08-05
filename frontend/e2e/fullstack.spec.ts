@@ -16,30 +16,42 @@ import { expect, test } from "@playwright/test";
  * and the `request` fixture, so API calls carry the session cookie too.
  */
 
-test("items page talks to the real API @fullstack", async ({ page }) => {
-  await page.goto("/items");
+test("the app shell renders behind the session cookie @fullstack", async ({
+  page,
+}) => {
+  await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Items" })).toBeVisible();
-  // Any successful render (list or empty state) proves the round-trip;
-  // the error state means broken wiring.
-  await expect(page.getByText("Failed to load items.")).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "arc" })).toBeVisible();
 });
 
-test("item created via API appears in the UI @fullstack", async ({
-  page,
+test("the athlete profile round-trips through the proxy @fullstack", async ({
   request,
 }) => {
-  const name = `smoke-item-${Date.now()}`;
-  const created = await request.post("/api/v1/items", {
-    data: { name, description: "created by the smoke test" },
-  });
-  expect(created.status()).toBe(201);
-  const { id } = await created.json();
+  // Also proves migrations ran on boot: the profile is bootstrapped into a
+  // table that only exists if `alembic upgrade head` succeeded.
+  const created = await request.get("/api/v1/athlete");
+  expect(created.status()).toBe(200);
 
-  try {
-    await page.goto("/items");
-    await expect(page.getByText(name)).toBeVisible();
-  } finally {
-    await request.delete(`/api/v1/items/${id}`);
-  }
+  const name = `smoke-${Date.now()}`;
+  const updated = await request.patch("/api/v1/athlete", { data: { name } });
+  expect(updated.status()).toBe(200);
+  expect((await updated.json()).name).toBe(name);
+});
+
+test("anchors and zones answer through the proxy @fullstack", async ({
+  request,
+}) => {
+  // WARNING: this append is PERMANENT — anchor history is append-only by
+  // design, so there is no cleanup. Fine against CI's throwaway compose
+  // stack; but `E2E_PASSWORD=... just smoke` against a stack sharing a real
+  // athlete's database volume will leave this 250 W estimated FTP in the
+  // history and may change which version is "current".
+  const appended = await request.post("/api/v1/anchors", {
+    data: { anchor_type: "ftp", value: 250, provenance: "estimated" },
+  });
+  expect(appended.status()).toBe(201);
+
+  const zones = await request.get("/api/v1/zones?anchor_type=ftp");
+  expect(zones.status()).toBe(200);
+  expect((await zones.json()).zones).toHaveLength(7);
 });

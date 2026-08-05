@@ -78,7 +78,19 @@ def enum_column[E: Enum](enum_class: type[E]) -> sa.Enum:
     """Return the column type for storing ``enum_class``.
 
     Non-native by convention: a ``VARCHAR`` plus a ``CHECK`` constraint on the
-    member names, which behaves the same on SQLite and Postgres and makes
+    stored strings, which behaves the same on SQLite and Postgres and makes
     adding a member an ordinary column-constraint migration.
+
+    What is stored is the member's **value**, not its name
+    (``values_callable``). SQLAlchemy defaults to the name, which for the
+    ``StrEnum`` members this codebase uses would put ``MAX_HR`` in the database
+    while the API, the OpenAPI schema and every JSON payload say ``max_hr`` —
+    two spellings of one vocabulary, and hand-written SQL would have to know
+    which side of the ORM it is on.
     """
-    return sa.Enum(enum_class, native_enum=False, validate_strings=True)
+    return sa.Enum(
+        enum_class,
+        native_enum=False,
+        validate_strings=True,
+        values_callable=lambda members: [str(member.value) for member in members],
+    )

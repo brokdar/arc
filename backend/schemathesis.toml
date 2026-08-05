@@ -1,0 +1,59 @@
+# Schemathesis configuration for the API fuzz job (.github/workflows/api-fuzz.yml).
+#
+# Auto-discovered: the job runs with working-directory `backend`, and the CLI
+# reads `schemathesis.toml` from the current directory.
+#
+# What is configured here is one check, `positive_data_acceptance`, and only
+# for the operations where a schema-compliant request is *rightly* refused.
+# Its default expectation — a valid-looking request gets 2xx/401/403/404/409 —
+# cannot hold for an API with rules a JSON schema cannot express:
+#
+#   * the append-only anchor refusals answer 405 by design (D36); a fuzzer
+#     reading the schema has no way to know PUT is documented in order to be
+#     refused,
+#   * anchor and profile writes are validated against domain rules — per-type
+#     plausibility bounds, `tested` provenance requiring a protocol, the
+#     confidence interval bracketing the value (D35) — which reach the client
+#     as 422s the schema does not describe,
+#   * zones exist only for anchor types a zone model derives from (D32), so
+#     `?anchor_type=max_hr` is schema-valid and semantically empty.
+#
+# Every one of those refusals is pinned by a unit test, which is the condition
+# for narrowing a check at all (D13). The check stays fully armed everywhere
+# else, and `expected-statuses` here *replaces* the default list, so each entry
+# repeats the statuses the operation can legitimately return.
+
+[[operations]]
+include-name = "PUT /api/v1/anchors/{anchor_version_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = [405]
+
+[[operations]]
+include-name = "PATCH /api/v1/anchors/{anchor_version_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = [405]
+
+[[operations]]
+include-name = "DELETE /api/v1/anchors/{anchor_version_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = [405]
+
+[[operations]]
+include-name = "POST /api/v1/anchors"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/athlete"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "GET /api/v1/zones"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "GET /api/v1/anchors/{anchor_version_id}/zones"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

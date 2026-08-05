@@ -1,7 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import ItemsPage from "@/app/items/page";
 import LoginPage from "@/app/login/page";
 import Home from "@/app/page";
 import { Providers } from "@/app/providers";
@@ -38,18 +37,6 @@ describe("route shells", () => {
 
     expect(
       await screen.findByRole("heading", { name: "arc" }),
-    ).toBeInTheDocument();
-  });
-
-  it("renders the items page behind the auth guard", async () => {
-    render(
-      <Providers>
-        <ItemsPage />
-      </Providers>,
-    );
-
-    expect(
-      await screen.findByRole("heading", { name: "Items" }),
     ).toBeInTheDocument();
   });
 });

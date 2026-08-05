@@ -4,6 +4,143 @@
  */
 
 export interface paths {
+  "/api/v1/anchors": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Anchor Versions
+     * @description List anchor versions, newest first, optionally for one anchor type.
+     */
+    get: operations["anchors-list_anchor_versions"];
+    put?: never;
+    /**
+     * Append Anchor Version
+     * @description Append a new version to an anchor's history.
+     */
+    post: operations["anchors-append_anchor_version"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/anchors/current": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Current Anchor Version
+     * @description Get the version of one anchor currently in force.
+     *
+     *     "In force" is a domain rule, not `ORDER BY created_at DESC`: a version
+     *     effective from a future date does not count yet, and a back-dated
+     *     correction does.
+     */
+    get: operations["anchors-get_current_anchor_version"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/anchors/{anchor_version_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Anchor Version
+     * @description Get one anchor version by id.
+     */
+    get: operations["anchors-get_anchor_version"];
+    /**
+     * Replace Anchor Version
+     * @description Refuse to replace an anchor version (405).
+     *
+     *     Raises:
+     *         MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.
+     */
+    put: operations["anchors-replace_anchor_version"];
+    post?: never;
+    /**
+     * Delete Anchor Version
+     * @description Refuse to delete an anchor version (405).
+     *
+     *     Raises:
+     *         MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.
+     */
+    delete: operations["anchors-delete_anchor_version"];
+    options?: never;
+    head?: never;
+    /**
+     * Update Anchor Version
+     * @description Refuse to edit an anchor version (405).
+     *
+     *     Raises:
+     *         MethodNotAllowedError: Always. See :data:`APPEND_ONLY_DETAIL`.
+     */
+    patch: operations["anchors-update_anchor_version"];
+    trace?: never;
+  };
+  "/api/v1/anchors/{anchor_version_id}/zones": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Anchor Version Zones
+     * @description Compute zones from one specific, frozen anchor version.
+     */
+    get: operations["zones-get_anchor_version_zones"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/athlete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Athlete
+     * @description Get the athlete profile.
+     *
+     *     Creates it, empty, on the first call — the profile is bootstrapped
+     *     lazily rather than seeded by a migration, so this read takes an actor and
+     *     audits that one write.
+     */
+    get: operations["athlete-get_athlete"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Athlete
+     * @description Partially update the athlete profile.
+     */
+    patch: operations["athlete-update_athlete"];
+    trace?: never;
+  };
   "/api/v1/auth/login": {
     parameters: {
       query?: never;
@@ -64,7 +201,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/v1/items": {
+  "/api/v1/zones": {
     parameters: {
       query?: never;
       header?: never;
@@ -72,48 +209,16 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List Items
-     * @description List items, newest first.
+     * Get Zones
+     * @description Compute zones from the anchor version currently in force.
      */
-    get: operations["items-list_items"];
+    get: operations["zones-get_zones"];
     put?: never;
-    /**
-     * Create Item
-     * @description Create a new item.
-     */
-    post: operations["items-create_item"];
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
-    trace?: never;
-  };
-  "/api/v1/items/{item_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get Item
-     * @description Get a single item.
-     */
-    get: operations["items-get_item"];
-    put?: never;
-    post?: never;
-    /**
-     * Delete Item
-     * @description Delete an item.
-     */
-    delete: operations["items-delete_item"];
-    options?: never;
-    head?: never;
-    /**
-     * Update Item
-     * @description Partially update an item.
-     */
-    patch: operations["items-update_item"];
     trace?: never;
   };
   "/health": {
@@ -141,6 +246,140 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     /**
+     * AnchorSource
+     * @description Who appended the version. Distinct from :class:`Provenance`.
+     *
+     *     Provenance is about the *value*; source is about the *writer*, and the
+     *     agent may never disguise itself as the athlete (build plan §0.7).
+     * @enum {string}
+     */
+    AnchorSource: "athlete" | "agent";
+    /**
+     * AnchorType
+     * @description Anchor quantities the application knows about.
+     *
+     *     ``CP`` and ``W_PRIME`` are reserved by the build plan: the critical-power
+     *     model is out of MVP scope, but the enum member exists so adding it later
+     *     is not a migration of stored values. Nothing produces or consumes them
+     *     yet, and :func:`app.domain.zones.zones_for` rejects them.
+     * @enum {string}
+     */
+    AnchorType: "ftp" | "lthr" | "max_hr" | "cp" | "w_prime";
+    /**
+     * AnchorUnit
+     * @description Units an anchor value can be expressed in.
+     * @enum {string}
+     */
+    AnchorUnit: "W" | "bpm" | "J";
+    /**
+     * AnchorVersionCreate
+     * @description Payload for appending a version to an anchor's history.
+     */
+    AnchorVersionCreate: {
+      /**
+       * Anchor Type
+       * @enum {string}
+       */
+      anchor_type: "ftp" | "lthr" | "max_hr";
+      /** Ci High */
+      ci_high?: number | null;
+      /** Ci Low */
+      ci_low?: number | null;
+      /** Effective Date */
+      effective_date?: string | null;
+      /** Protocol */
+      protocol?: string | null;
+      provenance: components["schemas"]["Provenance"];
+      unit?: components["schemas"]["AnchorUnit"] | null;
+      /** Value */
+      value: number;
+    };
+    /**
+     * AnchorVersionRead
+     * @description One anchor version as returned by the API.
+     */
+    AnchorVersionRead: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /** Ci High */
+      ci_high: number | null;
+      /** Ci Low */
+      ci_low: number | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Protocol */
+      protocol: string | null;
+      provenance: components["schemas"]["Provenance"];
+      source: components["schemas"]["AnchorSource"];
+      staleness_state: components["schemas"]["StalenessState"];
+      unit: components["schemas"]["AnchorUnit"];
+      /** Value */
+      value: number;
+    };
+    /**
+     * AthleteRead
+     * @description The athlete profile as returned by the API.
+     *
+     *     Every field is nullable: the profile is bootstrapped empty on first access
+     *     and filled in from the UI.
+     */
+    AthleteRead: {
+      /** Capabilities */
+      capabilities: {
+        [key: string]: unknown;
+      };
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Date Of Birth */
+      date_of_birth: string | null;
+      /** Height Cm */
+      height_cm: number | null;
+      /** Name */
+      name: string | null;
+      sex: components["schemas"]["Sex"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * AthleteUpdate
+     * @description Payload for partially updating the profile.
+     *
+     *     Omitted fields are left unchanged; an explicit ``null`` clears a field
+     *     (for ``sex`` and ``capabilities``, "clear" means back to ``unspecified``
+     *     and ``{}`` — those two have an empty value rather than an absent one).
+     */
+    AthleteUpdate: {
+      /** Capabilities */
+      capabilities?: {
+        [key: string]: unknown;
+      } | null;
+      /** Date Of Birth */
+      date_of_birth?: string | null;
+      /** Height Cm */
+      height_cm?: number | null;
+      /** Name */
+      name?: string | null;
+      sex?: components["schemas"]["Sex"] | null;
+    };
+    /**
      * ErrorDetail
      * @description Error response body, as produced by the AppError handler.
      *
@@ -166,54 +405,6 @@ export interface components {
       status: string;
     };
     /**
-     * ItemCreate
-     * @description Payload for creating an item.
-     */
-    ItemCreate: {
-      /** Description */
-      description?: string | null;
-      /** Name */
-      name: string;
-    };
-    /**
-     * ItemRead
-     * @description Item as returned by the API.
-     */
-    ItemRead: {
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
-      /** Description */
-      description: string | null;
-      /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /** Name */
-      name: string;
-      /**
-       * Updated At
-       * Format: date-time
-       */
-      updated_at: string;
-    };
-    /**
-     * ItemUpdate
-     * @description Payload for partially updating an item.
-     *
-     *     Omitted fields are left unchanged; ``description`` may be set to null to
-     *     clear it, but ``name`` is non-nullable.
-     */
-    ItemUpdate: {
-      /** Description */
-      description?: string | null;
-      /** Name */
-      name?: string;
-    };
-    /**
      * LoginRequest
      * @description Credentials for the single-user login.
      */
@@ -221,10 +412,10 @@ export interface components {
       /** Password */
       password: string;
     };
-    /** Page[ItemRead] */
-    Page_ItemRead_: {
+    /** Page[AnchorVersionRead] */
+    Page_AnchorVersionRead_: {
       /** Items */
-      items: components["schemas"]["ItemRead"][];
+      items: components["schemas"]["AnchorVersionRead"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -233,6 +424,15 @@ export interface components {
       total: number;
     };
     /**
+     * Provenance
+     * @description Where an anchor value came from — ordered weakest to strongest.
+     *
+     *     The order matters: it is what later work packages compare when deciding
+     *     whether a new value should displace the one in use.
+     * @enum {string}
+     */
+    Provenance: "assumed" | "estimated" | "athlete_reported" | "tested";
+    /**
      * SessionStatus
      * @description Whether the caller currently holds an authenticated session.
      */
@@ -240,6 +440,26 @@ export interface components {
       /** Authenticated */
       authenticated: boolean;
     };
+    /**
+     * Sex
+     * @description Biological sex, as it affects physiological reference values.
+     *
+     *     ``UNSPECIFIED`` is a real member rather than ``None`` so the column is
+     *     never null and reads state "not answered" instead of "unknown why".
+     * @enum {string}
+     */
+    Sex: "female" | "male" | "unspecified";
+    /**
+     * StalenessState
+     * @description How much an anchor version is still to be trusted.
+     *
+     *     The staleness *model* is deferred past the MVP, but the field is not:
+     *     every version stores one, hardcoded to ``FRESH`` today (see
+     *     :data:`MVP_STALENESS_STATE`). ``AGING`` and ``STALE`` are reserved so that
+     *     turning the model on later is code, not a data migration.
+     * @enum {string}
+     */
+    StalenessState: "fresh" | "aging" | "stale";
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -253,6 +473,61 @@ export interface components {
       /** Error Type */
       type: string;
     };
+    /**
+     * ValidationErrorDetail
+     * @description 422 response body — the one status with two shapes.
+     *
+     *     A service raising :class:`ValidationError` produces a sentence; FastAPI's
+     *     own request validation produces its list of per-field errors. Both are
+     *     422s on the same endpoint, so the declared contract has to admit both, or
+     *     a schema-conformance fuzzer is right to call one of them a lie.
+     */
+    ValidationErrorDetail: {
+      /** Detail */
+      detail: string | unknown[];
+    };
+    /**
+     * ZoneModel
+     * @description The zone schemes the MVP supports.
+     *
+     *     One per channel: power zones off FTP, heart-rate zones off LTHR. Adding a
+     *     model is adding a member plus a row in :data:`_ZONE_SCHEMES`.
+     * @enum {string}
+     */
+    ZoneModel: "coggan_7" | "lthr_5";
+    /**
+     * ZoneRead
+     * @description One half-open zone band ``[lower, upper)``.
+     */
+    ZoneRead: {
+      /** Index */
+      index: number;
+      /** Lower */
+      lower: number;
+      /** Lower Pct */
+      lower_pct: number;
+      /** Name */
+      name: string;
+      unit: components["schemas"]["AnchorUnit"];
+      /** Upper */
+      upper: number | null;
+      /** Upper Pct */
+      upper_pct: number | null;
+    };
+    /**
+     * ZonesRead
+     * @description The computed zones, with the two inputs they came from.
+     *
+     *     The anchor version is returned in full because it is the provenance of
+     *     every number in ``zones``; a client that caches the zones caches the
+     *     version id with them.
+     */
+    ZonesRead: {
+      anchor_version: components["schemas"]["AnchorVersionRead"];
+      model: components["schemas"]["ZoneModel"];
+      /** Zones */
+      zones: components["schemas"]["ZoneRead"][];
+    };
   };
   responses: never;
   parameters: never;
@@ -262,6 +537,451 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  "anchors-list_anchor_versions": {
+    parameters: {
+      query?: {
+        /** @description Restrict to one anchor type; omit for all of them. */
+        anchor_type?: components["schemas"]["AnchorType"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_AnchorVersionRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "anchors-append_anchor_version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AnchorVersionCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AnchorVersionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Version violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "anchors-get_current_anchor_version": {
+    parameters: {
+      query: {
+        /** @description Which anchor to resolve. */
+        anchor_type: components["schemas"]["AnchorType"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AnchorVersionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Anchor version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "anchors-get_anchor_version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        anchor_version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AnchorVersionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Anchor version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "anchors-replace_anchor_version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        anchor_version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Anchor history is append-only */
+      405: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "anchors-delete_anchor_version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        anchor_version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Anchor history is append-only */
+      405: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "anchors-update_anchor_version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        anchor_version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Anchor history is append-only */
+      405: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "zones-get_anchor_version_zones": {
+    parameters: {
+      query?: {
+        /** @description Defaults to the model that derives from the anchor type. */
+        zone_model?: components["schemas"]["ZoneModel"];
+      };
+      header?: never;
+      path: {
+        anchor_version_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZonesRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such anchor version, or none in force */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No zone model derives from this anchor type */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "athlete-get_athlete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AthleteRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "athlete-update_athlete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AthleteUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AthleteRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Profile violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "auth-login": {
     parameters: {
       query?: never;
@@ -349,11 +1069,13 @@ export interface operations {
       };
     };
   };
-  "items-list_items": {
+  "zones-get_zones": {
     parameters: {
-      query?: {
-        offset?: number;
-        limit?: number;
+      query: {
+        /** @description Whose version in force to derive from. */
+        anchor_type: components["schemas"]["AnchorType"];
+        /** @description Defaults to the model that derives from the anchor type. */
+        zone_model?: components["schemas"]["ZoneModel"];
       };
       header?: never;
       path?: never;
@@ -367,7 +1089,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Page_ItemRead_"];
+          "application/json": components["schemas"]["ZonesRead"];
         };
       };
       /** @description No valid session */
@@ -379,107 +1101,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "items-create_item": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ItemCreate"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ItemRead"];
-        };
-      };
-      /** @description Malformed body */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Name already taken */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "items-get_item": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        item_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ItemRead"];
-        };
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Item not found */
+      /** @description No such anchor version, or none in force */
       404: {
         headers: {
           [name: string]: unknown;
@@ -488,131 +1110,13 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
-      /** @description Validation Error */
+      /** @description No zone model derives from this anchor type */
       422: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "items-delete_item": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        item_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Item not found */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "items-update_item": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        item_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ItemUpdate"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ItemRead"];
-        };
-      };
-      /** @description Malformed body */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Item not found */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Name already taken */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

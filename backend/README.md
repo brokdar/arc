@@ -27,9 +27,10 @@ Dependencies point one way only — `api | mcp` → `ingest` → `services` →
 outer layers at all. This is enforced by import-linter (`uv run lint-imports`,
 contracts in `pyproject.toml`), which runs in CI, `just lint` and pre-push.
 
-`items` is a worked example spread across the layers (`persistence/items.py`,
-`services/items.py`, `api/schemas/items.py`, `api/routes/items.py`) — delete
-it once you have a real one.
+The first real entities live across those layers as a worked example:
+`domain/{athlete,anchors,zones,versioning}.py`, `persistence/{athlete,anchors,
+audit}.py`, `services/{athlete,anchors,zones}.py`, `api/schemas/*` and
+`api/routes/*`. WP-0's throwaway `items` example is gone.
 
 ## Commands
 
