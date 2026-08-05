@@ -1,19 +1,21 @@
 [project]
 name = "backend"
-description = "__PROJECT_NAME__ API service"
+description = "arc API service"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dynamic = ["version"]
 dependencies = [
     "fastapi[standard]>=0.141.1",
     "sqlalchemy[asyncio]>=2.0.51",
     "alembic>=1.18.0",
     "asyncpg>=0.31.0",
-    "arq>=0.28.0",
-    "redis>=5.0.0",
+    "apscheduler>=3.11,<4",
+    "fastmcp>=3.4,<4",
     "pydantic>=2.13.0",
     "pydantic-settings>=2.14.0",
     "structlog>=25.5.0",
+    "bcrypt>=5",
+    "itsdangerous>=2.2",
 ]
 
 [dependency-groups]
@@ -27,6 +29,7 @@ dev = [
     "aiosqlite>=0.21.0",
     "ruff>=0.15.0",
     "pyrefly>=1.1.0",
+    "import-linter>=2.3",
 ]
 
 [build-system]
@@ -46,9 +49,9 @@ link-mode = "copy"
 
 [tool.ruff]
 line-length = 88
-target-version = "py313"
+target-version = "py314"
 fix = true
-extend-exclude = ["app/alembic"]
+extend-exclude = ["app/persistence/alembic"]
 
 [tool.ruff.lint]
 select = [
@@ -104,7 +107,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/alembic/*"]
+omit = ["app/persistence/alembic/*"]
 # SQLAlchemy's asyncio layer switches greenlets; without this, code awaited
 # across the sync/async bridge is reported as uncovered.
 concurrency = ["greenlet", "thread"]
@@ -112,3 +115,57 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 fail_under = 80
 show_missing = true
+
+# --- Architecture boundaries (import-linter) ---------------------------------
+# `uv run lint-imports` — enforced in CI, the `just lint` recipe and pre-push.
+# `app.core` is deliberately absent from the layer stack: it is cross-cutting
+# (config, logging, exceptions, scheduler) and every layer may use it.
+[tool.importlinter]
+root_package = "app"
+# Needed so the forbidden contract below can name third-party packages.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+# A deny-list only bites for what it names, so every runtime dependency has to
+# appear here or on the explicit allowlist in
+# tests/unit/test_domain_purity_contract.py, which fails when a new dependency
+# is classified as neither.
+name = "Domain is pure (no I/O, no frameworks, no outer layers)"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "sqlalchemy",
+    "alembic",
+    "asyncpg",
+    "fastapi",
+    "starlette",
+    "httpx",
+    "pydantic_settings",
+    "apscheduler",
+    "structlog",
+    "fastmcp",
+    "bcrypt",
+    "itsdangerous",
+    "app.persistence",
+    "app.services",
+    "app.api",
+    "app.mcp",
+    "app.ingest",
+    "app.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "API and MCP adapters are independent"
+type = "independence"
+modules = ["app.api", "app.mcp"]
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "app.api | app.mcp",
+    "app.ingest",
+    "app.services",
+    "app.persistence",
+    "app.domain",
+]

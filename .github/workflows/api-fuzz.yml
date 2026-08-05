@@ -28,6 +28,10 @@ jobs:
       POSTGRES__USER: postgres
       POSTGRES__PASSWORD: test
       POSTGRES__DB: app_test
+      # Fixed bcrypt hash of "ci-test-password". No escaping needed: YAML
+      # scalars are literal, so the `$`s survive as-is.
+      AUTH__PASSWORD_HASH: "$2b$12$zKJ/WPCZxSLDiNcagKB4NuxBO3.OqDch0OfYVoTkNfFBvjnvREdVm"
+      AUTH__SESSION__SECRET_KEY: ci-fuzz-session-secret
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -52,9 +56,31 @@ jobs:
           uv run fastapi run app/main.py --port 8000 &
           timeout 30 bash -c 'until curl -sf http://localhost:8000/health; do sleep 1; done'
 
+      - name: Log in and capture the session cookie
+        # Every endpoint except /health and /api/v1/auth/* is behind the
+        # session guard, so without this the fuzzer would only ever see 401s.
+        run: |
+          curl -sf -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"password":"ci-test-password"}'
+          value=$(awk '$6 == "arc_session" { print $7 }' cookies.txt)
+          test -n "$value"
+          echo "SESSION_COOKIE=arc_session=$value" >> "$GITHUB_ENV"
+
       - name: Fuzz the API from its OpenAPI schema
         # negative_data_rejection is excluded by design: FastAPI ignores
         # unknown query parameters, which that check treats as a failure.
+        #
+        # ignored_auth is excluded because the session cookie is supplied as a
+        # raw --header (schemathesis has no CLI flag for an apiKey scheme), so
+        # the check cannot strip it before probing and every protected
+        # operation looks unauthenticated-but-accepted. The property it tests
+        # is covered directly by tests/unit/test_auth.py.
+        #
+        # Expect a standing "schema validation mismatch" warning for
+        # POST /api/v1/auth/login: a login endpoint rejects essentially every
+        # generated password, which the heuristic reads as over-strict
+        # validation. It is a warning, not a failure.
         #
         # schemathesis runs unpinned via `uvx` (floats to the latest release),
         # and current versions intermittently hang on exit AFTER finishing
@@ -67,7 +93,8 @@ jobs:
           timeout --signal=INT --kill-after=30s 8m \
             uvx schemathesis run http://localhost:8000/openapi.json \
               --max-examples 100 \
-              --exclude-checks negative_data_rejection \
+              --header "Cookie: $SESSION_COOKIE" \
+              --exclude-checks negative_data_rejection,ignored_auth \
               --report junit \
               --report-dir schemathesis-report
           st=$?

@@ -5,6 +5,12 @@ on:
     paths:
       - "backend/**"
       - "frontend/generated/**"
+      # generate-api-types.sh shells out to openapi-typescript and biome via
+      # `bunx`, so their versions come from the frontend manifest and lockfile:
+      # bumping either can change the generated output, and without these paths
+      # a Dependabot bump lands that drift on main unchecked.
+      - "frontend/package.json"
+      - "frontend/bun.lock"
       - "scripts/generate-api-types.sh"
       - "scripts/check-api-schema-sync.sh"
       - ".github/workflows/api-schema-sync.yml"

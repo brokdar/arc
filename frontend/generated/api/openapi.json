@@ -131,6 +131,18 @@
         "title": "ItemUpdate",
         "type": "object"
       },
+      "LoginRequest": {
+        "description": "Credentials for the single-user login.",
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": ["password"],
+        "title": "LoginRequest",
+        "type": "object"
+      },
       "Page_ItemRead_": {
         "properties": {
           "items": {
@@ -155,6 +167,18 @@
         },
         "required": ["items", "total", "offset", "limit"],
         "title": "Page[ItemRead]",
+        "type": "object"
+      },
+      "SessionStatus": {
+        "description": "Whether the caller currently holds an authenticated session.",
+        "properties": {
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          }
+        },
+        "required": ["authenticated"],
+        "title": "SessionStatus",
         "type": "object"
       },
       "ValidationError": {
@@ -193,14 +217,107 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "APIKeyCookie": {
+        "in": "cookie",
+        "name": "arc_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
-    "title": "__PROJECT_NAME__",
+    "title": "arc",
     "version": "0.0.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "description": "Exchange the configured password for a signed session cookie.",
+        "operationId": "auth-login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Invalid password"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": ["auth"]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "Drop the session. A no-op (still 204) when there is none.",
+        "operationId": "auth-logout",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": ["auth"]
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "description": "Report whether the caller is authenticated. Never rejects.",
+        "operationId": "auth-read_session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Session",
+        "tags": ["auth"]
+      }
+    },
     "/api/v1/items": {
       "get": {
         "description": "List items, newest first.",
@@ -242,6 +359,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -253,6 +380,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "List Items",
         "tags": ["items"]
       },
@@ -290,6 +422,16 @@
             },
             "description": "Malformed body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -311,6 +453,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Create Item",
         "tags": ["items"]
       }
@@ -335,6 +482,16 @@
           "204": {
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -356,6 +513,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Delete Item",
         "tags": ["items"]
       },
@@ -385,6 +547,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -406,6 +578,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Item",
         "tags": ["items"]
       },
@@ -455,6 +632,16 @@
             },
             "description": "Malformed body"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -486,6 +673,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Update Item",
         "tags": ["items"]
       }

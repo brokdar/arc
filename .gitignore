@@ -28,6 +28,7 @@ venv/
 .ruff_cache/
 .pyrefly/
 .mypy_cache/
+.schemathesis/
 
 # === Node / Next.js ===
 node_modules/
@@ -50,5 +51,8 @@ playwright/.cache/
 
 # === Project ===
 logs/
+data/
+.data-dev/
+.claude/settings.local.json
 .claude/scheduled_tasks.lock
 **/agent-memory/

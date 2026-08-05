@@ -1,14 +1,15 @@
 name: Full-Stack Smoke
 
-# Boots the real compose stack (Postgres, Redis, API + migrations, worker,
-# frontend) and runs the tiny @fullstack Playwright suite against it. This is
-# the top of the test pyramid — it verifies wiring, not logic.
+# Boots the real compose stack (Postgres, API + migrations, frontend, Caddy)
+# and runs the tiny @fullstack Playwright suite against it — through the proxy
+# on :80. This is the top of the test pyramid — it verifies wiring, not logic.
 on:
   pull_request:
     paths:
       - "backend/**"
       - "frontend/**"
       - "docker-compose.yml"
+      - "caddy/Caddyfile"
       - ".env.example"
       - ".github/workflows/docker-compose-check.yml"
 
@@ -28,19 +29,56 @@ jobs:
           persist-credentials: false
 
       - name: Create .env from example
+        # docker-compose.yml pins ENVIRONMENT=production on api and mcp, so
+        # every value below has to satisfy the production config guard
+        # (app/core/config.py): POSTGRES__PASSWORD neither empty nor
+        # 'postgres', and non-empty AUTH__PASSWORD_HASH and
+        # AUTH__SESSION__SECRET_KEY. The MCP key must also clear
+        # app/mcp/auth.py's rules: >= 32 characters and no 'change-me'.
         run: |
           cp .env.example .env
           sed -i 's/^POSTGRES__PASSWORD=.*/POSTGRES__PASSWORD=ci-test/' .env
-          sed -i 's/^AUTH__JWT__SECRET_KEY=.*/AUTH__JWT__SECRET_KEY=ci-test-secret-key-32-characters!/' .env
+          sed -i 's/^AUTH__SESSION__SECRET_KEY=.*/AUTH__SESSION__SECRET_KEY=ci-test-secret-key-0123456789abcdef/' .env
+          sed -i "s|^MCP__API_KEYS=.*|MCP__API_KEYS='ci:read:ci-test-mcp-key-0123456789abcdef0123456789abcdef'|" .env
+          # Fixed bcrypt hash of "ci-test-password" (the E2E_PASSWORD below).
+          # Appended with printf rather than substituted with sed: bcrypt
+          # hashes are full of `$`, `/` and `.`, which sed would eat.
+          sed -i "/^AUTH__PASSWORD_HASH=/d" .env
+          printf "%s\n" "AUTH__PASSWORD_HASH='\$2b\$12\$zKJ/WPCZxSLDiNcagKB4NuxBO3.OqDch0OfYVoTkNfFBvjnvREdVm'" >> .env
 
       - name: Validate compose config
         run: docker compose config --quiet
 
       - name: Build and start the full stack
-        run: docker compose up --build --wait db redis api worker frontend
+        run: docker compose up --build --wait db api mcp frontend caddy
 
-      - name: Check API health
+      - name: Check API health (direct)
         run: curl --fail --retry 5 --retry-delay 3 http://localhost:8000/health
+
+      - name: Check API health through the Caddy proxy
+        run: curl --fail --retry 5 --retry-delay 3 http://localhost/health
+
+      - name: Check the frontend through the Caddy proxy
+        run: curl --fail --retry 5 --retry-delay 3 http://localhost/
+
+      - name: Check the API rejects unauthenticated calls through Caddy
+        # 401 proves the session guard is actually mounted in the shipped
+        # image; a 200 here would mean the API is wide open.
+        run: |
+          status=$(curl -s --retry 5 --retry-delay 3 http://localhost/api/v1/items \
+            -o /dev/null -w '%{http_code}')
+          echo "GET /api/v1/items -> $status"
+          test "$status" = "401"
+
+      - name: Check the MCP server rejects unauthenticated calls through Caddy
+        # 401 proves the whole path is wired: Caddy -> mcp -> bearer auth.
+        # A 502 would mean the proxy route or the container is broken.
+        run: |
+          status=$(curl -sf --retry 5 --retry-delay 3 http://localhost/mcp \
+            -H 'Accept: application/json, text/event-stream' \
+            -o /dev/null -w '%{http_code}' || true)
+          echo "GET /mcp -> $status"
+          test "$status" = "401"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
@@ -63,6 +101,8 @@ jobs:
         working-directory: frontend
         env:
           E2E_FULLSTACK: "1"
+          # Must match AUTH__PASSWORD_HASH written into .env above.
+          E2E_PASSWORD: ci-test-password
 
       - name: Show logs on failure
         if: failure()

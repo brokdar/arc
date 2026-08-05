@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "__PROJECT_NAME__",
-  description: "__PROJECT_NAME__",
+  title: "arc",
+  description: "arc",
 };
 
 export default function RootLayout({

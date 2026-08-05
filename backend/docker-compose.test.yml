@@ -3,7 +3,7 @@
 # running dev database.
 services:
   db-test:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     ports:
       - "127.0.0.1:5433:5432"
     healthcheck:
@@ -16,4 +16,6 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_DB=app_test
     tmpfs:
-      - /var/lib/postgresql/data
+      # Postgres 18 keeps its data under /var/lib/postgresql/<major>/docker,
+      # so the whole directory must be the tmpfs mount.
+      - /var/lib/postgresql

@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# Playwright storage state from the fullstack auth setup project
+/e2e/.auth
 
 # next.js
 /.next/

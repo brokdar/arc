@@ -1,0 +1,134 @@
+# git-cliff — CHANGELOG.md drafting (https://git-cliff.org)
+#
+# This does NOT own CHANGELOG.md. `just changelog` writes a DRAFT to stdout;
+# nothing writes to the file. The entries are raw material a human edits down
+# before committing — Keep a Changelog is explicit that "changelogs are for
+# humans, not machines".
+#
+# That is why commit bodies are included in full: in this repo the body of a
+# commit is already changelog prose, so the draft starts at ~90% and curation
+# is deletion rather than rewriting.
+#
+# `main` is squash-only, and the repository is configured
+# `squash_merge_commit_title = PR_TITLE` / `squash_merge_commit_message =
+# PR_BODY`. So what this actually parses on `main` is one commit per PR whose
+# subject is the PR title and whose body is the PR description.
+
+[changelog]
+# Emitted above the generated entries. Kept empty because CHANGELOG.md already
+# carries its own header.
+header = ""
+
+# Tera template. With `conventional_commits = true`, `commit.message` is the
+# *description only* — the type and scope are already parsed off, which is why
+# `upper_first` below does not capitalise "feat". `commit.body` is the body
+# with trailers stripped by `commit_preprocessors`.
+#
+# `raw_body` is a fallback. The Conventional Commits grammar treats a leading
+# `Token: value` line as a *footer*, so a body that opens with e.g. "Note: ..."
+# is parsed entirely as footers and `commit.body` comes back empty — taking any
+# prose after it with it. Verified: a body of "Note: x\n\nReal prose." yields an
+# empty `commit.body`. Falling back to everything after the subject line keeps
+# that prose in the draft instead of losing it silently. (A footer at the END of
+# an otherwise normal body is still dropped; that is why `breaking_description`
+# is rendered explicitly below — it is the footer that actually matters.)
+body = """
+{% if version %}
+## [{{ version | trim_start_matches(pat="v") }}] — {{ timestamp | date(format="%Y-%m-%d") }}
+{%- else -%}
+## [Unreleased]
+{%- endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+{%- set raw_body = commit.raw_message | split(pat="\\n") | slice(start=1) | join(sep="\\n") | trim %}
+- {% if commit.breaking %}**BREAKING** — {% endif %}{% if commit.scope %}**{{ commit.scope }}** — {% endif %}{{ commit.message | upper_first }}
+{%- if commit.breaking and commit.breaking_description and commit.breaking_description != commit.message %}
+{% set breaking = "**Breaking:** " ~ commit.breaking_description | trim %}
+{{ breaking | indent(prefix="  ", first=true, blank=false) }}
+{%- endif %}
+{%- if commit.body %}
+
+{{ commit.body | trim | indent(prefix="  ", first=true, blank=false) }}
+{% elif raw_body %}
+
+{{ raw_body | indent(prefix="  ", first=true, blank=false) }}
+{% endif %}
+{%- endfor %}
+{% endfor %}"""
+
+footer = ""
+trim = true
+postprocessors = [
+  # A squashed commit body is the PR description, which starts with the PR
+  # template's `## What` / `## Checklist`. Indenting those two spaces does NOT
+  # stop CommonMark rendering them as real H2s — they would become siblings of
+  # `## [Unreleased]` and wreck the document. Demote any heading that appears
+  # inside an (indented) body to bold. Real headings sit at column 0 and are
+  # untouched.
+  { pattern = '(?m)^  #{1,6}[ \t]+(.*)$', replace = "  **${1}**" },
+  # Collapse the blank line the loops leave at each group boundary — the draft
+  # gets pasted into CHANGELOG.md by hand, so it should not need tidying first.
+  { pattern = '\n{3,}', replace = "\n\n" },
+]
+
+[git]
+conventional_commits = true
+# Anything that is not a conventional commit is dropped rather than dumped into
+# the draft under a catch-all heading. This happens BEFORE commit_parsers run,
+# so a non-conventional subject cannot be rescued by a parser — only by a
+# preprocessor that rewrites it into conventional form (see the revert rule).
+#
+# This is why `.github/workflows/pr-title.yml` exists. The `protect-main`
+# ruleset allows only squash merges, so `main` gets ONE commit per PR and its
+# subject is the PR title — which the local commit-msg hook never sees. Without
+# the CI check, a PR titled "WP-1 domain model" would land on main and silently
+# vanish from every changelog draft.
+filter_unconventional = true
+split_commits = false
+
+commit_preprocessors = [
+  # `git revert` and GitHub's Revert button both produce `Revert "<subject>"`,
+  # which is not conventional and would therefore be dropped outright — a
+  # feature being UN-shipped, invisible in the changelog. Rewrite it into a
+  # `revert:` commit so it lands under Changed.
+  { pattern = '\ARevert "(.*)"', replace = 'revert: ${1}' },
+  # Drop Co-Authored-By / Signed-off-by trailers so they don't land in the body.
+  { pattern = '(?m)^(Co-Authored-By|Co-authored-by|Signed-off-by):.*$', replace = "" },
+  # GitHub appends the PR number to every squashed subject:
+  # `feat(wp-1): thing (#12)`. Strip it — the changelog wants the change, not
+  # the PR id. Anchored with `\A` to the FIRST LINE ONLY: preprocessors run
+  # against the whole message, so a multiline-anchored version would also eat
+  # legitimate `(#123)` references inside the body.
+  { pattern = '\A([^\n]*?)[ \t]*\(#[0-9]+\)([\n]|\z)', replace = '${1}${2}' },
+]
+
+# Conventional type -> Keep a Changelog section. The `<!-- N -->` prefix only
+# sets the ordering and is removed by `striptags` in the template; a bare
+# numeric prefix would render an empty `### ` heading for any type with no
+# parser. "Internal" and "Documentation" are not Keep a Changelog sections —
+# they are here because a draft should over-collect and let the curator delete,
+# not silently lose a change that turned out to matter.
+#
+# THIS LIST IS DUPLICATED in .pre-commit-config.yaml and
+# .github/workflows/pr-title.yml. Change all three together.
+commit_parsers = [
+  # Release commits describe the release, not a change in it. Must precede the
+  # `^(chore|...)` rule — the first matching parser wins.
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^feat", group = "<!-- 1 -->Added" },
+  { message = "^(perf|refactor|revert)", group = "<!-- 2 -->Changed" },
+  { message = "^fix", group = "<!-- 3 -->Fixed" },
+  { message = "^docs", group = "<!-- 4 -->Documentation" },
+  { message = "^(chore|build|ci|test|style)", group = "<!-- 5 -->Internal" },
+]
+# Deprecated / Removed / Security are Keep a Changelog sections with no
+# Conventional Commits type behind them. They stay a curation step: add the
+# heading by hand when a release has one, rather than inventing commit types
+# that only this repo understands.
+
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"

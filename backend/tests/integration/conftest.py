@@ -17,8 +17,13 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
-from app.core.db import Base
 from app.main import create_app
+from app.persistence import load_models
+from app.persistence.db import Base
+
+# `_clean_tables` truncates `Base.metadata.sorted_tables`; without the sweep it
+# would silently skip any model `app.main`'s import graph does not reach.
+load_models()
 
 
 @pytest.fixture(scope="session")
@@ -46,10 +51,24 @@ async def _clean_tables(_migrated_database: None) -> AsyncIterator[None]:
     await engine.dispose()
 
 
+#: Matches the AUTH__PASSWORD_HASH exported by scripts/run-integration-tests.sh.
+TEST_PASSWORD = "integration-test-password"
+
+
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    """HTTP client against the app using the real database."""
+async def anon_client() -> AsyncIterator[AsyncClient]:
+    """HTTP client against the app using the real database, with no session."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
+
+
+@pytest.fixture
+async def client(anon_client: AsyncClient) -> AsyncClient:
+    """Authenticated HTTP client — logs in for real, keeping the cookie."""
+    response = await anon_client.post(
+        "/api/v1/auth/login", json={"password": TEST_PASSWORD}
+    )
+    assert response.status_code == 204, response.text
+    return anon_client

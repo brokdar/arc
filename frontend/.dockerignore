@@ -5,4 +5,10 @@ playwright-report
 blob-report
 coverage
 e2e
-.env.local
+# Ships nothing to the image and imports e2e/ (excluded above), which would
+# break the build's type-check.
+playwright.config.ts
+# Local secrets never belong in an image: .env.local plus every other .env
+# variant a developer might have lying around.
+.env
+.env.*

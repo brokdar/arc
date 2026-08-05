@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+  "/api/v1/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Login
+     * @description Exchange the configured password for a signed session cookie.
+     */
+    post: operations["auth-login"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Logout
+     * @description Drop the session. A no-op (still 204) when there is none.
+     */
+    post: operations["auth-logout"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/auth/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Session
+     * @description Report whether the caller is authenticated. Never rejects.
+     */
+    get: operations["auth-read_session"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/items": {
     parameters: {
       query?: never;
@@ -153,6 +213,14 @@ export interface components {
       /** Name */
       name?: string;
     };
+    /**
+     * LoginRequest
+     * @description Credentials for the single-user login.
+     */
+    LoginRequest: {
+      /** Password */
+      password: string;
+    };
     /** Page[ItemRead] */
     Page_ItemRead_: {
       /** Items */
@@ -163,6 +231,14 @@ export interface components {
       offset: number;
       /** Total */
       total: number;
+    };
+    /**
+     * SessionStatus
+     * @description Whether the caller currently holds an authenticated session.
+     */
+    SessionStatus: {
+      /** Authenticated */
+      authenticated: boolean;
     };
     /** ValidationError */
     ValidationError: {
@@ -186,6 +262,93 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  "auth-login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LoginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Invalid password */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "auth-logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  "auth-read_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionStatus"];
+        };
+      };
+    };
+  };
   "items-list_items": {
     parameters: {
       query?: {
@@ -205,6 +368,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_ItemRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
       /** @description Validation Error */
@@ -242,6 +414,15 @@ export interface operations {
       };
       /** @description Malformed body */
       400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
         headers: {
           [name: string]: unknown;
         };
@@ -289,6 +470,15 @@ export interface operations {
           "application/json": components["schemas"]["ItemRead"];
         };
       };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Item not found */
       404: {
         headers: {
@@ -326,6 +516,15 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
       };
       /** @description Item not found */
       404: {
@@ -373,6 +572,15 @@ export interface operations {
       };
       /** @description Malformed body */
       400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
         headers: {
           [name: string]: unknown;
         };

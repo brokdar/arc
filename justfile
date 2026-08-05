@@ -2,23 +2,37 @@
 default:
 	@just --list
 
-# One-time project initialization after creating a repo from the template
+# --- Setup -------------------------------------------------------------------
+
+# Create .env from .env.example: random secrets + the password you pick
 init:
-	bash scripts/init.sh
+	bash scripts/bootstrap-env.sh
+
+# The printed line is single-quoted because bcrypt hashes are full of `$`,
+# which .env parsers and your shell would otherwise expand.
+
+# Print an AUTH__PASSWORD_HASH line for .env, for a password you type
+hash-password:
+	@cd backend && hash="$(uv run python -c 'import bcrypt, getpass, sys; pw = getpass.getpass("Password: "); sys.exit("passwords do not match, or the password is empty") if (not pw or pw != getpass.getpass("Confirm: ")) else None; print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode())')" && printf "AUTH__PASSWORD_HASH='%s'\n" "$hash"
 
 # --- Dev servers -------------------------------------------------------------
 
-# Start backing services (Postgres + Redis) in the background
+# Start backing services (Postgres) in the background
 infra:
-	docker compose up -d db redis
+	docker compose up -d db
+
+# Host processes read the repo-root .env (see backend/app/core/config.py), but
+# its POSTGRES__HOST=db is the compose network name — only reachable from inside
+# the Docker network. `just infra` publishes the database on localhost, so these
+# recipes override that one value; a real env var beats any .env entry.
 
 # Run the FastAPI dev server with hot reload
 dev-api: infra
-	cd backend && uv run fastapi dev app/main.py
+	cd backend && POSTGRES__HOST=localhost uv run fastapi dev app/main.py
 
-# Run the ARQ background worker
-dev-worker: infra
-	cd backend && uv run arq app.worker.main.WorkerSettings
+# Run the MCP server (needs MCP__API_KEYS in .env — `just init` writes it)
+dev-mcp: infra
+	cd backend && POSTGRES__HOST=localhost uv run python -m app.mcp.main
 
 # Run the Next.js dev server
 dev-web:
@@ -41,7 +55,7 @@ format:
 
 # Lint backend + frontend
 lint:
-	cd backend && uv run ruff check . && uv run ruff format --check .
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run lint-imports
 	cd frontend && bun run lint
 
 # Type-check backend + frontend
@@ -58,27 +72,48 @@ test:
 test-int:
 	bash scripts/run-integration-tests.sh
 
+# Production build of the frontend (catches what `tsgo --noEmit` cannot)
+build:
+	cd frontend && bun run build
+
 # Run Playwright end-to-end tests (UI-only, no backend needed)
 e2e:
 	cd frontend && bun run test:e2e
 
+# E2E_PASSWORD must be the password whose bcrypt hash is in .env as
+# AUTH__PASSWORD_HASH — the suite logs in through the real UI. With an .env
+# from `just init` that is the password you chose there, so pass it in:
+# E2E_PASSWORD=... just smoke
+
 # Boot the full Docker stack and run the @fullstack smoke suite against it
 smoke:
-	docker compose up --build --wait db redis api worker frontend
-	cd frontend && E2E_FULLSTACK=1 bun run test:e2e
+	docker compose up --build --wait db api mcp frontend caddy
+	cd frontend && E2E_FULLSTACK=1 E2E_PASSWORD="${E2E_PASSWORD:-ci-test-password}" bun run test:e2e
 
-# Everything CI runs, locally
-check: lint typecheck test
+# The gates that need nothing but this checkout: lint, type-check, unit tests,
+# the production frontend build and API-contract drift. NOT covered — each
+# needs a service or a long run: `test-int` (Postgres; the only place
+# `alembic check` runs), `e2e` (Playwright browsers), `smoke` (the Docker
+# stack). `check-all` adds the integration suite; CI runs all of them.
+
+# Everything that runs without Docker or a browser
+check: lint typecheck test build api-check
+
+# `check` plus the integration suite (needs Docker for Postgres)
+check-all: check test-int
 
 # --- Database ----------------------------------------------------------------
 
+# POSTGRES__HOST=localhost for the same reason as the dev-* recipes above: the
+# .env value `db` only resolves inside the compose network.
+
 # Apply migrations to the dev database
 db-upgrade:
-	cd backend && uv run alembic upgrade head
+	cd backend && POSTGRES__HOST=localhost uv run alembic upgrade head
 
 # Autogenerate a migration from model changes: just db-revision "add items table"
 db-revision message:
-	cd backend && uv run alembic revision --autogenerate -m "{{message}}"
+	cd backend && POSTGRES__HOST=localhost uv run alembic revision --autogenerate -m "{{message}}"
 
 # --- API contract ------------------------------------------------------------
 
@@ -89,3 +124,25 @@ api-sync:
 # Fail if generated API types are out of sync with the backend
 api-check:
 	bash scripts/check-api-schema-sync.sh
+
+# --- Changelog ---------------------------------------------------------------
+
+# git-cliff (cliff.toml) turns conventional commits into DRAFT entries, commit
+# bodies included. CHANGELOG.md stays hand-curated and nothing writes to it:
+# pipe a draft out, cut it down, and merge the ENTRIES into the existing
+# `## [Unreleased]` section — the draft prints that heading itself, so don't
+# paste it wholesale or you get the heading twice.
+#
+# Note the repo has no tags yet, so `--unreleased` is the whole history and
+# re-emits what is already curated in CHANGELOG.md. That stops once the first
+# `v*` tag exists. git-cliff prints "N commit(s) were skipped" on stderr for
+# anything it could not parse — those are silently missing from the draft, so
+# read that line; `git-cliff --unreleased -vv` names them.
+
+# Draft changelog entries for every commit since the last release tag
+changelog:
+	@git-cliff --unreleased
+
+# Draft changelog entries for a commit range: just changelog-range main..HEAD
+changelog-range range:
+	@git-cliff {{range}}

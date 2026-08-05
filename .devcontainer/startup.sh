@@ -39,12 +39,40 @@ echo "📦 Installing backend dependencies..."
 cd "$WORKSPACE/backend"
 uv sync
 
+echo "🛠️  Installing just..."
+# Every workflow in this repo goes through the justfile, so the task runner has
+# to be present. `rust-just` is the just project's own PyPI distribution; uv
+# drops the binary in ~/.local/bin, which is already on PATH.
+uv tool install rust-just
+
+echo "📝 Installing git-cliff..."
+# Drafts CHANGELOG.md entries from conventional commits (`just changelog`,
+# config in cliff.toml). Published to PyPI as a wheel with the binary, so it
+# needs no Rust toolchain.
+uv tool install git-cliff
+
 echo "🔧 Setting up prek hooks..."
 cd "$WORKSPACE"
 uv tool install prek
-# Install both shims: cheap checks run on commit, heavy checks (pyrefly, unit
-# tests, type-check) run on push.
-prek install -t pre-commit -t pre-push
+# Install all three shims: cheap checks run on commit, heavy checks (pyrefly,
+# unit tests, type-check) on push, and conventional-commit subject linting on
+# commit-msg.
+prek install -t pre-commit -t pre-push -t commit-msg
+
+echo "🔎 Installing language servers for Claude Code..."
+# Each language server is the tool the build type-checks with, launched through
+# the project's package manager (D21): pyrefly, not pyright, and tsgo, not
+# tsserver — the repo checks with pyrefly and tsgo (`just typecheck`, pre-push,
+# CI), and a second checker means editor diagnostics that contradict the build.
+# `.claude/marketplace/` holds both plugins; each runs its server out of the
+# project (`uv run --project backend pyrefly lsp`, `bun run tsgo --lsp`), so a
+# language server cannot drift from the version CI installs. No binaries to
+# install — `uv sync` above and `bun install` below already provide them; just
+# register the marketplace and enable the plugins.
+# `|| true` because these are idempotent and must not fail a container rebuild.
+claude plugin marketplace add "$WORKSPACE/.claude/marketplace" || true
+claude plugin install pyrefly-lsp@arc-local || true
+claude plugin install tsgo-lsp@arc-local || true
 
 echo "🎭 Setting up frontend dependencies..."
 cd "$WORKSPACE/frontend"

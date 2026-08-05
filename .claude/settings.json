@@ -1,4 +1,16 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(just:*)",
+      "Bash(uv:*)",
+      "Bash(bun:*)",
+      "Bash(bunx:*)",
+      "Bash(docker compose:*)",
+      "Bash(git:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -11,5 +23,18 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "pyrefly-lsp@arc-local": true,
+    "tsgo-lsp@arc-local": true,
+    "commit-commands@claude-plugins-official": false
+  },
+  "extraKnownMarketplaces": {
+    "arc-local": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/marketplace"
+      }
+    }
   }
 }

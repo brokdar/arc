@@ -1,0 +1,70 @@
+name: PR Title
+
+# `main` is squash-only (the `protect-main` ruleset allows nothing else), so a
+# merged PR becomes exactly ONE commit on main and its subject comes from the
+# PR title. The local commit-msg hook (conventional-pre-commit) only ever sees
+# branch commits — it cannot see this. Without this job, a PR titled
+# "WP-1 domain model" lands on main as a non-conventional commit, which
+# cliff.toml drops (`filter_unconventional = true`): the change would be
+# missing from `just changelog` with no error anywhere.
+#
+# The type list mirrors .pre-commit-config.yaml and cliff.toml's
+# commit_parsers. Changing one means changing all three.
+
+on:
+  # `pull_request`, not `pull_request_target`: the action only reads the title
+  # from the event payload and needs no secrets, so there is no reason to run
+  # it in the privileged context.
+  #
+  # `synchronize` and `ready_for_review` look redundant — a push cannot change
+  # the PR title — but `pr-title` is a check the `protect-main` ruleset
+  # REQUIRES, and GitHub resolves required checks against the PR's latest head
+  # SHA. Without a run per push, the first commit after opening leaves the merge
+  # box waiting forever on a check that never reported for that SHA.
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    # This name is the status-check context required by the `protect-main`
+    # ruleset (rule type `required_status_checks`). Renaming the job renames the
+    # check, which silently breaks the requirement — update the ruleset too.
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      # Reads only the PR title from the event payload — it never checks out or
+      # executes PR code.
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            revert
+            docs
+            chore
+            build
+            ci
+            test
+            style
+          # Scope is the work package (wp-0, wp-1, ...) or an area. Optional,
+          # and the action has no case rule for it — `feat(WP-1): x` passes.
+          requireScope: false
+          # Note this is STRICTER than the local commit-msg hook, which accepts
+          # any parseable subject. `feat(wp-1): Add thing.` passes the hook and
+          # fails here. That is deliberate: this is the text that becomes the
+          # changelog entry.
+          subjectPattern: ^(?![A-Z])(?!.*\.$).+$
+          subjectPatternError: |
+            The subject "{subject}" of PR title "{title}" is invalid: it must
+            not begin with an uppercase letter and must not end with a period.

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { STORAGE_STATE } from "./e2e/storage-state";
+
 const isCI = !!process.env.CI;
 
 /**
@@ -7,7 +9,8 @@ const isCI = !!process.env.CI;
  * - default: UI-only e2e against `bun run start`, no backend required
  *   (tests tagged @fullstack are excluded)
  * - E2E_FULLSTACK=1: runs ONLY @fullstack tests against an already-running
- *   full stack (docker compose up) — frontend on :3000, API on :8000.
+ *   full stack (docker compose up), entered through the Caddy reverse proxy
+ *   on :80 — same origin for both the UI and /api/*.
  *   Keep this suite tiny: it exists to verify wiring, not logic.
  */
 const fullstack = !!process.env.E2E_FULLSTACK;
@@ -22,17 +25,29 @@ export default defineConfig({
   // CI shards via --shard; see .github/workflows/frontend-e2e.yml.
   reporter: isCI ? [["blob"], ["github"]] : [["html", { open: "never" }]],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: fullstack ? "http://localhost" : "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "off",
   },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+  // Fullstack mode logs in once in a setup project and replays the session
+  // cookie into every test. UI-only mode has no API to log into, so it keeps
+  // the plain single-project layout.
+  projects: fullstack
+    ? [
+        { name: "setup", testMatch: /auth\.setup\.ts/ },
+        {
+          name: "chromium",
+          use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+          dependencies: ["setup"],
+        },
+      ]
+    : [
+        {
+          name: "chromium",
+          use: { ...devices["Desktop Chrome"] },
+        },
+      ],
   webServer: fullstack
     ? undefined
     : {
