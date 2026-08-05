@@ -73,6 +73,14 @@ async def scalar(statement: str) -> Any:
     return value
 
 
+async def execute(statement: str) -> None:
+    """Run one raw SQL statement against the real database."""
+    engine = create_async_engine(get_settings().postgres.async_url)
+    async with engine.begin() as conn:
+        await conn.execute(text(statement))
+    await engine.dispose()
+
+
 async def create_workout(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
     """Add a workout to the library, asserting it was accepted."""
     payload: dict[str, Any] = {"name": "Sweet spot 3x8", "structure": RIDE} | overrides
@@ -188,6 +196,30 @@ async def test_deleting_a_session_takes_its_whole_intent_chain(
     await client.delete(f"{SESSIONS}/{session['id']}")
 
     assert await scalar("SELECT count(*) FROM planned_session_intents") == 0
+
+
+async def test_the_cascade_is_the_migration_schema_s_own(
+    client: AsyncClient,
+) -> None:
+    # The test above deletes through the ORM, which removes the rows it has
+    # loaded whatever the schema says. This one deletes in SQL, so the only
+    # thing that can take the intent chain and the tags with their parents is
+    # the ON DELETE CASCADE in migration 0003 — the schema that ships, rather
+    # than the one `create_all` builds from the models in the unit suite.
+    await client.post(
+        ANCHORS, json={"anchor_type": "ftp", "value": 250, "provenance": "estimated"}
+    )
+    await create_workout(client, tags=["bike", "z2"])
+    await client.post(
+        SESSIONS,
+        json={"date": "2026-08-10", "purpose": "sweet_spot", "structure": RIDE},
+    )
+
+    await execute("DELETE FROM planned_sessions")
+    await execute("DELETE FROM workouts")
+
+    assert await scalar("SELECT count(*) FROM planned_session_intents") == 0
+    assert await scalar("SELECT count(*) FROM workout_tags") == 0
 
 
 async def test_a_duplicate_intent_version_is_refused_by_the_database(

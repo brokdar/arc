@@ -94,11 +94,16 @@ class PurposeTemplate:
         axes: The scoring axes that apply, in :class:`ScoringAxis` order.
         default_criteria: The criteria a session of this purpose is created
             with. Editable afterwards.
+        description: One sentence saying what the purpose is for and why its
+            template is shaped the way it is. Carried rather than dropped
+            because it is the only place that reasoning is written down, and
+            the planning UI is where someone choosing a purpose needs it.
     """
 
     purpose: Purpose
     axes: tuple[ScoringAxis, ...]
     default_criteria: tuple[SuccessCriterion, ...]
+    description: str | None = None
 
     def __post_init__(self) -> None:
         """Reject templates that could not describe a scoreable session."""
@@ -178,8 +183,6 @@ def parse_templates(document: Any) -> dict[Purpose, PurposeTemplate]:
         axes = as_sequence(field(content, "axes", path), f"{path}.axes")
         criteria = optional(content, "default_criteria")
         description = optional(content, "description")
-        if description is not None:
-            as_str(description, f"{path}.description")
         templates[purpose] = PurposeTemplate(
             purpose=purpose,
             axes=tuple(
@@ -190,6 +193,11 @@ def parse_templates(document: Any) -> dict[Purpose, PurposeTemplate]:
                 ()
                 if criteria is None
                 else criteria_from_json(criteria, f"{path}.default_criteria")
+            ),
+            description=(
+                None
+                if description is None
+                else as_str(description, f"{path}.description")
             ),
         )
 
@@ -205,10 +213,12 @@ def parse_templates(document: Any) -> dict[Purpose, PurposeTemplate]:
 
 def template_to_json(template: PurposeTemplate) -> dict[str, Any]:
     """Serialize a template back to the file's own shape."""
-    return {
-        "axes": [axis.value for axis in template.axes],
-        "default_criteria": criteria_to_json(template.default_criteria),
-    }
+    document: dict[str, Any] = {}
+    if template.description is not None:
+        document["description"] = template.description
+    document["axes"] = [axis.value for axis in template.axes]
+    document["default_criteria"] = criteria_to_json(template.default_criteria)
+    return document
 
 
 def default_criteria_for(

@@ -75,9 +75,15 @@ class WorkoutRow(Base):
 
     # `selectin`: a lazy load would emit IO on attribute access, which in an
     # async session raises instead of querying.
+    # `passive_deletes`: the tag rows' foreign key carries ON DELETE CASCADE,
+    # so the database is what removes them and the ORM must not query for rows
+    # to delete itself. Tags already loaded are still deleted by the unit of
+    # work, so the clause itself is proved by a statement that goes around the
+    # ORM (see the CASCADE test in tests/unit/test_workouts_api.py).
     tags: Mapped[list[WorkoutTagRow]] = relationship(
         cascade="all, delete-orphan",
         lazy="selectin",
+        passive_deletes=True,
         order_by=WorkoutTagRow.tag,
     )
 

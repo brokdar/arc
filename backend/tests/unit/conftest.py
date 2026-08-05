@@ -9,9 +9,9 @@ from typing import Any
 
 import bcrypt
 import pytest
-import sqlalchemy as sa
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -65,7 +65,7 @@ async def engine() -> AsyncIterator[AsyncEngine]:
     # `ON DELETE CASCADE` and `ON DELETE SET NULL` are inert in the unit suite
     # and enforced in production — the exact divergence `app.persistence.types`
     # exists to prevent (D29), one layer down in the schema.
-    @sa.event.listens_for(engine.sync_engine, "connect")
+    @event.listens_for(engine.sync_engine, "connect")
     def _enable_foreign_keys(connection: Any, _record: Any) -> None:
         cursor = connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")

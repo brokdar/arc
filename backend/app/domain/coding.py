@@ -13,7 +13,8 @@ in `app.core.exceptions.domain_rules()`, which turns the `ValueError` into a
 422 carrying the text verbatim.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from enum import StrEnum
 from typing import Any
 
@@ -21,6 +22,31 @@ from typing import Any
 def _at(path: str, message: str) -> ValueError:
     """Build the error, prefixed with where in the document it happened."""
     return ValueError(f"{path}: {message}" if path else message)
+
+
+@contextmanager
+def located(path: str) -> Generator[None]:
+    """Prefix any ``ValueError`` raised inside with ``path``.
+
+    The helpers above locate every *shape* error, but a node's semantic rules
+    live in its ``__post_init__``, which knows the value and not where in the
+    document it came from — so ``a ramp must prescribe at least one channel``
+    would reach a client with no way to tell which of forty steps it meant.
+    Wrapping the construction restores the contract the rest of this module
+    promises, without every domain rule having to take a path argument.
+
+    Wrap the **construction call only**, with the arguments already decoded: a
+    message that already starts with ``path`` is passed through unprefixed, so
+    an error from a nested codec keeps its own, deeper position rather than
+    collecting one prefix per level on the way out.
+    """
+    try:
+        yield
+    except ValueError as exc:
+        message = str(exc)
+        if path and not message.startswith(path):
+            raise ValueError(f"{path}: {message}") from exc
+        raise
 
 
 def as_mapping(value: Any, path: str = "") -> Mapping[str, Any]:

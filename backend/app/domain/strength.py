@@ -21,6 +21,7 @@ rest taken after the round). There is no `is_superset` flag to keep in step
 with the item count.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -35,6 +36,7 @@ from app.domain.coding import (
     as_sequence,
     as_str,
     field,
+    located,
     no_extra_fields,
     optional,
 )
@@ -92,6 +94,13 @@ MAX_REPS = 500
 #: Reps-in-reserve is a 0-10 scale; anything else is a typo.
 MAX_RIR = 10
 
+#: The shape a catalogue slug must have, stated positively. A slug is part of
+#: the data contract — it appears inside stored prescriptions, in URLs and in
+#: the MCP tools' arguments — so it is checked against what is allowed rather
+#: than against a list of characters someone remembered to forbid: spelling the
+#: rule as "no spaces" let a tab or a newline through.
+SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
 
 @dataclass(frozen=True, slots=True)
 class Exercise:
@@ -115,9 +124,10 @@ class Exercise:
         """Reject entries that could not have come from the catalogue file."""
         if not self.id.strip():
             raise ValueError("an exercise needs a non-empty id")
-        if self.id != self.id.strip().lower() or " " in self.id:
+        if not SLUG_PATTERN.fullmatch(self.id):
             raise ValueError(
-                f"exercise id {self.id!r} must be a lowercase slug without spaces"
+                f"exercise id {self.id!r} must be a lowercase slug: digits and "
+                "letters a-z, separated by '_' or '-', starting with either"
             )
         if not self.name.strip():
             raise ValueError(f"exercise {self.id} needs a non-empty name")
@@ -293,7 +303,8 @@ def load_from_json(document: Any, path: str = "load") -> Load:
     kind = as_enum(LoadKind, field(body, "kind", path), f"{path}.kind")
     raw_value = optional(body, "value")
     value = None if raw_value is None else as_float(raw_value, f"{path}.value")
-    return Load(kind=kind, value=value)
+    with located(path):
+        return Load(kind=kind, value=value)
 
 
 def strength_set_to_json(prescription: StrengthSet) -> dict[str, Any]:
@@ -328,16 +339,21 @@ def strength_set_from_json(document: Any, path: str) -> StrengthSet:
     rest_s = optional(body, "rest_s")
     tempo = optional(body, "tempo")
     notes = optional(body, "notes")
-    return StrengthSet(
-        exercise_id=as_str(field(body, "exercise_id", path), f"{path}.exercise_id"),
-        sets=as_int(field(body, "sets", path), f"{path}.sets"),
-        reps=as_int(field(body, "reps", path), f"{path}.reps"),
-        load=load_from_json(field(body, "load", path), f"{path}.load"),
-        rir=None if rir is None else as_int(rir, f"{path}.rir"),
-        rest_s=None if rest_s is None else as_int(rest_s, f"{path}.rest_s"),
-        tempo=None if tempo is None else as_str(tempo, f"{path}.tempo"),
-        notes=None if notes is None else as_str(notes, f"{path}.notes"),
-    )
+    exercise_id = as_str(field(body, "exercise_id", path), f"{path}.exercise_id")
+    sets = as_int(field(body, "sets", path), f"{path}.sets")
+    reps = as_int(field(body, "reps", path), f"{path}.reps")
+    load = load_from_json(field(body, "load", path), f"{path}.load")
+    with located(path):
+        return StrengthSet(
+            exercise_id=exercise_id,
+            sets=sets,
+            reps=reps,
+            load=load,
+            rir=None if rir is None else as_int(rir, f"{path}.rir"),
+            rest_s=None if rest_s is None else as_int(rest_s, f"{path}.rest_s"),
+            tempo=None if tempo is None else as_str(tempo, f"{path}.tempo"),
+            notes=None if notes is None else as_str(notes, f"{path}.notes"),
+        )
 
 
 def strength_group_to_json(group: StrengthGroup) -> dict[str, Any]:
@@ -363,13 +379,15 @@ def strength_group_from_json(document: Any, path: str) -> StrengthGroup:
     no_extra_fields(body, _GROUP_FIELDS, path)
     items = as_sequence(field(body, "items", path), f"{path}.items")
     label = optional(body, "label")
-    return StrengthGroup(
-        items=tuple(
-            strength_set_from_json(item, f"{path}.items[{index}]")
-            for index, item in enumerate(items)
-        ),
-        label=None if label is None else as_str(label, f"{path}.label"),
+    decoded = tuple(
+        strength_set_from_json(item, f"{path}.items[{index}]")
+        for index, item in enumerate(items)
     )
+    with located(path):
+        return StrengthGroup(
+            items=decoded,
+            label=None if label is None else as_str(label, f"{path}.label"),
+        )
 
 
 def strength_workout_to_json(workout: StrengthWorkout) -> dict[str, Any]:
@@ -389,12 +407,12 @@ def strength_workout_from_json(document: Any, path: str = "") -> StrengthWorkout
     body = as_mapping(document, path)
     no_extra_fields(body, _WORKOUT_FIELDS, path)
     groups = as_sequence(field(body, "groups", path), _join(path, "groups"))
-    return StrengthWorkout(
-        groups=tuple(
-            strength_group_from_json(group, _join(path, f"groups[{index}]"))
-            for index, group in enumerate(groups)
-        )
+    decoded = tuple(
+        strength_group_from_json(group, _join(path, f"groups[{index}]"))
+        for index, group in enumerate(groups)
     )
+    with located(path or "workout"):
+        return StrengthWorkout(groups=decoded)
 
 
 def exercise_to_json(exercise: Exercise) -> dict[str, Any]:
@@ -419,16 +437,22 @@ def exercise_from_json(document: Any, path: str = "exercise") -> Exercise:
     body = as_mapping(document, path)
     no_extra_fields(body, _EXERCISE_FIELDS, path)
     unilateral = optional(body, "unilateral")
-    return Exercise(
-        id=as_str(field(body, "id", path), f"{path}.id"),
-        name=as_str(field(body, "name", path), f"{path}.name"),
-        category=as_enum(
-            ExerciseCategory, field(body, "category", path), f"{path}.category"
-        ),
-        unilateral=(
-            False if unilateral is None else as_bool(unilateral, f"{path}.unilateral")
-        ),
+    slug = as_str(field(body, "id", path), f"{path}.id")
+    name = as_str(field(body, "name", path), f"{path}.name")
+    category = as_enum(
+        ExerciseCategory, field(body, "category", path), f"{path}.category"
     )
+    with located(path):
+        return Exercise(
+            id=slug,
+            name=name,
+            category=category,
+            unilateral=(
+                False
+                if unilateral is None
+                else as_bool(unilateral, f"{path}.unilateral")
+            ),
+        )
 
 
 def parse_catalogue(document: Any) -> tuple[Exercise, ...]:

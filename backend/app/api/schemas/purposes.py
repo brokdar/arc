@@ -21,6 +21,9 @@ class PurposeTemplateRead(BaseModel):
 
     purpose: Purpose
     discipline: Discipline
+    #: What the purpose is for, and why its template is shaped the way it is.
+    #: `None` for a template whose file entry omits it.
+    description: str | None = None
     #: The scoring axes WP-7 will compute for a session of this purpose.
     axes: list[ScoringAxis]
     #: The criteria a session of this purpose is created with. Editable

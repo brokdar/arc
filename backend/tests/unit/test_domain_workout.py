@@ -6,6 +6,8 @@ expand, ramps stay whole) are stated as properties here so they hold for any
 tree, not just the ones anybody thought to write down.
 """
 
+from typing import Any
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -13,7 +15,9 @@ from hypothesis import strategies as st
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
 from app.domain.workout import (
+    MAX_FLAT_STEPS,
     MAX_NESTING_DEPTH,
+    MAX_REPEAT_TIMES,
     AbsoluteRange,
     Channel,
     ChannelUnit,
@@ -23,6 +27,7 @@ from app.domain.workout import (
     RepeatBlock,
     SteadyStep,
     StepRole,
+    Target,
     Targets,
     endurance_workout_from_json,
     endurance_workout_to_json,
@@ -76,35 +81,62 @@ def target_maps(draw: st.DrawFn) -> Targets:
     return dict(pairs)
 
 
+@st.composite
+def matching_targets(draw: st.DrawFn, start: Target) -> Target:
+    """The far end of a ramp: same kind, same anchor, different numbers.
+
+    A ramp's ends must agree channel by channel (D53), so the end target is
+    generated *from* the start one rather than drawn independently — which
+    also means the strategy never discards.
+    """
+    if isinstance(start, PercentOfAnchor):
+        low = draw(fractions)
+        return PercentOfAnchor(
+            anchor_type=start.anchor_type, pct_low=low, pct_high=low + 0.05
+        )
+    assert isinstance(start, AbsoluteRange)
+    low = draw(st.integers(min_value=40, max_value=110))
+    return AbsoluteRange(low=float(low), high=float(low + 10), unit=start.unit)
+
+
 roles = st.sampled_from(list(StepRole))
 durations = st.integers(min_value=1, max_value=3_600)
+distances = st.integers(min_value=100, max_value=50_000).map(float)
+
+
+@st.composite
+def extents(draw: st.DrawFn) -> dict[str, Any]:
+    """Exactly one extent, time-based or distance-based.
+
+    Both, because a step may state either and a suite that only ever
+    generated durations would leave the distance half of every codec and
+    every property untested.
+    """
+    if draw(st.booleans()):
+        return {"duration_s": draw(durations)}
+    return {"distance_m": draw(distances)}
 
 
 @st.composite
 def steady_steps(draw: st.DrawFn) -> SteadyStep:
-    """A steady step, always time-based so durations stay summable."""
+    """A steady step, stating one extent of either kind."""
     return SteadyStep(
-        duration_s=draw(durations),
         targets=draw(target_maps()),
         role=draw(roles),
+        **draw(extents()),
     )
 
 
 @st.composite
 def ramp_steps(draw: st.DrawFn) -> RampStep:
-    """A ramp whose ends prescribe the same channels."""
+    """A ramp whose ends prescribe the same channels in the same terms."""
     start = draw(target_maps())
-    end = {channel: target for channel, target in draw(target_maps()).items()}
-    # A ramp must start and end on the same channels; reuse the start map's
-    # keys rather than filtering, so the strategy never discards.
-    end = {channel: start[channel] for channel in start} | {
-        channel: value for channel, value in end.items() if channel in start
-    }
+    end = {channel: draw(matching_targets(target)) for channel, target in start.items()}
     return RampStep(
         start_targets=start,
         end_targets=end,
-        duration_s=draw(durations),
         role=draw(roles),
+        **draw(extents()),
     )
 
 
@@ -170,10 +202,15 @@ def test_repeat_blocks_expand_and_are_traceable(workout: EnduranceWorkout) -> No
 @given(workouts)
 @settings(max_examples=100)
 def test_duration_is_conserved_by_expansion(workout: EnduranceWorkout) -> None:
-    assert total_duration_s(workout) == total_duration_s(expand(workout))
-    assert total_duration_s(workout) == sum(
-        step.step.duration_s or 0 for step in flatten(workout)
-    )
+    total = total_duration_s(workout)
+
+    # `None` when any step is distance-based — and then it has to be `None` on
+    # both sides, which is as much a conservation law as the sum is.
+    assert total == total_duration_s(expand(workout))
+    if total is None:
+        assert any(flat.distance_m is not None for flat in flatten(workout))
+    else:
+        assert total == sum(flat.duration_s or 0 for flat in flatten(workout))
 
 
 @given(workouts)
@@ -369,6 +406,17 @@ def test_an_inverted_target_range_is_rejected() -> None:
         PercentOfAnchor(anchor_type=AnchorType.FTP, pct_low=0.9, pct_high=0.8)
 
 
+def test_a_flat_step_reports_whichever_extent_its_step_states() -> None:
+    flat = flatten(
+        EnduranceWorkout(
+            steps=(SteadyStep(duration_s=600), SteadyStep(distance_m=5_000))
+        )
+    )
+
+    assert (flat[0].duration_s, flat[0].distance_m) == (600, None)
+    assert (flat[1].duration_s, flat[1].distance_m) == (None, 5_000)
+
+
 def test_a_ramp_must_start_and_end_on_the_same_channels() -> None:
     with pytest.raises(ValueError, match="same channels"):
         RampStep(
@@ -379,6 +427,41 @@ def test_a_ramp_must_start_and_end_on_the_same_channels() -> None:
                 Channel.HR: AbsoluteRange(low=120, high=120, unit=ChannelUnit.BPM)
             },
             duration_s=300,
+        )
+
+
+def test_a_ramp_cannot_change_what_kind_of_target_it_prescribes() -> None:
+    # There is no interpolation from "60 % of a number nobody has resolved
+    # yet" to "250 W", so a prescription whose meaning would depend on when
+    # the anchor resolves is refused rather than frozen (D53).
+    with pytest.raises(ValueError, match="same kind of target"):
+        RampStep(
+            start_targets={
+                Channel.POWER: PercentOfAnchor(
+                    anchor_type=AnchorType.FTP, pct_low=0.6, pct_high=0.6
+                )
+            },
+            end_targets={
+                Channel.POWER: AbsoluteRange(low=250, high=250, unit=ChannelUnit.WATT)
+            },
+            duration_s=600,
+        )
+
+
+def test_a_ramp_cannot_change_which_anchor_it_is_a_percentage_of() -> None:
+    with pytest.raises(ValueError, match="percentages of one anchor"):
+        RampStep(
+            start_targets={
+                Channel.HR: PercentOfAnchor(
+                    anchor_type=AnchorType.LTHR, pct_low=0.7, pct_high=0.7
+                )
+            },
+            end_targets={
+                Channel.HR: PercentOfAnchor(
+                    anchor_type=AnchorType.MAX_HR, pct_low=0.9, pct_high=0.9
+                )
+            },
+            duration_s=600,
         )
 
 
@@ -447,3 +530,75 @@ def test_an_unknown_field_is_rejected_rather_than_ignored() -> None:
                 "steps": [{"kind": "steady", "duration_s": 60, "colour": "red"}],
             }
         )
+
+
+def test_a_semantic_failure_keeps_its_place_in_the_document() -> None:
+    # The rule is enforced in `__post_init__`, which knows the value and not
+    # where it came from — but the codec promises every message names its
+    # position, and "exactly one of duration_s or distance_m" is useless
+    # against a forty-step document without one.
+    with pytest.raises(ValueError, match=r"steps\[1\]: .*exactly one of"):
+        workout_body_from_json(
+            {
+                "discipline": "cycling",
+                "steps": [
+                    {"kind": "steady", "duration_s": 60},
+                    {"kind": "steady", "duration_s": 60, "distance_m": 100},
+                ],
+            }
+        )
+
+
+# --- the bounds hold while decoding, not only afterwards ----------------------
+
+
+def nested_repeats(levels: int) -> dict[str, Any]:
+    """A step document wrapped in ``levels`` repeat blocks."""
+    document: dict[str, Any] = {"kind": "steady", "duration_s": 60}
+    for _ in range(levels):
+        document = {"kind": "repeat", "times": 2, "children": [document]}
+    return document
+
+
+def test_the_nesting_bound_is_checked_while_decoding() -> None:
+    # Checking it only once the whole tree is built means never reaching the
+    # check: decoding is recursive, so a deep enough document exhausts the
+    # interpreter stack first.
+    endurance_workout_from_json({"steps": [nested_repeats(MAX_NESTING_DEPTH)]})
+
+    with pytest.raises(ValueError, match=r"children\[0\]: repeat blocks may nest"):
+        endurance_workout_from_json({"steps": [nested_repeats(MAX_NESTING_DEPTH + 1)]})
+
+
+def test_a_pathologically_nested_document_is_refused_not_a_stack_overflow() -> None:
+    document = {"discipline": "cycling", "steps": [nested_repeats(2_000)]}
+
+    with pytest.raises(ValueError, match="nest at most"):
+        workout_body_from_json(document)
+
+
+def test_the_repeat_count_bound_holds_through_the_codec() -> None:
+    legal = {
+        "kind": "repeat",
+        "times": MAX_REPEAT_TIMES,
+        "children": [{"kind": "steady", "duration_s": 60}],
+    }
+    endurance_workout_from_json({"steps": [legal]})
+
+    with pytest.raises(ValueError, match="times must be between"):
+        endurance_workout_from_json(
+            {"steps": [legal | {"times": MAX_REPEAT_TIMES + 1}]}
+        )
+
+
+def test_a_workout_that_would_flatten_past_the_bound_is_refused() -> None:
+    # 100^4 leaves, from four legally-nested blocks. The bound is computed by
+    # multiplying the counts, not by expanding the tree — this test finishing
+    # at all is the evidence, since expanding it would need a hundred million
+    # `FlatStep`s before anyone could count them.
+    document: dict[str, Any] = {"kind": "steady", "duration_s": 60}
+    for _ in range(MAX_NESTING_DEPTH):
+        document = {"kind": "repeat", "times": 100, "children": [document]}
+
+    with pytest.raises(ValueError, match=f"at most {MAX_FLAT_STEPS} steps"):
+        endurance_workout_from_json({"steps": [document]})

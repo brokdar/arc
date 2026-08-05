@@ -1193,3 +1193,49 @@ messages and bare `KeyError`s; the helpers make the failure mode uniform for
 one afternoon's work. Refusing unknown fields matters more here than usual: a
 silently ignored key in a prescription is a lost edit to a training plan, and
 the client cannot tell a typo from an unsupported feature.
+
+## D53 — A ramp's two ends must be the same kind of target
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+`RampStep` refuses a channel whose start and end targets disagree in kind — a
+ramp from `60 % FTP` to `250 W` — and refuses two percentage ends that name
+different anchors, `60 % LTHR` to `90 % max_hr`. Both ends of a channel are a
+percentage of one anchor, or both are absolute.
+
+This displaces allowing the mixed form and defining an interpolation for it in
+WP-7, which is what the model did until now: the rule was "same channels", and
+nothing said the quantities had to be comparable.
+
+*Rationale:* there is no interpolation between a fraction of an unresolved
+number and an absolute one. Whatever WP-7 chose, the answer would depend on
+when the anchor resolves — the prescription would mean one thing against
+today's FTP and another against the FTP pinned at planning time — and a
+prescription whose meaning depends on resolution order is not frozen, which is
+the whole of invariant 4. Refusing it at construction costs a planner nothing:
+two steps say the same thing unambiguously. The rule is enforced in
+`__post_init__`, so it reaches the API, the MCP tools and a stored document
+being read back identically.
+
+## D54 — A post-hoc edit keeps the pins it still needs, drops the rest, and pins what it introduces
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-2
+
+Editing a matched session's intent keeps the pinned anchor versions — but only
+for the anchors the *new* version still refers to. A pin whose anchor the edit
+removed is dropped, and an anchor the edit introduced is pinned at the version
+in force today, not left unpinned.
+
+This displaces the simpler reading of invariant 4's "keep the original pins",
+which would carry the whole map forward unchanged.
+
+*Rationale:* the map cannot be carried wholesale, because `SessionIntent`
+rejects both an unpinned required anchor and a pin nothing refers to — the two
+rules that make a stored intent resolvable and its score reproducible. So the
+question is only what to do at the edges, and each edge has one honest answer.
+A dropped anchor has nothing left to resolve; keeping its pin would claim a
+resolution the prescription has no use for. An introduced anchor has no older
+answer to preserve: it was never part of what the athlete executed against, so
+"the version in force when it entered the prescription" is the only version it
+was ever judged by. The pins that carry the athlete's actual execution — the
+ones still required — are untouched, which is what the invariant is protecting.

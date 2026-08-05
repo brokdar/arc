@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from httpx import AsyncClient
 
 from app.domain.athlete import Discipline
 from app.domain.criteria import (
@@ -33,6 +34,7 @@ from app.domain.templates import (
     ScoringAxis,
     parse_templates,
     sorted_templates,
+    template_to_json,
 )
 from app.services.templates import (
     PURPOSE_TEMPLATES_FILE,
@@ -158,6 +160,29 @@ def test_templates_are_listed_in_vocabulary_order(
     assert [template.purpose for template in sorted_templates(templates)] == list(
         Purpose
     )
+
+
+def test_the_description_is_kept_rather_than_validated_and_dropped(
+    templates: dict[Purpose, PurposeTemplate],
+) -> None:
+    # The file's descriptions are the only written record of why a template is
+    # shaped the way it is, and the planning UI is where someone choosing a
+    # purpose needs them.
+    assert all(template.description for template in templates.values())
+    assert "you do NOT do" in (templates[Purpose.RECOVERY].description or "")
+    assert template_to_json(templates[Purpose.RECOVERY])["description"] == (
+        templates[Purpose.RECOVERY].description
+    )
+
+
+async def test_the_purposes_endpoint_serves_the_descriptions(
+    client: AsyncClient,
+) -> None:
+    page = (await client.get("/api/v1/purposes")).json()
+    one = (await client.get("/api/v1/purposes/recovery")).json()
+
+    assert all(item["description"] for item in page["items"])
+    assert one["description"] == purpose_templates()[Purpose.RECOVERY].description
 
 
 def test_the_file_on_disk_is_what_is_loaded() -> None:

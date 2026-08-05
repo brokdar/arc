@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The prescription half of the loop: what a session *is*, what it is *for*, and
 the machinery that freezes both at planning time (build-plan invariant 4).
-Decisions D42–D52.
+Decisions D42–D54.
 
 **Domain (`backend/app/domain/`, pure)**
 
@@ -23,8 +23,15 @@ Decisions D42–D52.
   leaves ramps whole, carrying a start and an end target set (D42). Rules are
   enforced at construction: exactly one of duration or distance, a channel may
   only be a percentage of an anchor it derives from, an absolute target must
-  use the channel's unit and lie in a plausible range, and nesting is bounded
-  because the tree arrives as user-supplied JSON.
+  use the channel's unit and lie in a plausible range, and a ramp's two ends
+  must be the same kind of target — no interpolating from a fraction of an
+  unresolved anchor to an absolute number (D53).
+- The nesting bound is enforced *while* a step tree is decoded, not once it is
+  built: decoding is recursive, so a deep enough document exhausted the
+  interpreter stack before there was a workout to check.
+- A `ceiling` criterion's absolute limit is held to the channel's plausibility
+  bounds, as an absolute target always was — a 1e300 W cap is a criterion
+  every session passes, not a rule.
 - Added the **strength model** (`strength.py`): a catalogue `Exercise`
   (slug, name, category, unilateral flag) and a `StrengthSet` prescription
   (exercise, sets, reps, load as kg / %e1RM / RPE / bodyweight, RIR, rest,
@@ -85,7 +92,12 @@ Decisions D42–D52.
   `/{id}/intents` and `/{id}/intents/{version}`. Creating a session derives its
   criteria from the purpose template and pins the anchor versions in force; a
   prescription referring to an anchor with none in force is refused with a 422
-  that says what to do (D49).
+  that names which half of it — the targets, the criteria or both — asked for
+  the anchor, and what to do about it (D49).
+- `PATCH /api/v1/planned-sessions/{id}` refuses an explicit `null` for
+  `purpose`, `date` or `status` with a 422, and refuses an empty body rather
+  than answering 200 with an audit row saying nothing changed. A patch that
+  moves the session *and* edits its intent now leaves both audit rows.
 - Implemented the freeze rule (D47): an intent edit before a match exists
   writes a new version and re-pins; an edit after a match exists writes a new
   version flagged `edited_post_hoc`, **keeps** the pins the athlete executed

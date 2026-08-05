@@ -11,10 +11,11 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.persistence.audit import AuditLogEntry
+from app.persistence.workouts import WorkoutRow, WorkoutTagRow
 
 WORKOUTS = "/api/v1/workouts"
 LABELS = "/api/v1/workout-labels"
@@ -221,6 +222,27 @@ async def test_domain_rules_reach_the_client_as_422s(
     assert message in response.json()["detail"]
 
 
+async def test_a_pathologically_nested_structure_is_a_422_not_a_crash(
+    client: AsyncClient,
+) -> None:
+    # The nesting bound is checked while decoding, so a document deep enough
+    # to exhaust the interpreter stack is refused like any other illegal
+    # prescription rather than becoming a 500.
+    document: dict[str, Any] = {"kind": "steady", "duration_s": 60}
+    for _ in range(400):
+        document = {"kind": "repeat", "times": 2, "children": [document]}
+
+    response = await client.post(
+        WORKOUTS,
+        json={
+            "name": "Turtles",
+            "structure": {"discipline": "cycling", "steps": [document]},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
 async def test_an_unknown_structure_field_is_rejected_by_the_contract(
     client: AsyncClient,
 ) -> None:
@@ -325,6 +347,19 @@ async def test_the_label_route_is_outside_the_workout_id_namespace(
     assert (await client.get(f"{WORKOUTS}/labels")).status_code == 422
 
 
+async def test_a_page_is_a_slice_of_the_whole_library(client: AsyncClient) -> None:
+    for index in range(5):
+        await create(client, name=f"Workout {index}")
+
+    page = (await client.get(WORKOUTS, params={"offset": 1, "limit": 2})).json()
+
+    assert page["total"] == 5
+    assert page["offset"] == 1
+    assert page["limit"] == 2
+    # Newest first, so offset 1 skips the last one created.
+    assert [workout["name"] for workout in page["items"]] == ["Workout 3", "Workout 2"]
+
+
 async def test_get_unknown_id_returns_404(client: AsyncClient) -> None:
     assert (await client.get(f"{WORKOUTS}/{uuid.uuid4()}")).status_code == 404
 
@@ -408,9 +443,7 @@ async def test_an_unknown_field_is_rejected_rather_than_silently_dropped(
 # --- delete -------------------------------------------------------------------
 
 
-async def test_delete_removes_the_workout_and_its_tags(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
+async def test_delete_removes_the_workout_and_its_tags(client: AsyncClient) -> None:
     created = await create(client, tags=["bike"])
 
     response = await client.delete(f"{WORKOUTS}/{created['id']}")
@@ -418,6 +451,25 @@ async def test_delete_removes_the_workout_and_its_tags(
     assert response.status_code == 204
     assert (await client.get(f"{WORKOUTS}/{created['id']}")).status_code == 404
     assert (await client.get(LABELS)).json()["tags"] == []
+
+
+async def test_tags_cascade_in_the_database_not_the_orm(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The test above proves the tags go; it cannot prove what takes them,
+    # because the ORM deletes the rows it has loaded whatever the schema says.
+    # This statement goes around the ORM, leaving `ON DELETE CASCADE` as the
+    # only thing that can — and the unit suite runs with SQLite's foreign keys
+    # on (D51), so the clause is exercised on both dialects.
+    created = await create(client, tags=["bike", "z2"])
+
+    await db_session.execute(
+        delete(WorkoutRow).where(WorkoutRow.id == uuid.UUID(created["id"]))
+    )
+    await db_session.commit()
+
+    remaining = await db_session.execute(select(WorkoutTagRow))
+    assert list(remaining.scalars()) == []
 
 
 async def test_deleting_an_unknown_id_returns_404(client: AsyncClient) -> None:

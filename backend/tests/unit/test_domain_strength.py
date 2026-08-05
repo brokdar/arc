@@ -1,9 +1,13 @@
 """Strength prescriptions: loads, sets, supersets, and the bundled catalogue."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.domain.athlete import Discipline
 from app.domain.strength import (
+    SLUG_PATTERN,
     Exercise,
     ExerciseCategory,
     Load,
@@ -17,6 +21,7 @@ from app.domain.strength import (
     strength_workout_to_json,
 )
 from app.domain.workout import workout_body_from_json, workout_body_to_json
+from app.services.templates import EXERCISE_CATALOGUE_FILE
 
 
 def squat(**overrides: object) -> StrengthSet:
@@ -210,6 +215,35 @@ def test_the_error_says_where_in_the_document_it_happened() -> None:
         )
 
 
+def test_a_semantic_failure_keeps_its_place_in_the_document() -> None:
+    # `sets must be between 1 and 50` comes from `__post_init__`, which knows
+    # the number and not where it came from — but the codec's contract is that
+    # every message locates itself, and a prescription has many lines.
+    with pytest.raises(ValueError, match=r"groups\[0\].items\[1\]: sets must be"):
+        strength_workout_from_json(
+            {
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "back_squat",
+                                "sets": 3,
+                                "reps": 5,
+                                "load": {"kind": "bodyweight"},
+                            },
+                            {
+                                "exercise_id": "front_plank",
+                                "sets": 0,
+                                "reps": 5,
+                                "load": {"kind": "bodyweight"},
+                            },
+                        ]
+                    }
+                ]
+            }
+        )
+
+
 # --- the catalogue ------------------------------------------------------------
 
 
@@ -218,6 +252,29 @@ def test_a_catalogue_entry_needs_a_slug_and_a_name() -> None:
         Exercise(id="Back Squat", name="Back Squat", category=ExerciseCategory.SQUAT)
     with pytest.raises(ValueError, match="non-empty name"):
         Exercise(id="back_squat", name=" ", category=ExerciseCategory.SQUAT)
+
+
+@pytest.mark.parametrize(
+    "slug",
+    ["back\tsquat", "back\nsquat", "Back_squat", "back squat", "_back_squat", "bäck"],
+)
+def test_a_slug_is_checked_against_its_shape_not_against_one_bad_character(
+    slug: str,
+) -> None:
+    # A slug is part of the data contract — it sits inside stored
+    # prescriptions and in URLs — so it is checked against what is allowed.
+    # Spelling the rule as "no spaces" let a tab and a newline through.
+    with pytest.raises(ValueError, match="lowercase slug"):
+        Exercise(id=slug, name="Back Squat", category=ExerciseCategory.SQUAT)
+
+
+def test_every_bundled_slug_satisfies_the_shape() -> None:
+    catalogue = parse_catalogue(
+        json.loads(Path(EXERCISE_CATALOGUE_FILE).read_text(encoding="utf-8"))
+    )
+
+    assert catalogue
+    assert all(SLUG_PATTERN.fullmatch(exercise.id) for exercise in catalogue)
 
 
 def test_a_duplicate_slug_is_fatal_rather_than_deduplicated() -> None:

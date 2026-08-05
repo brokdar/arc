@@ -40,11 +40,13 @@ from app.domain.coding import (
     as_sequence,
     as_str,
     field,
+    located,
     no_extra_fields,
     optional,
 )
 from app.domain.workout import (
     CHANNEL_ANCHORS,
+    CHANNEL_BOUNDS,
     CHANNEL_UNITS,
     MAX_TARGET_FRACTION,
     Channel,
@@ -237,7 +239,14 @@ class Ceiling:
     max_seconds_above: int
 
     def __post_init__(self) -> None:
-        """Reject limits the channel cannot carry."""
+        """Reject limits the channel cannot carry.
+
+        The channel is what makes an absolute limit checkable at all: only
+        here is it known that ``value`` is watts rather than beats, so this is
+        also where a cap of 1e300 W is caught. :class:`AbsoluteLimit` itself
+        cannot do it — it does not know what it is limiting — and a ceiling no
+        recording could ever exceed silently scores every session a pass.
+        """
         if self.max_seconds_above < 0:
             raise ValueError(
                 f"max_seconds_above must not be negative, got {self.max_seconds_above}"
@@ -249,10 +258,17 @@ class Ceiling:
                     f"{self.channel.value} cannot be capped as a percentage of "
                     f"{self.limit.anchor_type.value}"
                 )
-        elif self.limit.unit is not CHANNEL_UNITS[self.channel]:
+            return
+        if self.limit.unit is not CHANNEL_UNITS[self.channel]:
             raise ValueError(
                 f"{self.channel.value} is measured in "
                 f"{CHANNEL_UNITS[self.channel].value}, not {self.limit.unit.value}"
+            )
+        low, high = CHANNEL_BOUNDS[self.channel]
+        if not low <= self.limit.value <= high:
+            raise ValueError(
+                f"a {self.channel.value} ceiling must lie between {low} and "
+                f"{high} {CHANNEL_UNITS[self.channel].value}, got {self.limit.value}"
             )
 
 
@@ -360,11 +376,13 @@ def selector_from_json(document: Any, path: str) -> StepSelector:
     no_extra_fields(body, _SELECTOR_FIELDS, path)
     role = optional(body, "role")
     index = optional(body, "index")
-    return StepSelector(
-        kind=as_enum(StepSelectorKind, field(body, "kind", path), f"{path}.kind"),
-        role=None if role is None else as_enum(StepRole, role, f"{path}.role"),
-        index=None if index is None else as_int(index, f"{path}.index"),
-    )
+    kind = as_enum(StepSelectorKind, field(body, "kind", path), f"{path}.kind")
+    with located(path):
+        return StepSelector(
+            kind=kind,
+            role=None if role is None else as_enum(StepRole, role, f"{path}.role"),
+            index=None if index is None else as_int(index, f"{path}.index"),
+        )
 
 
 def band_to_json(band: Band) -> dict[str, Any]:
@@ -383,11 +401,11 @@ def band_from_json(document: Any, path: str) -> Band:
     """
     body = as_mapping(document, path)
     no_extra_fields(body, _BAND_FIELDS, path)
-    return Band(
-        channel=as_enum(Channel, field(body, "channel", path), f"{path}.channel"),
-        low=as_float(field(body, "low", path), f"{path}.low"),
-        high=as_float(field(body, "high", path), f"{path}.high"),
-    )
+    channel = as_enum(Channel, field(body, "channel", path), f"{path}.channel")
+    low = as_float(field(body, "low", path), f"{path}.low")
+    high = as_float(field(body, "high", path), f"{path}.high")
+    with located(path):
+        return Band(channel=channel, low=low, high=high)
 
 
 def limit_to_json(limit: Limit) -> dict[str, Any]:
@@ -415,18 +433,18 @@ def limit_from_json(document: Any, path: str) -> Limit:
     kind = as_str(field(body, "kind", path), f"{path}.kind")
     if kind == "percent_of_anchor":
         no_extra_fields(body, _PERCENT_LIMIT_FIELDS, path)
-        return PercentLimit(
-            anchor_type=as_enum(
-                AnchorType, field(body, "anchor_type", path), f"{path}.anchor_type"
-            ),
-            pct=as_float(field(body, "pct", path), f"{path}.pct"),
+        anchor_type = as_enum(
+            AnchorType, field(body, "anchor_type", path), f"{path}.anchor_type"
         )
+        pct = as_float(field(body, "pct", path), f"{path}.pct")
+        with located(path):
+            return PercentLimit(anchor_type=anchor_type, pct=pct)
     if kind == "absolute":
         no_extra_fields(body, _ABSOLUTE_LIMIT_FIELDS, path)
-        return AbsoluteLimit(
-            value=as_float(field(body, "value", path), f"{path}.value"),
-            unit=as_enum(ChannelUnit, field(body, "unit", path), f"{path}.unit"),
-        )
+        value = as_float(field(body, "value", path), f"{path}.value")
+        unit = as_enum(ChannelUnit, field(body, "unit", path), f"{path}.unit")
+        with located(path):
+            return AbsoluteLimit(value=value, unit=unit)
     raise ValueError(
         f"{path}.kind: {kind!r} is not one of: percent_of_anchor, absolute"
     )
@@ -478,43 +496,47 @@ def criterion_from_json(document: Any, path: str = "criterion") -> SuccessCriter
     no_extra_fields(body, _CRITERION_FIELDS[kind], path)
     match kind:
         case CriterionKind.TIME_IN_BAND:
-            return TimeInBand(
-                selector=selector_from_json(
-                    field(body, "selector", path), f"{path}.selector"
-                ),
-                band=band_from_json(field(body, "band", path), f"{path}.band"),
-                min_fraction=as_float(
-                    field(body, "min_fraction", path), f"{path}.min_fraction"
-                ),
+            selector = selector_from_json(
+                field(body, "selector", path), f"{path}.selector"
             )
+            band = band_from_json(field(body, "band", path), f"{path}.band")
+            min_fraction = as_float(
+                field(body, "min_fraction", path), f"{path}.min_fraction"
+            )
+            with located(path):
+                return TimeInBand(
+                    selector=selector, band=band, min_fraction=min_fraction
+                )
         case CriterionKind.DURATION_FLOOR:
-            return DurationFloor(
-                min_seconds=as_int(
-                    field(body, "min_seconds", path), f"{path}.min_seconds"
-                )
+            min_seconds = as_int(
+                field(body, "min_seconds", path), f"{path}.min_seconds"
             )
+            with located(path):
+                return DurationFloor(min_seconds=min_seconds)
         case CriterionKind.CEILING:
-            return Ceiling(
-                channel=as_enum(
-                    Channel, field(body, "channel", path), f"{path}.channel"
-                ),
-                limit=limit_from_json(field(body, "limit", path), f"{path}.limit"),
-                max_seconds_above=as_int(
-                    field(body, "max_seconds_above", path), f"{path}.max_seconds_above"
-                ),
+            channel = as_enum(Channel, field(body, "channel", path), f"{path}.channel")
+            limit = limit_from_json(field(body, "limit", path), f"{path}.limit")
+            max_seconds_above = as_int(
+                field(body, "max_seconds_above", path), f"{path}.max_seconds_above"
             )
+            with located(path):
+                return Ceiling(
+                    channel=channel,
+                    limit=limit,
+                    max_seconds_above=max_seconds_above,
+                )
         case CriterionKind.SETS_COMPLETED:
-            return SetsCompleted(
-                min_fraction=as_float(
-                    field(body, "min_fraction", path), f"{path}.min_fraction"
-                )
+            completed = as_float(
+                field(body, "min_fraction", path), f"{path}.min_fraction"
             )
+            with located(path):
+                return SetsCompleted(min_fraction=completed)
         case CriterionKind.LOAD_WITHIN:
-            return LoadWithin(
-                pct_tolerance=as_float(
-                    field(body, "pct_tolerance", path), f"{path}.pct_tolerance"
-                )
+            tolerance = as_float(
+                field(body, "pct_tolerance", path), f"{path}.pct_tolerance"
             )
+            with located(path):
+                return LoadWithin(pct_tolerance=tolerance)
 
 
 def criteria_to_json(

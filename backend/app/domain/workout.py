@@ -50,6 +50,7 @@ from app.domain.coding import (
     as_sequence,
     as_str,
     field,
+    located,
     no_extra_fields,
     optional,
 )
@@ -192,6 +193,13 @@ type Targets = Mapping[Channel, Target]
 _NO_TARGETS: Targets = MappingProxyType({})
 
 
+def _target_kind(target: Target) -> str:
+    """Name what kind of quantity a target is, for an error message."""
+    if isinstance(target, PercentOfAnchor):
+        return f"a percentage of {target.anchor_type.value}"
+    return f"an absolute range in {target.unit.value}"
+
+
 def validate_targets(targets: Targets, *, where: str) -> None:
     """Check every target against the channel it is prescribed on.
 
@@ -273,8 +281,11 @@ class SteadyStep:
 class RampStep:
     """Move from one set of targets to another over a duration or distance.
 
-    Both ends prescribe the *same* channels: a ramp that starts on power and
-    ends on heart rate is not a ramp, it is two steps.
+    Both ends prescribe the *same* channels **in the same terms**: a ramp that
+    starts on power and ends on heart rate is not a ramp, it is two steps, and
+    a ramp from ``60 % FTP`` to ``250 W`` has no defined interpolation until
+    the anchor resolves (D53). Percentage ends must also name one anchor:
+    "from 60 % of FTP to 90 % of LTHR" is two prescriptions in a trench coat.
 
     Args:
         duration_s: How long, in seconds. Mutually exclusive with
@@ -304,6 +315,23 @@ class RampStep:
                 f"{sorted(channel.value for channel in self.start_targets)} and "
                 f"{sorted(channel.value for channel in self.end_targets)}"
             )
+        for channel, start in self.start_targets.items():
+            end = self.end_targets[channel]
+            if isinstance(start, PercentOfAnchor) != isinstance(end, PercentOfAnchor):
+                raise ValueError(
+                    f"a ramp's {channel.value} ends must be the same kind of "
+                    f"target; got {_target_kind(start)} and {_target_kind(end)}"
+                )
+            if (
+                isinstance(start, PercentOfAnchor)
+                and isinstance(end, PercentOfAnchor)
+                and start.anchor_type is not end.anchor_type
+            ):
+                raise ValueError(
+                    f"a ramp's {channel.value} ends must be percentages of one "
+                    f"anchor; got {start.anchor_type.value} and "
+                    f"{end.anchor_type.value}"
+                )
         validate_targets(self.start_targets, where="ramp start")
         validate_targets(self.end_targets, where="ramp end")
 
@@ -389,6 +417,16 @@ class FlatStep:
     def duration_s(self) -> int | None:
         """The leaf step's duration, if it is time-based."""
         return self.step.duration_s
+
+    @property
+    def distance_m(self) -> float | None:
+        """The leaf step's distance, if it is distance-based.
+
+        The symmetric half of :attr:`duration_s`: a step states exactly one
+        extent, and a consumer reading only one of the two would silently skip
+        every step prescribed the other way.
+        """
+        return self.step.distance_m
 
     @property
     def start_targets(self) -> Targets:
@@ -552,20 +590,22 @@ def target_from_json(document: Any, path: str) -> Target:
     kind = as_str(field(body, "kind", path), f"{path}.kind")
     if kind == "percent_of_anchor":
         no_extra_fields(body, _PERCENT_FIELDS, path)
-        return PercentOfAnchor(
-            anchor_type=as_enum(
-                AnchorType, field(body, "anchor_type", path), f"{path}.anchor_type"
-            ),
-            pct_low=as_float(field(body, "pct_low", path), f"{path}.pct_low"),
-            pct_high=as_float(field(body, "pct_high", path), f"{path}.pct_high"),
+        anchor_type = as_enum(
+            AnchorType, field(body, "anchor_type", path), f"{path}.anchor_type"
         )
+        pct_low = as_float(field(body, "pct_low", path), f"{path}.pct_low")
+        pct_high = as_float(field(body, "pct_high", path), f"{path}.pct_high")
+        with located(path):
+            return PercentOfAnchor(
+                anchor_type=anchor_type, pct_low=pct_low, pct_high=pct_high
+            )
     if kind == "absolute":
         no_extra_fields(body, _ABSOLUTE_FIELDS, path)
-        return AbsoluteRange(
-            low=as_float(field(body, "low", path), f"{path}.low"),
-            high=as_float(field(body, "high", path), f"{path}.high"),
-            unit=as_enum(ChannelUnit, field(body, "unit", path), f"{path}.unit"),
-        )
+        low = as_float(field(body, "low", path), f"{path}.low")
+        high = as_float(field(body, "high", path), f"{path}.high")
+        unit = as_enum(ChannelUnit, field(body, "unit", path), f"{path}.unit")
+        with located(path):
+            return AbsoluteRange(low=low, high=high, unit=unit)
     raise ValueError(
         f"{path}.kind: {kind!r} is not one of: percent_of_anchor, absolute"
     )
@@ -635,24 +675,38 @@ _RAMP_FIELDS = frozenset(
 _REPEAT_FIELDS = frozenset({"kind", "times", "children"})
 
 
-def step_from_json(document: Any, path: str) -> Step:
+def step_from_json(document: Any, path: str, depth: int = 0) -> Step:
     """Deserialize one step of the tree, recursively.
 
+    Args:
+        document: The step, as decoded JSON.
+        path: Where in the enclosing document this step sits.
+        depth: How many repeat blocks enclose it. Checked **here** rather than
+            only in :meth:`EnduranceWorkout.__post_init__`, because this
+            function recurses on user-supplied JSON: a document nested a few
+            hundred levels deep would otherwise exhaust the interpreter stack
+            and raise `RecursionError` before there was a workout to validate.
+
     Raises:
-        ValueError: When the document is not a legal step.
+        ValueError: When the document is not a legal step, or nests past
+            :data:`MAX_NESTING_DEPTH`.
     """
     body = as_mapping(document, path)
     kind = as_str(field(body, "kind", path), f"{path}.kind")
     if kind == "repeat":
         no_extra_fields(body, _REPEAT_FIELDS, path)
+        if depth >= MAX_NESTING_DEPTH:
+            raise ValueError(
+                f"{path}: repeat blocks may nest at most {MAX_NESTING_DEPTH} deep"
+            )
         children = as_sequence(field(body, "children", path), f"{path}.children")
-        return RepeatBlock(
-            times=as_int(field(body, "times", path), f"{path}.times"),
-            children=tuple(
-                step_from_json(child, f"{path}.children[{index}]")
-                for index, child in enumerate(children)
-            ),
+        times = as_int(field(body, "times", path), f"{path}.times")
+        decoded = tuple(
+            step_from_json(child, f"{path}.children[{index}]", depth + 1)
+            for index, child in enumerate(children)
         )
+        with located(path):
+            return RepeatBlock(times=times, children=decoded)
     duration_s = optional(body, "duration_s")
     distance_m = optional(body, "distance_m")
     role = optional(body, "role")
@@ -672,25 +726,25 @@ def step_from_json(document: Any, path: str) -> Step:
     if kind == "steady":
         no_extra_fields(body, _STEADY_FIELDS, path)
         targets = optional(body, "targets")
-        return SteadyStep(
-            targets=(
-                _NO_TARGETS
-                if targets is None
-                else targets_from_json(targets, f"{path}.targets")
-            ),
-            **common,
+        decoded_targets = (
+            _NO_TARGETS
+            if targets is None
+            else targets_from_json(targets, f"{path}.targets")
         )
+        with located(path):
+            return SteadyStep(targets=decoded_targets, **common)
     if kind == "ramp":
         no_extra_fields(body, _RAMP_FIELDS, path)
-        return RampStep(
-            start_targets=targets_from_json(
-                field(body, "start_targets", path), f"{path}.start_targets"
-            ),
-            end_targets=targets_from_json(
-                field(body, "end_targets", path), f"{path}.end_targets"
-            ),
-            **common,
+        start_targets = targets_from_json(
+            field(body, "start_targets", path), f"{path}.start_targets"
         )
+        end_targets = targets_from_json(
+            field(body, "end_targets", path), f"{path}.end_targets"
+        )
+        with located(path):
+            return RampStep(
+                start_targets=start_targets, end_targets=end_targets, **common
+            )
     raise ValueError(f"{path}.kind: {kind!r} is not one of: steady, ramp, repeat")
 
 
@@ -706,15 +760,15 @@ def endurance_workout_from_json(document: Any, path: str = "") -> EnduranceWorko
         ValueError: When the document is not a legal endurance workout.
     """
     body = as_mapping(document, path)
-    no_extra_fields(body, frozenset({"steps"}), path or "workout")
+    where = path or "workout"
+    no_extra_fields(body, frozenset({"steps"}), where)
     prefix = f"{path}.steps" if path else "steps"
     steps = as_sequence(field(body, "steps", path), prefix)
-    return EnduranceWorkout(
-        steps=tuple(
-            step_from_json(step, f"{prefix}[{index}]")
-            for index, step in enumerate(steps)
-        )
+    decoded = tuple(
+        step_from_json(step, f"{prefix}[{index}]") for index, step in enumerate(steps)
     )
+    with located(where):
+        return EnduranceWorkout(steps=decoded)
 
 
 def workout_body_to_json(body: WorkoutBody) -> dict[str, Any]:

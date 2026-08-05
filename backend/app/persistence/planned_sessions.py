@@ -62,8 +62,10 @@ class PlannedSessionIntentRow(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    #: No index of its own: the unique constraint above leads on this column,
+    #: so "the versions of one session" already has one.
     planned_session_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("planned_sessions.id", ondelete="CASCADE"), index=True
+        ForeignKey("planned_sessions.id", ondelete="CASCADE")
     )
     #: 1-based, strictly increasing within a planned session.
     version: Mapped[int] = mapped_column(Integer)
@@ -93,8 +95,10 @@ class PlannedSessionIntentRow(Base):
     )
     #: Where the prescription came from, if the library. Nulled rather than
     #: cascaded when that entry is deleted: the snapshot below still stands.
+    #: Indexed because that SET NULL is a write against every intent row
+    #: referencing the deleted workout, and unindexed it is a full scan.
     workout_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("workouts.id", ondelete="SET NULL")
+        ForeignKey("workouts.id", ondelete="SET NULL"), index=True
     )
     #: The prescription as frozen at this version.
     structure: Mapped[dict[str, Any]] = mapped_column(JSONColumn, default=dict)
@@ -129,9 +133,16 @@ class PlannedSessionRow(Base):
         UtcDateTime, server_default=func.now(), onupdate=func.now()
     )
 
+    # `passive_deletes`: the intent rows' foreign key carries ON DELETE
+    # CASCADE, so the database is what removes the chain — the ORM must not go
+    # looking for rows to delete itself. (Rows already in the session are still
+    # deleted by the unit of work, which is why the clause is proved by a
+    # statement that goes around the ORM entirely; see the CASCADE tests in
+    # tests/unit/test_planned_sessions_api.py.)
     intents: Mapped[list[PlannedSessionIntentRow]] = relationship(
         cascade="all, delete-orphan",
         lazy="selectin",
+        passive_deletes=True,
         order_by=PlannedSessionIntentRow.version,
     )
 

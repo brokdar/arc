@@ -14,7 +14,9 @@ Build-plan invariant 4, in one place:
 * **Editing intent after a match exists** writes version n+1 flagged
   ``edited_post_hoc``, **keeps the original pins**, and triggers a rescore.
   The pins are kept because the athlete executed against them; changing them
-  would rewrite the prescription the ride was actually judged by.
+  would rewrite the prescription the ride was actually judged by. Kept, not
+  frozen wholesale: a pin the new version no longer needs is dropped, and an
+  anchor the new version introduces is pinned at today's version (D54).
 * Editing a session's *date* or *status* is not an intent edit and writes no
   version. Those are facts about the calendar, not about what the session is
   for.
@@ -38,21 +40,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.anchors import AnchorType
-from app.domain.criteria import criteria_from_json, criteria_to_json
+from app.domain.criteria import (
+    SuccessCriterion,
+    criteria_from_json,
+    criteria_to_json,
+)
+from app.domain.criteria import referenced_anchor_types as criteria_anchors
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
-from app.domain.sessions import (
-    SessionIntent,
-    SessionStatus,
-    check_prescription,
-    required_anchor_types,
-)
+from app.domain.sessions import SessionIntent, SessionStatus, check_prescription
 from app.domain.versioning import FIRST_VERSION, next_version
 from app.domain.workout import (
     WorkoutBody,
     workout_body_from_json,
     workout_body_to_json,
 )
+from app.domain.workout import referenced_anchor_types as body_anchors
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.persistence.planned_sessions import (
@@ -83,6 +86,12 @@ SESSION_FIELDS = ("date", "status")
 
 #: Everything `update` accepts.
 UPDATABLE_FIELDS = (*INTENT_FIELDS, *SESSION_FIELDS)
+
+#: Fields an explicit ``null`` may not clear. `intent_text` and `coach_notes`
+#: are nullable by design and clearing them is an edit; these three name
+#: something a planned session cannot be without, and a null would reach the
+#: template lookup or a NOT NULL column as a 500 rather than a 422.
+UNCLEARABLE_FIELDS = ("purpose", "date", "status")
 
 #: `recompute_reason` written on an ordinary pre-execution edit.
 REASON_EDITED = "intent edited"
@@ -258,7 +267,7 @@ class PlannedSessionService:
         # discipline").
         with domain_rules():
             check_prescription(purpose, body, criteria)
-        pins = await self._pin_anchors(required_anchor_types(body, criteria))
+        pins = await self._pin_anchors(_anchor_sources(body, criteria))
         intent = self._build_intent(
             purpose=purpose,
             body=body,
@@ -306,18 +315,27 @@ class PlannedSessionService:
         """Update a planned session, versioning its intent if intent changed.
 
         See the module docstring for the three cases. ``updates`` holds only
-        the fields the caller supplied.
+        the fields the caller supplied — and an edit that supplies nothing is
+        refused rather than answered with an audit row saying nothing changed.
+
+        A patch that moves the session **and** edits its intent leaves two
+        audit rows, because those are two facts: the calendar move is not
+        implied by the revision, and the revision is not implied by the move.
 
         Raises:
             NotFoundError: When the session (or a referenced workout) does not
                 exist.
-            ValidationError: When a field is unknown or a value is illegal.
+            ValidationError: When a field is unknown, empty, cleared or
+                illegal.
         """
         unknown = set(updates) - set(UPDATABLE_FIELDS)
         if unknown:
             raise ValidationError(
                 f"Unknown planned-session fields: {', '.join(sorted(unknown))}"
             )
+        for name in UNCLEARABLE_FIELDS:
+            if name in updates and updates[name] is None:
+                raise ValidationError(f"{name} cannot be cleared")
         if "workout_id" in updates and "structure" in updates:
             raise ValidationError(
                 "Give either workout_id or structure, not both: a session's "
@@ -325,8 +343,12 @@ class PlannedSessionService:
             )
 
         row = await self.get(planned_session_id)
-        current = row.current_intent
+        # Checked after the lookup: patching a session that does not exist
+        # should say so, not complain about the body.
+        if not updates:
+            raise ValidationError("Supply at least one field to update")
         touches_intent = bool(set(updates) & set(INTENT_FIELDS))
+        touches_session = bool(set(updates) & set(SESSION_FIELDS))
 
         if touches_intent:
             await self._revise_intent(row, updates, actor=actor)
@@ -338,17 +360,17 @@ class PlannedSessionService:
         row.discipline = purpose_discipline(row.current_intent.purpose)
         row = await self._repository.add(row)
 
-        if not touches_intent:
+        if touches_session:
             await self._audit.record(
                 actor=actor,
                 action="planned_session.updated",
                 entity_type=ENTITY_TYPE,
                 entity_id=row.id,
                 payload={
-                    "changed": sorted(set(updates)),
+                    "changed": sorted(set(updates) & set(SESSION_FIELDS)),
                     "date": row.date.isoformat(),
                     "status": row.status.value,
-                    "intent_version": current.version,
+                    "intent_version": row.current_intent.version,
                 },
             )
         await commit(self._session)
@@ -412,19 +434,27 @@ class PlannedSessionService:
 
         with domain_rules():
             check_prescription(purpose, body, criteria)
-        required = required_anchor_types(body, criteria)
+        sources = _anchor_sources(body, criteria)
+        required = set(sources)
         if post_hoc:
-            # Keep the pins the athlete executed against; only add one if the
-            # edit introduced an anchor the frozen prescription never had.
+            # Keep the pins the athlete executed against — but only those the
+            # new version still refers to. A pin for an anchor the edit
+            # removed is dropped (the intent rejects pins nothing needs, and
+            # keeping one would claim a resolution this prescription has no
+            # use for), and an anchor the edit *introduced* is pinned at
+            # today's version, because there is no older answer to keep: it
+            # was never part of what the athlete executed against (D54).
             pins = {
                 anchor: version
                 for anchor, version in _pins_of(current).items()
                 if anchor in required
             }
             missing = required - set(pins)
-            pins |= await self._pin_anchors(missing)
+            pins |= await self._pin_anchors(
+                {anchor: sources[anchor] for anchor in missing}
+            )
         else:
-            pins = await self._pin_anchors(required)
+            pins = await self._pin_anchors(sources)
 
         intent = self._build_intent(
             purpose=purpose,
@@ -531,9 +561,15 @@ class PlannedSessionService:
             return criteria_from_json(list(supplied))
 
     async def _pin_anchors(
-        self, anchor_types: frozenset[AnchorType] | set[AnchorType]
+        self, sources: Mapping[AnchorType, frozenset[str]]
     ) -> dict[AnchorType, uuid.UUID]:
         """Pin the version of each anchor that is in force right now.
+
+        Args:
+            sources: The anchors to pin, each mapped to which halves of the
+                prescription refer to it (:func:`_anchor_sources`). Carried
+                only so the refusal below can name the half the client would
+                have to change.
 
         Raises:
             ValidationError: When an anchor the prescription needs has no
@@ -542,17 +578,77 @@ class PlannedSessionService:
                 a missing resource the client asked for.
         """
         pins: dict[AnchorType, uuid.UUID] = {}
-        for anchor_type in sorted(anchor_types, key=lambda anchor: anchor.value):
+        for anchor_type in sorted(sources, key=lambda anchor: anchor.value):
             try:
                 pins[anchor_type] = (await self._anchors.current(anchor_type)).id
             except NotFoundError as exc:
                 raise ValidationError(
-                    f"This prescription is expressed as a percentage of "
-                    f"{anchor_type.value}, but no {anchor_type.value} anchor is in "
-                    "force. Append one before planning the session, or prescribe "
-                    "absolute targets."
+                    _missing_anchor_message(anchor_type, sources[anchor_type])
                 ) from exc
         return pins
+
+
+#: What refers to an anchor, as :func:`_anchor_sources` labels it.
+FROM_TARGETS = "targets"
+FROM_CRITERIA = "criteria"
+
+
+def _anchor_sources(
+    body: WorkoutBody, criteria: Sequence[SuccessCriterion]
+) -> dict[AnchorType, frozenset[str]]:
+    """Return every anchor this prescription must pin, and what refers to it.
+
+    The set is `app.domain.sessions.required_anchor_types`; what is added is
+    *which* half asked for each anchor. Both halves are part of the frozen
+    prescription, but they are edited in different places and by different
+    people — the targets are what the planner wrote, the criteria usually come
+    from the purpose template — so a refusal that cannot tell them apart sends
+    the client to fix the wrong one.
+    """
+    from_body = body_anchors(body)
+    from_criteria = criteria_anchors(criteria)
+    return {
+        anchor: frozenset(
+            label
+            for label, group in (
+                (FROM_TARGETS, from_body),
+                (FROM_CRITERIA, from_criteria),
+            )
+            if anchor in group
+        )
+        for anchor in from_body | from_criteria
+    }
+
+
+def _missing_anchor_message(anchor: AnchorType, sources: frozenset[str]) -> str:
+    """Explain which half of the prescription needs an anchor nobody entered.
+
+    D49 gave this refusal one wording, and it misleads whenever the anchor is
+    required by the template's criteria alone: an athlete who prescribed
+    nothing but absolute watts was told "this prescription is expressed as a
+    percentage of ftp", and the remedy it offered — use absolute targets — was
+    the thing they had already done.
+    """
+    name = anchor.value
+    if sources == frozenset({FROM_TARGETS}):
+        subject = f"This prescription is expressed as a percentage of {name}"
+        remedy = "prescribe absolute targets"
+    elif sources == frozenset({FROM_CRITERIA}):
+        subject = (
+            "The success criteria (from the purpose template, editable) "
+            f"reference {name}"
+        )
+        remedy = "edit the criteria"
+    else:
+        subject = (
+            "This prescription's targets and its success criteria (from the "
+            f"purpose template, editable) both reference {name}"
+        )
+        remedy = "prescribe absolute targets and edit the criteria"
+    return (
+        f"{subject}, but no {name} anchor is in force. Append one before "
+        f"planning the session, or {remedy}."
+    )
 
 
 def _intent_row(

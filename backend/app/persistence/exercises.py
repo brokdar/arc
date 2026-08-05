@@ -91,8 +91,11 @@ class ExerciseRepository:
         """Return a page of the catalogue, plus the total count.
 
         Ordered by category then name so a picker groups sensibly without the
-        client re-sorting. ``query`` is a case-insensitive substring match on
-        the display name.
+        client re-sorting, and by slug last: display names are not unique, and
+        two rows tied on the sort key may land on either side of a page
+        boundary from one request to the next — losing one entry and showing
+        another twice. ``query`` is a case-insensitive substring match on the
+        display name.
         """
         criteria = []
         if category is not None:
@@ -105,7 +108,11 @@ class ExerciseRepository:
         result = await self._session.execute(
             select(ExerciseRow)
             .where(*criteria)
-            .order_by(ExerciseRow.category.asc(), ExerciseRow.name.asc())
+            .order_by(
+                ExerciseRow.category.asc(),
+                ExerciseRow.name.asc(),
+                ExerciseRow.id.asc(),
+            )
             .offset(offset)
             .limit(limit)
         )

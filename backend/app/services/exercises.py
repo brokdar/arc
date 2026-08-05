@@ -104,6 +104,20 @@ class ExerciseService:
         file may still be referenced by a stored prescription, and losing the
         name would make that prescription unreadable.
 
+        **Call this before loading any row the same use-case goes on to
+        mutate.** Unlike every other write in this layer, the seed commits in
+        the *middle* of whatever transaction it is called from, and its
+        lost-race branch rolls that transaction back. The commit is harmless
+        on its own (`expire_on_commit=False`, `app.persistence.db`), but a
+        rollback expires every instance in the session — so a caller that
+        loaded a row first, seeded second and wrote third would be flushing an
+        object whose in-memory state had been discarded, and would lose the
+        edits it had already made. The safe order is: seed, then load, then
+        write. A caller that genuinely cannot follow it should run the seed in
+        its own transaction (`session_scope()`) rather than reorder the
+        commit here — the commit is what makes a lazy first-access seed
+        visible to the request that triggered it.
+
         Args:
             actor: Credited with the seed. Defaults to the system, which is
                 what a lazy first-access seed genuinely is.

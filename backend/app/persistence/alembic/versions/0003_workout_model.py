@@ -249,10 +249,15 @@ def upgrade() -> None:
             name=op.f("uq_planned_session_intents_planned_session_id"),
         ),
     )
+    # `planned_session_id` gets no index of its own: the unique constraint on
+    # (planned_session_id, version) leads on it, so a second one would be a
+    # duplicate the planner never picks. `workout_id` gets one because its
+    # SET NULL writes every intent row referencing a deleted workout, and
+    # unindexed that is a scan of the table.
     op.create_index(
-        op.f("ix_planned_session_intents_planned_session_id"),
+        op.f("ix_planned_session_intents_workout_id"),
         "planned_session_intents",
-        ["planned_session_id"],
+        ["workout_id"],
         unique=False,
     )
 
@@ -260,7 +265,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert the migration."""
     op.drop_index(
-        op.f("ix_planned_session_intents_planned_session_id"),
+        op.f("ix_planned_session_intents_workout_id"),
         table_name="planned_session_intents",
     )
     op.drop_table("planned_session_intents")

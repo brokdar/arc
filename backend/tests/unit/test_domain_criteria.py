@@ -107,6 +107,36 @@ def test_a_ceiling_must_match_its_channel() -> None:
         )
 
 
+def test_an_absolute_ceiling_must_be_a_number_a_recording_could_reach() -> None:
+    # The mirror of the bound on an absolute *target*: a 1e300 W cap is not a
+    # rule, it is a criterion every session passes. The channel is what makes
+    # the check possible at all — `AbsoluteLimit` does not know what it caps.
+    with pytest.raises(ValueError, match="ceiling must lie between"):
+        Ceiling(
+            channel=Channel.POWER,
+            limit=AbsoluteLimit(value=1e300, unit=ChannelUnit.WATT),
+            max_seconds_above=0,
+        )
+    with pytest.raises(ValueError, match="ceiling must lie between"):
+        Ceiling(
+            channel=Channel.HR,
+            limit=AbsoluteLimit(value=5, unit=ChannelUnit.BPM),
+            max_seconds_above=0,
+        )
+
+
+def test_a_semantic_failure_keeps_its_place_in_the_document() -> None:
+    # The rule lives in `__post_init__`, which knows the value and not where
+    # it came from; the codec promises the message says which criterion.
+    with pytest.raises(ValueError, match=r"success_criteria\[1\]: .*must be between"):
+        criteria_from_json(
+            [
+                {"kind": "duration_floor", "min_seconds": 600},
+                {"kind": "sets_completed", "min_fraction": 1.5},
+            ]
+        )
+
+
 def test_a_cadence_ceiling_cannot_be_a_percentage_of_an_anchor() -> None:
     with pytest.raises(ValueError, match="cadence cannot be capped"):
         Ceiling(

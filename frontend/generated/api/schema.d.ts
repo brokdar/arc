@@ -1097,6 +1097,8 @@ export interface components {
         | components["schemas"]["SetsCompletedSchema"]
         | components["schemas"]["LoadWithinSchema"]
       )[];
+      /** Description */
+      description?: string | null;
       discipline: components["schemas"]["Discipline"];
       purpose: components["schemas"]["Purpose"];
     };

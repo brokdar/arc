@@ -24,6 +24,7 @@ def _to_read(template: PurposeTemplate) -> PurposeTemplateRead:
         {
             "purpose": template.purpose,
             "discipline": template.discipline,
+            "description": template.description,
             "axes": list(template.axes),
             "default_criteria": criteria_to_json(template.default_criteria),
         }
