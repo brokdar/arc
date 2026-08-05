@@ -6,7 +6,7 @@ append-only (build-plan invariant 3).
 
 import datetime as dt
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,6 +21,10 @@ from app.domain.anchors import (
 )
 
 Protocol = Annotated[PostgresText, Field(min_length=1, max_length=200)]
+#: The appendable anchor types — the MVP three, spelled as a `Literal` so the
+#: contract does not advertise the reserved `cp`/`w_prime` (which the service
+#: also refuses, for callers that do not come through this schema).
+WritableAnchorType = Literal[AnchorType.FTP, AnchorType.LTHR, AnchorType.MAX_HR]
 #: Bounds are per anchor type (`app.domain.anchors.ANCHOR_BOUNDS`), so the
 #: schema only rejects what is nonsensical for every type; the domain gives
 #: the precise message.
@@ -32,7 +36,7 @@ class AnchorVersionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    anchor_type: AnchorType
+    anchor_type: WritableAnchorType
     value: AnchorValue
     provenance: Provenance
     #: Defaults to the anchor type's own unit; a different one is rejected

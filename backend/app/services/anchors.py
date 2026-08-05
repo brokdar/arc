@@ -12,11 +12,12 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError, domain_rules
+from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.anchors import (
     ANCHOR_UNITS,
     MVP_STALENESS_STATE,
+    RESERVED_ANCHOR_TYPES,
     AnchorSource,
     AnchorType,
     AnchorUnit,
@@ -132,8 +133,17 @@ class AnchorService:
             ci_high: Upper bound of the confidence interval.
 
         Raises:
-            ValidationError: When the version breaks a domain rule.
+            ValidationError: When the version breaks a domain rule, or when
+                ``anchor_type`` is reserved.
         """
+        # Enforced here as well as in the API schema: this service is the
+        # one path every adapter shares, and WP-8's MCP tools do not go
+        # through `AnchorVersionCreate`.
+        if anchor_type in RESERVED_ANCHOR_TYPES:
+            raise ValidationError(
+                f"{anchor_type.value} anchors are reserved for the "
+                "critical-power model (WP-5) and cannot be appended yet"
+            )
         created_at = dt.datetime.now(dt.UTC)
         with domain_rules():
             version = AnchorVersion(

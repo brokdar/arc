@@ -67,6 +67,13 @@ enforced by rather than described in. Decisions D31–D37.
 - `PUT`, `PATCH` and `DELETE` on an anchor version return **405 with an
   explanation** and an `Allow` header, because FastAPI answers an undefined
   method+path with 404 — which reads as "wrong id" (D36).
+- The reserved anchor types `cp` and `w_prime` cannot be appended (D40): the
+  create contract only offers the MVP three, and the service refuses them for
+  callers that bypass the schema.
+- The singleton athlete bootstrap is race-tolerant and never a side effect of
+  a rejected write (D41): a lost first-access race returns the winner's row
+  instead of a 409, and a 422'd first-ever `PATCH` leaves the database
+  untouched — bootstrap and update happen in one transaction, both audited.
 - Hardened the new surface against what Schemathesis found (D39): the 422
   contract now admits both shapes the status really has
   (`ValidationErrorDetail`), the append-only refusals answer 405 for any id

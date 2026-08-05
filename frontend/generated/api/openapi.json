@@ -24,7 +24,9 @@
         "description": "Payload for appending a version to an anchor's history.",
         "properties": {
           "anchor_type": {
-            "$ref": "#/components/schemas/AnchorType"
+            "enum": ["ftp", "lthr", "max_hr"],
+            "title": "Anchor Type",
+            "type": "string"
           },
           "ci_high": {
             "anyOf": [

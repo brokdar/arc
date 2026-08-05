@@ -276,7 +276,11 @@ export interface components {
      * @description Payload for appending a version to an anchor's history.
      */
     AnchorVersionCreate: {
-      anchor_type: components["schemas"]["AnchorType"];
+      /**
+       * Anchor Type
+       * @enum {string}
+       */
+      anchor_type: "ftp" | "lthr" | "max_hr";
       /** Ci High */
       ci_high?: number | null;
       /** Ci Low */

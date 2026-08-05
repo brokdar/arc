@@ -51,10 +51,12 @@ async def test_failure_at_commit_returns_the_json_envelope(
 async def test_race_losing_insert_conflicts_rather_than_500(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Two callers bootstrapping the athlete at once look exactly like this:
-    # both see no row, both insert the singleton's fixed primary key, and the
-    # database refuses the second. The blind lookup below is that race,
-    # deterministically.
+    # A blind lookup that *always* misses is the pathological version of the
+    # bootstrap race: the insert conflicts and the recovery re-read finds
+    # nothing either. The service re-raises rather than inventing a row, and
+    # the conflict surfaces as a 409 envelope, not a 500. (The realistic
+    # race, where the re-read finds the winner's row, recovers to a 200 —
+    # see test_a_lost_bootstrap_race_recovers_with_the_winners_row.)
     assert (await client.get(ATHLETE)).status_code == 200
 
     async def blind_lookup(self: AthleteRepository) -> Athlete | None:
@@ -91,3 +93,29 @@ async def test_the_405_refusals_use_the_envelope_too(client: AsyncClient) -> Non
     created = (await client.post(ANCHORS, json=FTP)).json()
 
     _assert_error_envelope(await client.delete(f"{ANCHORS}/{created['id']}"), 405)
+
+
+async def test_a_lost_bootstrap_race_recovers_with_the_winners_row(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The realistic race: the loser's insert conflicts, but the winner's row
+    # is right there on re-read — so the loser returns it instead of a 409.
+    # First call sees no row (as both racers did); the retry sees the truth.
+    assert (await client.get(ATHLETE)).status_code == 200
+
+    real_lookup = AthleteRepository.get
+    lookups = 0
+
+    async def racing_lookup(self: AthleteRepository) -> Athlete | None:
+        nonlocal lookups
+        lookups += 1
+        if lookups == 1:
+            return None
+        return await real_lookup(self)
+
+    monkeypatch.setattr(AthleteRepository, "get", racing_lookup)
+
+    response = await client.get(ATHLETE)
+
+    assert response.status_code == 200
+    assert lookups >= 2

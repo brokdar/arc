@@ -41,6 +41,11 @@ test("the athlete profile round-trips through the proxy @fullstack", async ({
 test("anchors and zones answer through the proxy @fullstack", async ({
   request,
 }) => {
+  // WARNING: this append is PERMANENT — anchor history is append-only by
+  // design, so there is no cleanup. Fine against CI's throwaway compose
+  // stack; but `E2E_PASSWORD=... just smoke` against a stack sharing a real
+  // athlete's database volume will leave this 250 W estimated FTP in the
+  // history and may change which version is "current".
   const appended = await request.post("/api/v1/anchors", {
     data: { anchor_type: "ftp", value: 250, provenance: "estimated" },
   });

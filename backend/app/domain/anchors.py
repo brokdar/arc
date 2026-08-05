@@ -87,6 +87,14 @@ class StalenessState(StrEnum):
 #: The only staleness state the MVP ever writes.
 MVP_STALENESS_STATE = StalenessState.FRESH
 
+#: Anchor types that exist as vocabulary but may not be written yet. The
+#: critical-power model arrives in WP-5 with its own protocols and semantics;
+#: accepting CP/W′ values before anything can derive from or validate them
+#: would seed the history the model later builds on with unvetted rows.
+RESERVED_ANCHOR_TYPES: frozenset[AnchorType] = frozenset(
+    {AnchorType.CP, AnchorType.W_PRIME}
+)
+
 #: The unit each anchor type is measured in. One unit per type: allowing a
 #: choice would mean every consumer converting before comparing.
 ANCHOR_UNITS: dict[AnchorType, AnchorUnit] = {

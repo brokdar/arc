@@ -865,3 +865,48 @@ excluding the check globally (as D13 does for two others) keeps it armed for
 every endpoint added later, which is where the next unguarded 500 will be. All
 five refusals are pinned by unit tests, which is the standing condition for
 narrowing a check at all.
+
+## D40 — Reserved anchor types cannot be appended
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+`cp` and `w_prime` exist in `AnchorType` so that WP-5's critical-power model
+arrives as code, not a data migration (D32 spirit). But existence in the enum
+had left them **appendable**: `POST /api/v1/anchors` with `anchor_type: "cp"`
+succeeded, which the review of PR #2 flagged as unaddressed by D35. They are
+now refused twice: the create schema's `anchor_type` is a `Literal` of the
+MVP three, so the contract does not offer them, and
+`AnchorService.append` rejects `RESERVED_ANCHOR_TYPES`
+(`app/domain/anchors.py`) with a 422 naming the work package that will accept
+them — the service check is what covers WP-8's MCP tools, which do not pass
+through the schema. This displaces the alternative of accepting early CP
+measurements as harmless storage.
+
+*Rationale:* nothing can consume the value (zones reject CP, no model exists),
+and the CP protocols that make one measurement comparable with the next are
+exactly what WP-5 defines. Rows accepted before those rules exist would be
+history the model must either trust unvetted or awkwardly disown. The domain
+`AnchorVersion` itself still accepts CP — reserved-ness is MVP write policy,
+not a timeless domain rule, so it lives in the write path.
+
+## D41 — Bootstrap is race-tolerant, and never a side effect of a rejected write
+
+**Date:** 2026-08-05 · **Status:** accepted · **WP:** WP-1
+
+Two refinements to D33's lazy bootstrap, both from the PR #2 review:
+
+1. **The lost race self-heals.** Two concurrent first-ever accesses both saw
+   no row and both inserted the fixed primary key; the loser surfaced a 409 —
+   on a `GET`. `AthleteService.get` now catches the `ConflictError`, re-reads,
+   and returns the winner's row; it re-raises only when the re-read finds
+   nothing (a genuinely broken state that should be loud). D33's "the loser
+   gets a 409" is superseded for reads; a conflicting concurrent `PATCH`
+   still 409s, since that is a real concurrent-write signal.
+2. **`update` validates before it bootstraps.** It previously called `get`,
+   committing the bootstrap (plus audit row) before domain validation — so a
+   422'd first-ever `PATCH` left a profile behind. It now merges the update
+   into the not-yet-persisted defaults, validates, and only then creates and
+   updates the row in **one** transaction with both audit rows
+   (`athlete.created`, `athlete.updated`). A rejected `PATCH` on an empty
+   database is a pure no-op, pinned by
+   `test_a_rejected_update_does_not_bootstrap_the_profile`.

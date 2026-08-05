@@ -100,8 +100,10 @@ class AnchorRepository:
     ) -> tuple[Sequence[AnchorVersionRow], int]:
         """Return a page of history, newest first, plus the total count.
 
-        Newest first by ``(effective_date, created_at)`` — the same ordering
-        `app.domain.anchors` uses, so page 1 starts with the version in force.
+        Newest first by ``(effective_date, created_at)`` — the reverse of the
+        canonical `app.domain.anchors` ordering. Note "newest" is not "in
+        force": a future-dated version sorts first here but is not in force
+        yet, which is why `current` asks the domain instead of this method.
         """
         criteria = (
             (AnchorVersionRow.anchor_type == anchor_type,)

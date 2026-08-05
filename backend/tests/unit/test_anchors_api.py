@@ -10,7 +10,14 @@ import datetime as dt
 import uuid
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import ValidationError
+from app.domain.actor import Actor
+from app.domain.anchors import AnchorSource, AnchorType, Provenance
+from app.services.anchors import AnchorService
 
 ANCHORS = "/api/v1/anchors"
 
@@ -281,3 +288,35 @@ async def test_optional_query_params_do_not_advertise_null(
         if param["in"] == "query" and "null" in str(param["schema"])
     ]
     assert offenders == []
+
+
+# Reserved anchor types (D40): `cp` and `w_prime` exist as vocabulary so that
+# WP-5 can add the critical-power model without migrating stored values, but
+# nothing may write them yet. The contract's create enum only offers the MVP
+# three, and the service refuses the reserved two for callers that do not come
+# through the schema (WP-8's MCP tools).
+
+
+async def test_reserved_anchor_types_cannot_be_appended(client: AsyncClient) -> None:
+    for reserved in ("cp", "w_prime"):
+        response = await client.post(
+            ANCHORS,
+            json={"anchor_type": reserved, "value": 300, "provenance": "estimated"},
+        )
+
+        assert response.status_code == 422
+
+
+async def test_the_service_refuses_reserved_types_without_the_schema(
+    db_session: AsyncSession,
+) -> None:
+    service = AnchorService.from_session(db_session)
+
+    with pytest.raises(ValidationError, match="reserved"):
+        await service.append(
+            actor=Actor.parse("agent:test"),
+            anchor_type=AnchorType.CP,
+            value=300,
+            provenance=Provenance.ESTIMATED,
+            source=AnchorSource.AGENT,
+        )

@@ -13,7 +13,7 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ValidationError, domain_rules
+from app.core.exceptions import ConflictError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.athlete import AthleteProfile, Sex
 from app.persistence.athlete import SINGLETON_ATHLETE_ID, Athlete, AthleteRepository
@@ -53,7 +53,17 @@ class AthleteService:
         if athlete is not None:
             return athlete
 
-        athlete = await self._repository.add(Athlete(id=SINGLETON_ATHLETE_ID))
+        try:
+            athlete = await self._repository.add(Athlete(id=SINGLETON_ATHLETE_ID))
+        except ConflictError:
+            # Two first-ever calls raced and this one lost: the winner has
+            # committed the row this one was about to create, so the right
+            # answer is that row, not a 409. The failed flush already rolled
+            # the session back, so nothing of the losing insert survives.
+            athlete = await self._repository.get()
+            if athlete is None:
+                raise
+            return athlete
         await self._audit.record(
             actor=actor,
             action="athlete.created",
@@ -81,8 +91,11 @@ class AthleteService:
                 f"Unknown athlete fields: {', '.join(sorted(unknown))}"
             )
 
-        athlete = await self.get(actor=actor)
-        before = _values(athlete)
+        # Validate *before* bootstrapping, and bootstrap in the same
+        # transaction as the update: a rejected PATCH on an empty database
+        # must be a pure no-op, not a 422 that leaves a profile behind.
+        athlete = await self._repository.get()
+        before = _values(athlete) if athlete is not None else _empty_profile()
         candidate = {**before, **dict(updates)}
         candidate["sex"] = candidate["sex"] or Sex.UNSPECIFIED
         candidate["capabilities"] = candidate["capabilities"] or {}
@@ -93,10 +106,21 @@ class AthleteService:
         with domain_rules():
             AthleteProfile(**candidate)
 
+        bootstrapping = athlete is None
+        if bootstrapping:
+            athlete = Athlete(id=SINGLETON_ATHLETE_ID)
         for field in UPDATABLE_FIELDS:
             if field in updates:
                 setattr(athlete, field, candidate[field])
         athlete = await self._repository.add(athlete)
+        if bootstrapping:
+            await self._audit.record(
+                actor=actor,
+                action="athlete.created",
+                entity_type=ENTITY_TYPE,
+                entity_id=athlete.id,
+                payload={"bootstrap": True},
+            )
 
         after = _values(athlete)
         await self._audit.record(
@@ -117,6 +141,17 @@ class AthleteService:
         )
         await commit(self._session)
         return athlete
+
+
+def _empty_profile() -> dict[str, Any]:
+    """The field values of a not-yet-bootstrapped profile."""
+    return {
+        "name": None,
+        "date_of_birth": None,
+        "sex": Sex.UNSPECIFIED,
+        "height_cm": None,
+        "capabilities": {},
+    }
 
 
 def _values(athlete: Athlete) -> dict[str, Any]:
