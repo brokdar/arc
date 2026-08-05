@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-2 — workout model, library, purpose templates, planned sessions
+
+The prescription half of the loop: what a session *is*, what it is *for*, and
+the machinery that freezes both at planning time (build-plan invariant 4).
+Decisions D42–D52.
+
+**Domain (`backend/app/domain/`, pure)**
+
+- Added the **structured workout** (`workout.py`): a recursive step tree of
+  `SteadyStep` / `RampStep` / `RepeatBlock`, with per-channel targets (power,
+  hr, cadence) that are either a percentage range of an anchor or an absolute
+  range in the channel's own unit. `flatten()` expands repeat blocks — each
+  flat step remembering which iteration of which block it came from — and
+  leaves ramps whole, carrying a start and an end target set (D42). Rules are
+  enforced at construction: exactly one of duration or distance, a channel may
+  only be a percentage of an anchor it derives from, an absolute target must
+  use the channel's unit and lie in a plausible range, and nesting is bounded
+  because the tree arrives as user-supplied JSON.
+- Added the **strength model** (`strength.py`): a catalogue `Exercise`
+  (slug, name, category, unilateral flag) and a `StrengthSet` prescription
+  (exercise, sets, reps, load as kg / %e1RM / RPE / bodyweight, RIR, rest,
+  tempo), grouped by `StrengthGroup` — a group of more than one item *is* a
+  superset, with no flag to keep in step with the count.
+- Added the **purpose vocabulary** (`purpose.py`): eleven endurance and seven
+  strength purposes, each paired with exactly one discipline.
+- Added **success criteria** (`criteria.py`): the MVP five — `time_in_band`,
+  `duration_floor`, `ceiling`, `sets_completed`, `load_within` — as a
+  tagged-union value set with (de)serialization. A band is a tolerance around
+  the step's *own* prescribed target rather than an absolute range (D44), which
+  is what lets a purpose template state one at all. Evaluation is WP-7.
+- Added **purpose templates** (`templates.py`) and the `ScoringAxis`
+  vocabulary WP-7 will compute (`completion, adherence, discipline, pacing,
+  sets_load`, with `response`/`fuelling` reserved and deliberately unclaimed).
+- Added the **planned-session intent** (`sessions.py`): purpose, prescription
+  snapshot, criteria, pinned anchor versions, and the rule that every anchor a
+  prescription refers to must be pinned.
+- Percentages are fractions everywhere, matching the zone model (D43), and
+  domain JSON is decoded by shared helpers that refuse unknown fields and
+  locate every error in the document (D52).
+
+**Data in the repository**
+
+- Added `backend/app/resources/purpose_templates.json`: per purpose, the
+  scoring axes that apply and the success criteria a session starts with.
+  Loaded and validated at startup, so a file that omits a purpose, names an
+  unknown axis, or carries a criterion that purpose could never evaluate stops
+  the boot rather than surfacing at scoring time (D45).
+- Added `backend/app/resources/exercise_catalogue.json`: 98 hand-curated
+  movements across nine families (the plan's `DECIDE:` default). The
+  `exercises` table is keyed by slug and seeded from it **lazily and
+  idempotently on first access** — not by a migration, which a truncating test
+  fixture or a restore would defeat, and not by the lifespan, which would make
+  a successful boot depend on a writable database (D46).
+
+**Persistence**
+
+- Added the `exercises`, `workouts`, `workout_tags`, `planned_sessions` and
+  `planned_session_intents` tables with migration `0003`. Prescriptions are one
+  JSON document; tags get a table because "which workouts are tagged X" is a
+  query and array containment is dialect-specific; folders stay a column (D50).
+- Intent versions are append-only and carry WP-1's versioning vocabulary
+  verbatim, so `app.domain.versioning`'s chain helpers work on the ORM rows
+  unchanged.
+
+**API**
+
+- Added `GET/POST /api/v1/workouts`, `GET/PATCH/DELETE /api/v1/workouts/{id}`
+  with search (ILIKE, wildcards escaped), folder/tag/discipline filters, and
+  `GET /api/v1/workout-labels` for the folder and tag lists in use.
+- Added the read-only `GET /api/v1/exercises`(`/{id}`) and
+  `GET /api/v1/purposes`(`/{purpose}`), the latter returning each purpose's
+  axes and default criteria so the planning UI pre-fills from the same
+  templates the server derives from.
+- Added `GET/POST /api/v1/planned-sessions`,
+  `GET/PATCH/DELETE /api/v1/planned-sessions/{id}` and the intent history at
+  `/{id}/intents` and `/{id}/intents/{version}`. Creating a session derives its
+  criteria from the purpose template and pins the anchor versions in force; a
+  prescription referring to an anchor with none in force is refused with a 422
+  that says what to do (D49).
+- Implemented the freeze rule (D47): an intent edit before a match exists
+  writes a new version and re-pins; an edit after a match exists writes a new
+  version flagged `edited_post_hoc`, **keeps** the pins the athlete executed
+  against, and triggers a rescore. Editing only a session's date or status
+  versions nothing. Matching and rescoring do not exist yet, so both are
+  explicit, tested seams the later work packages replace with one function
+  each (D48).
+- The whole step tree and criterion set are typed end to end: recursive
+  discriminated unions in the API schemas, regenerated into
+  `frontend/generated/api/`.
+- Schemathesis found that `/workouts/folders` and `/workouts/tags` were
+  shadowed by `/workouts/{workout_id}`, so an undocumented method on them
+  answered 422 about uuid syntax instead of 405. The facet moved to
+  `/workout-labels`, outside the id namespace (D50); the four new write
+  operations that refuse schema-valid input by domain rule are narrowed per
+  operation in `backend/schemathesis.toml`.
+
+**Testing**
+
+- Added property tests over random step trees (hypothesis): flattening and
+  expansion round-trip, indices are execution order, duration is conserved,
+  and the serialized form round-trips.
+- Added template-derivation tests for every purpose in the vocabulary, plus
+  the malformed-file cases that must stop the boot.
+- Added freeze-semantics tests driving the match/rescore seams: post-match
+  edit produces a new version, the flag, kept pins, a rescore call and a
+  retrievable original; pre-match edit produces a new version, no flag, and
+  re-pinned anchors.
+- The unit suite now turns SQLite's foreign keys on (D51), so `ON DELETE
+  CASCADE`/`SET NULL` behave there as they do on Postgres — the divergence
+  that hid a real failure until the pragma went in.
+
 ### WP-1 — domain core: athlete, anchors, zones, versioning primitives
 
 The first real entities, and the first code the build plan's invariants are

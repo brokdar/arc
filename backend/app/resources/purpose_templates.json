@@ -1,0 +1,171 @@
+{
+  "templates": {
+    "recovery": {
+      "description": "Stay easy. The point is what you do NOT do, so the discipline axis carries the verdict and adherence is deliberately not scored.",
+      "axes": ["completion", "discipline"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 600 },
+        {
+          "kind": "ceiling",
+          "channel": "power",
+          "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 0.6 },
+          "max_seconds_above": 120
+        }
+      ]
+    },
+    "endurance": {
+      "description": "Time in the aerobic band, with a cap so it does not drift into tempo.",
+      "axes": ["completion", "adherence", "discipline"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 1800 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.9, "high": 1.1 },
+          "min_fraction": 0.7
+        },
+        {
+          "kind": "ceiling",
+          "channel": "power",
+          "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 1.0 },
+          "max_seconds_above": 300
+        }
+      ]
+    },
+    "tempo": {
+      "description": "Sustained sub-threshold work; the band is what makes it tempo rather than a hard endurance ride.",
+      "axes": ["completion", "adherence"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 1200 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.93, "high": 1.07 },
+          "min_fraction": 0.75
+        }
+      ]
+    },
+    "sweet_spot": {
+      "description": "Narrow band just under threshold, held across repeats.",
+      "axes": ["completion", "adherence", "pacing"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 1200 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.95, "high": 1.05 },
+          "min_fraction": 0.8
+        }
+      ]
+    },
+    "threshold": {
+      "description": "At or around FTP. Tight band, and fade across repeats is the failure mode worth naming.",
+      "axes": ["completion", "adherence", "pacing"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 1200 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.95, "high": 1.05 },
+          "min_fraction": 0.8
+        }
+      ]
+    },
+    "vo2max": {
+      "description": "Short, hard intervals. The band is wider because the first minute of each rep never sits on target.",
+      "axes": ["completion", "adherence", "pacing"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 900 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.92, "high": 1.12 },
+          "min_fraction": 0.7
+        }
+      ]
+    },
+    "anaerobic": {
+      "description": "Very short, very hard. Wide band, low fraction: nobody holds a target for 30 seconds.",
+      "axes": ["completion", "adherence", "pacing"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 600 },
+        {
+          "kind": "time_in_band",
+          "selector": { "kind": "role", "role": "work" },
+          "band": { "channel": "power", "low": 0.9, "high": 1.2 },
+          "min_fraction": 0.6
+        }
+      ]
+    },
+    "neuromuscular": {
+      "description": "Maximal sprints. There is no band to hold, so adherence is not scored; what matters is that the last effort resembles the first.",
+      "axes": ["completion", "pacing"],
+      "default_criteria": [{ "kind": "duration_floor", "min_seconds": 600 }]
+    },
+    "unstructured": {
+      "description": "Ride. Adherence is suppressed by the build plan: there was no structure to adhere to.",
+      "axes": ["completion"],
+      "default_criteria": [{ "kind": "duration_floor", "min_seconds": 1200 }]
+    },
+    "technique": {
+      "description": "Skills work — cadence drills, cornering, position. Judged on having done it.",
+      "axes": ["completion"],
+      "default_criteria": [{ "kind": "duration_floor", "min_seconds": 900 }]
+    },
+    "test": {
+      "description": "A protocol whose output is a new anchor. Scored on completion only: the result is the point, and it is maximal by definition.",
+      "axes": ["completion"],
+      "default_criteria": [{ "kind": "duration_floor", "min_seconds": 600 }]
+    },
+    "max_strength": {
+      "description": "Heavy, low reps. Load fidelity matters more here than anywhere else, so the tolerance is the tightest of the strength templates.",
+      "axes": ["completion", "sets_load"],
+      "default_criteria": [
+        { "kind": "sets_completed", "min_fraction": 0.9 },
+        { "kind": "load_within", "pct_tolerance": 0.05 }
+      ]
+    },
+    "strength_endurance": {
+      "description": "Moderate loads, high reps, short rest.",
+      "axes": ["completion", "sets_load"],
+      "default_criteria": [
+        { "kind": "sets_completed", "min_fraction": 0.9 },
+        { "kind": "load_within", "pct_tolerance": 0.1 }
+      ]
+    },
+    "hypertrophy": {
+      "description": "Volume at a moderate load; completing the sets matters more than hitting an exact weight.",
+      "axes": ["completion", "sets_load"],
+      "default_criteria": [
+        { "kind": "sets_completed", "min_fraction": 0.85 },
+        { "kind": "load_within", "pct_tolerance": 0.1 }
+      ]
+    },
+    "power": {
+      "description": "Explosive work at sub-maximal loads; a load that drifts up quietly turns this into max strength.",
+      "axes": ["completion", "sets_load"],
+      "default_criteria": [
+        { "kind": "sets_completed", "min_fraction": 0.9 },
+        { "kind": "load_within", "pct_tolerance": 0.075 }
+      ]
+    },
+    "core": {
+      "description": "Trunk work, usually bodyweight, where load tolerance means nothing.",
+      "axes": ["completion"],
+      "default_criteria": [{ "kind": "sets_completed", "min_fraction": 0.8 }]
+    },
+    "mobility": {
+      "description": "Range-of-motion work. Judged on having spent the time.",
+      "axes": ["completion"],
+      "default_criteria": [{ "kind": "duration_floor", "min_seconds": 600 }]
+    },
+    "conditioning": {
+      "description": "Circuits and carries — general work capacity, off the bike.",
+      "axes": ["completion"],
+      "default_criteria": [
+        { "kind": "duration_floor", "min_seconds": 600 },
+        { "kind": "sets_completed", "min_fraction": 0.8 }
+      ]
+    }
+  }
+}
