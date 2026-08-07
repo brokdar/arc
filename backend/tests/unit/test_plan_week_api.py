@@ -133,7 +133,11 @@ async def test_an_empty_week_still_has_its_seven_days(client: AsyncClient) -> No
 
     assert [day["sessions"] for day in payload["days"]] == [[]] * 7
     assert payload["session_count"] == 0
-    assert payload["planned_duration_s"] == 0
+    # No session contributed a duration, so there is no duration — a zero
+    # here would read as a week of rest rather than as a week of nothing.
+    assert payload["planned_duration_s"] is None
+    assert payload["duration_sessions_counted"] == 0
+    assert payload["duration_sessions_uncounted"] == 0
 
 
 async def test_both_ends_of_the_window_are_included(client: AsyncClient) -> None:
@@ -337,6 +341,36 @@ async def test_the_week_totals_the_durations_it_has(client: AsyncClient) -> None
 
     assert payload["session_count"] == 4
     assert payload["planned_duration_s"] == 2 * RIDE_DURATION_S
+    # Two of the four had a duration to add. The total is only honest beside
+    # the count it came from.
+    assert payload["duration_sessions_counted"] == 2
+    assert payload["duration_sessions_uncounted"] == 2
+
+
+async def test_a_week_of_sessions_with_no_duration_has_none_rather_than_zero(
+    client: AsyncClient,
+) -> None:
+    # A strength session and a distance ride: four hours of work between them
+    # and not one prescribed second. `sum(... or 0)` called that a rest week.
+    await plan(client, MONDAY, purpose="max_strength", structure=KG_LIFT)
+    await plan(
+        client,
+        MONDAY + dt.timedelta(days=1),
+        purpose="technique",
+        structure=DISTANCE_RIDE,
+    )
+
+    payload = await week(client, MONDAY)
+
+    assert payload["session_count"] == 2
+    assert payload["planned_duration_s"] is None
+    assert payload["duration_sessions_counted"] == 0
+    assert payload["duration_sessions_uncounted"] == 2
+    rows = {row["discipline"]: row for row in payload["by_discipline"]}
+    assert rows["strength"]["planned_duration_s"] is None
+    assert rows["strength"]["duration_sessions_uncounted"] == 1
+    assert rows["cycling"]["planned_duration_s"] is None
+    assert rows["cycling"]["duration_sessions_uncounted"] == 1
 
 
 async def test_a_cards_status_follows_the_session(client: AsyncClient) -> None:
@@ -460,17 +494,73 @@ async def test_the_per_discipline_rows_reconcile_with_the_flat_totals(
     assert (
         sum(row["session_count"] for row in rows.values()) == (payload["session_count"])
     )
+    # The rows reconcile over the *counted* sessions, which is the only sum
+    # that means anything: a row with no duration contributes no duration, and
+    # `or 0` would have made it contribute a zero instead.
     assert (
-        sum(row["planned_duration_s"] for row in rows.values())
-        == (payload["planned_duration_s"])
+        sum(
+            row["planned_duration_s"]
+            for row in rows.values()
+            if row["planned_duration_s"] is not None
+        )
+        == payload["planned_duration_s"]
+    )
+    assert (
+        sum(row["duration_sessions_counted"] for row in rows.values())
+        == payload["duration_sessions_counted"]
+    )
+    assert (
+        sum(row["duration_sessions_uncounted"] for row in rows.values())
+        == payload["duration_sessions_uncounted"]
+    )
+    assert (
+        sum(row["load_sessions_counted"] for row in rows.values())
+        == payload["load_sessions_counted"]
+    )
+    assert (
+        sum(row["load_sessions_uncounted"] for row in rows.values())
+        == payload["load_sessions_uncounted"]
     )
     assert rows["cycling"]["planned_load"] == pytest.approx(
         payload["planned_load"], abs=1e-9
     )
     assert rows["cycling"]["total_sets"] is None
     # Strength contributes sets and no load, and is not in the load total.
+    # The row says so itself rather than leaving a client to guess why.
     assert rows["strength"]["planned_load"] is None
+    assert rows["strength"]["load_sessions_counted"] == 0
+    assert rows["strength"]["load_sessions_uncounted"] == 1
+    assert rows["strength"]["planned_duration_s"] is None
+    assert rows["strength"]["duration_sessions_uncounted"] == 1
     assert rows["strength"]["total_sets"] == 5
+
+
+async def test_a_discipline_row_explains_its_own_missing_load(
+    client: AsyncClient,
+) -> None:
+    # The reason a cycling row has no load is not "it is a strength session".
+    # Two cycling sessions, neither predictable, and the row has to carry the
+    # coverage that says so — otherwise the only honest thing a client can
+    # render is a hardcoded guess.
+    await plan(client, MONDAY, purpose="technique", structure=CADENCE_RIDE)
+    await plan(
+        client,
+        MONDAY + dt.timedelta(days=1),
+        purpose="technique",
+        structure=DISTANCE_RIDE,
+    )
+
+    (row,) = (await week(client, MONDAY))["by_discipline"]
+
+    assert row["discipline"] == "cycling"
+    assert row["session_count"] == 2
+    assert row["planned_load"] is None
+    assert row["load_sessions_counted"] == 0
+    assert row["load_sessions_uncounted"] == 2
+    # One has a prescribed duration (the cadence ride), one does not.
+    assert row["planned_duration_s"] == 1_800
+    assert row["duration_sessions_counted"] == 1
+    assert row["duration_sessions_uncounted"] == 1
 
 
 async def test_a_discipline_with_no_session_gets_no_row(client: AsyncClient) -> None:
@@ -491,6 +581,32 @@ async def test_an_empty_week_has_no_load_and_no_discipline_rows(
     assert payload["load_sessions_counted"] == 0
     assert payload["load_sessions_uncounted"] == 0
     assert payload["by_discipline"] == []
+
+
+async def test_a_truncated_week_says_its_totals_are_partial(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The render cap bounds what a corrupted date column can load; it must not
+    # also make the week claim its totals cover everything. The sessions the
+    # cap left behind are counted, and counted as *uncounted* on both axes.
+    monkeypatch.setattr("app.services.plan.MAX_WEEK_SESSIONS", 2)
+    await append_ftp(client)
+    for day in range(3):
+        await plan(client, MONDAY + dt.timedelta(days=day))
+
+    payload = await week(client, MONDAY)
+
+    assert len(cards(payload)) == 2
+    assert payload["session_count"] == 3
+    assert payload["duration_sessions_counted"] == 2
+    assert payload["duration_sessions_uncounted"] == 1
+    assert payload["load_sessions_counted"] == 2
+    assert payload["load_sessions_uncounted"] == 1
+    # The rendered rows are still whole in themselves: an unread session has
+    # no discipline to be attributed to.
+    (row,) = payload["by_discipline"]
+    assert row["session_count"] == 2
+    assert row["duration_sessions_uncounted"] == 0
 
 
 async def test_the_load_follows_the_pinned_version_not_the_current_anchor(

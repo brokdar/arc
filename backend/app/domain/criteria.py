@@ -64,6 +64,14 @@ DEFAULT_BAND_SMOOTHING_S = 30
 #: otherwise. Zero — raw samples — because a ceiling is about excursions.
 DEFAULT_CEILING_SMOOTHING_S = 0
 
+#: Longest smoothing window a criterion may declare, in seconds. An hour is
+#: longer than any window that can still mean something: a rolling mean wider
+#: than the interval it judges flattens the thing being judged, and a band
+#: smoothed over an hour scores the ride rather than the step. Without a bound
+#: the field takes any integer the JSON carries, and WP-7 would be asked to
+#: build a 10¹²-sample window on a read path.
+MAX_SMOOTHING_S = 3_600
+
 
 class CriterionKind(StrEnum):
     """The five MVP criterion types, as they appear in the ``kind`` tag."""
@@ -354,9 +362,17 @@ def _check_fraction(value: float, name: str) -> None:
 
 
 def _check_smoothing(seconds: int) -> None:
-    """Reject a negative smoothing window. ``0`` is legal and means raw."""
+    """Bound a smoothing window to [0, :data:`MAX_SMOOTHING_S`].
+
+    ``0`` is legal and means raw samples; the ceiling is what keeps the field
+    from carrying a number no window could mean.
+    """
     if seconds < 0:
         raise ValueError(f"smoothing_s must not be negative, got {seconds}")
+    if seconds > MAX_SMOOTHING_S:
+        raise ValueError(
+            f"smoothing_s must be at most {MAX_SMOOTHING_S} s, got {seconds}"
+        )
 
 
 def kind_of(criterion: SuccessCriterion) -> CriterionKind:

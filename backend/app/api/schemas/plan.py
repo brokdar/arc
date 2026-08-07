@@ -76,15 +76,28 @@ class PlanWeekDisciplineRead(BaseModel):
     ``total_sets`` counts strength sets; there is deliberately no field that
     could hold their sum, because they measure different things (spec v2
     §5.4, §8.3).
+
+    Both totals carry their own coverage pair, so a row explains its own
+    missing number instead of leaving a client to invent a reason for it.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     discipline: Discipline
     session_count: int
-    planned_duration_s: int
+    #: Prescribed seconds across this discipline's sessions that have one;
+    #: null — never 0 — when none of them does.
+    planned_duration_s: int | None
+    #: How many of this discipline's sessions contributed to
+    #: ``planned_duration_s``, and how many could not.
+    duration_sessions_counted: int
+    duration_sessions_uncounted: int
     #: TSS across this discipline's predictable sessions; null when none is.
     planned_load: float | None
+    #: How many of this discipline's sessions contributed to
+    #: ``planned_load``, and how many could not.
+    load_sessions_counted: int
+    load_sessions_uncounted: int
     #: Prescribed working sets; null for a discipline that has none.
     total_sets: int | None
 
@@ -99,10 +112,16 @@ class PlanWeekRead(BaseModel):
     end: dt.date
     #: Always seven entries, in date order.
     days: list[PlanWeekDayRead]
+    #: Every session in the window, including any the render cap left out of
+    #: ``days``. The overflow counts as uncounted against both coverage pairs.
     session_count: int
-    #: Prescribed seconds across the week, counting the sessions that have a
-    #: duration to count.
-    planned_duration_s: int
+    #: Prescribed seconds across the week. Null — never 0 — when no session
+    #: contributed one, the empty week included.
+    planned_duration_s: int | None
+    #: How many sessions contributed to ``planned_duration_s``, and how many
+    #: could not. **Never render the total without them.**
+    duration_sessions_counted: int
+    duration_sessions_uncounted: int
     #: TSS across the sessions that could be predicted. Null — never 0 — when
     #: none of them could.
     planned_load: float | None

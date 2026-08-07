@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D77.
+D55–D81.
 
 **API (`backend/app/`)**
 
@@ -45,15 +45,57 @@ D55–D77.
   row (sessions, duration, load, sets). TSS and kilograms stay in separate
   columns and are never summed. Everything is computed on read from the frozen
   intent and its pins — no column, no migration, no cache (D72) — with the
-  week's pins loaded in one query.
-- A planned session now **resolves its own pins**. Every response carrying a
-  whole session adds `resolved_steps` (each flattened step's targets said both
-  ways: `88–93 % FTP` *and* 220–232.5 W, with the anchor version that resolved
-  them), `pinned_anchors` (type, version id, value, unit, provenance,
-  effective date) and `predicted_load` with a `MetricExplanation` — formula,
+  week's pins loaded in one query. The prediction resolves against
+  `PinnedAnchor` pairs — an anchor version together with the id it was pinned
+  by — rather than bare versions, so the number can name what it resolved
+  against without an id being pushed onto the domain's id-free
+  `AnchorVersion` (D64); and it refuses to expand a prescription longer than
+  a day (`MAX_PREDICTABLE_DURATION_S`), because the workout model bounds steps
+  and step counts but not their product, and a legal tree can describe 43
+  million seconds of 1 Hz series on a read path (D65).
+- **Every week total says what it covers, and a total nothing contributed to
+  is null.** `planned_duration_s` is nullable — week-wide and per discipline —
+  and travels with `duration_sessions_counted` / `duration_sessions_uncounted`,
+  the way `planned_load` already travelled with its own pair; each
+  `by_discipline` row now carries **both** pairs, so a row explains its own
+  missing number instead of leaving a client to invent a reason (D78). A week
+  of two distance rides and a lift used to total `0` seconds and read as rest.
+  `session_count` reports the repository's true total, and any session past the
+  `MAX_WEEK_SESSIONS` render cap counts as uncounted on both axes rather than
+  vanishing from a total that then claims to be whole.
+- A planned session now **resolves its own pins**. `GET /planned-sessions/{id}`
+  and every write route add `resolved_steps` (each flattened step's targets
+  said both ways: `88–93 % FTP` *and* 220–232.5 W, with the anchor version that
+  resolved them), `pinned_anchors` (type, version id, value, unit, provenance,
+  effective date), `predicted_load` with a `MetricExplanation` — formula,
   inputs naming the *version's* value and provenance, assumptions, citation
-  (D74). Appending a new FTP anchor changes nothing on a session already
+  (D74) — and `predicted_volume` for a strength session (volume load in
+  kilograms, total sets, coverage), the other axis, never summed with the
+  first. Appending a new FTP anchor changes nothing on a session already
   planned, which is invariant 4 finally made visible.
+- **`GET /planned-sessions` answers with a lighter row** than the session it
+  names: no `resolved_steps` and no predicted fields at all — absent from the
+  shape, not null in it — because a page of 200 sessions carrying them is
+  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request (D79, superseding
+  that half of D74). The pins stay, since the whole page's pins are one query.
+- A success criterion's smoothing window is now bounded **above** as well as
+  below: `MAX_SMOOTHING_S` is an hour, longer than any window that could mean
+  something, and the API answers 422 past it (D80). The field previously took
+  any non-negative integer the JSON carried.
+- A prediction's explanation no longer rounds its coverage to a flat `100%` or
+  `0%`: full coverage is said in words, and a partial one renders to one
+  decimal, clamped to `>99.9%` / `<0.1%` at the edges. One uncovered second in
+  half an hour used to print "100% of the duration carried a power target"
+  beside an assumption saying the opposite.
+- A target whose two bounds *render* identically collapses to a point —
+  `88 % FTP`, not `88–88 % FTP`. The collapse used to test the floats, which
+  binary floating point makes a different question from what a reader sees.
+- Enum columns are documented as what they compile to. `enum_column` emits a
+  plain `VARCHAR(n)` with **no** `CHECK` constraint on either dialect; the
+  docstrings claiming one — in `persistence/types.py` and in the `0004`
+  migration — now describe the emitted DDL and the consequence it was hiding:
+  a future member with a longer value widens the column and needs a batch
+  `ALTER COLUMN` (D81).
 
 **Web — design system (`frontend/`)**
 
@@ -69,6 +111,14 @@ D55–D77.
   value of the purpose enum, coloured), `StatusDot`, `WorkoutProfileBars`, a
   Base UI `Sheet`, and a hand-drawn inline-SVG icon set including the two
   discipline glyphs.
+- The **eighteen purpose colours** live in a typed table in TypeScript
+  (`PURPOSE_TONES` in `lib/purpose.ts`: edge, foreground, tint per purpose),
+  applied through `style` rather than as fifty-four `--color-purpose-*` custom
+  properties — Tailwind cannot emit a utility whose class name is assembled at
+  runtime, so CSS tokens would have needed a safelist anyway (D63). Keyed by
+  the generated `Purpose` union, the table cannot miss a purpose without
+  failing the type-check, and its test reads the vocabulary out of the
+  committed `openapi.json`. The *semantic* palette stays in `@theme`.
 - Added the pure helpers behind them in `lib/`: duration and date formatting,
   ISO-week arithmetic on date strings (no timestamps, so a DST boundary cannot
   shift a session), the step-tree → bar-profile flattening with its zone ramp,

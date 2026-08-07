@@ -25,11 +25,13 @@ from app.api.schemas.planned_sessions import (
     PinnedAnchorRead,
     PlannedSessionCopy,
     PlannedSessionCreate,
+    PlannedSessionListItem,
     PlannedSessionMove,
     PlannedSessionRead,
     PlannedSessionsPage,
     PlannedSessionUpdate,
     PredictedLoadRead,
+    PredictedVolumeRead,
     ResolvedStepRead,
     ResolvedTargetRead,
     SessionIntentRead,
@@ -42,7 +44,7 @@ from app.api.schemas.workouts import (
 )
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.domain.anchors import AnchorType
-from app.domain.prediction import PinnedAnchor, PredictedLoad
+from app.domain.prediction import PinnedAnchor, PredictedLoad, PredictedVolume
 from app.domain.resolution import ResolvedStep, ResolvedTarget
 from app.domain.sessions import SessionStatus
 from app.domain.workout import workout_body_from_json
@@ -185,6 +187,34 @@ def _load_to_read(predicted: PredictedLoad | None) -> PredictedLoadRead | None:
     )
 
 
+def _volume_to_read(predicted: PredictedVolume | None) -> PredictedVolumeRead | None:
+    """Project a predicted strength volume. Kilograms, never a load."""
+    if predicted is None:
+        return None
+    return PredictedVolumeRead(
+        volume_load_kg=predicted.volume_load_kg,
+        total_sets=predicted.total_sets,
+        coverage=predicted.coverage,
+    )
+
+
+def to_list_item(
+    row: PlannedSessionRow, anchors: Mapping[AnchorType, PinnedAnchor]
+) -> PlannedSessionListItem:
+    """Project a stored planned session onto its list-row shape (D79)."""
+    return PlannedSessionListItem(
+        id=row.id,
+        date=row.date,
+        discipline=row.discipline,
+        status=row.status,
+        intent=intent_to_read(row.current_intent),
+        intent_versions=len(row.intents),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        pinned_anchors=_pins_to_read(anchors),
+    )
+
+
 def to_read(
     row: PlannedSessionRow, resolution: SessionResolution
 ) -> PlannedSessionRead:
@@ -201,6 +231,7 @@ def to_read(
         pinned_anchors=_pins_to_read(resolution.anchors),
         resolved_steps=[_step_to_read(step) for step in resolution.steps],
         predicted_load=_load_to_read(resolution.predicted_load),
+        predicted_volume=_volume_to_read(resolution.predicted_volume),
     )
 
 
@@ -225,7 +256,15 @@ async def list_planned_sessions(
     end: EndFilter = None,
     session_status: StatusFilter = None,
 ) -> PlannedSessionsPage:
-    """List planned sessions in date order, optionally within a date range."""
+    """List planned sessions in date order, optionally within a date range.
+
+    A list row is lighter than the session it names (D79): no resolved step
+    tree and no predicted-load explanation, because a page of two hundred
+    sessions carrying either is measured in megabytes and in seconds of
+    synchronous CPU. The pins stay — they are one query for the whole page —
+    and the whole session is one request away at
+    `GET /planned-sessions/{id}`.
+    """
     sessions, total = await service.list(
         start=start,
         end=end,
@@ -233,10 +272,11 @@ async def list_planned_sessions(
         offset=page.offset,
         limit=page.limit,
     )
-    # One query for the whole page's pins, not one per session.
-    resolutions = await service.resolutions(sessions)
+    # One query for the whole page's pins, not one per session — and no
+    # prescription parsed, no 1 Hz expansion run.
+    anchors = await service.pins(sessions)
     return PlannedSessionsPage(
-        items=[to_read(session, resolutions[session.id]) for session in sessions],
+        items=[to_list_item(session, anchors[session.id]) for session in sessions],
         total=total,
         offset=page.offset,
         limit=page.limit,

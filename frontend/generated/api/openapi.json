@@ -820,11 +820,11 @@
         "title": "Page[ExerciseRead]",
         "type": "object"
       },
-      "Page_PlannedSessionRead_": {
+      "Page_PlannedSessionListItem_": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/PlannedSessionRead"
+              "$ref": "#/components/schemas/PlannedSessionListItem"
             },
             "title": "Items",
             "type": "array"
@@ -843,7 +843,7 @@
           }
         },
         "required": ["items", "total", "offset", "limit"],
-        "title": "Page[PlannedSessionRead]",
+        "title": "Page[PlannedSessionListItem]",
         "type": "object"
       },
       "Page_WorkoutRead_": {
@@ -985,14 +985,37 @@
         "type": "object"
       },
       "PlanWeekDisciplineRead": {
-        "description": "One week's totals for one discipline.\n\nThe two axes keep their own columns. ``planned_load`` is TSS and\n``total_sets`` counts strength sets; there is deliberately no field that\ncould hold their sum, because they measure different things (spec v2\n\u00a75.4, \u00a78.3).",
+        "description": "One week's totals for one discipline.\n\nThe two axes keep their own columns. ``planned_load`` is TSS and\n``total_sets`` counts strength sets; there is deliberately no field that\ncould hold their sum, because they measure different things (spec v2\n\u00a75.4, \u00a78.3).\n\nBoth totals carry their own coverage pair, so a row explains its own\nmissing number instead of leaving a client to invent a reason for it.",
         "properties": {
           "discipline": {
             "$ref": "#/components/schemas/Discipline"
           },
-          "planned_duration_s": {
-            "title": "Planned Duration S",
+          "duration_sessions_counted": {
+            "title": "Duration Sessions Counted",
             "type": "integer"
+          },
+          "duration_sessions_uncounted": {
+            "title": "Duration Sessions Uncounted",
+            "type": "integer"
+          },
+          "load_sessions_counted": {
+            "title": "Load Sessions Counted",
+            "type": "integer"
+          },
+          "load_sessions_uncounted": {
+            "title": "Load Sessions Uncounted",
+            "type": "integer"
+          },
+          "planned_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
           },
           "planned_load": {
             "anyOf": [
@@ -1025,7 +1048,11 @@
           "discipline",
           "session_count",
           "planned_duration_s",
+          "duration_sessions_counted",
+          "duration_sessions_uncounted",
           "planned_load",
+          "load_sessions_counted",
+          "load_sessions_uncounted",
           "total_sets"
         ],
         "title": "PlanWeekDisciplineRead",
@@ -1048,6 +1075,14 @@
             "title": "Days",
             "type": "array"
           },
+          "duration_sessions_counted": {
+            "title": "Duration Sessions Counted",
+            "type": "integer"
+          },
+          "duration_sessions_uncounted": {
+            "title": "Duration Sessions Uncounted",
+            "type": "integer"
+          },
           "end": {
             "format": "date",
             "title": "End",
@@ -1062,8 +1097,15 @@
             "type": "integer"
           },
           "planned_duration_s": {
-            "title": "Planned Duration S",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
           },
           "planned_load": {
             "anyOf": [
@@ -1092,6 +1134,8 @@
           "days",
           "session_count",
           "planned_duration_s",
+          "duration_sessions_counted",
+          "duration_sessions_uncounted",
           "planned_load",
           "load_sessions_counted",
           "load_sessions_uncounted",
@@ -1236,6 +1280,64 @@
         "title": "PlannedSessionCreate",
         "type": "object"
       },
+      "PlannedSessionListItem": {
+        "description": "One planned session as a **list row**: everything but the expensive parts.\n\nDeliberately not `PlannedSessionRead` (D79, superseding that half of D74).\nA page of this collection is a page of *sessions*, and serving the resolved\nstep tree and the load explanation for every one of them costs megabytes\nof body and seconds of CPU that no list view spends. What is dropped is\ndropped whole rather than emptied: `resolved_steps`, `predicted_load` and\n`predicted_volume` are **absent from this shape**, not null in it, so a\nclient cannot mistake a list row for a session that has no prediction.\n\n`GET /planned-sessions/{id}` \u2014 and every write route, which answers with\nthe session it wrote \u2014 returns the full `PlannedSessionRead`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/SessionIntentRead"
+          },
+          "intent_versions": {
+            "title": "Intent Versions",
+            "type": "integer"
+          },
+          "pinned_anchors": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedAnchorRead"
+            },
+            "title": "Pinned Anchors",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "status",
+          "intent",
+          "intent_versions",
+          "created_at",
+          "updated_at",
+          "pinned_anchors"
+        ],
+        "title": "PlannedSessionListItem",
+        "type": "object"
+      },
       "PlannedSessionMove": {
         "additionalProperties": false,
         "description": "Payload for moving a planned session to another date.",
@@ -1251,7 +1353,7 @@
         "type": "object"
       },
       "PlannedSessionRead": {
-        "description": "One planned session, with the intent version in force.\n\nThe three resolved fields are computed on every read from the intent's\nfrozen prescription and the anchor versions it pinned \u2014 never stored, so\nappending a new anchor cannot change what an existing session says.",
+        "description": "One planned session, with the intent version in force.\n\nThe resolved fields are computed on every read from the intent's frozen\nprescription and the anchor versions it pinned \u2014 never stored, so\nappending a new anchor cannot change what an existing session says.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -1295,6 +1397,16 @@
               }
             ]
           },
+          "predicted_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictedVolumeRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resolved_steps": {
             "items": {
               "$ref": "#/components/schemas/ResolvedStepRead"
@@ -1322,7 +1434,8 @@
           "updated_at",
           "pinned_anchors",
           "resolved_steps",
-          "predicted_load"
+          "predicted_load",
+          "predicted_volume"
         ],
         "title": "PlannedSessionRead",
         "type": "object"
@@ -1504,6 +1617,33 @@
           "explanation"
         ],
         "title": "PredictedLoadRead",
+        "type": "object"
+      },
+      "PredictedVolumeRead": {
+        "description": "What a strength prescription is expected to cost. **Not** a load.\n\nKilograms and TSS are different axes (spec v2 \u00a75.4, \u00a78.3): never add\n``volume_load_kg`` to ``PredictedLoadRead.load``, and never render the two\nin one column. Exactly one of the two is ever present on a session.",
+        "properties": {
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "total_sets": {
+            "title": "Total Sets",
+            "type": "integer"
+          },
+          "volume_load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Load Kg"
+          }
+        },
+        "required": ["volume_load_kg", "total_sets", "coverage"],
+        "title": "PredictedVolumeRead",
         "type": "object"
       },
       "Provenance": {
@@ -4003,7 +4143,7 @@
     },
     "/api/v1/planned-sessions": {
       "get": {
-        "description": "List planned sessions in date order, optionally within a date range.",
+        "description": "List planned sessions in date order, optionally within a date range.\n\nA list row is lighter than the session it names (D79): no resolved step\ntree and no predicted-load explanation, because a page of two hundred\nsessions carrying either is measured in megabytes and in seconds of\nsynchronous CPU. The pins stay \u2014 they are one query for the whole page \u2014\nand the whole session is one request away at\n`GET /planned-sessions/{id}`.",
         "operationId": "planned-sessions-list_planned_sessions",
         "parameters": [
           {
@@ -4070,7 +4210,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_PlannedSessionRead_"
+                  "$ref": "#/components/schemas/Page_PlannedSessionListItem_"
                 }
               }
             },

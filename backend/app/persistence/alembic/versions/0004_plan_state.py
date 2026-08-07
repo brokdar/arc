@@ -24,8 +24,11 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 #: Enums are non-native VARCHARs holding the member VALUE
-#: (`app.persistence.types.enum_column`), so adding a member later is an
-#: ordinary column migration on either dialect.
+#: (`app.persistence.types.enum_column`) with no CHECK constraint, so this
+#: compiles to `VARCHAR(6)` — the length of `paused`/`active` — on either
+#: dialect. Adding a member needs a migration only if its value is longer
+#: than every existing one, and then a batch one, because it widens the
+#: column (D81).
 PLAN_STATE = sa.Enum("active", "paused", name="planstate", native_enum=False)
 
 

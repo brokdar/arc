@@ -59,16 +59,24 @@ export function findSession(
 /** Recompute the week's derived counters from its days. */
 function withTotals(week: PlanWeek): PlanWeek {
   let sessionCount = 0;
+  let counted = 0;
   let plannedDurationS = 0;
   for (const day of week.days) {
     for (const session of day.sessions) {
       sessionCount += 1;
-      plannedDurationS += session.planned_duration_s ?? 0;
+      if (session.planned_duration_s !== null) {
+        counted += 1;
+        plannedDurationS += session.planned_duration_s;
+      }
     }
   }
   return {
     ...week,
     session_count: sessionCount,
-    planned_duration_s: plannedDurationS,
+    // Null, never 0 — the contract the server holds to, mirrored here so a
+    // drag cannot turn a week of lifts into a rest week for one request.
+    planned_duration_s: counted ? plannedDurationS : null,
+    duration_sessions_counted: counted,
+    duration_sessions_uncounted: sessionCount - counted,
   };
 }

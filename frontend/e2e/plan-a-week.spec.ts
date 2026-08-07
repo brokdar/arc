@@ -211,9 +211,12 @@ function week(
     end: days[6]?.date ?? start,
     days,
     session_count: sessions.length,
-    planned_duration_s: sessions.length * 1200,
     // The week rail reads these; a total is never rendered without the count
-    // it was computed from, so the fake has to carry both.
+    // it was computed from, so the fake has to carry both — and a total
+    // nothing contributed to is null, never 0.
+    planned_duration_s: sessions.length > 0 ? sessions.length * 1200 : null,
+    duration_sessions_counted: sessions.length,
+    duration_sessions_uncounted: 0,
     planned_load: sessions.length > 0 ? sessions.length * 42.5 : null,
     load_sessions_counted: sessions.length,
     load_sessions_uncounted: 0,
@@ -224,7 +227,11 @@ function week(
               discipline: "cycling",
               session_count: sessions.length,
               planned_duration_s: sessions.length * 1200,
+              duration_sessions_counted: sessions.length,
+              duration_sessions_uncounted: 0,
               planned_load: sessions.length * 42.5,
+              load_sessions_counted: sessions.length,
+              load_sessions_uncounted: 0,
               total_sets: null,
             },
           ]

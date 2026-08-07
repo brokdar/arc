@@ -84,6 +84,26 @@ def test_a_range_renders_with_an_en_dash_and_a_point_renders_as_one_number() -> 
     )
 
 
+def test_bounds_that_render_identically_collapse_to_a_point() -> None:
+    # The collapse tests the rendered strings, not the floats. Two bounds that
+    # differ in the seventh decimal are one prescription to every reader, and
+    # comparing floats printed the "88–88 % FTP" the docstring above rules out.
+    assert (
+        render_target(
+            PercentOfAnchor(
+                anchor_type=AnchorType.FTP, pct_low=0.8800001, pct_high=0.8800002
+            )
+        )
+        == "88 % FTP"
+    )
+    assert (
+        render_target(
+            AbsoluteRange(low=250.0000001, high=250.0000002, unit=ChannelUnit.WATT)
+        )
+        == "250 W"
+    )
+
+
 def test_an_anchor_is_named_the_way_an_athlete_writes_it() -> None:
     assert (
         render_target(

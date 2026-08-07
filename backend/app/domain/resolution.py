@@ -126,18 +126,26 @@ def render_target(target: Target) -> str:
 
     ``"88-93 % FTP"``, ``"88 % FTP"``, ``"250-270 W"``, ``"250 W"`` — a point
     target renders as one number rather than as a range of itself.
+
+    The collapse tests the two **rendered** strings, not the two floats. The
+    bounds are typed in as decimals and stored as binary floating point, so
+    a range whose ends differ in the fifteenth digit is a range no reader can
+    see: comparing the floats printed ``"88–88 % FTP"``, which reads as a
+    display bug rather than as a prescription. Two targets that render
+    identically are the same prescription as far as anyone reading it is
+    concerned, and that is what this function is for.
     """
     if isinstance(target, PercentOfAnchor):
         name = _anchor_name(target.anchor_type)
-        if target.pct_low == target.pct_high:
-            return f"{_percentage(target.pct_low)} % {name}"
         low = _percentage(target.pct_low)
         high = _percentage(target.pct_high)
+        if low == high:
+            return f"{low} % {name}"
         return f"{low}{RANGE_DASH}{high} % {name}"
-    if target.low == target.high:
-        return f"{_quantity(target.low)} {target.unit.value}"
     low = _quantity(target.low)
     high = _quantity(target.high)
+    if low == high:
+        return f"{low} {target.unit.value}"
     return f"{low}{RANGE_DASH}{high} {target.unit.value}"
 
 

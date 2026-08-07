@@ -315,5 +315,6 @@ function plannedSession() {
     pinned_anchors: [],
     resolved_steps: [],
     predicted_load: null,
+    predicted_volume: null,
   };
 }

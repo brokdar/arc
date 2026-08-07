@@ -207,12 +207,39 @@ class PredictedLoadRead(BaseModel):
     explanation: MetricExplanationRead
 
 
-class PlannedSessionRead(BaseModel):
-    """One planned session, with the intent version in force.
+class PredictedVolumeRead(BaseModel):
+    """What a strength prescription is expected to cost. **Not** a load.
 
-    The three resolved fields are computed on every read from the intent's
-    frozen prescription and the anchor versions it pinned — never stored, so
-    appending a new anchor cannot change what an existing session says.
+    Kilograms and TSS are different axes (spec v2 §5.4, §8.3): never add
+    ``volume_load_kg`` to ``PredictedLoadRead.load``, and never render the two
+    in one column. Exactly one of the two is ever present on a session.
+    """
+
+    #: Σ ``sets × reps × kg`` over the sets prescribed in kilograms; null when
+    #: none is — a session of bodyweight, RPE or %e1RM work has no volume load
+    #: until it is performed. Null means "not assessed", never zero.
+    volume_load_kg: float | None
+    #: Prescribed working sets across the whole workout, whatever their load
+    #: kind — the honest denominator.
+    total_sets: int
+    #: Fraction of ``total_sets`` whose load is in kilograms. Below 1.0,
+    #: ``volume_load_kg`` covers only part of the session.
+    coverage: float
+
+
+class PlannedSessionListItem(BaseModel):
+    """One planned session as a **list row**: everything but the expensive parts.
+
+    Deliberately not `PlannedSessionRead` (D79, superseding that half of D74).
+    A page of this collection is a page of *sessions*, and serving the resolved
+    step tree and the load explanation for every one of them costs megabytes
+    of body and seconds of CPU that no list view spends. What is dropped is
+    dropped whole rather than emptied: `resolved_steps`, `predicted_load` and
+    `predicted_volume` are **absent from this shape**, not null in it, so a
+    client cannot mistake a list row for a session that has no prediction.
+
+    `GET /planned-sessions/{id}` — and every write route, which answers with
+    the session it wrote — returns the full `PlannedSessionRead`.
     """
 
     id: uuid.UUID
@@ -224,18 +251,33 @@ class PlannedSessionRead(BaseModel):
     intent_versions: int
     created_at: dt.datetime
     updated_at: dt.datetime
-    #: The anchor versions this session pinned, in anchor-type order. Empty
-    #: for a prescription that refers to none.
+    #: The anchor versions this session pinned, in anchor-type order. Kept on
+    #: the list row: the whole page's pins are one query, and a row that
+    #: quotes a percentage without saying what it resolves against is the
+    #: thing invariant 4 exists to prevent.
     pinned_anchors: list[PinnedAnchorRead]
+
+
+class PlannedSessionRead(PlannedSessionListItem):
+    """One planned session, with the intent version in force.
+
+    The resolved fields are computed on every read from the intent's frozen
+    prescription and the anchor versions it pinned — never stored, so
+    appending a new anchor cannot change what an existing session says.
+    """
+
     #: Every flattened step with its targets resolved against those pins.
     #: Empty for a strength session, which prescribes no anchor percentages.
     resolved_steps: list[ResolvedStepRead]
     #: Null when the cost cannot honestly be predicted: a strength session, a
     #: distance-based ride, a ride with no power target, an unpinned FTP.
     predicted_load: PredictedLoadRead | None
+    #: The prescribed volume load of a strength session; null for an endurance
+    #: one. The other axis — never summed with ``predicted_load``.
+    predicted_volume: PredictedVolumeRead | None
 
 
-PlannedSessionsPage = Page[PlannedSessionRead]
+PlannedSessionsPage = Page[PlannedSessionListItem]
 
 
 class SessionIntentsRead(BaseModel):

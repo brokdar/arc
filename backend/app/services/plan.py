@@ -107,14 +107,29 @@ class PlanWeekDiscipline:
     The two axes stay in their own columns: `planned_load` is TSS and
     `total_sets` counts strength sets, and there is deliberately no field that
     could hold their sum.
+
+    Both totals carry their own coverage pair. A row is the only place a
+    reader learns *why* a discipline's number is missing — a cycling row with
+    a null load and three sessions says something a client cannot otherwise
+    reconstruct, and a client that has to guess the reason will guess wrong.
     """
 
     discipline: Discipline
     session_count: int
-    planned_duration_s: int
+    #: Prescribed seconds across this discipline's sessions that have one;
+    #: ``None`` — never 0 — when none of them does.
+    planned_duration_s: int | None
+    #: How many of this discipline's sessions contributed to
+    #: `planned_duration_s`, and how many could not.
+    duration_sessions_counted: int
+    duration_sessions_uncounted: int
     #: TSS across this discipline's predictable sessions; ``None`` when none
     #: of them is.
     planned_load: float | None
+    #: How many of this discipline's sessions contributed to `planned_load`,
+    #: and how many could not.
+    load_sessions_counted: int
+    load_sessions_uncounted: int
     #: Prescribed working sets; ``None`` for a discipline that has none.
     total_sets: int | None
 
@@ -127,10 +142,18 @@ class PlanWeek:
     #: The last day in the window, inclusive — ``start + 6``.
     end: dt.date
     days: tuple[WeekDay, ...]
+    #: Every session in the window, including any past `MAX_WEEK_SESSIONS`
+    #: that `days` therefore does not carry.
     session_count: int
-    #: Prescribed seconds across the week, counting only the sessions that
-    #: have a duration to count.
-    planned_duration_s: int
+    #: Prescribed seconds across the week. ``None`` — never 0 — when no
+    #: session contributed one, the empty week included: a week of two
+    #: distance rides has no planned time, and a zero would read as a rest
+    #: week exactly as a zero load would.
+    planned_duration_s: int | None
+    #: How many sessions contributed to `planned_duration_s`, and how many
+    #: could not. Same contract as the load pair below.
+    duration_sessions_counted: int
+    duration_sessions_uncounted: int
     #: TSS across the sessions that could be predicted. ``None`` — never 0 —
     #: when none of them could: an unpredictable week has no load, and a zero
     #: would read as a rest week.
@@ -176,19 +199,47 @@ class PlanService:
         ``start`` is taken literally — a Wednesday start gives the seven days
         from Wednesday — so a client can page the calendar by a day if it
         wants to. Omitted, it defaults to the Monday of the current week
-        (D55).
+        (D55), computed in **UTC** (:func:`_today`). That is right for the
+        browser client, which always sends an explicit `start=` derived from
+        the athlete's own clock; a WP-8 MCP caller that passes nothing gets
+        the UTC Monday, which is the wrong week for a few hours either side of
+        midnight in a distant timezone. The athlete-local answer arrives when
+        WP-4 gives the athlete a timezone — there is nothing to be local *to*
+        until then, and guessing from the server's clock would be a second
+        wrong answer rather than a better one.
 
         Predicted load is computed here, on read, from each intent's frozen
         prescription and the anchor versions it pinned — never stored, exactly
         like the durations beside it. The pins for the whole week are loaded
         in **one** query, so a busy week costs the same round-trips as an
         empty one.
+
+        Every total on the projection reports its own coverage, and a session
+        past :data:`MAX_WEEK_SESSIONS` counts as uncounted on both — the cap
+        truncates what is rendered, and a truncated week must not claim its
+        totals are whole.
+
+        Raises:
+            ValueError: When **any** session in the window has a stored
+                prescription that no longer parses. One bad row therefore
+                fails the whole week rather than one card. That is inherited
+                from the single-session read, where the policy is loud on
+                purpose and the blast radius is one session; here the radius
+                is the calendar, which is the deliberate trade: a week that
+                silently dropped a session would be a plan with a hole in it,
+                and the hole is exactly what an athlete would not notice. If
+                this ever fires in anger the remedy is the stored document,
+                not a per-card ``try``.
         """
         first = start if start is not None else week_start(_today())
         dates = week_dates(first)
-        rows, _total = await self._sessions.list(
+        rows, total = await self._sessions.list(
             start=first, end=dates[-1], limit=MAX_WEEK_SESSIONS
         )
+        # What the cap left behind. Counted in the session total and against
+        # both coverage pairs: the rows are unread, so nothing can be said
+        # about their duration or their load except that it is missing.
+        overflow = max(total - len(rows), 0)
         titles = await self._workouts.names(
             [
                 workout_id
@@ -211,6 +262,11 @@ class PlanService:
         loads = [
             card.predicted_load for card in cards if card.predicted_load is not None
         ]
+        durations = [
+            card.planned_duration_s
+            for card in cards
+            if card.planned_duration_s is not None
+        ]
         return PlanWeek(
             start=first,
             end=dates[-1],
@@ -221,11 +277,13 @@ class PlanService:
                 )
                 for day in dates
             ),
-            session_count=len(cards),
-            planned_duration_s=sum(card.planned_duration_s or 0 for card in cards),
+            session_count=total,
+            planned_duration_s=sum(durations) if durations else None,
+            duration_sessions_counted=len(durations),
+            duration_sessions_uncounted=len(cards) - len(durations) + overflow,
             planned_load=sum(loads) if loads else None,
             load_sessions_counted=len(loads),
-            load_sessions_uncounted=len(cards) - len(loads),
+            load_sessions_uncounted=len(cards) - len(loads) + overflow,
             by_discipline=_by_discipline(cards),
         )
 
@@ -297,7 +355,10 @@ def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ..
 
     Every total here is the same fold as its flat counterpart on
     :class:`PlanWeek`, over a subset of the same cards, so the rows reconcile
-    with the week's own numbers by construction rather than by agreement.
+    with the week's own numbers by construction rather than by agreement. The
+    one thing the rows cannot carry is the `MAX_WEEK_SESSIONS` overflow: an
+    unread row has no discipline to be attributed to, so the truncation shows
+    up only in the week's own coverage pairs.
     """
     rows: list[PlanWeekDiscipline] = []
     for discipline in Discipline:
@@ -307,13 +368,22 @@ def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ..
         loads = [
             card.predicted_load for card in group if card.predicted_load is not None
         ]
+        durations = [
+            card.planned_duration_s
+            for card in group
+            if card.planned_duration_s is not None
+        ]
         sets = [card.total_sets for card in group if card.total_sets is not None]
         rows.append(
             PlanWeekDiscipline(
                 discipline=discipline,
                 session_count=len(group),
-                planned_duration_s=sum(card.planned_duration_s or 0 for card in group),
+                planned_duration_s=sum(durations) if durations else None,
+                duration_sessions_counted=len(durations),
+                duration_sessions_uncounted=len(group) - len(durations),
                 planned_load=sum(loads) if loads else None,
+                load_sessions_counted=len(loads),
+                load_sessions_uncounted=len(group) - len(loads),
                 total_sets=sum(sets) if sets else None,
             )
         )

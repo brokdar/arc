@@ -275,6 +275,13 @@ export interface paths {
     /**
      * List Planned Sessions
      * @description List planned sessions in date order, optionally within a date range.
+     *
+     *     A list row is lighter than the session it names (D79): no resolved step
+     *     tree and no predicted-load explanation, because a page of two hundred
+     *     sessions carrying either is measured in megabytes and in seconds of
+     *     synchronous CPU. The pins stay — they are one query for the whole page —
+     *     and the whole session is one request away at
+     *     `GET /planned-sessions/{id}`.
      */
     get: operations["planned-sessions-list_planned_sessions"];
     put?: never;
@@ -997,10 +1004,10 @@ export interface components {
       /** Total */
       total: number;
     };
-    /** Page[PlannedSessionRead] */
-    Page_PlannedSessionRead_: {
+    /** Page[PlannedSessionListItem] */
+    Page_PlannedSessionListItem_: {
       /** Items */
-      items: components["schemas"]["PlannedSessionRead"][];
+      items: components["schemas"]["PlannedSessionListItem"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -1104,11 +1111,22 @@ export interface components {
      *     ``total_sets`` counts strength sets; there is deliberately no field that
      *     could hold their sum, because they measure different things (spec v2
      *     §5.4, §8.3).
+     *
+     *     Both totals carry their own coverage pair, so a row explains its own
+     *     missing number instead of leaving a client to invent a reason for it.
      */
     PlanWeekDisciplineRead: {
       discipline: components["schemas"]["Discipline"];
+      /** Duration Sessions Counted */
+      duration_sessions_counted: number;
+      /** Duration Sessions Uncounted */
+      duration_sessions_uncounted: number;
+      /** Load Sessions Counted */
+      load_sessions_counted: number;
+      /** Load Sessions Uncounted */
+      load_sessions_uncounted: number;
       /** Planned Duration S */
-      planned_duration_s: number;
+      planned_duration_s: number | null;
       /** Planned Load */
       planned_load: number | null;
       /** Session Count */
@@ -1125,6 +1143,10 @@ export interface components {
       by_discipline: components["schemas"]["PlanWeekDisciplineRead"][];
       /** Days */
       days: components["schemas"]["PlanWeekDayRead"][];
+      /** Duration Sessions Counted */
+      duration_sessions_counted: number;
+      /** Duration Sessions Uncounted */
+      duration_sessions_uncounted: number;
       /**
        * End
        * Format: date
@@ -1135,7 +1157,7 @@ export interface components {
       /** Load Sessions Uncounted */
       load_sessions_uncounted: number;
       /** Planned Duration S */
-      planned_duration_s: number;
+      planned_duration_s: number | null;
       /** Planned Load */
       planned_load: number | null;
       /** Session Count */
@@ -1193,6 +1215,50 @@ export interface components {
       workout_id?: string | null;
     };
     /**
+     * PlannedSessionListItem
+     * @description One planned session as a **list row**: everything but the expensive parts.
+     *
+     *     Deliberately not `PlannedSessionRead` (D79, superseding that half of D74).
+     *     A page of this collection is a page of *sessions*, and serving the resolved
+     *     step tree and the load explanation for every one of them costs megabytes
+     *     of body and seconds of CPU that no list view spends. What is dropped is
+     *     dropped whole rather than emptied: `resolved_steps`, `predicted_load` and
+     *     `predicted_volume` are **absent from this shape**, not null in it, so a
+     *     client cannot mistake a list row for a session that has no prediction.
+     *
+     *     `GET /planned-sessions/{id}` — and every write route, which answers with
+     *     the session it wrote — returns the full `PlannedSessionRead`.
+     */
+    PlannedSessionListItem: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      intent: components["schemas"]["SessionIntentRead"];
+      /** Intent Versions */
+      intent_versions: number;
+      /** Pinned Anchors */
+      pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
      * PlannedSessionMove
      * @description Payload for moving a planned session to another date.
      */
@@ -1207,8 +1273,8 @@ export interface components {
      * PlannedSessionRead
      * @description One planned session, with the intent version in force.
      *
-     *     The three resolved fields are computed on every read from the intent's
-     *     frozen prescription and the anchor versions it pinned — never stored, so
+     *     The resolved fields are computed on every read from the intent's frozen
+     *     prescription and the anchor versions it pinned — never stored, so
      *     appending a new anchor cannot change what an existing session says.
      */
     PlannedSessionRead: {
@@ -1234,6 +1300,7 @@ export interface components {
       /** Pinned Anchors */
       pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
       predicted_load: components["schemas"]["PredictedLoadRead"] | null;
+      predicted_volume: components["schemas"]["PredictedVolumeRead"] | null;
       /** Resolved Steps */
       resolved_steps: components["schemas"]["ResolvedStepRead"][];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
@@ -1297,6 +1364,22 @@ export interface components {
       intensity_factor: number;
       /** Load */
       load: number;
+    };
+    /**
+     * PredictedVolumeRead
+     * @description What a strength prescription is expected to cost. **Not** a load.
+     *
+     *     Kilograms and TSS are different axes (spec v2 §5.4, §8.3): never add
+     *     ``volume_load_kg`` to ``PredictedLoadRead.load``, and never render the two
+     *     in one column. Exactly one of the two is ever present on a session.
+     */
+    PredictedVolumeRead: {
+      /** Coverage */
+      coverage: number;
+      /** Total Sets */
+      total_sets: number;
+      /** Volume Load Kg */
+      volume_load_kg: number | null;
     };
     /**
      * Provenance
@@ -2629,7 +2712,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Page_PlannedSessionRead_"];
+          "application/json": components["schemas"]["Page_PlannedSessionListItem_"];
         };
       };
       /** @description No valid session */

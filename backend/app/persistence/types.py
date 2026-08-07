@@ -77,9 +77,22 @@ class UtcDateTime(TypeDecorator[dt.datetime]):
 def enum_column[E: Enum](enum_class: type[E]) -> sa.Enum:
     """Return the column type for storing ``enum_class``.
 
-    Non-native by convention: a ``VARCHAR`` plus a ``CHECK`` constraint on the
-    stored strings, which behaves the same on SQLite and Postgres and makes
-    adding a member an ordinary column-constraint migration.
+    Non-native by convention: a plain ``VARCHAR(n)`` on both SQLite and
+    Postgres, where ``n`` is the length of the **longest member value**. There
+    is no ``CHECK`` constraint — SQLAlchemy's ``create_constraint`` defaults to
+    ``False`` and this codebase leaves it there (D81), so the vocabulary is
+    enforced by ``validate_strings=True`` on the way in, not by the database.
+    A row written by hand-rolled SQL can therefore hold a value the enum does
+    not have; the ORM refuses to read it back.
+
+    Two consequences worth knowing before adding a member:
+
+    * a member whose value is **longer** than every existing one widens the
+      column, so it needs an ``ALTER COLUMN ... TYPE`` migration — inside
+      ``batch_alter_table``, because SQLite cannot alter a column in place.
+      A shorter or equal-length member needs no migration at all;
+    * nothing in the database will stop a mis-spelled value from being stored
+      by something that is not this ORM.
 
     What is stored is the member's **value**, not its name
     (``values_callable``). SQLAlchemy defaults to the name, which for the

@@ -134,6 +134,24 @@ LIFT: dict[str, Any] = {
 }
 
 
+#: The same lift prescribed in kilograms, so it has a volume load: 5 × 3 × 100.
+KG_LIFT: dict[str, Any] = {
+    "discipline": "strength",
+    "groups": [
+        {
+            "items": [
+                {
+                    "exercise_id": "back_squat",
+                    "sets": 5,
+                    "reps": 3,
+                    "load": {"kind": "kg", "value": 100},
+                }
+            ]
+        }
+    ],
+}
+
+
 @pytest.fixture
 def matched() -> Iterator[None]:
     """Pretend WP-6 has matched an activity to every planned session."""
@@ -363,6 +381,38 @@ async def test_a_criterion_the_discipline_cannot_evaluate_is_refused(
 
     assert response.status_code == 422
     assert "cannot be evaluated for a cycling session" in response.json()["detail"]
+
+
+async def test_an_absurd_smoothing_window_is_refused(client: AsyncClient) -> None:
+    # The field is an unbounded integer on the wire; the bound is the domain's
+    # (`MAX_SMOOTHING_S`), so the refusal arrives as a 422 rather than as a
+    # rolling mean WP-7 cannot build.
+    await append_ftp(client)
+
+    response = await client.post(
+        SESSIONS,
+        json={
+            "date": "2026-08-10",
+            "purpose": "sweet_spot",
+            "structure": RIDE,
+            "success_criteria": [
+                {
+                    "kind": "time_in_band",
+                    "selector": {"kind": "all"},
+                    "band": {
+                        "channel": "power",
+                        "low": 0.95,
+                        "high": 1.05,
+                        "smoothing_s": 10**12,
+                    },
+                    "min_fraction": 0.8,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "smoothing_s must be at most 3600" in response.json()["detail"]
 
 
 async def test_the_purpose_must_match_the_prescription_discipline(
@@ -1162,6 +1212,42 @@ async def test_a_strength_session_resolves_nothing_and_predicts_no_load(
     assert session["predicted_load"] is None
 
 
+async def test_a_kilogram_lift_carries_its_predicted_volume(
+    client: AsyncClient,
+) -> None:
+    # The week card already ships `predicted_volume_load_kg`; the resource the
+    # sheet opens must not be silent about the same artefact.
+    session = await plan(client, purpose="max_strength", structure=KG_LIFT)
+
+    assert session["predicted_volume"] == {
+        "volume_load_kg": 1500.0,
+        "total_sets": 5,
+        "coverage": 1.0,
+    }
+    # Kilograms and TSS are different axes: the other one stays empty.
+    assert session["predicted_load"] is None
+
+
+async def test_an_e1rm_lift_has_sets_but_no_kilograms(client: AsyncClient) -> None:
+    # A %e1RM line has no kilograms until the e1RM is known. The sets are
+    # still work, and coverage says how much of the session is uncounted.
+    session = await plan(client, purpose="max_strength", structure=LIFT)
+
+    assert session["predicted_volume"] == {
+        "volume_load_kg": None,
+        "total_sets": 5,
+        "coverage": 0.0,
+    }
+
+
+async def test_a_ride_predicts_a_load_and_no_volume(client: AsyncClient) -> None:
+    await append_ftp(client, 250)
+    session = await plan(client)
+
+    assert session["predicted_volume"] is None
+    assert session["predicted_load"] is not None
+
+
 async def test_appending_a_new_ftp_does_not_move_an_existing_session(
     client: AsyncClient,
 ) -> None:
@@ -1221,6 +1307,51 @@ async def test_sessions_list_in_date_order_within_a_range(
         "2026-08-12",
     ]
     assert page["total"] == 2
+
+
+async def test_a_list_row_carries_no_resolved_steps_and_no_explanation(
+    client: AsyncClient,
+) -> None:
+    # A page of two hundred sessions carrying a resolved step tree each is
+    # measured in megabytes and in seconds of synchronous CPU (D79). The
+    # fields are absent from the list shape, not null in it, so nothing can
+    # read a list row as a session with nothing to predict.
+    await append_ftp(client, 250)
+    session = await plan(client)
+
+    (row,) = (await client.get(SESSIONS)).json()["items"]
+
+    assert row["id"] == session["id"]
+    assert "resolved_steps" not in row
+    assert "predicted_load" not in row
+    assert "predicted_volume" not in row
+    # The intent version in force — the thing a list row is about — is intact.
+    assert row["intent"]["version"] == 1
+    assert row["intent"]["structure"] == session["intent"]["structure"]
+
+
+async def test_a_list_row_still_names_the_anchor_versions_it_pinned(
+    client: AsyncClient,
+) -> None:
+    # The pins are one query for the whole page, and a row quoting a
+    # percentage without saying what resolves it is what invariant 4 forbids.
+    version_id = await append_ftp(client, 250)
+    await plan(client)
+
+    (row,) = (await client.get(SESSIONS)).json()["items"]
+
+    assert [pin["anchor_version_id"] for pin in row["pinned_anchors"]] == [version_id]
+
+
+async def test_the_whole_session_is_one_request_away(client: AsyncClient) -> None:
+    # The other half of D79: what the list drops, the member route still has.
+    await append_ftp(client, 250)
+    session = await plan(client)
+
+    detail = (await client.get(f"{SESSIONS}/{session['id']}")).json()
+
+    assert len(detail["resolved_steps"]) == 7
+    assert detail["predicted_load"]["explanation"]["formula"]
 
 
 async def test_sessions_can_be_filtered_by_status(client: AsyncClient) -> None:

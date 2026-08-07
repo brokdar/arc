@@ -10,6 +10,7 @@ import pytest
 
 from app.domain.anchors import AnchorType
 from app.domain.criteria import (
+    MAX_SMOOTHING_S,
     AbsoluteLimit,
     Band,
     Ceiling,
@@ -224,6 +225,32 @@ def test_a_negative_smoothing_window_is_rejected(window: int) -> None:
             max_seconds_above=120,
             smoothing_s=window,
         )
+
+
+@pytest.mark.parametrize("window", [MAX_SMOOTHING_S + 1, 10**12])
+def test_an_absurd_smoothing_window_is_rejected(window: int) -> None:
+    # The field had a floor and no ceiling, so a criterion could ask WP-7 for
+    # a rolling mean wider than any ride it will ever judge.
+    with pytest.raises(ValueError, match="smoothing_s must be at most 3600"):
+        Band(channel=Channel.POWER, low=0.95, high=1.05, smoothing_s=window)
+    with pytest.raises(ValueError, match="smoothing_s must be at most 3600"):
+        Ceiling(
+            channel=Channel.POWER,
+            limit=PercentLimit(anchor_type=AnchorType.FTP, pct=0.6),
+            max_seconds_above=120,
+            smoothing_s=window,
+        )
+
+
+def test_an_hour_long_smoothing_window_is_still_legal() -> None:
+    # The bound is inclusive: an hour is the longest window that can mean
+    # anything, not the first one that cannot.
+    assert (
+        Band(
+            channel=Channel.POWER, low=0.95, high=1.05, smoothing_s=MAX_SMOOTHING_S
+        ).smoothing_s
+        == MAX_SMOOTHING_S
+    )
 
 
 def test_a_selector_carries_only_its_own_argument() -> None:

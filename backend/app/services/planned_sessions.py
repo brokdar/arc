@@ -55,7 +55,9 @@ from app.domain.criteria import referenced_anchor_types as criteria_anchors
 from app.domain.prediction import (
     PinnedAnchor,
     PredictedLoad,
+    PredictedVolume,
     predict_endurance_load,
+    predict_strength_volume,
 )
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
@@ -154,17 +156,28 @@ class SessionResolution:
     invariant 4 says the pins freeze, so resolving against them is always
     correct and never needs invalidating.
 
+    The two predicted fields are the two axes, and exactly one of them is ever
+    populated: an endurance prescription has a TSS-equivalent and no
+    kilograms, a strength one has kilograms and no TSS (spec v2 §5.4). Both
+    are on the resource because the week card already carries both — a
+    resource that is silent about the artefact its own summary ships is a
+    resource a client has to go back to the calendar for.
+
     Args:
         anchors: The anchor versions this session pinned, by type.
         steps: Every flattened step with its targets resolved. Empty for a
             strength prescription, which has no anchor percentages.
-        predicted_load: What the prescription is expected to cost, or ``None``
-            when it cannot honestly be predicted.
+        predicted_load: What an endurance prescription is expected to cost, or
+            ``None`` for a strength session and whenever it cannot honestly be
+            predicted.
+        predicted_volume: The prescribed volume load of a strength session,
+            with the sets it covers; ``None`` for an endurance one.
     """
 
     anchors: Mapping[AnchorType, PinnedAnchor]
     steps: tuple[ResolvedStep, ...]
     predicted_load: PredictedLoad | None
+    predicted_volume: PredictedVolume | None
 
 
 _match_probe: MatchProbe = _no_matches_yet
@@ -260,6 +273,28 @@ class PlannedSessionService:
             )
         return row
 
+    async def pins(
+        self, rows: Sequence[PlannedSessionRow]
+    ) -> dict[uuid.UUID, Mapping[AnchorType, PinnedAnchor]]:
+        """Load the anchor versions each session pinned, in one query.
+
+        The cheap half of :meth:`resolutions`, and everything a list row
+        needs: it costs one query for the whole page and parses no
+        prescription. A pin the anchor table cannot answer is dropped rather
+        than raising — the targets that needed it then report themselves
+        unresolved, which is the honest answer on a read path.
+        """
+        parsed = {
+            row.id: parse_pins(row.current_intent.pinned_anchor_versions)
+            for row in rows
+        }
+        versions = await self._anchors.by_ids(
+            version_id
+            for session_pins in parsed.values()
+            for version_id in session_pins.values()
+        )
+        return {row.id: resolve_pins(parsed[row.id], versions) for row in rows}
+
     async def resolutions(
         self, rows: Sequence[PlannedSessionRow]
     ) -> dict[uuid.UUID, SessionResolution]:
@@ -271,31 +306,28 @@ class PlannedSessionService:
         pure functions of the frozen intent and its pins, so there is no
         column and nothing to invalidate.
 
-        A pin the anchor table cannot answer is dropped rather than raising:
-        the targets that needed it then report themselves unresolved, which is
-        the honest answer on a read path.
+        The queries are one thing and the CPU is another: this parses every
+        prescription and runs the 1 Hz expansion behind
+        :func:`~app.domain.prediction.predict_endurance_load` **per row**, so
+        it is for the routes that answer with one whole session, not for a
+        page of fifty (D79).
         """
-        pins = {
-            row.id: parse_pins(row.current_intent.pinned_anchor_versions)
-            for row in rows
-        }
-        versions = await self._anchors.by_ids(
-            version_id
-            for session_pins in pins.values()
-            for version_id in session_pins.values()
-        )
+        anchors_by_session = await self.pins(rows)
         resolved: dict[uuid.UUID, SessionResolution] = {}
         for row in rows:
-            anchors = resolve_pins(pins[row.id], versions)
+            anchors = anchors_by_session[row.id]
             body = _body_of(row.current_intent)
+            load: PredictedLoad | None = None
+            volume: PredictedVolume | None = None
+            if isinstance(body, StrengthWorkout):
+                volume = predict_strength_volume(body)
+            else:
+                load = predict_endurance_load(body, anchors)
             resolved[row.id] = SessionResolution(
                 anchors=anchors,
                 steps=resolve_steps(body, anchors),
-                predicted_load=(
-                    None
-                    if isinstance(body, StrengthWorkout)
-                    else predict_endurance_load(body, anchors)
-                ),
+                predicted_load=load,
+                predicted_volume=volume,
             )
         return resolved
 

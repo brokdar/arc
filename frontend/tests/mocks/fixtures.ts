@@ -136,25 +136,36 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
     };
   });
   const sessions = days.flatMap((day) => day.sessions);
-  const duration = (of: readonly Schemas["WeekSessionRead"][]) =>
-    of.reduce((total, session) => total + (session.planned_duration_s ?? 0), 0);
+  // Null, never 0: a total nothing contributed to is missing, not zero.
+  const duration = (of: readonly Schemas["WeekSessionRead"][]) => {
+    const counted = of.filter((s) => s.planned_duration_s !== null);
+    return counted.length
+      ? counted.reduce((total, s) => total + (s.planned_duration_s ?? 0), 0)
+      : null;
+  };
   const load = (of: readonly Schemas["WeekSessionRead"][]) => {
     const counted = of.filter((session) => session.predicted_load !== null);
-    // Null, never 0: a week with nothing predictable has no load.
     return counted.length
       ? counted.reduce((total, s) => total + (s.predicted_load ?? 0), 0)
       : null;
   };
   const counted = sessions.filter((session) => session.predicted_load !== null);
+  const timed = sessions.filter((s) => s.planned_duration_s !== null);
   const byDiscipline = (["cycling", "strength"] as const)
     .map((discipline) => {
       const group = sessions.filter((s) => s.discipline === discipline);
       const sets = group.filter((s) => s.total_sets !== null);
+      const groupTimed = group.filter((s) => s.planned_duration_s !== null);
+      const groupCounted = group.filter((s) => s.predicted_load !== null);
       return {
         discipline,
         session_count: group.length,
         planned_duration_s: duration(group),
+        duration_sessions_counted: groupTimed.length,
+        duration_sessions_uncounted: group.length - groupTimed.length,
         planned_load: load(group),
+        load_sessions_counted: groupCounted.length,
+        load_sessions_uncounted: group.length - groupCounted.length,
         total_sets: sets.length
           ? sets.reduce((total, s) => total + (s.total_sets ?? 0), 0)
           : null,
@@ -167,6 +178,8 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
     days,
     session_count: sessions.length,
     planned_duration_s: duration(sessions),
+    duration_sessions_counted: timed.length,
+    duration_sessions_uncounted: sessions.length - timed.length,
     planned_load: load(sessions),
     load_sessions_counted: counted.length,
     load_sessions_uncounted: sessions.length - counted.length,
@@ -438,6 +451,14 @@ export function plannedSessionFixture(
     pinned_anchors: cycling ? [PINNED_FTP] : [],
     resolved_steps: cycling ? VO2_RESOLVED_STEPS : [],
     predicted_load: cycling ? VO2_PREDICTED_LOAD : null,
+    // The other axis: kilograms for a lift, nothing for a ride.
+    predicted_volume: cycling
+      ? null
+      : {
+          volume_load_kg: seed.session.predicted_volume_load_kg,
+          total_sets: seed.session.total_sets ?? 0,
+          coverage: seed.session.predicted_volume_load_kg === null ? 0 : 1,
+        },
   };
 }
 

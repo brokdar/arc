@@ -158,6 +158,34 @@ def _describe(version: AnchorVersion) -> str:
     )
 
 
+#: Coverage this close to whole is rendered as an inequality rather than
+#: rounded, in either direction. One decimal place is as fine as the phrasing
+#: goes, and past it a partial coverage would round to a flat ``100%`` or
+#: ``0%`` — printing a number that contradicts the assumption standing beside
+#: it ("steps with no power target counted as 0 W").
+_COVERAGE_EPSILON = 0.001
+
+
+def _coverage_phrase(coverage: float) -> str:
+    """Say what fraction of the duration carried a power target.
+
+    Full coverage is said in words, because ``100%`` is the one percentage a
+    reader will take as "all of it" — and it must therefore never appear for a
+    prescription that had a second uncovered. Everything short of whole is a
+    one-decimal percentage, clamped to ``>99.9%`` and ``<0.1%`` at the edges
+    so no partial coverage can round its way to a whole number.
+    """
+    if coverage >= 1.0:
+        return "the full duration carried a power target"
+    if coverage > 1.0 - _COVERAGE_EPSILON:
+        rendered = ">99.9%"
+    elif 0.0 < coverage < _COVERAGE_EPSILON:
+        rendered = "<0.1%"
+    else:
+        rendered = f"{coverage:.1%}"
+    return f"{rendered} of the duration carried a power target"
+
+
 def predict_endurance_load(
     workout: EnduranceWorkout,
     anchors: Mapping[AnchorType, PinnedAnchor],
@@ -242,7 +270,7 @@ def predict_endurance_load(
                 "FTP": _describe(ftp.version),
                 "planned NP": f"{planned_np:.0f} W over the prescribed watts",
                 "duration": f"{total_duration_s} s prescribed",
-                "coverage": f"{coverage:.0%} of the duration carried a power target",
+                "coverage": _coverage_phrase(coverage),
             }
         ),
         assumptions=tuple(assumptions),

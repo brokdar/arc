@@ -156,12 +156,15 @@ class WorkoutRepository:
 
         Exists so a calendar can label a week's sessions in one query instead
         of one per card; loading whole rows for a name would carry every
-        structure document along with it.
+        structure document along with it. Ids are deduplicated first — a week
+        of six sessions planned from the same library workout is the ordinary
+        case, and the ``IN`` clause should not repeat it six times.
         """
-        if not workout_ids:
+        ids = list(dict.fromkeys(workout_ids))
+        if not ids:
             return {}
         result = await self._session.execute(
-            select(WorkoutRow.id, WorkoutRow.name).where(WorkoutRow.id.in_(workout_ids))
+            select(WorkoutRow.id, WorkoutRow.name).where(WorkoutRow.id.in_(ids))
         )
         return {row.id: row.name for row in result}
 

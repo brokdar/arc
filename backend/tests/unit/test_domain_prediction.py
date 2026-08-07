@@ -257,6 +257,71 @@ def test_a_step_with_no_power_target_lowers_coverage_but_still_predicts() -> Non
     assert any("0 W" in assumption for assumption in predicted.explanation.assumptions)
 
 
+# --- what the explanation says about coverage ---------------------------------
+
+
+def cadence_step(duration_s: int) -> SteadyStep:
+    """A step with a cadence target and no power target: duration, no coverage."""
+    return SteadyStep(
+        duration_s=duration_s,
+        targets={
+            Channel.CADENCE: AbsoluteRange(low=85.0, high=95.0, unit=ChannelUnit.RPM)
+        },
+        role=StepRole.RECOVERY,
+    )
+
+
+def coverage_input(workout: EnduranceWorkout) -> str:
+    """The explanation's rendered coverage line."""
+    predicted = predict_endurance_load(workout, ftp_anchor())
+    assert predicted is not None
+    return predicted.explanation.inputs["coverage"]
+
+
+def test_full_coverage_is_said_in_words_not_as_a_hundred_percent() -> None:
+    workout = EnduranceWorkout(
+        steps=(SteadyStep(duration_s=3_600, targets=power(1.0)),)
+    )
+
+    assert coverage_input(workout) == "the full duration carried a power target"
+
+
+def test_one_uncovered_second_does_not_round_up_to_full_coverage() -> None:
+    # The bug this pins: 1 s uncovered of 1 800 printed "100% of the duration
+    # carried a power target" next to an assumption saying the opposite.
+    workout = EnduranceWorkout(
+        steps=(
+            SteadyStep(duration_s=1_799, targets=power(0.8)),
+            cadence_step(1),
+        )
+    )
+
+    assert coverage_input(workout) == ">99.9% of the duration carried a power target"
+
+
+def test_one_covered_second_does_not_round_down_to_no_coverage() -> None:
+    # The other edge, and the worse one: "0%" beside a load above zero.
+    workout = EnduranceWorkout(
+        steps=(
+            SteadyStep(duration_s=1, targets=power(0.8)),
+            cadence_step(1_799),
+        )
+    )
+
+    assert coverage_input(workout) == "<0.1% of the duration carried a power target"
+
+
+def test_ordinary_partial_coverage_keeps_one_decimal() -> None:
+    workout = EnduranceWorkout(
+        steps=(
+            SteadyStep(duration_s=1_800, targets=power(0.8)),
+            cadence_step(600),
+        )
+    )
+
+    assert coverage_input(workout) == "75.0% of the duration carried a power target"
+
+
 # --- when there is nothing honest to say --------------------------------------
 
 

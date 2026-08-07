@@ -1869,3 +1869,141 @@ hatch for updating the URL without navigating, it syncs `usePathname` and
 router call did: this is not a navigation, it is the same page saying where it
 is. Recorded here because the no-op is silent, and the next person to reach for
 `router.replace(pathname)` will lose the same afternoon to it.
+
+## D78 — Every week total carries its own coverage, and a missing total is null
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PlanWeek.planned_duration_s` is `int | None` and travels with
+`duration_sessions_counted` / `duration_sessions_uncounted`, exactly as
+`planned_load` already travelled with its own pair. Each `by_discipline` row
+carries **both** pairs — duration *and* load — beside its two totals, and its
+`planned_duration_s` is nullable for the same reason. A total no session
+contributed to is `None`, the empty week included.
+
+This displaces `sum(card.planned_duration_s or 0 for card in cards)`, which
+answered `0` for a week of two distance rides and a lift — four hours of work
+rendered as a rest week — and displaces per-discipline rows that carried a
+naked `planned_load: null` with no coverage beside it.
+
+*Rationale.* The load field had already been argued to this shape (D72): a
+missing number means "not assessed", never zero, and a total is only honest
+next to the count it came from. Duration was left as a plain `int` because
+`or 0` looked like a summing detail rather than a claim — but it is the same
+claim, made about the same week, on the same card, and a strength week is
+precisely the case where it is wrong.
+
+The coverage pairs went onto the discipline rows because the review found the
+UI explaining a null cycling load with a hardcoded reason. That is what a row
+without coverage forces: the client can see the number is missing, cannot see
+how many sessions are behind it, and has to invent a story. A row that says
+"two sessions, none predictable" needs no story. It is also the only thing
+that makes the rows reconcile with the flat totals *as coverage* rather than
+only as sums.
+
+`session_count` now reports the repository's true total rather than the number
+of rendered cards, and the `MAX_WEEK_SESSIONS` overflow is added to **both**
+uncounted counters. The cap exists so a corrupted date column cannot make one
+request load the table; it was silently discarding the total, so a truncated
+week claimed its totals covered everything it had counted. An unread row has
+no discipline to be attributed to, so the overflow shows up in the week's own
+pairs and not in `by_discipline` — recorded because the rows therefore do
+*not* sum to the week's counters on a truncated week, which is the honest
+answer rather than a reconciliation bug.
+
+## D79 — The planned-session list row is a lighter shape than the session
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`GET /api/v1/planned-sessions` answers with `PlannedSessionListItem`: id,
+date, discipline, status, the intent version in force, the version count, the
+timestamps and `pinned_anchors`. It carries **no** `resolved_steps`, **no**
+`predicted_load` and **no** `predicted_volume` — absent from the shape, not
+null in it. `GET /planned-sessions/{id}` and every write route (POST, PATCH,
+move, copy) still answer with the full `PlannedSessionRead`, which
+`PlannedSessionListItem` is the base of.
+
+This supersedes the part of **D74** that put the resolved fields on *every*
+endpoint answering with a whole session. The rest of D74 stands: the fields
+are part of the resource, not a detail-only view, and the member route proves
+it.
+
+*Rationale.* D74's argument was a react-query one — "one resource with two
+shapes is a trap for a cache" — and it was made against a `PlannedSessionRead`
+whose only measured cost was the anchor query, which `resolutions()` batches
+away. The cost that was not measured is the one that matters: 200 sessions ×
+200 flat steps is ≈ 19 MB of response body and ~3.8 s of **synchronous** CPU in
+the handler, because every row parses its prescription, flattens it, resolves
+every target, and runs the 1 Hz expansion behind `predict_endurance_load`.
+That is an event loop stalled for four seconds on a read.
+
+The cache argument survives because the list is already a different shape: a
+page is `{items, total, offset, limit}`, nothing in the frontend reads a list
+row as a session (checked — the browser client only ever POSTs to this
+collection and reads the week projection instead), and the fields are dropped
+whole rather than nulled, so a row cannot type-check as a session with nothing
+to predict. The alternative — keeping a numeric `predicted_load` summary
+without its explanation — was rejected because the number *is* the 1 Hz
+expansion: there is no cheap half of it, and a list that ran it per row would
+have kept 3.8 s of the 3.8 s.
+
+`pinned_anchors` stays: the whole page's pins are one query and no parsing,
+and a row that quotes a percentage without saying what resolves it is what
+invariant 4 exists to prevent.
+
+## D80 — A smoothing window is bounded above at an hour
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`MAX_SMOOTHING_S = 3600` in `app/domain/criteria.py`, checked in
+`_check_smoothing` beside the existing negative check, so `Band.smoothing_s`
+and `Ceiling.smoothing_s` are held to `[0, 3600]` and the API answers 422 for
+anything past it.
+
+This displaces a floor with no ceiling — the field accepted any non-negative
+integer the JSON carried, including `10**12`.
+
+*Rationale.* D73 put the window on the criterion so it freezes with the
+intent, which means whatever is stored is what WP-7 will be asked to build a
+rolling mean over. A window wider than the effort it judges does not measure
+the effort at all: an hour is already longer than any interval a criterion
+selects, and past it the criterion is stating something no recording could
+disagree with. Bounding it at construction keeps the refusal in the domain,
+where the negative check already is, rather than in a pydantic field that the
+MCP path and the stored-JSON decoder would both bypass. The templates are
+unaffected — the longest window in `purpose_templates.json` is 30 s.
+
+## D81 — Non-native enum columns carry no CHECK constraint, and the docstrings now say so
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`app/persistence/types.py:enum_column` compiles to a bare `VARCHAR(n)` on both
+SQLite and Postgres, where `n` is the longest member value — SQLAlchemy's
+`create_constraint` has defaulted to `False` since 1.4, and this codebase
+leaves it there. The docstrings in `types.py` and in
+`alembic/versions/0004_plan_state.py`, which both claimed "a `VARCHAR` plus a
+`CHECK` constraint", have been corrected to describe the emitted DDL,
+including the consequence the claim was hiding: a future member with a
+*longer* value widens the column and therefore needs a batch `ALTER COLUMN`
+migration, while a shorter one needs none.
+
+This displaces the alternative of making the docstring true —
+`create_constraint=True` with a named constraint. Verified as workable
+(non-native enums compile `CONSTRAINT <enum name> CHECK (col IN (...))` on
+both dialects, and SQLite's move-and-copy batch mode recreates it — though the
+default name is the *enum's*, so two tables storing `Discipline` would collide
+in one Postgres schema and every column would need an explicit `name=`), and
+rejected anyway: it would need a
+migration adding a constraint to every enum column that exists, and it buys
+nothing this application can reach. `validate_strings=True` already refuses an
+unknown member on the way in through the ORM, and the ORM is the only writer —
+there is no second application, no hand-written INSERT path, and a single
+athlete's database. The constraint would defend against a writer that does not
+exist, at the cost of a migration per enum column now and a second migration
+every time a member is added.
+
+The rule that stands: **verify the DDL before documenting it.** The false
+claim survived two files and a review because `native_enum=False` reads like
+"the constraint moved to a CHECK", which is what SQLAlchemy's own
+documentation once described and what `create_constraint` used to default to.
+`sa.Enum(...).create_constraint` answers the question in one line.
