@@ -13,11 +13,21 @@ The two quarantine outcomes are asymmetric on purpose (B-4):
 * **confirm** — "yes, this is the duplicate you thought": the *quarantined
   copy* is discarded and the record closed. Nothing under ``originals/`` is
   ever touched, so the already-ingested twin keeps its file.
-* **reject** — "no, this is a different session": the file goes back through
-  the pipeline with the overlap check waived, and becomes its own session.
-  Only a `suspected_duplicate` has anything safe to ingest, so rejecting any
-  other reason is a 409: a corrupt file offers confirm (discard) and a re-drop
-  after fixing it, and nothing else.
+* **reject** — "you were wrong, ingest it anyway": the file goes back through
+  the pipeline with the one check the athlete overruled waived, and becomes
+  its own session. Two verdicts can be overruled — `suspected_duplicate`
+  ("this is a different session") and `implausible_channel` ("that channel is
+  broken, the rest of the ride is not"). The rest are 409s: nothing about
+  disagreeing with the parser makes unreadable bytes readable, and a file with
+  two minutes in it does not gain a third.
+
+**The decision is committed before the pipeline runs.** Rejecting is the
+athlete's ruling, and a pipeline that fails afterwards must not take it back:
+sharing one transaction meant the rollback inside the pipeline's own catch-all
+erased the resolution *and* its audit row while leaving the file where the
+pipeline had already put it. So the transition commits here, and the ingest
+runs on a session of its own — a failure then costs an error event and
+nothing else.
 """
 
 import datetime as dt
@@ -31,11 +41,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
-from app.domain.activity import QuarantineReason, QuarantineStatus
+from app.domain.activity import IngestOutcome, QuarantineReason, QuarantineStatus
 from app.domain.actor import Actor
 from app.ingest.pipeline import IngestPaths, IngestPipeline, IngestReport
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit, flush
+from app.persistence.db import commit, session_scope
 from app.persistence.ingest_log import (
     MAX_FILENAME_LENGTH,
     IngestEventRepository,
@@ -54,9 +64,6 @@ ENTITY_TYPE = "quarantine_record"
 #: which an endpoint writing to disk needs to have.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
-#: Bytes read per chunk while streaming an upload to the inbox.
-UPLOAD_CHUNK = 1 << 20
-
 #: Everything not matched here is replaced in an uploaded filename. The name
 #: is written to disk, so it is rebuilt from a safe alphabet rather than
 #: inspected for the traversal of the week.
@@ -64,6 +71,19 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 #: Used when the sanitised name is empty (a filename that was all separators).
 FALLBACK_FILENAME = "upload"
+
+#: Longest name written into the inbox, ``<uuid7>-<name>`` included. NAME_MAX
+#: is 255 bytes on every filesystem this runs on and 143 on eCryptfs; the
+#: margin below the smaller of those is deliberate, because the failure this
+#: bounds — ``ENAMETOOLONG`` from the write — is a 500 on an upload the athlete
+#: did nothing wrong in making.
+MAX_STAGED_NAME = 180
+
+#: The quarantined reasons a *reject* can overrule, and what each one waives.
+#: Every other reason is a 409 (see :meth:`IngestService.reject`).
+REJECTABLE_REASONS = frozenset(
+    {QuarantineReason.SUSPECTED_DUPLICATE, QuarantineReason.IMPLAUSIBLE_CHANNEL}
+)
 
 
 def safe_filename(raw: str) -> str:
@@ -73,9 +93,31 @@ def safe_filename(raw: str) -> str:
     ``[A-Za-z0-9._-]`` becomes an underscore, and a leading dot is stripped —
     the sweep skips dotfiles, so a name starting with one would land a file in
     the inbox that nothing ever picks up.
+
+    The result is bounded by the *log* column's width, not by the filesystem's:
+    what goes on disk is :func:`staged_name`, and the name the athlete gave the
+    file is worth keeping in full in the ingest log.
     """
     name = _UNSAFE.sub("_", Path(raw).name).strip("._")[:MAX_FILENAME_LENGTH]
     return name or FALLBACK_FILENAME
+
+
+def staged_name(name: str) -> str:
+    """``<uuid7>-<name>``, short enough for any filesystem to accept.
+
+    Two uploads called `activity.fit` must not overwrite one another, and the
+    second one is a duplicate by *hash* or it is not a duplicate at all — hence
+    the prefix. A name too long for the prefix to fit beside is truncated from
+    the middle, keeping its extension: the extension is what the pipeline
+    dispatches a parser on, so dropping it would turn a perfectly good ride
+    into an `unreadable_file` on the strength of its name's length.
+    """
+    prefix = f"{uuid.uuid7()}-"
+    room = MAX_STAGED_NAME - len(prefix)
+    if len(name) <= room:
+        return f"{prefix}{name}"
+    suffix = Path(name).suffix[: room // 2]
+    return f"{prefix}{name[: room - len(suffix)]}{suffix}"
 
 
 class IngestService:
@@ -159,11 +201,9 @@ class IngestService:
                 f"The uploaded file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
             )
         name = safe_filename(filename)
-        # A unique name on disk, the athlete's name in the log: two uploads
-        # called `activity.fit` must not overwrite one another, and the second
-        # one is a duplicate by *hash* or it is not a duplicate at all.
+        # A unique, bounded name on disk; the athlete's own name in the log.
         self._paths.inbox.mkdir(parents=True, exist_ok=True)
-        staged = self._paths.inbox / f"{uuid.uuid7()}-{name}"
+        staged = self._paths.inbox / staged_name(name)
         staged.write_bytes(content)
         logger.info("upload_received", filename=name, bytes=len(content))
         return await self._pipeline.ingest_file(staged, actor=actor, filename=name)
@@ -206,28 +246,40 @@ class IngestService:
     async def reject(
         self, record_id: uuid.UUID, *, actor: Actor
     ) -> tuple[QuarantineRecordRow, IngestReport]:
-        """Overrule the pipeline: this is not a duplicate, ingest it.
+        """Overrule the pipeline's verdict and ingest the file anyway.
+
+        Two verdicts can be overruled, and each waives exactly the check it
+        disagrees with:
+
+        * `suspected_duplicate` — "this is a different session": the
+          file-level hash check and the overlap check are waived.
+        * `implausible_channel` — "one channel is broken, the ride is not":
+          that check alone is waived. What is ingested carries no out-of-range
+          reading regardless, because the cleaner nulls every value it cannot
+          believe and records each one as a repair.
+
+        The transition is committed **before** the pipeline runs, on this
+        service's own session, and the ingest runs on a fresh one: a pipeline
+        failure then leaves the athlete's decision standing and the file where
+        it is, instead of rolling both back and leaving the file moved.
 
         Raises:
             NotFoundError: When no record has that id.
-            ConflictError: When the record is already resolved, when its
-                reason is not `suspected_duplicate` (there is nothing safe to
-                ingest — a corrupt file is not made good by disagreement), or
-                when the file it points at is gone.
+            ConflictError: When the record is already resolved, when its reason
+                is not one of the two above (there is nothing in it that is
+                safe to ingest), or when the file it points at is gone.
         """
         row = await self._require_pending(record_id)
-        if row.reason is not QuarantineReason.SUSPECTED_DUPLICATE:
+        if row.reason not in REJECTABLE_REASONS:
             raise ConflictError(
-                f"This file was quarantined as {row.reason.value!r}, not as a "
-                "suspected duplicate: there is nothing in it that is safe to "
-                "ingest. Confirm to discard it, fix the file, and drop it in "
-                "again."
+                f"This file was quarantined as {row.reason.value!r}, which is not "
+                "a verdict that can be overruled: there is nothing in it that is "
+                "safe to ingest. Confirm to discard it, fix the file, and drop it "
+                "in again."
             )
         path = self._surviving_file(row)
+        reason, filename = row.reason, row.original_filename
 
-        # Resolved before the pipeline runs, and flushed, so the pipeline's own
-        # "is this hash already waiting in quarantine?" check does not refuse
-        # the very file this decision is about.
         row.status = QuarantineStatus.REJECTED_INGESTED
         row.resolved_at = dt.datetime.now(dt.UTC)
         await self._quarantine.add(row)
@@ -238,17 +290,38 @@ class IngestService:
             entity_id=row.id,
             payload={
                 "file_hash": row.file_hash,
+                "reason": reason.value,
                 "suspected_session_id": (
                     str(row.suspected_session_id) if row.suspected_session_id else None
                 ),
                 "quarantined_path": row.quarantined_path,
             },
         )
-        await flush(self._session)
-        report = await self._pipeline.ingest_file(
-            path, actor=actor, filename=row.original_filename, reingest=True
-        )
-        return row, report
+        # Committed here, so that nothing the pipeline does can undo it — and
+        # so the pipeline's own "is this hash waiting in quarantine?" check
+        # does not refuse the very file this decision is about.
+        await commit(self._session)
+
+        async with session_scope() as pipeline_session:
+            report = await IngestPipeline.from_session(pipeline_session).ingest_file(
+                path,
+                actor=actor,
+                filename=filename,
+                reingest=reason is QuarantineReason.SUSPECTED_DUPLICATE,
+                waive_implausible=reason is QuarantineReason.IMPLAUSIBLE_CHANNEL,
+                quarantine_on_failure=False,
+            )
+        if report.outcome is IngestOutcome.INGESTED:
+            # The bytes are an original now; the quarantined copy is the queue
+            # entry's, and the queue entry is resolved.
+            self._discard(path)
+        else:
+            logger.info(
+                "quarantine_reject_did_not_ingest",
+                record_id=str(record_id),
+                outcome=report.outcome.value,
+            )
+        return await self.get_record(record_id), report
 
     # --- helpers -------------------------------------------------------------
 

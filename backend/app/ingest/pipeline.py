@@ -12,30 +12,42 @@ from doing damage:
 3. **Parse** into one activity per sport (A4.5).
 4. Per activity, **validate** (`app.domain.streams.validate`). A file that is
    systemically broken is quarantined with its reason, not repaired.
-5. Per activity, **overlap dedup**: a time range covering more than
-   ``INGEST__OVERLAP_THRESHOLD`` of an existing session is the same ride
-   arriving from a second source, and the athlete rules on it.
-6. **File the original** under ``data/originals/YYYY/MM/<hash>.<ext>`` — once
+5. Per activity, **prepare**: `resample` + `clean` + the discipline
+   classification. Pure, and done before anything is written, because the
+   overlap check below needs the discipline and the classification needs the
+   *recording* time the resample reports.
+6. Per activity, **overlap dedup**: a time range covering more than
+   ``INGEST__OVERLAP_THRESHOLD`` of an existing session **of the same
+   discipline** is the same ride arriving from a second source, and the athlete
+   rules on it.
+7. **File the original** under ``data/originals/YYYY/MM/<hash>.<ext>`` — once
    per file, however many activities it holds, never modified afterwards and
    **never deleted**. It is what a re-ingest would read, so it outranks every
    derived artefact in this system.
-7. **Session + recording rows**, then `resample` + `clean`, then the parquet
-   frame and one row per repair.
+8. **Session + recording rows**, then the parquet frame and one row per repair.
 
 **Quarantine is the catch-all.** Any failure this module did not anticipate
-still ends with the file moved somewhere the athlete can find it and a record
+still ends with the file kept somewhere the athlete can find it and a record
 saying what went wrong, because the one unrecoverable outcome is a file that
 was deleted by something that then crashed.
 
-**File I/O here is synchronous, on the event loop.** Hashing a megabyte,
-moving it and writing a parquet frame is tens of milliseconds; this is a
-single-user application with one athlete's rides arriving a handful at a time,
-and an async filesystem layer would buy latency nobody is waiting on at the
-cost of a second way for every path in this module to fail. It is a decision,
-not an oversight — revisit it if bulk backfill ever runs here (D5's reasoning,
-one layer down).
+**Nothing is moved before its rows are committed.** The file is *copied* to
+its destination, the transaction commits, and only then is the inbox copy
+removed (:meth:`IngestPipeline._place`). A crash anywhere in that window
+leaves the arrival in the inbox for the next sweep, which converges on the
+already-placed destination rather than starting again — the alternative,
+moving first, loses the file entirely to a process that dies before COMMIT.
+
+**The CPU-heavy work runs off the event loop.** Hashing, parsing, resampling,
+cleaning and the parquet write go through `asyncio.to_thread`; every database
+call stays on the loop, where the session lives. A season's backfill is 150
+files at up to a second each, and a synchronous pass over them starves
+`/health` (5 s timeout) long enough for the container to be declared unhealthy
+and take Caddy and the frontend down with it. This is still one in-process
+pipeline — no queue, no worker (D5) — it simply yields.
 """
 
+import asyncio
 import datetime as dt
 import hashlib
 import shutil
@@ -48,12 +60,15 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.exceptions import ConflictError
 from app.core.logging import get_logger
 from app.domain.activity import (
+    ClassificationSource,
     IngestOutcome,
     QuarantineReason,
     QuarantineStatus,
     RecordingKind,
+    SessionDiscipline,
     classify_discipline,
     session_date,
     timezone_label,
@@ -61,6 +76,7 @@ from app.domain.activity import (
 from app.domain.actor import Actor
 from app.domain.streams import (
     Anomaly,
+    CleanResult,
     ParsedActivity,
     ResampleResult,
     StreamChannel,
@@ -106,9 +122,11 @@ class IngestReport:
         filename: The name the file arrived under.
         file_hash: Its sha256, or ``None`` when it could not even be read.
         outcome: ``ingested`` when at least one session was created,
-            ``duplicate_file`` when the hash was already known,
-            ``quarantined`` when every activity was refused, ``error`` when the
-            pipeline itself failed (the file is still quarantined).
+            ``duplicate_file`` when the hash — or every activity in it — was
+            already known, ``quarantined`` when every activity was refused,
+            ``error`` when the pipeline itself failed. The file survives an
+            ``error`` either way: quarantined with the failure on it, or left
+            where it was when the caller had already ruled on it.
         detail: One sentence for the log and for the upload response.
         session_ids: Sessions created — or, for a duplicate, the sessions the
             file was already ingested as.
@@ -121,6 +139,18 @@ class IngestReport:
     detail: str | None = None
     session_ids: tuple[uuid.UUID, ...] = ()
     quarantine_ids: tuple[uuid.UUID, ...] = ()
+
+
+def _located_in(path: Path) -> Sequence[Path]:
+    """The resolved directories ``path`` sits under, without following it.
+
+    Only the parent is resolved. Resolving the whole path would follow a
+    symbolic link to wherever it points, so a link dropped in the inbox would
+    read as living outside the inbox — and the guards that keep this module's
+    deletes inside it would silently stop applying to exactly the entry that
+    needs them.
+    """
+    return (path.parent.resolve() / path.name).parents
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +183,29 @@ class IngestPaths:
 
     def is_original(self, path: Path) -> bool:
         """Whether ``path`` is inside the immutable originals tree."""
-        return self.originals.resolve() in path.resolve().parents
+        return self.originals.resolve() in _located_in(path)
+
+    def is_inbox(self, path: Path) -> bool:
+        """Whether ``path`` is a drop in the watched folder."""
+        return self.inbox.resolve() in _located_in(path)
+
+
+@dataclass(frozen=True, slots=True)
+class _Prepared:
+    """Everything about one activity that no database or disk was needed for.
+
+    Computed in one pass off the event loop (:func:`_prepare`) and then used
+    twice: the discipline decides which existing sessions the overlap check may
+    compare against, and the frames become the rows and the parquet file. Doing
+    it once is also why a plan carries it — resampling a four-hour ride twice
+    is a second of CPU spent to recompute a value that cannot have changed.
+    """
+
+    resampled: ResampleResult
+    cleaned: CleanResult
+    channels: frozenset[StreamChannel]
+    discipline: SessionDiscipline
+    classification: ClassificationSource
 
 
 @dataclass(slots=True)
@@ -165,6 +217,7 @@ class _Plan:
     detail: str | None = None
     suspected_session_id: uuid.UUID | None = None
     existing_session_id: uuid.UUID | None = None
+    prepared: _Prepared | None = None
 
     @property
     def ingestible(self) -> bool:
@@ -174,10 +227,17 @@ class _Plan:
 
 @dataclass(slots=True)
 class _Placement:
-    """Where the file ended up, and what the rows should say about it."""
+    """Where the file ended up, and what the rows should say about it.
+
+    ``sessions`` is every session the file resolved to, in file order — the
+    ones it created *and* the ones its activities were already ingested as.
+    ``created`` is only the former, because "2 session(s) ingested" is a lie
+    when both of them existed before this run (F11).
+    """
 
     path: Path
     sessions: list[uuid.UUID] = field(default_factory=list)
+    created: list[uuid.UUID] = field(default_factory=list)
     quarantines: list[uuid.UUID] = field(default_factory=list)
 
 
@@ -185,10 +245,10 @@ class _Placement:
 class _Located:
     """Where the file is *now*, shared with the catch-all.
 
-    The pipeline moves the file part-way through, so "the path we were handed"
-    stops being true at that point. The rescue path needs the current one — it
-    has a file to keep — and this is how it learns it without the happy path
-    having to return something on the way out.
+    The pipeline files the bytes part-way through, so "the path we were
+    handed" stops being the interesting one at that point. The rescue path
+    needs the current one — it has a file to keep — and this is how it learns
+    it without the happy path having to return something on the way out.
     """
 
     path: Path
@@ -244,46 +304,84 @@ class IngestPipeline:
         actor: Actor,
         filename: str | None = None,
         reingest: bool = False,
+        waive_implausible: bool = False,
+        quarantine_on_failure: bool = True,
     ) -> IngestReport:
         """Ingest one file, committing whatever it managed to do.
 
         Args:
-            path: The file to read. It is *moved* — into ``originals/`` when
-                something was ingested, into ``quarantine/`` when nothing was
-                — unless it is already an original, which is never moved.
+            path: The file to read. It is *copied* to its destination —
+                ``originals/`` when something was ingested, ``quarantine/``
+                when nothing was — and the inbox copy is removed once those
+                rows are committed. A file that is already an original stays
+                where it is, and a file outside the inbox is never deleted.
             actor: Who is credited on the audit rows: the athlete for an
                 upload, `Actor.system` for the watched folder.
             filename: The name to log, when ``path`` is not it (an upload is
                 written into the inbox under a sanitised name).
-            reingest: Set for B-4's *reject*, where the athlete has ruled that
-                a quarantined file is **not** a duplicate. It waives both
-                duplicate checks the decision overrules — the file-level hash
-                one and the overlap one — and nothing else. Per-activity
+            reingest: Set for B-4's *reject* of a suspected duplicate, where
+                the athlete has ruled that the file is **not** one. It waives
+                both duplicate checks the decision overrules — the file-level
+                hash one and the overlap one — and nothing else. Per-activity
                 dedup on ``(hash, sport_index)`` still applies, so a reject
                 cannot produce a second copy of an activity that is already a
                 session.
+            waive_implausible: Set for B-4's *reject* of an
+                ``implausible_channel`` verdict. It waives that one check and
+                no other: the cleaner nulls every value it cannot trust, so
+                what is ingested carries no out-of-range reading (D-F13).
+            quarantine_on_failure: Whether an unanticipated failure should
+                leave a **new pending** quarantine record. The athlete-driven
+                reject path sets it false: it has just resolved the record for
+                this file, and a second pending one for the same bytes is a
+                phantom queue entry rather than a decision anybody can take.
 
         Returns:
             What happened. The pipeline does not raise for a bad file: a file
             it cannot use is a quarantine record, which is a result.
         """
         name = (filename or path.name)[:MAX_FILENAME_LENGTH]
-        located = _Located(path)
+        source = await asyncio.to_thread(self._materialise, path)
+        if source is None:
+            return await self._dead_link(name)
+        located = _Located(source)
         try:
-            return await self._ingest(
-                path, name=name, actor=actor, reingest=reingest, located=located
+            report = await self._ingest(
+                source,
+                name=name,
+                actor=actor,
+                reingest=reingest,
+                waive_implausible=waive_implausible,
+                located=located,
             )
         except Exception as exc:  # noqa: BLE001 — quarantine is the catch-all
             logger.exception("ingest_failed", filename=name, path=str(located.path))
-            return await self._rescue(located.path, name=name, actor=actor, error=exc)
+            report = await self._rescue(
+                located.path,
+                name=name,
+                actor=actor,
+                error=exc,
+                quarantine=quarantine_on_failure,
+            )
+        # Both branches above have committed. Until one of them did, the inbox
+        # copy was the only guarantee that a crash could not lose the file.
+        await asyncio.to_thread(self._discard_inbox_copy, source)
+        return report
 
     # --- the pipeline proper -------------------------------------------------
 
     async def _ingest(
-        self, path: Path, *, name: str, actor: Actor, reingest: bool, located: _Located
+        self,
+        path: Path,
+        *,
+        name: str,
+        actor: Actor,
+        reingest: bool,
+        waive_implausible: bool,
+        located: _Located,
     ) -> IngestReport:
-        """Steps 1-7 of the module docstring, in one transaction."""
-        file_hash = _sha256(path)
+        """Steps 1-8 of the module docstring, in one transaction."""
+        file_hash = await asyncio.to_thread(_sha256, path)
         extension = extension_of(path)
 
         if not reingest:
@@ -292,7 +390,7 @@ class IngestPipeline:
                 return duplicate
 
         try:
-            activities = parse(path)
+            activities = await asyncio.to_thread(parse, path)
         except UnreadableFileError as exc:
             return await self._refuse_whole_file(
                 path,
@@ -306,11 +404,17 @@ class IngestPipeline:
             )
 
         plans = [
-            await self._classify(activity, file_hash, overlap=not reingest)
+            await self._classify(
+                activity,
+                file_hash,
+                overlap=not reingest,
+                waive_implausible=waive_implausible,
+            )
             for activity in activities
         ]
         placement = _Placement(
-            path=self._place(
+            path=await asyncio.to_thread(
+                self._place,
                 path,
                 destination=self._destination(plans, file_hash, extension),
             )
@@ -331,15 +435,22 @@ class IngestPipeline:
                     )
                 )
             else:
-                placement.sessions.append(
-                    await self._ingest_activity(
-                        plan.activity,
+                try:
+                    created = await self._ingest_activity(
+                        plan,
                         file_hash=file_hash,
                         extension=extension,
                         original=placement.path,
                         actor=actor,
                     )
-                )
+                except ConflictError:
+                    # The dedup key is taken: another writer ingested this file
+                    # between our read and our insert. The session has been
+                    # rolled back, so there is nothing of this run left to
+                    # report but the fact that the file is already here.
+                    return await self._lost_the_race(name=name, file_hash=file_hash)
+                placement.sessions.append(created)
+                placement.created.append(created)
 
         report = _report(name, file_hash, placement)
         await self._events.record(
@@ -361,18 +472,33 @@ class IngestPipeline:
         unresolved in quarantine. Neither may be parsed again — the first
         would duplicate a session, the second would duplicate the queue entry
         the athlete has not yet dealt with.
+
+        **A row is not a file.** Before the new arrival is treated as
+        redundant, the copy the row names is checked for existence: if it is
+        gone — deleted by hand, lost by a restore — the arrival *becomes* it
+        and the log says so. Discarding the last copy of the bytes on the
+        strength of a row pointing at nothing is the one outcome this module
+        exists to prevent.
         """
         known = await self._recordings.by_hash(file_hash)
         pending = await self._quarantine.pending_for_hash(file_hash)
         if not known and pending is None:
             return None
 
+        canonical = _canonical_copy(known, pending)
+        restored = await asyncio.to_thread(self._restore_canonical, path, canonical)
         detail = (
             f"already ingested as {len(known)} recording(s) of this file"
             if known
             else "already waiting in quarantine for a decision"
         )
-        self._discard_inbox_copy(path)
+        if restored:
+            detail = (
+                f"{detail}; the recorded copy was missing and this file restored it"
+            )
+            logger.info(
+                "canonical_copy_restored", file_hash=file_hash, path=str(canonical)
+            )
         sessions = tuple(dict.fromkeys(row.session_id for row in known))
         await self._events.record(
             filename=name,
@@ -392,13 +518,24 @@ class IngestPipeline:
         )
 
     async def _classify(
-        self, activity: ParsedActivity, file_hash: str, *, overlap: bool
+        self,
+        activity: ParsedActivity,
+        file_hash: str,
+        *,
+        overlap: bool,
+        waive_implausible: bool = False,
     ) -> _Plan:
         """Decide one activity's fate without writing anything.
 
         Two passes are needed because where the *file* goes depends on whether
         **any** activity in it is ingestible, and the rows that name that path
         cannot be written before it is known.
+
+        The order is the domain's: `validate` refuses a file before `resample`
+        is asked to make sense of it. Only then is the activity prepared — and
+        it has to be prepared *here*, because the overlap check below compares
+        disciplines and the discipline is not known until the resample has
+        reported how much of the file was actually recorded.
         """
         already = await self._recordings.by_dedup_key(
             file_hash, activity.file_sport_index
@@ -407,11 +544,16 @@ class IngestPipeline:
             return _Plan(activity, existing_session_id=already.session_id)
 
         verdict = validate(activity)
-        if verdict is not None:
+        if verdict is not None and not (
+            waive_implausible and verdict.reason is QuarantineReason.IMPLAUSIBLE_CHANNEL
+        ):
             return _Plan(activity, reason=verdict.reason, detail=verdict.detail)
 
+        prepared = await asyncio.to_thread(_prepare, activity)
         if overlap:
-            twin = await self._overlapping_session(activity)
+            twin = await self._overlapping_session(
+                activity, discipline=prepared.discipline
+            )
             if twin is not None:
                 twin_session, fraction = twin
                 return _Plan(
@@ -423,11 +565,12 @@ class IngestPipeline:
                         "confirm to discard it, or reject to keep both"
                     ),
                     suspected_session_id=twin_session.id,
+                    prepared=prepared,
                 )
-        return _Plan(activity)
+        return _Plan(activity, prepared=prepared)
 
     async def _overlapping_session(
-        self, activity: ParsedActivity
+        self, activity: ParsedActivity, *, discipline: SessionDiscipline
     ) -> tuple[SessionRow, float] | None:
         """The existing session this activity is probably a second copy of.
 
@@ -435,11 +578,19 @@ class IngestPipeline:
         ranges. Two exports of one ride differ by a few seconds at each end
         and score near 1; a short recording that merely happens to sit inside
         a long ride scores near 0, which is right — it is not a copy of it.
+
+        Only sessions of the **same discipline** are candidates. A ride and a
+        gym session share a wall clock all the time — the athlete lifts, then
+        rides — and "70 % of this ride overlaps your strength session" names a
+        session the file cannot be a second copy of, which is a decision the
+        athlete is being asked to take for no reason.
         """
         start = activity.start_time
         end = activity.samples[-1].t
         best: tuple[SessionRow, float] | None = None
         for candidate in await self._sessions.overlapping(start, end):
+            if candidate.discipline is not discipline:
+                continue
             shared = (
                 min(end, candidate.end_time) - max(start, candidate.start_time)
             ).total_seconds()
@@ -473,29 +624,91 @@ class IngestPipeline:
         return self._paths.quarantine_for(file_hash, extension)
 
     def _place(self, path: Path, *, destination: Path) -> Path:
-        """Move the file to its destination, and never lose it doing so.
+        """**Copy** the file to its destination, and never lose it doing so.
+
+        Copy rather than move, and the arrival is unlinked only after the
+        transaction that names the destination has committed (see the module
+        docstring). Until then the inbox copy is what a crash leaves behind,
+        and a crashed run is one the next sweep repeats rather than a file
+        sitting in ``originals/`` that no row mentions and nothing will ever
+        look at again.
+
+        The copy itself lands under a temporary name and is renamed into place,
+        so a destination that exists is a *complete* file rather than however
+        much of one a killed process managed to write.
 
         A destination that already exists is left alone: identical hash means
-        identical bytes, so the file already there *is* this file — the state
-        a crash between the move and the commit leaves behind, and re-running
-        must converge on it rather than fail.
+        identical bytes, so the file already there *is* this file — the state a
+        crash before the commit leaves behind, and re-running must converge on
+        it rather than fail.
 
         A file that is **already an original stays where it is**, whatever the
         computed destination says. The reject path re-reads an original, and a
         second sport within it can start in a different month from the first;
         moving the file would rewrite a path other rows already record, and
         ``originals/`` is the one tree nothing rewrites.
+
+        ``copy2`` follows a symbolic link and copies the bytes behind it, so
+        the destination is always a regular file however the arrival got there
+        — ``originals/`` holding a pointer would make a backup of that tree
+        useless (invariant 8).
         """
         if self._paths.is_original(path):
             return path
         if path.resolve() == destination.resolve():
             return destination
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            self._discard_inbox_copy(path)
-            return destination
-        shutil.move(str(path), str(destination))
+        if not destination.exists():
+            staging = destination.with_name(f".{destination.name}.incoming")
+            shutil.copy2(path, staging)
+            staging.replace(destination)
         return destination
+
+    def _restore_canonical(self, arrival: Path, canonical: Path | None) -> bool:
+        """Put the bytes back where a row says they are, if they are not there.
+
+        Returns whether anything was restored. Same identity, same bytes: the
+        arrival is a byte-for-byte copy of what the row describes (it was found
+        by hash), so copying it to the recorded path makes the row true again
+        rather than inventing a file. The arrival is left alone here — the
+        inbox copy is dropped after the commit, like every other placement.
+        """
+        if canonical is None or arrival.resolve() == canonical.resolve():
+            return False
+        if canonical.exists():
+            return False
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        staging = canonical.with_name(f".{canonical.name}.incoming")
+        shutil.copy2(arrival, staging)
+        staging.replace(canonical)
+        return True
+
+    def _materialise(self, path: Path) -> Path | None:
+        """Replace a symbolic link dropped in the inbox with the bytes it names.
+
+        The inbox is a transient drop point, so a link in it is replaced by a
+        real file of the same name and the pipeline carries on. Everything
+        downstream then holds an ordinary file: the link would otherwise be
+        re-hashed on every sweep for ever, because the guards that discard an
+        inbox copy resolve the path and find themselves outside the inbox.
+
+        Returns the path to read, or ``None`` when the link dangles — its
+        target is unreadable, there is nothing to ingest, and the link is
+        removed rather than left to fail identically every thirty seconds.
+        """
+        if not path.is_symlink() or not self._paths.is_inbox(path):
+            return path
+        staging = path.with_name(f".{path.name}.materialising")
+        try:
+            shutil.copyfile(path, staging)  # follows the link, streams the bytes
+        except OSError:
+            logger.warning("inbox_dead_link_removed", path=str(path))
+            staging.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
+            return None
+        staging.replace(path)
+        logger.info("inbox_link_materialised", path=str(path))
+        return path
 
     def _discard_inbox_copy(self, path: Path) -> None:
         """Remove a redundant copy — but only from the inbox.
@@ -503,35 +716,39 @@ class IngestPipeline:
         The inbox is a drop point and its files are transient. Everything else
         is somebody's record: **nothing under ``originals/`` is ever deleted**,
         and a quarantined file is the athlete's to rule on.
+
+        The containment test never resolves the file itself, only the directory
+        holding it: a symbolic link resolves to wherever it points, which is
+        how a link in the inbox used to escape this guard entirely.
         """
-        if not path.exists() or self._paths.is_original(path):
+        if not self._paths.is_inbox(path) or self._paths.is_original(path):
             return
-        if self._paths.inbox.resolve() not in path.resolve().parents:
-            return
-        path.unlink()
+        path.unlink(missing_ok=True)
 
     # --- writing -------------------------------------------------------------
 
     async def _ingest_activity(
         self,
-        activity: ParsedActivity,
+        plan: _Plan,
         *,
         file_hash: str,
         extension: str,
         original: Path,
         actor: Actor,
     ) -> uuid.UUID:
-        """Create the session, the recording, the parquet frame and the repairs."""
-        resampled = resample(activity.samples)
-        cleaned = clean(resampled.frame, recording_stops=resampled.recording_stops)
-        channels = channels_present(activity.samples)
-        discipline, classification = classify_discipline(
-            sport=activity.sport,
-            has_power=StreamChannel.POWER in channels,
-            has_speed=StreamChannel.SPEED in channels,
-            has_gps=StreamChannel.LAT in channels,
-            duration_s=resampled.elapsed_time_s,
-        )
+        """Create the session, the recording, the parquet frame and the repairs.
+
+        Raises:
+            ConflictError: When the dedup key ``(file_hash, file_sport_index)``
+                is already taken — the pre-check lost a race, and the caller
+                reports the winner rather than a failure.
+        """
+        activity = plan.activity
+        prepared = plan.prepared or await asyncio.to_thread(_prepare, activity)
+        resampled = prepared.resampled
+        cleaned = prepared.cleaned
+        channels = prepared.channels
+        discipline, classification = prepared.discipline, prepared.classification
         tz = timezone_label(activity.local_offset)
         session_row = await self._sessions.add(
             SessionRow(
@@ -556,7 +773,8 @@ class IngestPipeline:
                 channels=channels,
             )
         )
-        write_streams(
+        await asyncio.to_thread(
+            write_streams,
             stream_path(self._paths.streams, recording.id),
             frame=resampled.frame,
             cleaned=cleaned,
@@ -616,8 +834,10 @@ class IngestPipeline:
         located: _Located,
     ) -> IngestReport:
         """Quarantine a file nothing could be parsed out of."""
-        kept = self._place(
-            path, destination=self._paths.quarantine_for(file_hash, extension)
+        kept = await asyncio.to_thread(
+            self._place,
+            path,
+            destination=self._paths.quarantine_for(file_hash, extension),
         )
         located.path = kept
         record_id = await self._record_quarantine(
@@ -688,8 +908,67 @@ class IngestPipeline:
         )
         return row.id
 
+    async def _lost_the_race(self, *, name: str, file_hash: str) -> IngestReport:
+        """Report the writer that got there first, on a rolled-back session.
+
+        The unique constraint on ``(file_hash, file_sport_index)`` is the real
+        dedup check; the read in :meth:`_classify` is an optimisation that can
+        always be overtaken. Losing that race means the file **is** ingested —
+        by somebody else — which is a `duplicate_file`, not an error and
+        certainly not a quarantine record asking the athlete to rule on a file
+        that is already a session.
+        """
+        known = await self._recordings.by_hash(file_hash)
+        sessions = tuple(dict.fromkeys(row.session_id for row in known))
+        detail = (
+            f"another ingest of this file committed first; it is recorded as "
+            f"{len(known)} recording(s)"
+        )
+        logger.info("ingest_lost_dedup_race", filename=name, file_hash=file_hash)
+        await self._events.record(
+            filename=name,
+            file_hash=file_hash,
+            outcome=IngestOutcome.DUPLICATE_FILE,
+            detail=detail,
+            session_id=sessions[0] if sessions else None,
+        )
+        await commit(self._session)
+        return IngestReport(
+            filename=name,
+            file_hash=file_hash,
+            outcome=IngestOutcome.DUPLICATE_FILE,
+            detail=detail,
+            session_ids=sessions,
+        )
+
+    async def _dead_link(self, name: str) -> IngestReport:
+        """Log the link whose target could not be read, and move on."""
+        detail = (
+            "this inbox entry was a symbolic link whose target could not be "
+            "read; the link has been removed and nothing was ingested"
+        )
+        await self._events.record(
+            filename=name,
+            file_hash=None,
+            outcome=IngestOutcome.ERROR,
+            detail=detail,
+        )
+        await commit(self._session)
+        return IngestReport(
+            filename=name,
+            file_hash=None,
+            outcome=IngestOutcome.ERROR,
+            detail=detail,
+        )
+
     async def _rescue(
-        self, path: Path, *, name: str, actor: Actor, error: Exception
+        self,
+        path: Path,
+        *,
+        name: str,
+        actor: Actor,
+        error: Exception,
+        quarantine: bool = True,
     ) -> IngestReport:
         """Last resort: keep the file, say what broke, do not raise.
 
@@ -698,17 +977,24 @@ class IngestPipeline:
         one. If even this fails the exception propagates: at that point the
         database is unreachable, and inventing a success would be worse than
         letting the scheduler log it.
+
+        With ``quarantine`` false the file is left exactly where it is and only
+        the error event is written. That is the reject path: the athlete has
+        just resolved this file's record, and a fresh pending one — pointing,
+        in the multisport case, into ``originals/`` — would be a queue entry
+        for a decision that has already been taken.
         """
         await self._session.rollback()
         detail = f"the pipeline failed while ingesting this file: {error}"
         file_hash: str | None = None
         quarantined: tuple[uuid.UUID, ...] = ()
         try:
-            file_hash = _sha256(path)
+            file_hash = await asyncio.to_thread(_sha256, path)
         except OSError:
             file_hash = None
-        if file_hash is not None:
-            kept = self._place(
+        if file_hash is not None and quarantine:
+            kept = await asyncio.to_thread(
+                self._place,
                 path,
                 destination=self._paths.quarantine_for(file_hash, extension_of(path)),
             )
@@ -738,6 +1024,52 @@ class IngestPipeline:
             detail=detail,
             quarantine_ids=quarantined,
         )
+
+
+# --- the pure pass ------------------------------------------------------------
+
+
+def _prepare(activity: ParsedActivity) -> _Prepared:
+    """Resample, clean and classify one activity. No I/O, no database.
+
+    Run in a worker thread: this is the part of the pipeline that costs real
+    CPU (about a second for a four-hour FIT file), and a backfill of a season's
+    files would otherwise hold the event loop for minutes.
+
+    The duration handed to `classify_discipline` is the **recording** time, not
+    the elapsed: an hour in the gym with a forty-minute break between blocks
+    lasts a hundred minutes on the clock, and classifying it by that number
+    calls it ``other`` on the grounds that it took too long to be a gym
+    session.
+    """
+    resampled = resample(activity.samples)
+    cleaned = clean(resampled.frame, recording_stops=resampled.recording_stops)
+    channels = channels_present(activity.samples)
+    discipline, classification = classify_discipline(
+        sport=activity.sport,
+        has_power=StreamChannel.POWER in channels,
+        has_speed=StreamChannel.SPEED in channels,
+        has_gps=StreamChannel.LAT in channels,
+        duration_s=resampled.recording_time_s,
+    )
+    return _Prepared(
+        resampled=resampled,
+        cleaned=cleaned,
+        channels=channels,
+        discipline=discipline,
+        classification=classification,
+    )
+
+
+def _canonical_copy(
+    known: Sequence[RecordingRow], pending: QuarantineRecordRow | None
+) -> Path | None:
+    """Where the database says the bytes of an already-known file are kept."""
+    if known:
+        return Path(known[0].original_path)
+    if pending is not None:
+        return Path(pending.quarantined_path)
+    return None
 
 
 # --- row builders -------------------------------------------------------------
@@ -801,21 +1133,39 @@ def _source_labels(activity: ParsedActivity) -> dict[StreamChannel, str]:
 
 
 def _report(name: str, file_hash: str, placement: _Placement) -> IngestReport:
-    """Summarise what a file produced.
+    """Summarise what a file produced, counting only what it actually did.
 
     A file with one ingested activity and one quarantined one reports
     ``ingested``: something reached the calendar, and the quarantine record is
     on the report as well as in the queue.
+
+    A file whose every activity was **already** a session reports
+    ``duplicate_file``. It created nothing, and "2 session(s) ingested" would
+    be the ingest log's answer to "did anything happen when I dropped this in
+    again?" — the one question that log is opened for.
     """
-    ingested = bool(placement.sessions)
+    created, existing = (
+        placement.created,
+        len(placement.sessions) - len(placement.created),
+    )
+    if created:
+        outcome = IngestOutcome.INGESTED
+    elif placement.quarantines:
+        outcome = IngestOutcome.QUARANTINED
+    elif placement.sessions:
+        outcome = IngestOutcome.DUPLICATE_FILE
+    else:
+        outcome = IngestOutcome.QUARANTINED
+    parts = [f"{len(created)} session(s) ingested"] if created else []
+    if existing:
+        parts.append(f"{existing} activity(ies) already ingested")
+    if placement.quarantines or not parts:
+        parts.append(f"{len(placement.quarantines)} quarantined")
     return IngestReport(
         filename=name,
         file_hash=file_hash,
-        outcome=IngestOutcome.INGESTED if ingested else IngestOutcome.QUARANTINED,
-        detail=(
-            f"{len(placement.sessions)} session(s) ingested, "
-            f"{len(placement.quarantines)} quarantined"
-        ),
+        outcome=outcome,
+        detail=", ".join(parts),
         session_ids=tuple(placement.sessions),
         quarantine_ids=tuple(placement.quarantines),
     )

@@ -5,17 +5,34 @@ Build-plan WP-4.3. Every ``INGEST__SCAN_INTERVAL_SECONDS`` the job lists
 leave the inbox by being moved — into ``originals/`` or ``quarantine/`` — so
 the directory is empty again between sweeps and nothing is processed twice.
 
-**Two skips, and both are about half-written files.** A file whose last
-modification is more recent than ``INGEST__SETTLE_SECONDS`` may still be
-arriving; so may one whose size changed since the previous sweep. Reading
-either would quarantine a perfectly good ride as truncated, so the file waits
-for the next sweep instead. Dotfiles are skipped outright: they are the
-`.DS_Store`/`.syncthing.*.tmp` traffic every sync tool leaves behind.
+**Two conditions, and both are about half-written files.** A file is taken
+only when it has been unmodified for ``INGEST__SETTLE_SECONDS`` **and** was
+seen at this exact size on the previous sweep. The second is not a refinement
+of the first: `rsync -t`, `cp -p` and Syncthing all preserve the *source's*
+modification time, so a file that is still arriving can present an mtime from
+last Tuesday. Two sightings at one size is the only evidence this job has that
+nothing is still writing, which is why a file is never taken the first time it
+is seen — at thirty-second sweeps that costs a drop half a minute and buys
+never quarantining a complete ride as truncated.
+
+Dotfiles are skipped outright: they are the `.DS_Store`/`.syncthing.*.tmp`
+traffic every sync tool leaves behind. So is anything that is not a **regular
+file**: a symbolic link's target is somebody else's file, and copying a
+pointer into ``originals/`` would make that tree's backup a set of dangling
+links.
+
+**One poisoned file may not stop the sweep.** Each file is ingested inside its
+own try: the pipeline has its own catch-all, but the failures that escape it
+are the interesting ones (a name the filesystem refuses, a full disk), and
+without this guard the first such file would take every later file in the
+directory down with it, on this sweep and on every sweep after it.
 
 :func:`scan_inbox` is an ordinary coroutine taking its own paths, so a test
 drives it against a temporary directory directly — no scheduler, no sleeping.
 """
 
+import asyncio
+import stat
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -33,9 +50,10 @@ logger = get_logger(__name__)
 #: Job id under which the sweep is registered with APScheduler.
 INBOX_JOB_ID = "ingest_inbox_scan"
 
-#: Sizes seen on the previous sweep, by path. A file whose size changed since
-#: then is still being written, however old its mtime claims to be — some
-#: copiers preserve the source's modification time.
+#: Sizes seen on the previous sweep, by path. A file is taken only when this
+#: says it was already here at the same size: a file seen for the first time
+#: may be mid-copy however old its mtime claims to be, because some copiers
+#: preserve the source's modification time.
 _last_seen: dict[Path, int] = {}
 
 
@@ -43,6 +61,11 @@ def settled_files(
     inbox: Path, *, settle_seconds: float, now: float | None = None
 ) -> list[Path]:
     """The inbox files that look finished, oldest first.
+
+    A file must be a regular file (not a link, not a directory, not a fifo),
+    unmodified for ``settle_seconds``, **and** already recorded at this size by
+    the previous call. A first sighting is always skipped — it is what makes
+    the size comparison mean anything.
 
     Args:
         inbox: Directory to list. A missing directory yields nothing rather
@@ -62,14 +85,17 @@ def settled_files(
     settled: list[tuple[float, Path]] = []
     seen: dict[Path, int] = {}
     for path in sorted(inbox.iterdir()):
-        if not path.is_file() or path.name.startswith("."):
+        if path.name.startswith("."):
             continue
-        stat = path.stat()
-        seen[path] = stat.st_size
-        grew = _last_seen.get(path) not in (None, stat.st_size)
-        if grew or moment - stat.st_mtime < settle_seconds:
+        entry = path.lstat()  # lstat: a link is described, not followed
+        if not stat.S_ISREG(entry.st_mode):
             continue
-        settled.append((stat.st_mtime, path))
+        seen[path] = entry.st_size
+        if _last_seen.get(path) != entry.st_size:
+            continue  # first sighting, or still growing
+        if moment - entry.st_mtime < settle_seconds:
+            continue
+        settled.append((entry.st_mtime, path))
     _last_seen.clear()
     _last_seen.update(seen)
     return [path for _, path in sorted(settled)]
@@ -95,7 +121,14 @@ async def scan_inbox(
 
     One session per file rather than one for the sweep: a file that fails must
     not roll back the ones already ingested, and the pipeline's own catch-all
-    needs a usable session to write its quarantine record on.
+    needs a usable session to write its quarantine record on. One *try* per
+    file for the same reason, one level up: whatever the pipeline could not
+    handle stops at that file and the sweep carries on to the next.
+
+    The `sleep(0)` between files is not politeness. A backfill is a hundred
+    files in one call, and the health check the container is judged by has five
+    seconds to answer; this hands the loop back between them, on top of the
+    threads the pipeline already does its heavy work in.
 
     Args:
         paths: Data tree to sweep; read from settings when omitted.
@@ -117,9 +150,13 @@ async def scan_inbox(
     reports: list[IngestReport] = []
     actor = Actor.system()
     for path in files:
-        async with session_scope() as session:
-            pipeline = IngestPipeline.from_session(session)
-            reports.append(await pipeline.ingest_file(path, actor=actor))
+        try:
+            async with session_scope() as session:
+                pipeline = IngestPipeline.from_session(session)
+                reports.append(await pipeline.ingest_file(path, actor=actor))
+        except Exception:  # noqa: BLE001 — one file may not end the sweep
+            logger.exception("ingest_file_failed", path=str(path))
+        await asyncio.sleep(0)
     logger.info(
         "inbox_scanned",
         files=len(reports),

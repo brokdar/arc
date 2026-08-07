@@ -15,7 +15,7 @@ a record that is already resolved), never for a bad recording.
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
@@ -59,6 +59,20 @@ ServiceDep = Annotated[IngestService, Depends(get_service)]
 #: The multipart part carrying the device file.
 UploadDep = Annotated[UploadFile, File(description="A FIT, GPX or TCX file.")]
 
+#: How much a multipart envelope may add to the file it carries: a boundary,
+#: a couple of headers and the filename. Kilobytes, allowed generously — the
+#: point of the header check is to refuse gigabytes before they are spooled,
+#: not to police the last kilobyte, which `MAX_UPLOAD_BYTES` does exactly.
+MULTIPART_OVERHEAD_BYTES = 8 * 1024
+
+
+def _refuse_oversized(size: int, limit: int) -> None:
+    """Refuse an upload above the limit, in the athlete's units."""
+    if size > limit:
+        raise ValidationError(
+            f"The uploaded file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
+        )
+
 
 def to_report(report: IngestReport) -> IngestReportRead:
     """Project the pipeline's report onto its response shape."""
@@ -74,7 +88,7 @@ def to_report(report: IngestReport) -> IngestReportRead:
 
 @router.post("/upload", responses=INVALID)
 async def upload_activity_file(
-    service: ServiceDep, actor: ActorDep, file: UploadDep
+    request: Request, service: ServiceDep, actor: ActorDep, file: UploadDep
 ) -> IngestReportRead:
     """Upload one activity file and ingest it now.
 
@@ -83,14 +97,20 @@ async def upload_activity_file(
     with the reason it was refused. An upload above the size limit is refused
     with a 422.
     """
-    # The one piece of judgement this route carries, and it belongs here: the
-    # service refuses an oversized upload too, but by then it is already a
-    # `bytes` in memory. The part's declared size is known before the body is
-    # read, so the bound is applied where it costs nothing.
-    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
-        raise ValidationError(
-            f"The uploaded file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
-        )
+    # The bound is applied twice, and the first one is the one that matters.
+    # Multipart carries no declared part size: Starlette counts the bytes as it
+    # spools them, so `file.size` is only true once the whole body has been
+    # written to the container's disk — a 20 GB POST would fill the filesystem
+    # in order to be refused. The request's own `Content-Length` is known
+    # before a byte is read, and refusing on it never touches `file` at all.
+    # (Caddy holds the same line one hop earlier; this must stand without it,
+    # because the API is also reachable directly.)
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit():
+        _refuse_oversized(int(declared), MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES)
+    # And then the file itself, for a chunked request that declared nothing.
+    if file.size is not None:
+        _refuse_oversized(file.size, MAX_UPLOAD_BYTES)
     return to_report(
         await service.upload(
             filename=file.filename or "", content=await file.read(), actor=actor
@@ -135,12 +155,18 @@ async def confirm_quarantine(
 async def reject_quarantine(
     service: ServiceDep, actor: ActorDep, record_id: uuid.UUID
 ) -> QuarantineRejectRead:
-    """Overrule the verdict: this is not a duplicate, ingest it separately.
+    """Overrule the verdict: ingest this file anyway.
 
-    Only a `suspected_duplicate` can be rejected. A corrupt or implausible
-    file offers confirm (discard) and a re-drop after fixing it — disagreeing
-    with the parser does not make the bytes readable, so rejecting one is a
-    409 rather than an ingest that would fail identically.
+    Two verdicts can be overruled — `suspected_duplicate` ("this is a
+    different session") and `implausible_channel` ("one channel is broken, the
+    ride is not"; the cleaner nulls what it cannot believe, so nothing
+    out-of-range reaches analysis). A corrupt or too-short file offers confirm
+    (discard) and a re-drop after fixing it — disagreeing with the parser does
+    not make the bytes readable, so rejecting one is a 409 rather than an
+    ingest that would fail identically.
+
+    The answer is 200 even when the re-ingest did not produce a session: the
+    decision has been recorded either way, and the report says what came of it.
     """
     record, report = await service.reject(record_id, actor=actor)
     return QuarantineRejectRead(

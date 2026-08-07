@@ -5320,7 +5320,7 @@
     },
     "/api/v1/ingest/quarantine/{record_id}/reject": {
       "post": {
-        "description": "Overrule the verdict: this is not a duplicate, ingest it separately.\n\nOnly a `suspected_duplicate` can be rejected. A corrupt or implausible\nfile offers confirm (discard) and a re-drop after fixing it \u2014 disagreeing\nwith the parser does not make the bytes readable, so rejecting one is a\n409 rather than an ingest that would fail identically.",
+        "description": "Overrule the verdict: ingest this file anyway.\n\nTwo verdicts can be overruled \u2014 `suspected_duplicate` (\"this is a\ndifferent session\") and `implausible_channel` (\"one channel is broken, the\nride is not\"; the cleaner nulls what it cannot believe, so nothing\nout-of-range reaches analysis). A corrupt or too-short file offers confirm\n(discard) and a re-drop after fixing it \u2014 disagreeing with the parser does\nnot make the bytes readable, so rejecting one is a 409 rather than an\ningest that would fail identically.\n\nThe answer is 200 even when the re-ingest did not produce a session: the\ndecision has been recorded either way, and the report says what came of it.",
         "operationId": "ingest-reject_quarantine",
         "parameters": [
           {

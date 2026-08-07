@@ -55,6 +55,10 @@ TIME_TYPE = pa.timestamp("ms", tz="UTC")
 #: Parquet extension used for stream files.
 STREAM_SUFFIX = ".parquet"
 
+#: Appended while a stream file is being written; renamed away on success and
+#: removed on failure, so nothing at the real path is ever half a file.
+STAGING_SUFFIX = ".tmp"
+
 
 def stream_path(streams_root: Path, recording_id: uuid.UUID) -> Path:
     """Where one recording's samples are stored."""
@@ -95,6 +99,13 @@ def write_streams(
     sources: Mapping[StreamChannel, str] | None = None,
 ) -> None:
     """Write one recording's grid to parquet.
+
+    The file appears **whole or not at all**: the table is written to a
+    temporary name beside it and renamed into place, which is atomic within a
+    directory. A process killed mid-write would otherwise leave a truncated
+    parquet file at the path a recording row already names, and a truncated
+    parquet file is not a shorter ride — it is a read error for the lifetime of
+    that recording.
 
     Args:
         path: Destination; its parent is created if needed.
@@ -138,7 +149,12 @@ def write_streams(
         arrays, schema=pa.schema(zip(names, (a.type for a in arrays), strict=True))
     ).replace_schema_metadata(metadata)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path)
+    staging = path.with_name(f"{path.name}{STAGING_SUFFIX}")
+    try:
+        pq.write_table(table, staging)
+        staging.replace(path)
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 def read_streams(path: Path) -> StoredStreams:

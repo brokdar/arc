@@ -323,12 +323,18 @@ export interface paths {
     put?: never;
     /**
      * Reject Quarantine
-     * @description Overrule the verdict: this is not a duplicate, ingest it separately.
+     * @description Overrule the verdict: ingest this file anyway.
      *
-     *     Only a `suspected_duplicate` can be rejected. A corrupt or implausible
-     *     file offers confirm (discard) and a re-drop after fixing it — disagreeing
-     *     with the parser does not make the bytes readable, so rejecting one is a
-     *     409 rather than an ingest that would fail identically.
+     *     Two verdicts can be overruled — `suspected_duplicate` ("this is a
+     *     different session") and `implausible_channel` ("one channel is broken, the
+     *     ride is not"; the cleaner nulls what it cannot believe, so nothing
+     *     out-of-range reaches analysis). A corrupt or too-short file offers confirm
+     *     (discard) and a re-drop after fixing it — disagreeing with the parser does
+     *     not make the bytes readable, so rejecting one is a 409 rather than an
+     *     ingest that would fail identically.
+     *
+     *     The answer is 200 even when the re-ingest did not produce a session: the
+     *     decision has been recorded either way, and the report says what came of it.
      */
     post: operations["ingest-reject_quarantine"];
     delete?: never;

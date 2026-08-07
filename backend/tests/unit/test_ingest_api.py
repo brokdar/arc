@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from starlette.datastructures import UploadFile
 
 from tests.unit.activity_files import gpx_document, tcx_document
 from tests.unit.golden_fit import golden
@@ -88,8 +89,8 @@ async def test_an_empty_upload_is_refused(data_root: Path, client: AsyncClient) 
 async def test_an_oversized_upload_is_refused_before_it_is_read(
     data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The bound is checked from the declared part size, so a file too large to
-    # accept is never materialised in memory in order to be rejected.
+    # The bound is checked from the size Starlette counted while spooling, so
+    # a file too large to accept is never materialised in memory to be refused.
     monkeypatch.setattr("app.api.routes.ingest.MAX_UPLOAD_BYTES", 16)
 
     response = await client.post(
@@ -98,6 +99,43 @@ async def test_an_oversized_upload_is_refused_before_it_is_read(
 
     assert response.status_code == 422
     assert "larger than" in response.json()["detail"]
+    assert not list((data_root / "inbox").iterdir())
+
+
+async def test_a_body_declaring_itself_too_large_is_refused_unread(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Multipart carries no declared *part* size — `file.size` is only true once
+    # the whole body has been spooled. `Content-Length` is known before that,
+    # and it is the header the size limit is read from. The part below is 64
+    # bytes, so nothing but the declared length can be what refuses this.
+    async def never_read(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("the body of a refused upload must not be read")
+
+    monkeypatch.setattr(UploadFile, "read", never_read)
+
+    response = await client.post(
+        UPLOAD,
+        files={"file": ("big.fit", b"x" * 64, "application/octet-stream")},
+        headers={"content-length": str(200 * 1024 * 1024)},
+    )
+
+    assert response.status_code == 422
+    assert "larger than" in response.json()["detail"]
+    assert not list((data_root / "inbox").iterdir())
+
+
+async def test_an_absurdly_long_filename_is_an_outcome_not_a_500(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # `<uuid7>-<name>` has to fit in a filesystem's 255-byte name limit; the
+    # ENAMETOOLONG it used to raise was a bare 500 on a perfectly good ride.
+    report = await upload(
+        client, f"{'a' * 300}.fit", golden("outdoor_ride.fit").read_bytes()
+    )
+
+    assert report["outcome"] == "ingested"
+    assert report["filename"].startswith("aaa")
     assert not list((data_root / "inbox").iterdir())
 
 
@@ -202,6 +240,68 @@ async def test_rejecting_a_duplicate_ingests_it_as_its_own_session(
     assert list((data_root / "originals").glob("**/*.tcx")), "it became an original"
 
 
+async def test_a_failed_reingest_does_not_take_back_the_decision(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The decision is the athlete's and is committed before the pipeline runs.
+    # Sharing one transaction meant the pipeline's own rollback erased the
+    # resolution, left the file moved, and answered 500 on an expired row.
+    await upload(client, "ride.gpx", gpx_document().encode())
+    twin = await upload(client, "ride.tcx", tcx_document().encode())
+    [record_id] = twin["quarantine_ids"]
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("the disk caught fire")
+
+    monkeypatch.setattr("app.ingest.pipeline.write_streams", explode)
+    response = await client.post(f"{QUARANTINE}/{record_id}/reject")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record"]["status"] == "rejected_ingested"
+    assert body["record"]["resolved_at"] is not None
+    assert body["report"]["outcome"] == "error"
+    queue = (await client.get(QUARANTINE)).json()
+    assert [item["status"] for item in queue["items"]] == ["rejected_ingested"], (
+        "no phantom pending record for a file already ruled on"
+    )
+    assert "error" in [
+        event["outcome"] for event in (await client.get(EVENTS)).json()["items"]
+    ]
+    assert (await client.get("/api/v1/sessions")).json()["total"] == 1
+
+    # And nothing is wedged: the same bytes go through the queue again, and
+    # the second decision ingests them.
+    monkeypatch.undo()
+    again = await upload(client, "ride.tcx", tcx_document().encode())
+    assert again["outcome"] == "quarantined"
+    [new_record] = again["quarantine_ids"]
+    retried = await client.post(f"{QUARANTINE}/{new_record}/reject")
+    assert retried.json()["report"]["outcome"] == "ingested", retried.text
+    assert (await client.get("/api/v1/sessions")).json()["total"] == 2
+
+
+async def test_rejecting_a_broken_channel_ingests_it_cleaned(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # B-4 generalised: a file with one channel of nonsense is refused by
+    # default, but the athlete can overrule that — the cleaner nulls what it
+    # cannot believe, so what is ingested carries no out-of-range reading.
+    report = await upload(client, "absurd.gpx", gpx_document(power=9000).encode())
+    assert report["outcome"] == "quarantined"
+    [record_id] = report["quarantine_ids"]
+
+    response = await client.post(f"{QUARANTINE}/{record_id}/reject")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record"]["status"] == "rejected_ingested"
+    assert body["report"]["outcome"] == "ingested"
+    sessions = (await client.get("/api/v1/sessions")).json()
+    assert sessions["total"] == 1
+    assert not list((data_root / "quarantine").iterdir()), "it is an original now"
+
+
 async def test_rejecting_a_corrupt_file_is_a_conflict(
     data_root: Path, client: AsyncClient
 ) -> None:
@@ -213,7 +313,24 @@ async def test_rejecting_a_corrupt_file_is_a_conflict(
     response = await client.post(f"{QUARANTINE}/{record_id}/reject")
 
     assert response.status_code == 409
-    assert "suspected duplicate" in response.json()["detail"]
+    assert "unreadable_file" in response.json()["detail"]
+    assert (await client.get("/api/v1/sessions")).json()["total"] == 0
+
+
+async def test_rejecting_a_file_with_nothing_in_it_is_a_conflict(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # A file with ninety seconds in it does not gain a third minute by being
+    # disagreed with either.
+    report = await upload(
+        client, "short.gpx", gpx_document(seconds=range(0, 60, 5)).encode()
+    )
+    [record_id] = report["quarantine_ids"]
+
+    response = await client.post(f"{QUARANTINE}/{record_id}/reject")
+
+    assert response.status_code == 409
+    assert "too_short" in response.json()["detail"]
     assert (await client.get("/api/v1/sessions")).json()["total"] == 0
 
 
