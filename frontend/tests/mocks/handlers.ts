@@ -1,6 +1,8 @@
 import { createOpenApiHttp } from "openapi-msw";
 
 import type { paths } from "@/generated/api/schema";
+import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { plannedSessionFixture, planWeekFixture } from "@/tests/mocks/fixtures";
 
 /**
  * Typed MSW handlers: paths, params, and response bodies are all inferred
@@ -29,5 +31,42 @@ export const handlers = [
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     }),
+  ),
+  http.patch("/api/v1/athlete", async ({ request, response }) => {
+    const body = await request.json();
+    return response(200).json({
+      name: "Alex Rider",
+      date_of_birth: "1990-06-15",
+      sex: "male",
+      height_cm: 181.5,
+      capabilities: {},
+      plan_state: body.plan_state ?? "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+  }),
+
+  // The week the calendar asks for, built around whatever `start` it sends.
+  http.get("/api/v1/plan/week", ({ query, response }) => {
+    const start = query.get("start") ?? mondayOf(todayIsoDate());
+    return response(200).json(planWeekFixture(start));
+  }),
+  http.get(
+    "/api/v1/planned-sessions/{planned_session_id}",
+    ({ params, response }) =>
+      response(200).json(plannedSessionFixture(params.planned_session_id)),
+  ),
+  http.post(
+    "/api/v1/planned-sessions/{planned_session_id}/move",
+    ({ params, response }) =>
+      response(200).json(plannedSessionFixture(params.planned_session_id)),
+  ),
+  http.post(
+    "/api/v1/planned-sessions/{planned_session_id}/copy",
+    ({ params, response }) =>
+      response(201).json(plannedSessionFixture(params.planned_session_id)),
+  ),
+  http.delete("/api/v1/planned-sessions/{planned_session_id}", ({ response }) =>
+    response(204).empty(),
   ),
 ];

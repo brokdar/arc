@@ -1365,3 +1365,115 @@ The semantics stay as the build plan states them: paused means ingestion,
 matching and scoring carry on and **missed-session marking stops** (WP-6.7).
 Nothing consumes the field yet; it lands now so WP-6 reads state instead of
 writing a migration.
+
+## D59 — arc is dark-only, and its palette is one `@theme` block
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The application ships one colour scheme. `<html>` carries `dark`
+unconditionally, `:root` declares `color-scheme: dark`, and
+`frontend/app/globals.css` holds a single `@theme` block whose tokens are named
+for meaning (`--color-canvas`, `--color-ink-muted`, `--color-status-missed`,
+`--color-zone-4`) with the shadcn vocabulary (`--color-background`,
+`--color-primary`, `--color-border`, …) aliased onto those names rather than
+kept as a second palette. Type comes from `next/font` — Inter as the UI face,
+JetBrains Mono for **every** numeral, timestamp, duration and percentage — and
+the size scale is redefined dense (12.5px body, 9.5–10.5px labels) rather than
+left at Tailwind's defaults.
+
+This displaces the light/dark pair the shadcn scaffold arrived with, and the
+`prefers-color-scheme` switch that would have kept both alive.
+
+*Rationale:* the design capture in `docs/ui_mockups/` is a dark instrument
+panel, and the palette is doing semantic work — a completed session is green, a
+zone-5 bar is orange, a coach note is violet — that a light inversion would
+have to re-derive, not merely lighten. Two schemes would double every colour
+decision for one self-hosted athlete who never asked for the second. Aliasing
+the shadcn names instead of deleting them keeps the vendored components in
+`components/ui/` usable without a fork, and means a future re-skin is an edit
+to one block. Naming tokens semantically rather than by hue is what lets that
+edit stay in one place: nothing outside `globals.css` and `lib/purpose.ts`
+contains a colour.
+
+## D60 — `/` redirects to `/calendar`; there is no home page
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The root route is a server-side `redirect("/calendar")`. Signed-in pages live
+under the `app/(app)/` route group, which contributes nothing to the URL and
+declares the session guard and the application shell once; `/login` sits
+outside it.
+
+This displaces a dashboard at `/` (and the WP-0 placeholder page that stood
+there).
+
+*Rationale:* there is one athlete and one plan, and the week is the thing they
+open the application to see. A landing page would be a page whose only content
+is links to two other pages. The redirect is not a security boundary — it lands
+on a guarded route, so an unauthenticated visitor still reaches `/login`, one
+hop later. `/today` would have been the other candidate; the week is the
+better default because it is also where planning happens, and the Today view
+is one click away once it exists.
+
+## D61 — A section with no page yet is dimmed in the nav, never linked
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`NAV_ITEMS` in `components/shell/sidebar-nav.tsx` carries a `ready` flag. A
+section whose page does not exist renders as dimmed, inert text — the
+treatment the mockup itself gives the sections it previews — instead of a link
+to a 404. Shipping the page is flipping one boolean.
+
+This displaces both alternatives: linking to routes that do not exist, and
+hiding the sections until they do.
+
+*Rationale:* the sidebar is the app's table of contents, and an app that grows
+a nav item per work package looks unfinished in a different way each week. A
+dead link is a bug report; an absent one hides where the product is going.
+Dimmed-and-listed says "not yet" honestly, and keeps the shell's proportions
+stable as pages land.
+
+## D62 — Calendar cards carry no workout profile
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The mockup draws a miniature bar profile on each calendar card. `WeekSessionRead`
+does not carry a step tree — by design (D55): the week is a summary projection
+and the structure lives behind `GET /planned-sessions/{id}`. So the card shows
+the discipline, its own measure (minutes for a ride, sets for lifting), the
+title, the one-line intent, the purpose badge, the status dot and a step count;
+the bar profile appears in the session sheet, at the larger size, where the
+structure has actually been fetched. `WorkoutProfileBars` supports both sizes
+regardless.
+
+This displaces two ways of getting the bars onto the card: fetching the detail
+of every session in the week, and widening the week payload to include seven
+days of step trees.
+
+*Rationale:* a week of five sessions would be five extra requests to paint
+strips 134px wide, and putting the trees in the week response would make the
+calendar's payload grow with the complexity of its prescriptions — for a
+picture that is decorative at that size. The card's job is to say what the
+session is and whether it happened; the profile is a detail, and it is one
+click away.
+
+## D63 — Purpose colours are a typed table in TypeScript, not CSS tokens
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The eighteen purposes each get an edge, a foreground and a tint, held in
+`PURPOSE_TONES` in `frontend/lib/purpose.ts` and applied through `style`. The
+*semantic* palette (surfaces, ink, status, the zone ramp) stays in `@theme`
+where D59 put it.
+
+This displaces fifty-four `--color-purpose-*` custom properties in
+`globals.css`.
+
+*Rationale:* Tailwind only emits utilities it can read in the source, and a
+class name assembled from a value that arrives at runtime
+(`bg-purpose-${session.purpose}`) is invisible to it — so CSS tokens would have
+needed a safelist or a switch statement per component anyway. As a typed record
+keyed by the generated `Purpose` union, the table cannot miss a purpose without
+failing the type-check, and `purpose.test.ts` reads the enum out of the
+committed `openapi.json` so a vocabulary the backend gains fails a test rather
+than rendering an uncoloured chip.

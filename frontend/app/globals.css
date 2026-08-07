@@ -2,43 +2,149 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/*
+ * arc is dark-only by design (D59). `<html>` always carries `.dark`, so the
+ * variant still exists for vendored shadcn components that ship `dark:` rules,
+ * but nothing in this app is styled for a light canvas.
+ */
 @custom-variant dark (&:is(.dark *));
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/*
+ * The design system, taken from docs/ui_mockups/Training App.dc.html.
+ *
+ * Tokens are named for what they mean, never for what they look like: a card
+ * is `bg-card`, a completed session is `text-status-completed`. The palette is
+ * the one place a hex literal is allowed — everything else refers to a token,
+ * so a re-skin is an edit here and nowhere else.
+ */
+@theme {
+  /* --- Type ------------------------------------------------------------- */
+  /* Inter for prose and chrome; JetBrains Mono for EVERY numeral, timestamp,
+     duration and code-ish value. The mockup is rigorous about that split and
+     so is this app: `font-mono` on watts, dates, durations, percentages. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
+
+  /* A dense scale. Body text is 12.5px, labels 9.5–10.5px — this is an
+     information display, not a landing page. */
+  --text-2xs: 9.5px;
+  --text-2xs--line-height: 1.35;
+  --text-xs: 10.5px;
+  --text-xs--line-height: 1.4;
+  --text-sm: 11.5px;
+  --text-sm--line-height: 1.45;
+  --text-base: 12.5px;
+  --text-base--line-height: 1.5;
+  --text-lg: 13.5px;
+  --text-lg--line-height: 1.4;
+  --text-xl: 15px;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 19px;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 23px;
+  --text-3xl--line-height: 1.25;
+  --text-4xl: 25px;
+  --text-4xl--line-height: 1.25;
+
+  /* --- Surfaces --------------------------------------------------------- */
+  --color-canvas: #0b0c0e;
+  --color-chrome: #0e1013; /* sidebar and top bar */
+  --color-card: #131519;
+  --color-card-hover: #171a21;
+  --color-panel: #111317;
+  --color-inset: #0f1114; /* chart wells, forecast tiles */
+  --color-raised: #1b1e24; /* secondary buttons */
+  --color-raised-hover: #22262d;
+  --color-well: #1c1f25; /* progress-bar troughs */
+
+  /* --- Hairlines -------------------------------------------------------- */
+  --color-hairline: rgb(255 255 255 / 0.06);
+  --color-hairline-strong: rgb(255 255 255 / 0.09);
+
+  /* --- Ink -------------------------------------------------------------- */
+  --color-ink: #e8eaed;
+  --color-ink-secondary: #b7bdc6;
+  --color-ink-muted: #8a9099;
+  --color-ink-faint: #5c636d;
+  --color-ink-disabled: #6b727c;
+
+  /* --- Accent ----------------------------------------------------------- */
+  --color-accent: #4c8dff;
+  --color-accent-hover: #6ba0ff;
+  --color-accent-ink: #08111f; /* text ON a filled accent surface */
+  --color-accent-quiet: #a8bede; /* body text inside an accented card */
+  --color-accent-surface: #14181f;
+  --color-accent-border: rgb(76 141 255 / 0.4);
+
+  /* --- Status ----------------------------------------------------------- */
+  --color-status-completed: #4fb477;
+  --color-status-under: #d9a441;
+  --color-status-missed: #e05c5c;
+  --color-status-over: #a78bfa;
+  --color-status-pending: #6b7280;
+
+  /* --- Coach / intent --------------------------------------------------- */
+  /* Reserved now, used by the coach work packages (WP-8). The tint exists so
+     agent-written text is visually distinguishable from computed findings
+     wherever it lands (build-plan invariant 7). */
+  --color-coach: #b49bff;
+  --color-coach-strong: #c7b6ff;
+  --color-coach-ink: #d6d3e4;
+  --color-coach-surface: #15161c;
+  --color-coach-tint: rgb(167 139 250 / 0.16);
+  --color-coach-border: rgb(167 139 250 / 0.16);
+
+  /* --- Zone ramp -------------------------------------------------------- */
+  /* Workout profile bars. Ordered rest → Z5+, warm as intensity rises. */
+  --color-zone-rest: #667284;
+  --color-zone-2: #4a8fc7;
+  --color-zone-3: #56a36b;
+  --color-zone-4: #d19a3e;
+  --color-zone-5: #e0603c;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --radius: 9px;
+  --radius-badge: 4px;
+  --radius-button: 7px;
+  --radius-card: 9px;
+  --radius-panel: 11px;
+  --radius-shell: 13px;
+
+  /* --- shadcn compatibility -------------------------------------------- */
+  /* The vendored components in components/ui speak shadcn's vocabulary. Point
+     each name at the arc token that means the same thing rather than keeping a
+     second palette alive beside this one. */
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+  --color-card-foreground: var(--color-ink);
+  --color-popover: var(--color-card);
+  --color-popover-foreground: var(--color-ink);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: var(--color-accent-ink);
+  --color-secondary: var(--color-raised);
+  --color-secondary-foreground: var(--color-ink-secondary);
+  --color-muted: var(--color-raised);
+  --color-muted-foreground: var(--color-ink-muted);
+  --color-accent-foreground: var(--color-accent-ink);
+  --color-destructive: var(--color-status-missed);
+  --color-border: var(--color-hairline);
+  --color-input: var(--color-hairline-strong);
+  --color-ring: var(--color-accent);
+  --color-sidebar: var(--color-chrome);
+  --color-sidebar-foreground: var(--color-ink-secondary);
+  --color-sidebar-primary: var(--color-accent);
+  --color-sidebar-primary-foreground: var(--color-accent-ink);
+  --color-sidebar-accent: var(--color-card-hover);
+  --color-sidebar-accent-foreground: var(--color-ink);
+  --color-sidebar-border: var(--color-hairline);
+  --color-sidebar-ring: var(--color-accent);
+  --color-chart-1: var(--color-zone-rest);
+  --color-chart-2: var(--color-zone-2);
+  --color-chart-3: var(--color-zone-3);
+  --color-chart-4: var(--color-zone-4);
+  --color-chart-5: var(--color-zone-5);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,82 +155,32 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* One scheme, declared: form controls, scrollbars and the browser's own
+     surfaces render dark without a media query or a toggle. */
+  color-scheme: dark;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
-    @apply font-sans;
+    @apply bg-canvas font-sans text-ink;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-canvas text-base text-ink;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #23272e;
+    border-radius: 6px;
+    border: 3px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
   }
 }

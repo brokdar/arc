@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-3 — calendar & plan API, design system, week UI
+
+The plan becomes something you can look at and rearrange. Decisions D55–D63.
+
+**API (`backend/app/`)**
+
+- Added `GET /api/v1/plan/week?start=` — seven day objects, empty ones
+  included, each carrying flat session cards (discipline, purpose, status,
+  title, planned duration, step count, sets, the one-line intent and its
+  version). `start` is taken literally so a client can page by a day; omitted,
+  it defaults to the Monday of the current week (D55). Everything a card cannot
+  show stays behind `GET /planned-sessions/{id}`.
+- Added `POST /planned-sessions/{id}/move` and `/copy`: the calendar's two
+  gestures get their own verbs and their own audit actions rather than being
+  folded into the PATCH that can already change a date (D56). A copy is a *new*
+  session planned now — fresh intent chain, anchors pinned at what is in force
+  today, criteria carried over as they stand (D57).
+- Added `athlete.plan_state` (`active | paused`), read and written through the
+  existing athlete endpoints rather than a plan table and two verbs (D58).
+  Paused means missed-session marking stops; ingestion and scoring carry on.
+
+**Web — design system (`frontend/`)**
+
+- The application is **dark-only** (D59). `app/globals.css` holds one `@theme`
+  block of semantically named tokens — surfaces, hairlines, ink, accent,
+  session status, the coach/intent tint, the five-stop zone ramp, radii and a
+  dense type scale — with the shadcn vocabulary aliased onto them so the
+  vendored components keep working without a second palette. Inter and
+  JetBrains Mono come from `next/font`; every numeral, duration, date and
+  percentage in the app is set in the mono face.
+- Added the reusable pieces later pages assemble from: `AppShell` + `Toolbar` +
+  `PageBody`, `SidebarNav`, `Panel`, `SectionLabel`, `PurposeBadge` (every
+  value of the purpose enum, coloured), `StatusDot`, `WorkoutProfileBars`, a
+  Base UI `Sheet`, and a hand-drawn inline-SVG icon set including the two
+  discipline glyphs.
+- Added the pure helpers behind them in `lib/`: duration and date formatting,
+  ISO-week arithmetic on date strings (no timestamps, so a DST boundary cannot
+  shift a session), the step-tree → bar-profile flattening with its zone ramp,
+  the criteria-to-English translation, and the optimistic week mutation.
+
+**Web — calendar week page**
+
+- Added `/calendar`: a Mon–Sun grid of session cards with prev / this week /
+  next navigation, today's column and card in the accent treatment, and a
+  purpose-coloured left edge on every card. `/` now redirects there — there is
+  no separate home page (D60).
+- **Drag to move**: native HTML5 drag-and-drop from card to day column, with an
+  optimistic cache update, rollback on failure and invalidation on settle. The
+  session sheet offers the same move as a date picker for anyone not using a
+  mouse.
+- **Session sheet**: the full prescription behind a card — the larger bar
+  profile, the flattened step list (or the grouped strength lines), intent,
+  coach notes, the success criteria rendered as sentences, and move / copy /
+  delete / edit actions.
+- A paused plan shows a banner with a resume action, and the toolbar carries an
+  unobtrusive pause control.
+- Sections whose pages have not landed yet are listed dimmed rather than linked
+  to a 404 (D61); calendar cards carry no bar profile, because the week payload
+  deliberately carries no step trees (D62).
+
 ### WP-2 — workout model, library, purpose templates, planned sessions
 
 The prescription half of the loop: what a session *is*, what it is *for*, and
