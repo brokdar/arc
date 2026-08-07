@@ -144,6 +144,17 @@ export const PURPOSE_TONES: Readonly<Record<Purpose, PurposeTone>> = {
   },
 };
 
+/** The two disciplines, as a heading names them. */
+const DISCIPLINE_LABELS: Readonly<Record<Discipline, string>> = {
+  cycling: "Cycling",
+  strength: "Strength",
+};
+
+/** `Cycling` / `Strength` — the discipline as a row or a group is labelled. */
+export function disciplineLabel(discipline: Discipline): string {
+  return DISCIPLINE_LABELS[discipline];
+}
+
 /** The purpose's tone. Total over the enum, so no fallback branch. */
 export function purposeTone(purpose: Purpose): PurposeTone {
   return PURPOSE_TONES[purpose];

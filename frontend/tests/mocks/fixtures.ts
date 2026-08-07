@@ -327,7 +327,12 @@ function powerTarget(
 ): Schemas["ResolvedTargetRead"] {
   return {
     channel: "power",
-    prescribed: `${pctLow * 100}\u2013${pctHigh * 100} % FTP`,
+    // Rounded, the way the backend renders it: `1.14 * 100` is
+    // 114.00000000000001 in IEEE 754, and a fixture that says so is a fixture
+    // testing floating point rather than the sheet.
+    prescribed: `${Math.round(pctLow * 100)}\u2013${Math.round(
+      pctHigh * 100,
+    )} % FTP`,
     resolved_low: Math.round(pctLow * FTP_WATTS * 10) / 10,
     resolved_high: Math.round(pctHigh * FTP_WATTS * 10) / 10,
     unit: "W",

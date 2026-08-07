@@ -214,17 +214,123 @@ describe("CalendarWeek", () => {
     ).toBeInTheDocument();
     expect(
       within(sheet).getByText(
-        "75% of the work steps' time within 95%–105% of the prescribed power",
+        "75% of the work steps' time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
     expect(
       within(sheet).getByText(
-        "No more than 6:00 with heart rate above 178 bpm",
+        "No more than 6:00 with heart rate above 178 bpm, raw samples",
       ),
     ).toBeInTheDocument();
     expect(
       within(sheet).getByText(/Eat before you are hungry/),
     ).toBeInTheDocument();
+  });
+
+  it("says each step's target both ways: what was prescribed and what it resolves to", async () => {
+    renderCalendar();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    // `88–93 % FTP` is what survives an FTP change; the watts are what the
+    // athlete rides. Both, side by side, on the same row.
+    expect(within(sheet).getByText("50–60 % FTP")).toBeInTheDocument();
+    expect(within(sheet).getByText(/125–150 W/)).toBeInTheDocument();
+    // Repeats are expanded, so the list and the bars above it are the same
+    // eleven things in the same order.
+    expect(within(sheet).getAllByText("114–122 % FTP")).toHaveLength(5);
+  });
+
+  it("names the pinned anchor and marks an estimate as an estimate", async () => {
+    renderCalendar();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    expect(within(sheet).getByText(/Resolved against/)).toBeInTheDocument();
+    expect(within(sheet).getByText("FTP 250 W")).toBeInTheDocument();
+    expect(within(sheet).getByText("effective 01.06.2026")).toBeInTheDocument();
+
+    // An estimate has to read as an estimate, not as a fact: the mark carries
+    // its own styling and its own note, not just a different word.
+    const provenance = within(sheet).getByText("estimated");
+    expect(provenance).toHaveAttribute("data-untested", "true");
+    expect(provenance).toHaveAttribute(
+      "title",
+      expect.stringContaining("not a test"),
+    );
+  });
+
+  it("shows the predicted load with the arithmetic behind it, one disclosure away", async () => {
+    renderCalendar();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    expect(within(sheet).getByText("92")).toBeInTheDocument();
+    expect(within(sheet).getByText("IF 0.90")).toBeInTheDocument();
+    // Never a total without its coverage, on a session as on a week.
+    expect(
+      within(sheet).getByText(/86% of the time carried a power target/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(sheet).getByText("How this was computed"));
+    expect(within(sheet).getByText(/TSS = duration_s/)).toBeInTheDocument();
+    expect(
+      within(sheet).getByText("250 W (estimated, effective 2026-06-01)"),
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).getByText("target ranges reduced to their midpoint"),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByText(/Allen & Coggan/)).toBeInTheDocument();
+  });
+
+  it("says why a session has no predicted load rather than showing a zero", async () => {
+    server.use(
+      http.get(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        ({ params, response }) => {
+          const session = plannedSessionFixture(params.planned_session_id);
+          return response(200).json({
+            ...session,
+            pinned_anchors: [],
+            predicted_load: null,
+          });
+        },
+      ),
+    );
+
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    expect(
+      within(sheet).getByLabelText("Not assessed: No FTP anchor pinned"),
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).getByText(/no FTP anchor is pinned to this session/),
+    ).toBeInTheDocument();
+  });
+
+  it("states each criterion's smoothing window", async () => {
+    renderCalendar();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    expect(within(sheet).getByText(/30 s average/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/raw samples/)).toBeInTheDocument();
   });
 
   it("copies a session from the sheet onto another date", async () => {

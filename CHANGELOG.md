@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D74.
+D55–D76.
 
 **API (`backend/app/`)**
 
@@ -59,7 +59,7 @@ D55–D74.
 
 - The application is **dark-only** (D59). `app/globals.css` holds one `@theme`
   block of semantically named tokens — surfaces, hairlines, ink, accent,
-  session status, the coach/intent tint, the five-stop zone ramp, radii and a
+  session status, the coach/intent tint, the zone ramp, radii and a
   dense type scale — with the shadcn vocabulary aliased onto them so the
   vendored components keep working without a second palette. Inter and
   JetBrains Mono come from `next/font`; every numeral, duration, date and
@@ -73,6 +73,20 @@ D55–D74.
   ISO-week arithmetic on date strings (no timestamps, so a DST boundary cannot
   shift a session), the step-tree → bar-profile flattening with its zone ramp,
   the criteria-to-English translation, and the optimistic week mutation.
+- The **zone ramp has seven stops**, `--color-zone-1` … `--color-zone-7`, and
+  `lib/workout-profile.ts` buckets a %-of-FTP fraction through the backend's
+  own `coggan_7` boundaries (`0.55 / 0.75 / 0.90 / 1.05 / 1.20 / 1.50`) rather
+  than the display-only ones the mockup's five colours implied (D75). A test
+  fails if either table grows a stop the other has not. Heart rate maps its
+  five zones onto the same ramp, so a power chart and an HR chart will mean the
+  same thing at a glance; the top two stops are crimson and berry, never
+  purple, which stays reserved for agent-written text and over-target verdicts
+  (invariant 7) — and WP-5's fitness/fatigue series are bound by that too.
+- Added `components/design/not-assessed.tsx`: the `—` that holds a metric's
+  slot when there is no number for it, carrying *why* on hover and in its
+  accessible name. Missing data means "not assessed", never zero, and the grid
+  never reflows around a gap. WP-7's `not_assessed(reason)` axes render through
+  the same component.
 
 **Web — calendar week page**
 
@@ -88,6 +102,29 @@ D55–D74.
   profile, the flattened step list (or the grouped strength lines), intent,
   coach notes, the success criteria rendered as sentences, and move / copy /
   delete / edit actions.
+- The sheet now says each step's target **both ways** — `114–122 % FTP` with
+  `285–305 W` beside it in secondary ink — and names the pin once per sheet:
+  *"Resolved against FTP 250 W · estimated · effective 01.06.2026"*, with the
+  three non-tested provenances marked differently from `tested`, because an
+  estimate should read as an estimate. Predicted load renders with its coverage
+  and, behind a quiet disclosure, the `MetricExplanation` the API attaches to
+  it: formula, inputs naming the anchor *version*, assumptions, citation (D76).
+  A session with no predictable load gets the not-assessed placeholder and the
+  honest reason — no FTP pinned, no power target, or prescribed by distance —
+  never a zero.
+- Every criteria list in the app now states each band's and ceiling's
+  **smoothing window** ("…, 30 s average", "…, raw samples"), because a
+  criterion that hides its window is not one the athlete can hold anyone to.
+- Added the **week rail**, left of the seven-day grid so the totals stay beside
+  the days that produced them while paging weeks: planned time, planned load
+  *always* with its coverage ("3 of 5 sessions"), and a per-discipline row
+  whose TSS and set columns never merge. A week with nothing predictable reads
+  as not assessed rather than as a light week. The rail already declares the
+  props WP-4/WP-5 will fill — completed time and load, fitness, fatigue, form,
+  ramp — and renders nothing for the ones that are undefined, so it is laid out
+  at its final density once rather than twice; none of them is on the API
+  schema, because a wall of nulls in the contract is noise until something can
+  fill them.
 - A paused plan shows a banner with a resume action, and the toolbar carries an
   unobtrusive pause control.
 - Sections whose pages have not landed yet are listed dimmed rather than linked

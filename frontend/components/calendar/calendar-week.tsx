@@ -10,6 +10,7 @@ import {
 import type { WeekSession } from "@/components/calendar/session-card";
 import { SessionSheet } from "@/components/calendar/session-sheet";
 import { WeekGrid } from "@/components/calendar/week-grid";
+import { WeekRail } from "@/components/calendar/week-rail";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -183,13 +184,22 @@ export function CalendarWeek() {
             Could not load this week. Is the API reachable?
           </p>
         ) : (
-          <WeekGrid
-            days={week.data.days}
-            today={today}
-            onOpen={setOpenSession}
-            onMove={moveSession}
-            onPlan={(date) => setPlanning({ date })}
-          />
+          // The rail sits left of the grid on a wide screen and above it on a
+          // narrow one: seven 134px columns already scroll horizontally, and
+          // stealing 200px from them to keep the rail beside them would make
+          // the days unreadable before it made the totals inconvenient.
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+            <WeekRail week={week.data} className="xl:w-[212px] xl:shrink-0" />
+            <div className="min-w-0 flex-1">
+              <WeekGrid
+                days={week.data.days}
+                today={today}
+                onOpen={setOpenSession}
+                onMove={moveSession}
+                onPlan={(date) => setPlanning({ date })}
+              />
+            </div>
+          </div>
         )}
       </PageBody>
 

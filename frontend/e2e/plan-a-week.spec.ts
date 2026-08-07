@@ -88,7 +88,12 @@ async function mockApi(page: Page) {
           default_criteria: [
             {
               kind: "time_in_band",
-              band: { channel: "power", low: 0.92, high: 1.08 },
+              band: {
+                channel: "power",
+                low: 0.92,
+                high: 1.08,
+                smoothing_s: 30,
+              },
               min_fraction: 0.7,
               selector: { kind: "all", role: null, index: null },
             },
@@ -194,6 +199,9 @@ function week(
               step_count: 1,
               intent_text: session.intent,
               intent_version: 1,
+              predicted_load: 42.5,
+              predicted_intensity_factor: 0.92,
+              predicted_volume_load_kg: null,
             }))
           : [],
     };
@@ -204,6 +212,23 @@ function week(
     days,
     session_count: sessions.length,
     planned_duration_s: sessions.length * 1200,
+    // The week rail reads these; a total is never rendered without the count
+    // it was computed from, so the fake has to carry both.
+    planned_load: sessions.length > 0 ? sessions.length * 42.5 : null,
+    load_sessions_counted: sessions.length,
+    load_sessions_uncounted: 0,
+    by_discipline:
+      sessions.length > 0
+        ? [
+            {
+              discipline: "cycling",
+              session_count: sessions.length,
+              planned_duration_s: sessions.length * 1200,
+              planned_load: sessions.length * 42.5,
+              total_sets: null,
+            },
+          ]
+        : [],
   };
 }
 
@@ -245,7 +270,7 @@ test("write a workout, plan it, and see it on the week", async ({ page }) => {
   // The criteria arrive from the purpose's template, phrased in English.
   await expect(
     dialog.getByText(
-      "70% of the session's time within 92%–108% of the prescribed power",
+      "70% of the session's time within 92%–108% of the prescribed power, 30 s average",
     ),
   ).toBeVisible();
 

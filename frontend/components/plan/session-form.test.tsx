@@ -41,7 +41,7 @@ describe("planning a session", () => {
     await waitFor(() => expect(criteria()).toHaveLength(2));
     expect(
       screen.getByText(
-        "70% of the session's time within 92%–108% of the prescribed power",
+        "70% of the session's time within 92%–108% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Lasts at least 1:30:00")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("planning a session", () => {
     await waitFor(() => expect(criteria()).toHaveLength(1));
     expect(
       screen.getByText(
-        "85% of the work steps' time within 95%–105% of the prescribed power",
+        "85% of the work steps' time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
   });
@@ -81,7 +81,7 @@ describe("planning a session", () => {
     expect(criteria()).toHaveLength(1);
     expect(
       screen.getByText(
-        "70% of the session's time within 92%–108% of the prescribed power",
+        "70% of the session's time within 92%–108% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
     expect(

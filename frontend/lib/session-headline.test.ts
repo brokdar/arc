@@ -169,12 +169,14 @@ describe("sessionHeadline", () => {
       ],
     };
 
+    // The warm-up's midpoint is 52.5 % FTP, which is Z1 on the backend's
+    // coggan_7 ramp (Z2 opens at 55 %) — the old display ramp called it Z2.
     expect(
       sessionHeadline({
         purpose: "tempo",
         structure: mixed,
         plannedDurationS: 1800,
       }),
-    ).toBe("30min tempo ride — mixed Z2–Z4");
+    ).toBe("30min tempo ride — mixed Z1–Z4");
   });
 });

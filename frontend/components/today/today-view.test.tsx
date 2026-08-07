@@ -148,7 +148,7 @@ describe("TodayView", () => {
 
     expect(
       await screen.findByText(
-        "75% of the work steps' time within 95%–105% of the prescribed power",
+        "75% of the work steps' time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
   });

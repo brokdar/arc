@@ -1,6 +1,7 @@
 import type { components } from "@/generated/api/schema";
 
 import { formatDurationClock, formatPercent } from "@/lib/format";
+import { anchorLabel } from "@/lib/targets";
 
 type Schemas = components["schemas"];
 
@@ -11,14 +12,6 @@ export type SuccessCriterion =
   | Schemas["CeilingSchema"]
   | Schemas["SetsCompletedSchema"]
   | Schemas["LoadWithinSchema"];
-
-const ANCHOR_LABELS: Record<Schemas["AnchorType"], string> = {
-  ftp: "FTP",
-  lthr: "LTHR",
-  max_hr: "max HR",
-  cp: "CP",
-  w_prime: "W′",
-};
 
 const CHANNEL_LABELS: Record<Schemas["Channel"], string> = {
   power: "power",
@@ -33,6 +26,17 @@ const STEP_ROLE_LABELS: Record<Schemas["StepRole"], string> = {
   rest: "rest",
   cooldown: "cool-down",
 };
+
+/**
+ * `warm-up`, `cool-down` — a step's role in the words a plan uses.
+ *
+ * Not `step.role` prettified: `warmup` and `cooldown` are one word on the
+ * wire and two in English, and a component that title-cases the slug renders
+ * "Warmup".
+ */
+export function stepRoleLabel(role: Schemas["StepRole"]): string {
+  return STEP_ROLE_LABELS[role];
+}
 
 /**
  * One criterion as a sentence an athlete can check themselves against.
@@ -51,7 +55,9 @@ export function describeCriterion(criterion: SuccessCriterion): string {
       const high = formatPercent(criterion.band.high);
       return `${formatPercent(criterion.min_fraction)} of ${describeSelector(
         criterion.selector,
-      )} within ${low}–${high} of the prescribed ${channel}`;
+      )} within ${low}–${high} of the prescribed ${channel}${describeSmoothing(
+        criterion.band.smoothing_s,
+      )}`;
     }
     case "duration_floor":
       return `Lasts at least ${formatDurationClock(criterion.min_seconds)}`;
@@ -59,19 +65,33 @@ export function describeCriterion(criterion: SuccessCriterion): string {
       const channel = CHANNEL_LABELS[criterion.channel];
       const limit =
         criterion.limit.kind === "percent_of_anchor"
-          ? `${formatPercent(criterion.limit.pct)} of ${
-              ANCHOR_LABELS[criterion.limit.anchor_type]
-            }`
+          ? `${formatPercent(criterion.limit.pct)} of ${anchorLabel(
+              criterion.limit.anchor_type,
+            )}`
           : `${criterion.limit.value} ${criterion.limit.unit}`;
       return `No more than ${formatDurationClock(
         criterion.max_seconds_above,
-      )} with ${channel} above ${limit}`;
+      )} with ${channel} above ${limit}${describeSmoothing(
+        criterion.smoothing_s,
+      )}`;
     }
     case "sets_completed":
       return `${formatPercent(criterion.min_fraction)} of the prescribed sets completed`;
     case "load_within":
       return `Loads within ${formatPercent(criterion.pct_tolerance)} of what was prescribed`;
   }
+}
+
+/**
+ * The trailing clause naming a band's or a ceiling's smoothing window.
+ *
+ * Always said, never implied. The window is the difference between judging
+ * the athlete and judging the equipment — power is spiky at 1 Hz, and the same
+ * ride scores differently at 0 s and at 30 s — so a criterion that hides its
+ * window is not a criterion the athlete can hold anyone to (D73).
+ */
+function describeSmoothing(seconds: number): string {
+  return seconds > 0 ? `, ${seconds} s average` : ", raw samples";
 }
 
 /** The tag of each criterion in the union. */

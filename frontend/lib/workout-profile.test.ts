@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { components } from "@/generated/api/schema";
 import {
+  COGGAN_7_LOWER,
   flattenSteps,
   profileBars,
   totalDurationS,
   totalSets,
   type WorkoutStep,
+  ZONE_COLORS,
+  ZONE_LABELS,
   zoneToneFor,
 } from "@/lib/workout-profile";
 
@@ -69,17 +72,43 @@ describe("flattenSteps", () => {
 
 describe("zoneToneFor", () => {
   it("walks the ramp with intensity", () => {
-    expect(zoneToneFor(0.3)).toBe("rest");
+    expect(zoneToneFor(0.3)).toBe("z1");
     expect(zoneToneFor(0.55)).toBe("z2");
     expect(zoneToneFor(0.8)).toBe("z3");
     expect(zoneToneFor(0.95)).toBe("z4");
     expect(zoneToneFor(1.18)).toBe("z5");
   });
 
+  it("puts each Coggan boundary on the right side of itself", () => {
+    // One case either side of every published bound, so a boundary that
+    // drifts from `backend/app/domain/zones.py` fails here by name.
+    expect(zoneToneFor(0.54)).toBe("z1");
+    expect(zoneToneFor(0.56)).toBe("z2");
+    expect(zoneToneFor(0.89)).toBe("z3");
+    expect(zoneToneFor(0.91)).toBe("z4");
+    expect(zoneToneFor(1.06)).toBe("z5");
+    expect(zoneToneFor(1.21)).toBe("z6");
+    expect(zoneToneFor(1.51)).toBe("z7");
+  });
+
+  it("bands are half-open, so a bound belongs to the zone it opens", () => {
+    for (const [index, lower] of COGGAN_7_LOWER.entries()) {
+      expect(zoneToneFor(lower)).toBe(`z${index + 1}`);
+    }
+  });
+
+  it("has seven stops, the same seven the backend's coggan_7 has", () => {
+    // Adding a zone backend-side has to fail here loudly rather than paint
+    // the new one in the previous zone's colour.
+    expect(COGGAN_7_LOWER).toHaveLength(7);
+    expect(Object.keys(ZONE_LABELS)).toHaveLength(7);
+    expect(Object.keys(ZONE_COLORS)).toHaveLength(7);
+  });
+
   it("is monotonic across the boundaries", () => {
-    const order = ["rest", "z2", "z3", "z4", "z5"];
+    const order = ["z1", "z2", "z3", "z4", "z5", "z6", "z7"];
     let previous = -1;
-    for (let f = 0; f <= 1.5; f += 0.01) {
+    for (let f = 0; f <= 2; f += 0.01) {
       const index = order.indexOf(zoneToneFor(f));
       expect(index).toBeGreaterThanOrEqual(previous);
       previous = index;
@@ -117,7 +146,7 @@ describe("profileBars", () => {
   it("colours the work blocks above the recoveries", () => {
     const bars = profileBars(vo2);
     expect(bars[1]?.zone).toBe("z5");
-    expect(bars[2]?.zone).toBe("rest");
+    expect(bars[2]?.zone).toBe("z1");
     expect(bars[0]?.zone).toBe("z2");
   });
 
@@ -144,7 +173,7 @@ describe("profileBars", () => {
     const bars = profileBars(vo2);
     // The cool-down has no targets at all; it still gets a visible bar.
     expect(bars.at(-1)?.height).toBeGreaterThan(0);
-    expect(bars.at(-1)?.zone).toBe("rest");
+    expect(bars.at(-1)?.zone).toBe("z1");
   });
 
   it("normalises absolute targets against the workout's own hardest step", () => {

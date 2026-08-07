@@ -1729,3 +1729,92 @@ type-checks and then renders undefined. The cost that motivated the split —
 one anchor-version query per session — does not exist: `resolutions()` batches
 the whole page into one query, so a page of fifty sessions costs the same
 round-trips as one.
+
+## D75 — One zone ramp, seven stops, mirrored front and back; purple stays reserved
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`frontend/app/globals.css` declares a **seven-stop** positional zone ramp,
+`--color-zone-1` … `--color-zone-7`, and `frontend/lib/workout-profile.ts`
+buckets a %-of-FTP fraction through `COGGAN_7_LOWER = [0, 0.55, 0.75, 0.9,
+1.05, 1.2, 1.5]` — the same boundaries as `_ZONE_SCHEMES[ZoneModel.COGGAN_7]`
+in `backend/app/domain/zones.py`, with a test that fails if either table grows
+a stop the other does not have. Every zone surface reads those seven and
+nothing else; the heart-rate model (`lthr_5`) maps its five zones onto the same
+ramp (Z1→zone-1, Z2→zone-2, Z3→zone-4, Z4→zone-5, Z5→zone-7) rather than
+getting a ramp of its own.
+
+This displaces the five-token ramp (`--color-zone-rest`, `--color-zone-2` …
+`--color-zone-5`) and the display-only boundaries `0.45 / 0.75 / 0.88 / 1.05`
+that went with it — which the code's own comment described as "the Coggan-ish
+ones the mockup's colours imply, not the backend's zone model".
+
+The top two stops landed as `--color-zone-6: #cf3f57` (crimson) and
+`--color-zone-7: #ad3f74` (berry), not the work order's proposed `#c9414a` /
+`#8f2f3f`. The order's contract — seven stops, one ramp, purple never — is what
+binds; the hexes were explicitly proposals, and both were checked against
+`--color-card` (#131519) before landing. `#8f2f3f` reaches only 2.30:1, under
+the 3:1 WCAG 1.4.11 floor for a non-text graphical object, and the top zone is
+exactly the one drawn as a 30-second 1px-wide bar that cannot afford to
+disappear; `#c9414a` sits ΔE 9 from `--color-status-missed` (#e05c5c), close
+enough that a missed card and an anaerobic bar would read as the same red. The
+landed pair continues the hue rotation past orange into crimson and berry
+instead of darkening it: all seven stops clear 3:1 against the card (3.26–7.31)
+and adjacent stops are ≥ 26 ΔE apart.
+
+*Rationale:* three reasons, in order of how expensive they get later. The zone
+ramp is about to be read by a zone table, a histogram, a sparkline and a stream
+fill (WP-5), and a five-stop ramp means either two of `coggan_7`'s zones share
+a colour or every one of those surfaces invents its own — the fix costs one
+CSS block now and four components later. A card that paints 52 % FTP as "rest"
+while the backend calls the same number Z1 Recovery is a disagreement the
+athlete can see, and the reasoning that justified it ("deriving it from the
+athlete's anchors would mean fetching them per card") is right about *absolute*
+targets and wrong about relative ones: a `PercentOfAnchor` target is already a
+fraction of FTP, so mapping it through %FTP boundaries needs no anchor at all.
+The absolute-target path still scales against the workout's own hardest step
+and is unchanged. Finally, purple is spent: `--color-coach` (#b49bff) marks
+agent-written text and `--color-status-over` (#a78bfa) marks an over-target
+verdict, and invariant 7 requires interpretive content to stay visually
+distinguishable wherever it lands — so no training zone is purple, and WP-5's
+fitness/fatigue series must not be either. The CSS comment says so at the
+tokens, which is where someone reaching for a colour will be looking.
+
+*On numbering:* the work order's docs section asks for D59 to be written and
+for new entries to continue from D60. That instruction was written against a
+branch that predates slice 1 of WP-3; D59 (dark-only) exists and the log
+already runs to D74, so this entry continues from D75. Per the order's own §4
+rule, the deviation is recorded here rather than by editing the order.
+
+## D76 — An explanation travels with the number, not with the page
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+A computed metric carries its own `MetricExplanation` — formula, inputs,
+assumptions, citation — as data on the artefact (`PredictedLoadRead.explanation`,
+B5). The session sheet renders it behind a quiet disclosure, and the coverage
+that qualifies the number (`86 % of the time carried a power target`) is
+rendered beside the number itself rather than in a legend. `inputs` names the
+**anchor version's** value, provenance and effective date — "250 W (estimated,
+effective 2026-06-01)" — never the athlete's current FTP.
+
+This displaces contextual help attached to the screen: a tooltip, a glossary
+entry, or an "about TSS" paragraph on the page that shows it.
+
+*Rationale:* spec v2 §10 requires contextual education on every metric and §8.3
+requires every metric to carry a trust level, and neither has a work package of
+its own — so both only survive if the explanation is part of the artefact.
+Page copy has three failure modes that data does not: it can only agree with
+the function or be wrong, it has to be rewritten in each of the three places
+the number is rendered, and an MCP tool cannot hand it to the coaching agent,
+so the agent ends up citing facts the screen does not show. Establishing the
+type cost one dataclass while there was exactly one number to attach it to;
+retrofitting it would have meant touching every artefact WP-5 creates.
+
+The same reasoning is why the provenance line exists in the session sheet.
+`SessionIntent.pinned_anchor_versions` (D49) already made the resolution
+exactly correct and completely invisible: an FTP of 250 W that was *estimated*
+is a different claim from one that was *tested*, and every watt on the sheet
+inherits whichever it is. The three non-tested provenances are marked
+differently from `tested` rather than merely spelled differently, because a
+word alone is not a distinction a reader scanning numbers will pick up.

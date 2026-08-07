@@ -96,12 +96,34 @@
   --color-coach-border: rgb(167 139 250 / 0.16);
 
   /* --- Zone ramp -------------------------------------------------------- */
-  /* Workout profile bars. Ordered rest → Z5+, warm as intensity rises. */
-  --color-zone-rest: #667284;
-  --color-zone-2: #4a8fc7;
-  --color-zone-3: #56a36b;
-  --color-zone-4: #d19a3e;
-  --color-zone-5: #e0603c;
+  /* The canonical scale is the backend's 7-zone power model (coggan_7). Every
+     zone surface — profile bars, zone tables, histograms, the calendar
+     sparkline, the 30 s power fill — reads these seven and nothing else.
+     `COGGAN_7_LOWER` in lib/workout-profile.ts is the matching boundary table.
+
+     HR (lthr_5) has five zones and maps onto the SAME ramp, so a heart-rate
+     chart and a power chart mean the same thing at a glance:
+       HR Z1→zone-1, Z2→zone-2, Z3→zone-4, Z4→zone-5, Z5→zone-7.
+     Rule: first and last zone take the ramp endpoints, the rest spread evenly.
+
+     PURPLE IS SPENT AND STAYS SPENT. `--color-coach` (#b49bff) marks
+     agent-written text and `--color-status-over` (#a78bfa) marks an
+     over-target verdict; both are load-bearing, because invariant 7 requires
+     interpretive content to be visually distinguishable wherever it lands. So
+     the top training zone is not purple — and when WP-5 adds the
+     fitness/fatigue series, they must not be purple either.
+
+     zone-6 and zone-7 continue the hue rotation past orange into crimson and
+     berry rather than darkening it: every stop clears 3:1 against
+     `--color-card` (#131519), which a deeper maroon does not, and a 30 s
+     sprint is drawn as a 1px-wide bar that has to survive being narrow. */
+  --color-zone-1: #667284; /* recovery      */
+  --color-zone-2: #4a8fc7; /* endurance     */
+  --color-zone-3: #56a36b; /* tempo         */
+  --color-zone-4: #d19a3e; /* threshold     */
+  --color-zone-5: #e0603c; /* VO2max        */
+  --color-zone-6: #cf3f57; /* anaerobic     */
+  --color-zone-7: #ad3f74; /* neuromuscular */
 
   /* --- Radii ------------------------------------------------------------ */
   --radius: 9px;
@@ -139,11 +161,13 @@
   --color-sidebar-accent-foreground: var(--color-ink);
   --color-sidebar-border: var(--color-hairline);
   --color-sidebar-ring: var(--color-accent);
-  --color-chart-1: var(--color-zone-rest);
+  --color-chart-1: var(--color-zone-1);
   --color-chart-2: var(--color-zone-2);
   --color-chart-3: var(--color-zone-3);
   --color-chart-4: var(--color-zone-4);
   --color-chart-5: var(--color-zone-5);
+  --color-chart-6: var(--color-zone-6);
+  --color-chart-7: var(--color-zone-7);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);

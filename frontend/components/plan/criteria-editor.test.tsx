@@ -43,7 +43,7 @@ describe("CriteriaEditor", () => {
 
     expect(
       screen.getByText(
-        "75% of the work steps' time within 95%–105% of the prescribed power",
+        "75% of the work steps' time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
   });
@@ -57,7 +57,7 @@ describe("CriteriaEditor", () => {
 
     expect(
       screen.getByText(
-        "90% of the work steps' time within 95%–105% of the prescribed power",
+        "90% of the work steps' time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
   });
@@ -69,7 +69,7 @@ describe("CriteriaEditor", () => {
 
     expect(
       screen.getByText(
-        "75% of the session's time within 95%–105% of the prescribed power",
+        "75% of the session's time within 95%–105% of the prescribed power, 30 s average",
       ),
     ).toBeInTheDocument();
   });
@@ -86,7 +86,9 @@ describe("CriteriaEditor", () => {
 
     expect(screen.getAllByTestId("criterion")).toHaveLength(1);
     expect(
-      screen.getByText("No more than 5:00 with heart rate above 100% of LTHR"),
+      screen.getByText(
+        "No more than 5:00 with heart rate above 100% of LTHR, raw samples",
+      ),
     ).toBeInTheDocument();
     expect(onChange).toHaveBeenCalledWith([
       expect.objectContaining({ kind: "ceiling" }),
@@ -112,7 +114,9 @@ describe("CriteriaEditor", () => {
     await userEvent.type(screen.getByLabelText(/For no more than/), "6:00");
 
     expect(
-      screen.getByText("No more than 6:00 with heart rate above 178 bpm"),
+      screen.getByText(
+        "No more than 6:00 with heart rate above 178 bpm, raw samples",
+      ),
     ).toBeInTheDocument();
   });
 

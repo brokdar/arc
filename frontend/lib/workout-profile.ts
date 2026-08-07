@@ -26,30 +26,47 @@ export interface ProfileBar {
   readonly role: StepRole;
 }
 
-export type ZoneTone = "rest" | "z2" | "z3" | "z4" | "z5";
+export type ZoneTone = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
 
 /**
- * What each band of the display ramp is called, for a legend or a headline.
+ * Coggan 7 lower bounds as fractions of FTP.
  *
- * `Z1`…`Z5` rather than "recovery"/"threshold": the ramp is a display bucket
- * (see `zoneToneFor`), not the athlete's computed zones, and naming it after a
- * physiological state would claim more than the arithmetic supports.
+ * Mirrors `_ZONE_SCHEMES[ZoneModel.COGGAN_7]` in
+ * `backend/app/domain/zones.py` — if you change one, change both. The bands
+ * are half-open the same way the backend's are: `lower <= x < next lower`.
+ */
+export const COGGAN_7_LOWER: readonly number[] = [
+  0, 0.55, 0.75, 0.9, 1.05, 1.2, 1.5,
+];
+
+/**
+ * What each band of the ramp is called, for a legend or a headline.
+ *
+ * `Z1`…`Z7` rather than "recovery"/"threshold": the boundaries are the
+ * backend's, but a bar painted from a *prescribed* percentage is still a
+ * display bucket rather than the athlete's measured time in zone, and naming
+ * it after a physiological state would claim more than the arithmetic
+ * supports.
  */
 export const ZONE_LABELS: Readonly<Record<ZoneTone, string>> = {
-  rest: "Z1",
+  z1: "Z1",
   z2: "Z2",
   z3: "Z3",
   z4: "Z4",
   z5: "Z5",
+  z6: "Z6",
+  z7: "Z7",
 };
 
 /** CSS custom properties for the zone ramp, in intensity order. */
 export const ZONE_COLORS: Readonly<Record<ZoneTone, string>> = {
-  rest: "var(--color-zone-rest)",
+  z1: "var(--color-zone-1)",
   z2: "var(--color-zone-2)",
   z3: "var(--color-zone-3)",
   z4: "var(--color-zone-4)",
   z5: "var(--color-zone-5)",
+  z6: "var(--color-zone-6)",
+  z7: "var(--color-zone-7)",
 };
 
 /**
@@ -140,17 +157,21 @@ export function profileBars(
 /**
  * The zone band a relative intensity falls in.
  *
- * Boundaries are the Coggan-ish ones the mockup's colours imply, not the
- * backend's zone model: this is a display ramp for a card 134px wide, and
- * deriving it from the athlete's anchors would mean fetching them per card to
- * repaint five bars.
+ * Boundaries are the backend's `coggan_7`, so a step painted Z5 on a card is
+ * the zone the backend would name for the same fraction. That needs no anchor
+ * fetch: a `PercentOfAnchor` target is *already* a fraction of FTP, so the
+ * only thing an anchor would add is the watts — which is why the absolute
+ * path above scales against the workout's own hardest step instead.
  */
 export function zoneToneFor(fraction: number): ZoneTone {
-  if (fraction <= 0.45) return "rest";
-  if (fraction <= 0.75) return "z2";
-  if (fraction <= 0.88) return "z3";
-  if (fraction <= 1.05) return "z4";
-  return "z5";
+  let index = 0;
+  for (let z = COGGAN_7_LOWER.length - 1; z >= 0; z -= 1) {
+    if (fraction >= (COGGAN_7_LOWER[z] as number)) {
+      index = z;
+      break;
+    }
+  }
+  return `z${index + 1}` as ZoneTone;
 }
 
 /** Expand repeats; leave steady steps and ramps as single entries. */

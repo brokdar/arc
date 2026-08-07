@@ -72,6 +72,17 @@ const ANCHOR_LABELS: Readonly<Record<AnchorType, string>> = {
   w_prime: "W′",
 };
 
+/**
+ * `FTP`, `LTHR`, `W′` — an anchor as it is written on a prescription.
+ *
+ * Exported because three modules now name anchors (this one, the criteria
+ * translation and the session sheet's provenance line) and a third private
+ * copy of the table is a third place to forget a new anchor type.
+ */
+export function anchorLabel(anchorType: AnchorType): string {
+  return ANCHOR_LABELS[anchorType];
+}
+
 /** The channel order the Targets panel lists rows in. */
 const CHANNEL_ORDER: readonly Channel[] = ["power", "hr", "cadence"];
 
