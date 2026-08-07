@@ -19,7 +19,12 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.anchors import AnchorType
-from app.domain.criteria import CriterionKind, StepSelectorKind
+from app.domain.criteria import (
+    DEFAULT_BAND_SMOOTHING_S,
+    DEFAULT_CEILING_SMOOTHING_S,
+    CriterionKind,
+    StepSelectorKind,
+)
 from app.domain.workout import Channel, ChannelUnit, StepRole
 
 
@@ -45,6 +50,10 @@ class BandSchema(BaseModel):
     low: float
     #: Upper bound as a fraction of the prescribed target.
     high: float
+    #: Seconds of trailing rolling mean applied to the channel before it is
+    #: compared to the band; 0 means raw samples. Omit to take the default —
+    #: the window is part of the frozen intent, so it is always returned.
+    smoothing_s: int = DEFAULT_BAND_SMOOTHING_S
 
 
 class PercentLimitSchema(BaseModel):
@@ -101,6 +110,10 @@ class CeilingSchema(BaseModel):
     channel: Channel
     limit: LimitSchema
     max_seconds_above: int
+    #: Seconds of trailing rolling mean applied before the comparison.
+    #: Defaults to 0 — raw — because a ceiling is about excursions and
+    #: smoothing hides them.
+    smoothing_s: int = DEFAULT_CEILING_SMOOTHING_S
 
 
 class SetsCompletedSchema(BaseModel):

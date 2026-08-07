@@ -287,6 +287,9 @@
             ],
             "title": "Name"
           },
+          "plan_state": {
+            "$ref": "#/components/schemas/PlanState"
+          },
           "sex": {
             "$ref": "#/components/schemas/Sex"
           },
@@ -302,6 +305,7 @@
           "sex",
           "height_cm",
           "capabilities",
+          "plan_state",
           "created_at",
           "updated_at"
         ],
@@ -310,7 +314,7 @@
       },
       "AthleteUpdate": {
         "additionalProperties": false,
-        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex`` and ``capabilities``, \"clear\" means back to ``unspecified``\nand ``{}`` \u2014 those two have an empty value rather than an absent one).",
+        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex``, ``capabilities`` and ``plan_state``, \"clear\" means back to\n``unspecified``, ``{}`` and ``active`` \u2014 those three have an empty value\nrather than an absent one).",
         "properties": {
           "capabilities": {
             "anyOf": [
@@ -363,6 +367,16 @@
             ],
             "title": "Name"
           },
+          "plan_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sex": {
             "anyOf": [
               {
@@ -391,6 +405,11 @@
           "low": {
             "title": "Low",
             "type": "number"
+          },
+          "smoothing_s": {
+            "default": 30,
+            "title": "Smoothing S",
+            "type": "integer"
           }
         },
         "required": ["channel", "low", "high"],
@@ -430,6 +449,11 @@
           },
           "max_seconds_above": {
             "title": "Max Seconds Above",
+            "type": "integer"
+          },
+          "smoothing_s": {
+            "default": 0,
+            "title": "Smoothing S",
             "type": "integer"
           }
         },
@@ -707,6 +731,43 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MetricExplanationRead": {
+        "description": "Why a computed number is the number. Travels with it; not page copy.",
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "required": ["formula", "inputs", "assumptions", "citation"],
+        "title": "MetricExplanationRead",
+        "type": "object"
+      },
       "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
@@ -759,11 +820,11 @@
         "title": "Page[ExerciseRead]",
         "type": "object"
       },
-      "Page_PlannedSessionRead_": {
+      "Page_PlannedSessionListItem_": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/PlannedSessionRead"
+              "$ref": "#/components/schemas/PlannedSessionListItem"
             },
             "title": "Items",
             "type": "array"
@@ -782,7 +843,7 @@
           }
         },
         "required": ["items", "total", "offset", "limit"],
-        "title": "Page[PlannedSessionRead]",
+        "title": "Page[PlannedSessionListItem]",
         "type": "object"
       },
       "Page_WorkoutRead_": {
@@ -857,6 +918,244 @@
         },
         "required": ["anchor_type", "pct_low", "pct_high"],
         "title": "PercentOfAnchorSchema",
+        "type": "object"
+      },
+      "PinnedAnchorRead": {
+        "description": "One anchor version this session's percentages resolve against.\n\nThe pin is the product's most distinctive invariant (build-plan invariant\n4, D49) and it is worth nothing invisible: showing the provenance is what\nmakes an `estimated` FTP read as an estimate rather than a fact.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "anchor_version_id": {
+            "format": "uuid",
+            "title": "Anchor Version Id",
+            "type": "string"
+          },
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/AnchorUnit"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "anchor_type",
+          "anchor_version_id",
+          "value",
+          "unit",
+          "provenance",
+          "effective_date"
+        ],
+        "title": "PinnedAnchorRead",
+        "type": "object"
+      },
+      "PlanState": {
+        "description": "Whether the plan is being enforced.\n\n``PAUSED`` does not pause the application: see the module docstring for\nwhat it does and does not stop.",
+        "enum": ["active", "paused"],
+        "title": "PlanState",
+        "type": "string"
+      },
+      "PlanWeekDayRead": {
+        "description": "One day of the week, with the sessions planned for it.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/WeekSessionRead"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": ["date", "sessions"],
+        "title": "PlanWeekDayRead",
+        "type": "object"
+      },
+      "PlanWeekDisciplineRead": {
+        "description": "One week's totals for one discipline.\n\nThe two axes keep their own columns. ``planned_load`` is TSS and\n``total_sets`` counts strength sets; there is deliberately no field that\ncould hold their sum, because they measure different things (spec v2\n\u00a75.4, \u00a78.3).\n\nBoth totals carry their own coverage pair, so a row explains its own\nmissing number instead of leaving a client to invent a reason for it.",
+        "properties": {
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "duration_sessions_counted": {
+            "title": "Duration Sessions Counted",
+            "type": "integer"
+          },
+          "duration_sessions_uncounted": {
+            "title": "Duration Sessions Uncounted",
+            "type": "integer"
+          },
+          "load_sessions_counted": {
+            "title": "Load Sessions Counted",
+            "type": "integer"
+          },
+          "load_sessions_uncounted": {
+            "title": "Load Sessions Uncounted",
+            "type": "integer"
+          },
+          "planned_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
+          },
+          "planned_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Load"
+          },
+          "session_count": {
+            "title": "Session Count",
+            "type": "integer"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          }
+        },
+        "required": [
+          "discipline",
+          "session_count",
+          "planned_duration_s",
+          "duration_sessions_counted",
+          "duration_sessions_uncounted",
+          "planned_load",
+          "load_sessions_counted",
+          "load_sessions_uncounted",
+          "total_sets"
+        ],
+        "title": "PlanWeekDisciplineRead",
+        "type": "object"
+      },
+      "PlanWeekRead": {
+        "description": "Seven consecutive days of the plan, empty days included.",
+        "properties": {
+          "by_discipline": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekDisciplineRead"
+            },
+            "title": "By Discipline",
+            "type": "array"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekDayRead"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "duration_sessions_counted": {
+            "title": "Duration Sessions Counted",
+            "type": "integer"
+          },
+          "duration_sessions_uncounted": {
+            "title": "Duration Sessions Uncounted",
+            "type": "integer"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "load_sessions_counted": {
+            "title": "Load Sessions Counted",
+            "type": "integer"
+          },
+          "load_sessions_uncounted": {
+            "title": "Load Sessions Uncounted",
+            "type": "integer"
+          },
+          "planned_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
+          },
+          "planned_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Load"
+          },
+          "session_count": {
+            "title": "Session Count",
+            "type": "integer"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "days",
+          "session_count",
+          "planned_duration_s",
+          "duration_sessions_counted",
+          "duration_sessions_uncounted",
+          "planned_load",
+          "load_sessions_counted",
+          "load_sessions_uncounted",
+          "by_discipline"
+        ],
+        "title": "PlanWeekRead",
+        "type": "object"
+      },
+      "PlannedSessionCopy": {
+        "additionalProperties": false,
+        "description": "Payload for copying a planned session onto another date.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": ["date"],
+        "title": "PlannedSessionCopy",
         "type": "object"
       },
       "PlannedSessionCreate": {
@@ -981,8 +1280,8 @@
         "title": "PlannedSessionCreate",
         "type": "object"
       },
-      "PlannedSessionRead": {
-        "description": "One planned session, with the intent version in force.",
+      "PlannedSessionListItem": {
+        "description": "One planned session as a **list row**: everything but the expensive parts.\n\nDeliberately not `PlannedSessionRead` (D79, superseding that half of D74).\nA page of this collection is a page of *sessions*, and serving the resolved\nstep tree and the load explanation for every one of them costs megabytes\nof body and seconds of CPU that no list view spends. What is dropped is\ndropped whole rather than emptied: `resolved_steps`, `predicted_load` and\n`predicted_volume` are **absent from this shape**, not null in it, so a\nclient cannot mistake a list row for a session that has no prediction.\n\n`GET /planned-sessions/{id}` \u2014 and every write route, which answers with\nthe session it wrote \u2014 returns the full `PlannedSessionRead`.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -1009,6 +1308,13 @@
             "title": "Intent Versions",
             "type": "integer"
           },
+          "pinned_anchors": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedAnchorRead"
+            },
+            "title": "Pinned Anchors",
+            "type": "array"
+          },
           "status": {
             "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
           },
@@ -1026,7 +1332,110 @@
           "intent",
           "intent_versions",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "pinned_anchors"
+        ],
+        "title": "PlannedSessionListItem",
+        "type": "object"
+      },
+      "PlannedSessionMove": {
+        "additionalProperties": false,
+        "description": "Payload for moving a planned session to another date.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": ["date"],
+        "title": "PlannedSessionMove",
+        "type": "object"
+      },
+      "PlannedSessionRead": {
+        "description": "One planned session, with the intent version in force.\n\nThe resolved fields are computed on every read from the intent's frozen\nprescription and the anchor versions it pinned \u2014 never stored, so\nappending a new anchor cannot change what an existing session says.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/SessionIntentRead"
+          },
+          "intent_versions": {
+            "title": "Intent Versions",
+            "type": "integer"
+          },
+          "pinned_anchors": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedAnchorRead"
+            },
+            "title": "Pinned Anchors",
+            "type": "array"
+          },
+          "predicted_load": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictedLoadRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "predicted_volume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictedVolumeRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_steps": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedStepRead"
+            },
+            "title": "Resolved Steps",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "status",
+          "intent",
+          "intent_versions",
+          "created_at",
+          "updated_at",
+          "pinned_anchors",
+          "resolved_steps",
+          "predicted_load",
+          "predicted_volume"
         ],
         "title": "PlannedSessionRead",
         "type": "object"
@@ -1174,6 +1583,67 @@
           }
         },
         "title": "PlannedSessionUpdate",
+        "type": "object"
+      },
+      "PredictedLoadRead": {
+        "description": "What this prescription is expected to cost, and how that was arrived at.",
+        "properties": {
+          "anchor_version_id": {
+            "format": "uuid",
+            "title": "Anchor Version Id",
+            "type": "string"
+          },
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "explanation": {
+            "$ref": "#/components/schemas/MetricExplanationRead"
+          },
+          "intensity_factor": {
+            "title": "Intensity Factor",
+            "type": "number"
+          },
+          "load": {
+            "title": "Load",
+            "type": "number"
+          }
+        },
+        "required": [
+          "load",
+          "intensity_factor",
+          "coverage",
+          "anchor_version_id",
+          "explanation"
+        ],
+        "title": "PredictedLoadRead",
+        "type": "object"
+      },
+      "PredictedVolumeRead": {
+        "description": "What a strength prescription is expected to cost. **Not** a load.\n\nKilograms and TSS are different axes (spec v2 \u00a75.4, \u00a78.3): never add\n``volume_load_kg`` to ``PredictedLoadRead.load``, and never render the two\nin one column. Exactly one of the two is ever present on a session.",
+        "properties": {
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "total_sets": {
+            "title": "Total Sets",
+            "type": "integer"
+          },
+          "volume_load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Load Kg"
+          }
+        },
+        "required": ["volume_load_kg", "total_sets", "coverage"],
+        "title": "PredictedVolumeRead",
         "type": "object"
       },
       "Provenance": {
@@ -1476,6 +1946,140 @@
         },
         "required": ["times", "children"],
         "title": "RepeatBlockSchema",
+        "type": "object"
+      },
+      "ResolvedStepRead": {
+        "description": "One flattened step of the prescription, with its targets resolved.",
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "end_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedTargetRead"
+            },
+            "title": "End Targets",
+            "type": "array"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "is_ramp": {
+            "title": "Is Ramp",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/StepRole"
+          },
+          "start_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedTargetRead"
+            },
+            "title": "Start Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index",
+          "role",
+          "name",
+          "duration_s",
+          "distance_m",
+          "is_ramp",
+          "start_targets",
+          "end_targets"
+        ],
+        "title": "ResolvedStepRead",
+        "type": "object"
+      },
+      "ResolvedTargetRead": {
+        "description": "One channel's target, said both ways.\n\nThe prescription and the numbers are both returned because they are both\nthe truth: ``88\u201393 % FTP`` is what survives an FTP change and what a\npurpose template can express, ``220\u2013232 W`` is what the athlete rides.",
+        "properties": {
+          "anchor_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Version Id"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "prescribed": {
+            "title": "Prescribed",
+            "type": "string"
+          },
+          "resolved_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved High"
+          },
+          "resolved_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Low"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/ChannelUnit"
+          }
+        },
+        "required": [
+          "channel",
+          "prescribed",
+          "resolved_low",
+          "resolved_high",
+          "unit",
+          "anchor_version_id"
+        ],
+        "title": "ResolvedTargetRead",
         "type": "object"
       },
       "ScoringAxis": {
@@ -2047,6 +2651,158 @@
         },
         "required": ["detail"],
         "title": "ValidationErrorDetail",
+        "type": "object"
+      },
+      "WeekSessionRead": {
+        "description": "One planned session, as a calendar card shows it.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "intent_version": {
+            "title": "Intent Version",
+            "type": "integer"
+          },
+          "planned_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
+          },
+          "predicted_intensity_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Intensity Factor"
+          },
+          "predicted_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Load"
+          },
+          "predicted_load_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Load Coverage"
+          },
+          "predicted_volume_load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Volume Load Kg"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "step_count": {
+            "title": "Step Count",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "purpose",
+          "status",
+          "title",
+          "workout_id",
+          "planned_duration_s",
+          "total_sets",
+          "step_count",
+          "intent_text",
+          "intent_version",
+          "predicted_load",
+          "predicted_intensity_factor",
+          "predicted_load_coverage",
+          "predicted_volume_load_kg"
+        ],
+        "title": "WeekSessionRead",
         "type": "object"
       },
       "WorkoutCreate": {
@@ -3338,9 +4094,68 @@
         "tags": ["exercises"]
       }
     },
+    "/api/v1/plan/week": {
+      "get": {
+        "description": "Get seven consecutive days of the plan, empty days included.\n\nEach session is summarized for a calendar card; its full detail \u2014 step\ntree, criteria, pins, intent history \u2014 stays at\n`GET /api/v1/planned-sessions/{id}`.",
+        "operationId": "plan-get_plan_week",
+        "parameters": [
+          {
+            "description": "First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "description": "First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week.",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanWeekRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Plan Week",
+        "tags": ["plan"]
+      }
+    },
     "/api/v1/planned-sessions": {
       "get": {
-        "description": "List planned sessions in date order, optionally within a date range.",
+        "description": "List planned sessions in date order, optionally within a date range.\n\nA list row is lighter than the session it names (D79): no resolved step\ntree and no predicted-load explanation, because a page of two hundred\nsessions carrying either is measured in megabytes and in seconds of\nsynchronous CPU. The pins stay \u2014 they are one query for the whole page \u2014\nand the whole session is one request away at\n`GET /planned-sessions/{id}`.",
         "operationId": "planned-sessions-list_planned_sessions",
         "parameters": [
           {
@@ -3407,7 +4222,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_PlannedSessionRead_"
+                  "$ref": "#/components/schemas/Page_PlannedSessionListItem_"
                 }
               }
             },
@@ -3726,6 +4541,93 @@
         "tags": ["planned-sessions"]
       }
     },
+    "/api/v1/planned-sessions/{planned_session_id}/copy": {
+      "post": {
+        "description": "Copy a planned session onto another date.\n\nThe copy is a **new** planned session: status `planned`, its own intent\nchain starting at version 1, and its anchors pinned at the versions in\nforce now \u2014 a prescription freezes when it is planned, and this one is\nbeing planned now (invariant 4, D57).",
+        "operationId": "planned-sessions-copy_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionCopy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Copy Planned Session",
+        "tags": ["planned-sessions"]
+      }
+    },
     "/api/v1/planned-sessions/{planned_session_id}/intents": {
       "get": {
         "description": "List every intent version of one session, oldest first.\n\nUnpaged: intent versions are the history of one session's prescription,\nand there are a handful even for a much-edited one.",
@@ -3866,6 +4768,93 @@
           }
         ],
         "summary": "Get Planned Session Intent",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/planned-sessions/{planned_session_id}/move": {
+      "post": {
+        "description": "Move a planned session to another date.\n\nIts own verb rather than `PATCH ... {\"date\": ...}`, which does the same\nthing: dragging a card across the calendar is one intention, and the audit\ntrail should be able to say so (D56). Nothing about the prescription\nchanges \u2014 no intent version, no re-pinning.",
+        "operationId": "planned-sessions-move_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Move Planned Session",
         "tags": ["planned-sessions"]
       }
     },

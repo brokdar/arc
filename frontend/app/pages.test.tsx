@@ -1,12 +1,33 @@
 import { render, screen } from "@testing-library/react";
+import { redirect } from "next/navigation";
+import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
-
+import CalendarPage from "@/app/(app)/calendar/page";
+import AppLayout from "@/app/(app)/layout";
+import TodayPage from "@/app/(app)/today/page";
+import WorkoutPage from "@/app/(app)/workouts/[id]/page";
+import WorkoutsPage from "@/app/(app)/workouts/page";
 import LoginPage from "@/app/login/page";
 import Home from "@/app/page";
 import { Providers } from "@/app/providers";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/calendar",
+  useSearchParams: () => new URLSearchParams(),
+  redirect: vi.fn(),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({
+    href,
+    children,
+    ...props
+  }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  ),
 }));
 
 /**
@@ -28,15 +49,71 @@ describe("route shells", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the home page behind the auth guard", async () => {
+  it("sends the root at the week — there is no separate home", () => {
+    Home();
+
+    expect(redirect).toHaveBeenCalledWith("/calendar");
+  });
+
+  it("wraps every signed-in page in the guard and the shell", async () => {
     render(
       <Providers>
-        <Home />
+        <AppLayout>
+          <p>page content</p>
+        </AppLayout>
+      </Providers>,
+    );
+
+    expect(await screen.findByText("page content")).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Sections" }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the today page", async () => {
+    render(
+      <Providers>
+        <TodayPage />
       </Providers>,
     );
 
     expect(
-      await screen.findByRole("heading", { name: "arc" }),
+      await screen.findByRole("heading", { level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the workout library", async () => {
+    render(
+      <Providers>
+        <WorkoutsPage />
+      </Providers>,
+    );
+
+    expect(await screen.findByLabelText("Search")).toBeInTheDocument();
+  });
+
+  it("routes /workouts/new at the creator, and an id at the editor", async () => {
+    render(
+      <Providers>
+        {await WorkoutPage({ params: Promise.resolve({ id: "new" }) })}
+      </Providers>,
+    );
+
+    expect(await screen.findByText("New workout")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save workout" }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the calendar page", async () => {
+    render(
+      <Providers>
+        <CalendarPage />
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Calendar" }),
     ).toBeInTheDocument();
   });
 });

@@ -7,6 +7,424 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-3 — calendar & plan API, design system, week UI
+
+The plan becomes something you can look at, rearrange, and fill. Decisions
+D55–D88.
+
+**API (`backend/app/`)**
+
+- Added `GET /api/v1/plan/week?start=` — seven day objects, empty ones
+  included, each carrying flat session cards (discipline, purpose, status,
+  title, planned duration, step count, sets, the one-line intent and its
+  version). `start` is taken literally so a client can page by a day; omitted,
+  it defaults to the Monday of the current week (D55). Everything a card cannot
+  show stays behind `GET /planned-sessions/{id}`.
+- `WeekSessionRead` carries `predicted_load_coverage` beside its
+  `predicted_load` — the same fraction `PredictedLoadRead.coverage` reports on
+  the session itself, passed through from the one prediction rather than
+  recomputed, and null exactly when the load is (D88). Without it a client
+  rendering card-level loads cannot tell a fully covered prediction from a
+  40 %-covered one, which is the rule D78 set for week totals applied one level
+  down. Nothing renders it yet; card-level load arrives with WP-5's week strip.
+- Added `POST /planned-sessions/{id}/move` and `/copy`: the calendar's two
+  gestures get their own verbs and their own audit actions rather than being
+  folded into the PATCH that can already change a date (D56). A copy is a *new*
+  session planned now — fresh intent chain, anchors pinned at what is in force
+  today, criteria carried over as they stand (D57).
+- Added `athlete.plan_state` (`active | paused`), read and written through the
+  existing athlete endpoints rather than a plan table and two verbs (D58).
+  Paused means missed-session marking stops; ingestion and scoring carry on.
+- Success criteria declare their own **smoothing window**: `Band.smoothing_s`
+  (default 30 s) and `Ceiling.smoothing_s` (default 0 — raw) say how long a
+  trailing rolling mean is applied before the channel is compared (D73). The
+  window freezes with the intent instead of living in WP-7's scorer, so a
+  scoring change cannot rewrite what an already-scored session was judged
+  against. Every band and ceiling in `purpose_templates.json` states its own
+  (30 s for steady work, 10 s for VO₂max, 3 s for anaerobic; ceilings raw),
+  and a test refuses a template that relies on the default. Criteria are
+  tagged-union JSON and the decoder tolerates the key being absent, so no
+  migration was needed.
+- `GET /plan/week` now carries **predicted load and its coverage**: per card
+  `predicted_load`, `predicted_intensity_factor` and `predicted_volume_load_kg`;
+  per week `planned_load` (null, never 0, when nothing is predictable),
+  `load_sessions_counted` / `load_sessions_uncounted`, and a `by_discipline`
+  row (sessions, duration, load, sets). TSS and kilograms stay in separate
+  columns and are never summed. Everything is computed on read from the frozen
+  intent and its pins — no column, no migration, no cache (D72) — with the
+  week's pins loaded in one query. The prediction resolves against
+  `PinnedAnchor` pairs — an anchor version together with the id it was pinned
+  by — rather than bare versions, so the number can name what it resolved
+  against without an id being pushed onto the domain's id-free
+  `AnchorVersion` (D64); and it refuses to expand a prescription longer than
+  a day (`MAX_PREDICTABLE_DURATION_S`), because the workout model bounds steps
+  and step counts but not their product, and a legal tree can describe 43
+  million seconds of 1 Hz series on a read path (D65).
+- **Every week total says what it covers, and a total nothing contributed to
+  is null.** `planned_duration_s` is nullable — week-wide and per discipline —
+  and travels with `duration_sessions_counted` / `duration_sessions_uncounted`,
+  the way `planned_load` already travelled with its own pair; each
+  `by_discipline` row now carries **both** pairs, so a row explains its own
+  missing number instead of leaving a client to invent a reason (D78). A week
+  of two distance rides and a lift used to total `0` seconds and read as rest.
+  `session_count` reports the repository's true total, and any session past the
+  `MAX_WEEK_SESSIONS` render cap counts as uncounted on both axes rather than
+  vanishing from a total that then claims to be whole.
+- A planned session now **resolves its own pins**. `GET /planned-sessions/{id}`
+  and every write route add `resolved_steps` (each flattened step's targets
+  said both ways: `88–93 % FTP` *and* 220–232.5 W, with the anchor version that
+  resolved them), `pinned_anchors` (type, version id, value, unit, provenance,
+  effective date), `predicted_load` with a `MetricExplanation` — formula,
+  inputs naming the *version's* value and provenance, assumptions, citation
+  (D74) — and `predicted_volume` for a strength session (volume load in
+  kilograms, total sets, coverage), the other axis, never summed with the
+  first. Appending a new FTP anchor changes nothing on a session already
+  planned, which is invariant 4 finally made visible.
+- **`GET /planned-sessions` answers with a lighter row** than the session it
+  names: no `resolved_steps` and no predicted fields at all — absent from the
+  shape, not null in it — because a page of 200 sessions carrying them is
+  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request (D79, superseding
+  that half of D74). The pins stay, since the whole page's pins are one query.
+- A success criterion's smoothing window is now bounded **above** as well as
+  below: `MAX_SMOOTHING_S` is an hour, longer than any window that could mean
+  something, and the API answers 422 past it (D80). The field previously took
+  any non-negative integer the JSON carried.
+- A prediction's explanation no longer rounds its coverage to a flat `100%` or
+  `0%`: full coverage is said in words, and a partial one renders to one
+  decimal, clamped to `>99.9%` / `<0.1%` at the edges. One uncovered second in
+  half an hour used to print "100% of the duration carried a power target"
+  beside an assumption saying the opposite.
+- A target whose two bounds *render* identically collapses to a point —
+  `88 % FTP`, not `88–88 % FTP`. The collapse used to test the floats, which
+  binary floating point makes a different question from what a reader sees.
+- Enum columns are documented as what they compile to. `enum_column` emits a
+  plain `VARCHAR(n)` with **no** `CHECK` constraint on either dialect; the
+  docstrings claiming one — in `persistence/types.py` and in the `0004`
+  migration — now describe the emitted DDL and the consequence it was hiding:
+  a future member with a longer value widens the column and needs a batch
+  `ALTER COLUMN` (D81).
+
+**Web — design system (`frontend/`)**
+
+- The application is **dark-only** (D59). `app/globals.css` holds one `@theme`
+  block of semantically named tokens — surfaces, hairlines, ink, accent,
+  session status, the coach/intent tint, the zone ramp, radii and a
+  dense type scale — with the shadcn vocabulary aliased onto them so the
+  vendored components keep working without a second palette. Inter and
+  JetBrains Mono come from `next/font`; every numeral, duration, date and
+  percentage in the app is set in the mono face.
+- Added the reusable pieces later pages assemble from: `AppShell` + `Toolbar` +
+  `PageBody`, `SidebarNav`, `Panel`, `SectionLabel`, `PurposeBadge` (every
+  value of the purpose enum, coloured), `StatusDot`, `WorkoutProfileBars`, a
+  Base UI `Sheet`, and a hand-drawn inline-SVG icon set including the two
+  discipline glyphs.
+- The **eighteen purpose colours** live in a typed table in TypeScript
+  (`PURPOSE_TONES` in `lib/purpose.ts`: edge, foreground, tint per purpose),
+  applied through `style` rather than as fifty-four `--color-purpose-*` custom
+  properties — Tailwind cannot emit a utility whose class name is assembled at
+  runtime, so CSS tokens would have needed a safelist anyway (D63). Keyed by
+  the generated `Purpose` union, the table cannot miss a purpose without
+  failing the type-check, and its test reads the vocabulary out of the
+  committed `openapi.json`. The *semantic* palette stays in `@theme`.
+- Added the pure helpers behind them in `lib/`: duration and date formatting,
+  ISO-week arithmetic on date strings (no timestamps, so a DST boundary cannot
+  shift a session), the step-tree → bar-profile flattening with its zone ramp,
+  the criteria-to-English translation, and the optimistic week mutation.
+- The **zone ramp has seven stops**, `--color-zone-1` … `--color-zone-7`, and
+  `lib/workout-profile.ts` buckets a %-of-FTP fraction through the backend's
+  own `coggan_7` boundaries (`0.55 / 0.75 / 0.90 / 1.05 / 1.20 / 1.50`) rather
+  than the display-only ones the mockup's five colours implied (D75). A test
+  fails if either table grows a stop the other has not. Heart rate maps its
+  five zones onto the same ramp, so a power chart and an HR chart will mean the
+  same thing at a glance; the top two stops are crimson and berry, never
+  purple, which stays reserved for agent-written text and over-target verdicts
+  (invariant 7) — and WP-5's fitness/fatigue series are bound by that too.
+- Added `components/design/not-assessed.tsx`: the `—` that holds a metric's
+  slot when there is no number for it, carrying *why* on hover and in its
+  accessible name. Missing data means "not assessed", never zero, and the grid
+  never reflows around a gap. WP-7's `not_assessed(reason)` axes render through
+  the same component.
+
+**Web — calendar week page**
+
+- Added `/calendar`: a Mon–Sun grid of session cards with prev / this week /
+  next navigation, today's column and card in the accent treatment, and a
+  purpose-coloured left edge on every card. `/` now redirects there — there is
+  no separate home page (D60).
+- **The week you are looking at is part of the address**: `/calendar?week=2026-08-03`
+  (D77). The param is an ISO date taken literally, the way the endpoint takes
+  `start` (D55); an unreadable one and an absent one both mean this week, so a
+  bare `/calendar` is the evergreen bookmark and is where "This week" returns
+  to. Stepping replaces the history entry rather than pushing one, so the back
+  button still means "leave the calendar" after a minute of paging. The page
+  gained a `<Suspense>` boundary, which is what keeps it prerendered as static
+  now that it reads `useSearchParams`.
+- **Drag to move**: native HTML5 drag-and-drop from card to day column, with an
+  optimistic cache update, rollback on failure and invalidation on settle. The
+  session sheet offers the same move as a date picker for anyone not using a
+  mouse.
+- **Session sheet**: the full prescription behind a card — the larger bar
+  profile, the flattened step list (or the grouped strength lines), intent,
+  coach notes, the success criteria rendered as sentences, and move / copy /
+  delete / edit actions.
+- The sheet now says each step's target **both ways** — `114–122 % FTP` with
+  `285–305 W` beside it in secondary ink — and names the pin once per sheet:
+  *"Resolved against FTP 250 W · estimated · effective 01.06.2026"*, with the
+  three non-tested provenances marked differently from `tested`, because an
+  estimate should read as an estimate. Predicted load renders with its coverage
+  and, behind a quiet disclosure, the `MetricExplanation` the API attaches to
+  it: formula, inputs naming the anchor *version*, assumptions, citation (D76).
+  A session with no predictable load gets the not-assessed placeholder and the
+  honest reason — no FTP pinned, no power target, or prescribed by distance —
+  never a zero.
+- Every criteria list in the app now states each band's and ceiling's
+  **smoothing window** ("…, 30 s average", "…, raw samples"), because a
+  criterion that hides its window is not one the athlete can hold anyone to.
+- Added the **week rail**, left of the seven-day grid so the totals stay beside
+  the days that produced them while paging weeks: planned time, planned load
+  *always* with its coverage ("3 of 5 sessions"), and a per-discipline row
+  whose TSS and set columns never merge. A week with nothing predictable reads
+  as not assessed rather than as a light week. The rail already declares the
+  props WP-4/WP-5 will fill — completed time and load, fitness, fatigue, form,
+  ramp — and renders nothing for the ones that are undefined, so it is laid out
+  at its final density once rather than twice; none of them is on the API
+  schema, because a wall of nulls in the contract is noise until something can
+  fill them.
+- A paused plan shows a banner with a resume action, and the toolbar carries an
+  unobtrusive pause control.
+- Sections whose pages have not landed yet are listed dimmed rather than linked
+  to a 404 (D61); calendar cards carry no bar profile, because the week payload
+  deliberately carries no step trees (D62).
+
+**Web — workout library and creator**
+
+- Added `/workouts`: the library as a grid of cards — discipline glyph, the
+  prescription's own measure (minutes for a ride, sets for a lift), the bar
+  profile, description and the folder/tag labels — with a search box and
+  folder/tag filters that go to the server (`q`, `folder`, `tag`) rather than
+  filtering one fetched page. A card carries **no purpose badge**: a workout has
+  no purpose, because purpose is a property of planning a session, not of the
+  prescription (D66). The empty state names the remedy and carries the control.
+- Added `/workouts/new` and `/workouts/{id}` — one route, one form, two verbs
+  (POST / PATCH) — with name, folder (autocompleting from labels in use), tags,
+  description, and a discipline switch that is fixed once a workout is saved.
+- **Endurance builder**: a step-tree editor that mirrors the recursive model —
+  steady steps, ramps and repeat blocks, with children rendered *inside* the
+  block that repeats them, per-step role and duration-or-distance, reordering
+  and removal, and nesting stopped at the domain's `MAX_NESTING_DEPTH`.
+- **Per-channel targets** with a %-of-anchor / absolute toggle that switches the
+  *document*, not the formatting: percentage targets carry an anchor and two
+  fractions, absolute ones a unit and two numbers. Cadence is offered in
+  absolute form only, because no anchor derives it.
+- **Live profile preview**, drawn from the unsaved draft through the same
+  `profileBars` the calendar uses, so a repeat block's expansion is visible
+  while it is being typed.
+- **Strength builder**: rows of movement × sets × reps × load (kg / %e1RM / RPE
+  / bodyweight) × RIR × rest, grouped — and a group holding more than one row
+  *is* a superset, with no flag to keep in step with the count. The movement
+  picker resolves real names from `GET /exercises`, which the calendar sheet now
+  uses too instead of prettifying a slug.
+- The builder's state is a string-typed client draft with client-side node ids,
+  translated to and from the API's structure document by three pure functions
+  (D70). It mirrors the domain's plausibility bounds so an obvious mistake is
+  caught without a round trip, and renders the API's 422 verbatim when the
+  server refuses something the browser could not have known about (D68).
+
+**Web — planning a session**
+
+- Added the plan-a-session form, reached from the calendar toolbar, from a
+  per-day `+` on any column (pre-filled with that date), and from Today. It
+  takes a date, a purpose (grouped by discipline), a prescription from **either**
+  the library — with a picker that previews the profile — **or** the inline
+  builder, an intent line, notes to self, and the success criteria.
+- **Success criteria follow the purpose's template until the athlete touches
+  them** (D67): the template is loaded from `GET /purposes/{purpose}` and
+  re-derived whenever the purpose changes, until the first edit; a reset action
+  puts the list back under the template's control. Criteria are shown and edited
+  as the English sentences `describeCriterion` produces, and only the kinds the
+  discipline can be judged by are on offer.
+- **Editing** a planned session opens the same form pre-filled and PATCHes only
+  the fields that changed, so a note fixed in place does not re-pin anchors and
+  a body never carries both `workout_id` and `structure`. The session sheet's
+  Edit now edits the *session*; the library workout behind it is a separate,
+  quieter link (D69).
+
+**Web — Today**
+
+- Added `/today`: the purpose badge and date, a **one-sentence headline composed
+  from the plan** ("3h10 endurance ride — steady Z2", "1h09 VO₂max ride — 5×4′
+  at Z5", "10 sets of max strength — 3 movements, one superset") by a pure
+  helper, the intent line, the large bar profile with a zone legend, a Targets
+  panel giving each channel's band across the whole prescription, the success
+  criteria, and a "This week" list linking to the calendar.
+- Percentage targets are resolved into watts and bpm **only when the anchor they
+  name is in force**, and the resolved figure always shows the percentage it
+  came from; with no anchor entered, the panel stays in percentages rather than
+  inventing a number.
+- The athlete's own notes render on a neutral surface: the design system's
+  violet stays reserved for agent-written text (D71).
+- A day with nothing planned is a deliberate rest-day state with a way out of
+  it, and a day with two sessions renders both, the one still to do first.
+- Weather, readiness/HRV/TSB, RPE logging, load numbers and coach proposals are
+  in the mockup and deliberately absent here — they belong to work packages that
+  do not exist yet.
+- Today and Workouts are no longer dimmed in the sidebar, and a nested route
+  (`/workouts/new`) marks the section it belongs to.
+
+**Web — fixed before the week UI shipped**
+
+- **Today resolved percentages against the anchor in force, not the session's
+  pins.** It fetched `/anchors/current` and multiplied; the page therefore
+  restated every planned watt the moment a new FTP was appended, and labelled a
+  guess with the current version's provenance. Targets, the zone legend and a
+  new flattened step list now render from the session's own `resolved_steps`,
+  and the provenance line (`ProvenanceMark` / `AnchorProvenance`, extracted to
+  `components/design/` and shared with the calendar sheet) says whose FTP they
+  came from. The `/anchors/current` resolution path is gone; there is no
+  function left in `lib/targets.ts` that can multiply a percentage by an
+  anchor.
+- **`widen()` unioned percentage bands across different anchors**, turning
+  `85 % LTHR` and `75 % max HR` into "75–85 % of LTHR" — a band the plan never
+  states. Bands now union only within one channel *and* one reference; two
+  anchors are two rows.
+- **The criteria editor could post a criterion of the wrong discipline.** The
+  selected kind was remembered across a purpose change, so a touched list moved
+  from a ride to a lift left `time_in_band` selected behind a strength menu.
+  The selection is derived from the discipline; a kind both disciplines offer
+  survives the change.
+- **Planning could freeze a session with no success criteria.** Submitting
+  before `GET /purposes/{purpose}` answered posted `success_criteria: []`,
+  which is indistinguishable afterwards from having chosen that. Save is
+  disabled with a visible "loading this purpose's criteria template…" while the
+  template is in flight and the list is still the template's; a template that
+  *fails* says so and lets the athlete proceed deliberately.
+- **Dirty dialogs no longer discard silently.** An outside press, Escape or the
+  close control on the plan form or the session sheet now raises an inline
+  "Discard?" prompt when there is unsaved work, and closes instantly when there
+  is not (`useDirtyClose`, reading Base UI's `onOpenChange` reason). The
+  workout editor guards its "← Library" link the same way and asks the browser
+  to warn on unload.
+- **Calendar mutations no longer fail invisibly.** A refused move rolls back
+  *and* raises a dismissible strip on the page; delete closes the sheet only on
+  success and shows the refusal in the sheet otherwise; copy reports where it
+  landed, or why it did not.
+- **Delete asks first**, in the session sheet and the workout editor — a
+  two-step button in the control's own slot, not a browser `confirm()`.
+- **The week rail tells the truth about missing numbers.** Planned time renders
+  not-assessed when it is null and carries its own coverage note whenever a
+  session contributed none, exactly as load does; discipline rows consume their
+  own four coverage fields; and the hard-coded "Strength volume is measured in
+  kilograms, not TSS" is derived per row, so a *cycling* row with no TSS says
+  "No prediction for 2 of 3 sessions" instead of a confident falsehood.
+- **A strength session's predicted volume renders** in the sheet — kilograms,
+  sets and the share of sets those kilograms came from — with the honest reason
+  in its place when the loads are prescribed as %e1RM, RPE or bodyweight.
+- **The optimistic move recomputes every aggregate**, not just the duration:
+  load, both coverage pairs and the whole `by_discipline` block follow the
+  cards that remain, so dragging a ride out of the week cannot leave a TSS on
+  the rail that no session in the grid contributes to.
+- Paging a week keeps the week you were reading on screen, dimmed, instead of
+  blanking the page (`keepPreviousData`); the toolbar's "Plan a session"
+  pre-fills a day inside the week on screen; a card dropped back on its own day
+  is a no-op rather than a request; the week param is written without
+  discarding the rest of the query string; the library's search waits 250 ms
+  for the typing to stop; and `ProvenanceMark` gained the `NotAssessed`
+  treatment so its note reaches a screen reader.
+- **The open session sheet lives in the address too** —
+  `/calendar?session=<uuid>`, beside `?week=` (D88). It was
+  `useState<WeekSession | null>`: a sheet nobody could reload, bookmark or send
+  to their coach, which is the gap D77's wording claimed the week param had
+  closed. Opening a card *pushes* a history entry so the browser's Back gesture
+  closes the sheet; closing *replaces*, so paging through a dozen cards does
+  not bury the page the athlete arrived from. Open-state is derived from
+  `useSearchParams`, never duplicated in state. The param is checked for uuid
+  shape before it is spent on a request (`lib/ids.ts`): garbage is treated as
+  absent and swept out of the URL, while a well-formed id that names no session
+  gets the sheet's error state rather than a silent close. The sheet no longer
+  needs a card at all — a link to a session outside the week on screen reads
+  the session itself and asks the library for the workout's name. Not a
+  `/sessions/{id}` route: that section arrives with WP-4/5 and would be built
+  twice.
+- Each page renders exactly one `h1`: Today's belongs to the page and its
+  session headlines are `h2`s, and the library and workout editor gained one.
+- Collision-prone `JSON.stringify(criterion)` and
+  `` `${exercise_id}-${sets}-${reps}` `` keys are gone; these lists are
+  replaced wholesale, so the index is the identity and says so in a comment.
+
+**Web — design-system corrections (D84–D87)**
+
+- **The strength purposes leave purple.** `max_strength` was byte-identical to
+  `--color-status-over` and `--color-coach`, and four neighbours were the same
+  violet family; all five move to a cyan-through-azure "steel" family (D84).
+  Distance from the reserved coach/verdict tones goes from ΔE00 0.00 to 11.92
+  across the whole eighteen-tone palette, and the strength family's own floor
+  from 2.16 to 8.72. `lib/purpose.test.ts` now *measures* the reservation, so
+  the next purpose cannot re-spend purple; a companion test checks every tone's
+  badge contrast. Figures are CIEDE2000 — D75's are CIE76, which flatters
+  saturated colours by roughly a factor of two.
+- **Every ink is WCAG AA on every surface it lands on** (D85).
+  `--color-ink-faint` was 3.01:1 on a card while carrying every uppercase
+  label, the provenance line and the coverage notes; it is now `#7d848f`,
+  4.54:1 at its worst. `--color-ink-disabled` stays below AA and is narrowed to
+  inactive controls, which WCAG 1.4.3 exempts — a missed session's struck-out
+  duration is content and moves to `ink-muted`, which is what the mockup uses
+  for it. `tests/ink-contrast.test.ts` parses the palette and enforces both.
+- **D59's "no colour outside `globals.css`" is now a test.** Ten inline hex and
+  `rgb()` literals are gone, replaced by the tokens they were re-encoding —
+  missed surface and border, danger surface and border, warn surface and
+  border, accent wash, accent surface hover, chrome active (D86).
+  `tests/no-literal-colours.test.ts` fails any colour literal under
+  `components/` or `app/`, with one documented allowlist entry.
+- Added the two stops the mockup uses and the palette had skipped:
+  `--color-hairline-card` (.07, the mockup's most common border — cards,
+  panels, the week shell) and `--color-hairline-faint` (.05, chart wells),
+  repointed occurrence by occurrence rather than wholesale; and `--text-label`
+  (10px), which is the size every uppercase micro-heading is drawn at.
+  `SectionLabel` was rendering at 9.5px, the metric-caption size.
+- **The sidebar shows all seven sections the mockup previews**, not the three
+  that exist: Sessions, Analysis, Coach and Settings render dimmed and inert
+  with a tooltip naming the work package each waits for (WP-4, WP-5, WP-8,
+  after the MVP) instead of the stale "arrives with the next slice of WP-3".
+  The active nav item gets its own `--color-chrome-active` token so it no
+  longer shares a colour with hover.
+- **D75's cross-language guard is real.** `lib/workout-profile.test.ts` reads
+  `backend/app/domain/zones.py` off disk and compares the extracted `coggan_7`
+  boundaries against `COGGAN_7_LOWER`; it used to assert the frontend table
+  had seven entries against itself.
+- Today's header carries the planned load (`planned 1:15 · 78 TSS`) when the
+  session has one, and the detail workout profile gained the mockup's time axis
+  beneath the bars — both absent rather than invented when the prescription
+  does not support them. The mockup modules WP-3 deliberately does not build
+  are listed in D87.
+
+**Web — testing**
+
+- `tests/mocks/fixtures.ts` was rewritten so that **every payload is one the
+  real API could produce**: a card's `title` is non-null exactly when its
+  `workout_id` is, strength cards carry no duration, and step counts, sets,
+  durations, predicted load, intensity factor, coverage and volume load are all
+  derived from the prescriptions — recomputed by running `app.domain.prediction`
+  over those documents at FTP 250 W (the VO₂ session is 3 420 s, 78.3 TSS,
+  IF 0.908, 82.5 % coverage; the long ride 11 400 s, 134.4 TSS, IF 0.652; the
+  lift 1 920 kg over 3 of 10 sets). An intent pins exactly the anchors its
+  prescription refers to, `artefact_id` is the session's own id, and no
+  `tested` anchor is left without a protocol. The pinned FTP (250 W, estimated)
+  and the one in force (265 W, tested) now differ in value *and* provenance, so
+  a page that resolves against the wrong one is visibly wrong.
+- The mutating MSW handlers **honour the request**: `move` applies the date it
+  is given, `copy` answers with a new id at version 1, and `POST` / `PATCH`
+  echo the submitted intent — so a form that drops a field fails its test
+  instead of passing against a canned reply.
+- The `next/navigation` test double **subscribes** to the address bar
+  (`pushState` / `replaceState` / `popstate` through `useSyncExternalStore`,
+  the way Next itself syncs), so `window.history.back()` closing the session
+  sheet is a real assertion in a component test rather than a simulated one.
+  The `afterUrlChange()` rerender helper it replaces is gone.
+- The Playwright fake serves session detail by id and hands out ids that are
+  real uuids, so the plan-a-week flow now ends by reloading the page with the
+  sheet open; its cards report no predicted load, which is what a fake with no
+  anchor in force would actually produce.
+
 ### WP-2 — workout model, library, purpose templates, planned sessions
 
 The prescription half of the loop: what a session *is*, what it is *for*, and

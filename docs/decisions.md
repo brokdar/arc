@@ -1239,3 +1239,1163 @@ answer to preserve: it was never part of what the athlete executed against, so
 "the version in force when it entered the prescription" is the only version it
 was ever judged by. The pins that carry the athlete's actual execution — the
 ones still required — are untouched, which is what the invariant is protecting.
+
+## D55 — The week view is a seven-day projection, defaulting to this UTC Monday
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`GET /api/v1/plan/week?start=` returns **seven day objects**, empty ones
+included, each holding the sessions planned for it. `start` is inclusive and
+taken literally — a Wednesday start gives the seven days from Wednesday — and
+when omitted defaults to the **Monday of the current week**, with "today"
+computed in **UTC**. Each session is a flat card (id, date, discipline,
+purpose, status, title, workout_id, planned_duration_s, total_sets,
+step_count, intent_text, intent_version) and nothing else; the step tree,
+criteria, pins and intent history stay behind
+`GET /api/v1/planned-sessions/{id}`.
+
+This displaces the two obvious alternatives: returning the sessions as a flat
+list and letting the client group them, and returning whole
+`PlannedSessionRead` objects for the week.
+
+*Rationale:* a calendar renders a grid, so the empty Thursday is part of the
+answer; a projection that omits it makes every client — the web UI and WP-8's
+agent alike — rebuild the window from the query it just sent. Keeping the card
+flat is what makes the projection worth having: `planned_duration_s` is
+derived from the frozen step tree by the same domain helper the workout
+library uses (`total_duration_s`, never stored — a cached duration beside the
+intent version is a second answer waiting to disagree), and shipping the whole
+step tree per card would send a week's worth of prescriptions to draw seven
+tiles.
+
+`start` is not snapped to a Monday because snapping makes "the week from
+Wednesday" unaskable and costs the client nothing to do itself; the default
+*is* snapped, because "this week" has one obvious meaning. UTC is the honest
+default for "today" only because the athlete has no timezone yet: WP-4 puts a
+timezone on each recorded session (build plan §WP-4.4), and the athlete-level
+one belongs with it. The clock is isolated in a single `_today()` in
+`app.services.plan` so that work package has one line to change, and the
+domain helpers (`app.domain.plan.week_start`, `week_dates`) take the day they
+are asked about, keeping `app.domain` clock-free.
+
+The week deliberately does **not** carry the athlete's `plan_state` (D58): the
+athlete profile is bootstrapped lazily on first access, so folding it in would
+make a read projection a write path.
+
+## D56 — Move and copy are their own endpoints, not a PATCH of `date`
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`POST /api/v1/planned-sessions/{id}/move` and
+`POST /api/v1/planned-sessions/{id}/copy`, both taking `{"date": "..."}`. Move
+answers 200 with the moved session; copy answers 201 with the new one. Each
+writes its own audit action — `planned_session.moved`,
+`planned_session.copied` — beside the existing `planned_session.updated`.
+Moving a session to the date it already sits on is accepted, not refused.
+
+This displaces expressing both through the existing
+`PATCH /planned-sessions/{id}`, which can already change a date and would need
+only a "copy" flag or a `POST` to the collection with a source id.
+
+*Rationale:* the audit trail is the reason. A drag across the calendar and a
+form edit that happens to include a new date are different intentions, and
+with one verb the trail cannot tell them apart — the same argument that gives
+a copy its own action rather than a `planned_session.created` that hides where
+the prescription came from. The sub-resource path also keeps the payload
+honest: `move` takes a date and nothing else, so a client cannot smuggle an
+intent edit into a drag. Both paths have one more segment than
+`/{planned_session_id}`, so nothing collides with the id route
+(`.claude/rules/api-collection-facets.md`). A same-day move is accepted
+because dragging a card back where it came from is a real gesture, and
+refusing it would make the client track a fact the server already has.
+
+## D57 — A copy is a new session planned now: it re-pins and starts a fresh chain
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Copying a planned session creates a new one with status `planned`, intent
+version 1, its own version chain, and **anchor versions pinned at whatever is
+in force at the moment of the copy** — not inherited from the original. What
+is carried over is everything the athlete authored: the purpose, the frozen
+structure (the snapshot, not a fresh read of the library workout), the intent
+text, the coach notes, the success criteria as they stand (edited or not) and
+the provenance link to the library workout. Where the copy came from is
+recorded in the `planned_session.copied` audit payload (`copied_from`), not in
+a column.
+
+This displaces copying the pins along with the prescription, which is what
+"duplicate the row" would have done.
+
+*Rationale:* invariant 4 says a prescription freezes at *planning* time, and
+the copy is being planned now — so repeating last week's ride after an FTP
+test prescribes against the new FTP, which is what an athlete means by "do
+that again". Inheriting the pins would produce a session frozen against a
+number that was current for a plan entry it has no other relationship to, and
+the athlete would have no way to see that from the calendar. The criteria are
+copied as they stand rather than re-derived from the purpose template for the
+mirror-image reason: an edited criterion is part of what is being repeated,
+and re-deriving would quietly undo the edit. Provenance goes on the audit row
+rather than a `copied_from` column because a copy is an independent plan entry
+from the moment it exists; a column pointing at the original would invite
+readers — and WP-6's matcher — to treat one artefact as living in two places.
+
+## D58 — Plan state is a field on the athlete profile
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`active | paused` lives as `athlete.plan_state` (default `active`) and is read
+and written through the existing `GET`/`PATCH /api/v1/athlete`, audited by the
+`athlete.updated` row that already records changed fields. `null` clears it
+back to `active`, the way `sex` and `capabilities` clear to their empty
+values. The column carries a `server_default` — the only one on that table
+that is not a timestamp — because it was added to a table already holding its
+one row.
+
+This displaces a `plan` table (or a `plan_states` history table) with
+`POST /plan/pause` and `/plan/resume` endpoints.
+
+*Rationale:* there is one athlete and one plan (D6), so a table whose row
+count is fixed at one, joined to another table whose row count is fixed at
+one, buys nothing but a join. Two verbs would need their own service method,
+their own schemas and their own audit actions to express a boolean the profile
+endpoint already knows how to update, and the athlete's own history is the
+audit log — which records the transition with its actor, so an agent pausing
+the plan is distinguishable from the athlete doing it without a second table.
+The semantics stay as the build plan states them: paused means ingestion,
+matching and scoring carry on and **missed-session marking stops** (WP-6.7).
+Nothing consumes the field yet; it lands now so WP-6 reads state instead of
+writing a migration.
+
+## D59 — arc is dark-only, and its palette is one `@theme` block
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The application ships one colour scheme. `<html>` carries `dark`
+unconditionally, `:root` declares `color-scheme: dark`, and
+`frontend/app/globals.css` holds a single `@theme` block whose tokens are named
+for meaning (`--color-canvas`, `--color-ink-muted`, `--color-status-missed`,
+`--color-zone-4`) with the shadcn vocabulary (`--color-background`,
+`--color-primary`, `--color-border`, …) aliased onto those names rather than
+kept as a second palette. Type comes from `next/font` — Inter as the UI face,
+JetBrains Mono for **every** numeral, timestamp, duration and percentage — and
+the size scale is redefined dense (12.5px body, 9.5–10.5px labels) rather than
+left at Tailwind's defaults.
+
+This displaces the light/dark pair the shadcn scaffold arrived with, and the
+`prefers-color-scheme` switch that would have kept both alive.
+
+*Rationale:* the design capture in `docs/ui_mockups/` is a dark instrument
+panel, and the palette is doing semantic work — a completed session is green, a
+zone-5 bar is orange, a coach note is violet — that a light inversion would
+have to re-derive, not merely lighten. Two schemes would double every colour
+decision for one self-hosted athlete who never asked for the second. Aliasing
+the shadcn names instead of deleting them keeps the vendored components in
+`components/ui/` usable without a fork, and means a future re-skin is an edit
+to one block. Naming tokens semantically rather than by hue is what lets that
+edit stay in one place: nothing outside `globals.css` and `lib/purpose.ts`
+contains a colour.
+
+## D60 — `/` redirects to `/calendar`; there is no home page
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The root route is a server-side `redirect("/calendar")`. Signed-in pages live
+under the `app/(app)/` route group, which contributes nothing to the URL and
+declares the session guard and the application shell once; `/login` sits
+outside it.
+
+This displaces a dashboard at `/` (and the WP-0 placeholder page that stood
+there).
+
+*Rationale:* there is one athlete and one plan, and the week is the thing they
+open the application to see. A landing page would be a page whose only content
+is links to two other pages. The redirect is not a security boundary — it lands
+on a guarded route, so an unauthenticated visitor still reaches `/login`, one
+hop later. `/today` would have been the other candidate; the week is the
+better default because it is also where planning happens, and the Today view
+is one click away once it exists.
+
+## D61 — A section with no page yet is dimmed in the nav, never linked
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`NAV_ITEMS` in `components/shell/sidebar-nav.tsx` carries a `ready` flag. A
+section whose page does not exist renders as dimmed, inert text — the
+treatment the mockup itself gives the sections it previews — instead of a link
+to a 404. Shipping the page is flipping one boolean.
+
+This displaces both alternatives: linking to routes that do not exist, and
+hiding the sections until they do.
+
+*Rationale:* the sidebar is the app's table of contents, and an app that grows
+a nav item per work package looks unfinished in a different way each week. A
+dead link is a bug report; an absent one hides where the product is going.
+Dimmed-and-listed says "not yet" honestly, and keeps the shell's proportions
+stable as pages land.
+
+## D62 — Calendar cards carry no workout profile
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The mockup draws a miniature bar profile on each calendar card. `WeekSessionRead`
+does not carry a step tree — by design (D55): the week is a summary projection
+and the structure lives behind `GET /planned-sessions/{id}`. So the card shows
+the discipline, its own measure (minutes for a ride, sets for lifting), the
+title, the one-line intent, the purpose badge, the status dot and a step count;
+the bar profile appears in the session sheet, at the larger size, where the
+structure has actually been fetched. `WorkoutProfileBars` supports both sizes
+regardless.
+
+This displaces two ways of getting the bars onto the card: fetching the detail
+of every session in the week, and widening the week payload to include seven
+days of step trees.
+
+*Rationale:* a week of five sessions would be five extra requests to paint
+strips 134px wide, and putting the trees in the week response would make the
+calendar's payload grow with the complexity of its prescriptions — for a
+picture that is decorative at that size. The card's job is to say what the
+session is and whether it happened; the profile is a detail, and it is one
+click away.
+
+## D63 — Purpose colours are a typed table in TypeScript, not CSS tokens
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The eighteen purposes each get an edge, a foreground and a tint, held in
+`PURPOSE_TONES` in `frontend/lib/purpose.ts` and applied through `style`. The
+*semantic* palette (surfaces, ink, status, the zone ramp) stays in `@theme`
+where D59 put it.
+
+This displaces fifty-four `--color-purpose-*` custom properties in
+`globals.css`.
+
+*Rationale:* Tailwind only emits utilities it can read in the source, and a
+class name assembled from a value that arrives at runtime
+(`bg-purpose-${session.purpose}`) is invisible to it — so CSS tokens would have
+needed a safelist or a switch statement per component anyway. As a typed record
+keyed by the generated `Purpose` union, the table cannot miss a purpose without
+failing the type-check, and `purpose.test.ts` reads the enum out of the
+committed `openapi.json` so a vocabulary the backend gains fails a test rather
+than rendering an uncoloured chip.
+
+## D64 — A prediction resolves against `PinnedAnchor` pairs, not bare anchor versions
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`predict_endurance_load` takes `Mapping[AnchorType, PinnedAnchor]`, where
+`PinnedAnchor` (`backend/app/domain/prediction.py`) pairs an `AnchorVersion`
+with the `uuid.UUID` it was pinned by, rather than the work order's
+`Mapping[AnchorType, AnchorVersion]`.
+
+This displaces two alternatives: putting an `id` on the domain
+`AnchorVersion`, and passing a second parallel mapping of ids beside the
+versions.
+
+*Rationale:* WP-3's work order (B2) asks the returned `PredictedLoad` to carry
+`anchor_version_id` — which is what makes the number reproducible later — but
+`app.domain.anchors.AnchorVersion` is deliberately id-free, because identity
+belongs to persistence and the value object is what zone derivation, target
+resolution and the codecs all share. Adding an id to it would push a storage
+concern into every construction site, including the ones that never came from a
+row. Two parallel mappings, the other way out, can disagree with each other and
+nothing would notice. One pair type keeps the id beside the value it belongs to,
+and the B4 service builds it in one line from the row it already loads
+(`PinnedAnchor(version_id=row.id, version=row.to_domain())`).
+
+## D65 — The 1 Hz expansion has a one-day ceiling
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`predict_endurance_load` returns `None` for a prescription longer than
+`MAX_PREDICTABLE_DURATION_S` (86 400 s) instead of expanding it, alongside the
+work order's other three `None` cases (no FTP pinned, zero coverage, any
+distance-based step).
+
+This displaces expanding whatever the workout model accepts.
+
+*Rationale:* the workout model bounds a single step (`MAX_STEP_SECONDS`,
+12 hours) and the flattened step count (`MAX_FLAT_STEPS`, 1 000) but not their
+product, so a legal, API-creatable tree can describe 43 million seconds — and
+the 1 Hz expansion would try to materialise a list of 43 million floats on a
+**read** path, since predicted load is computed on every week and session read.
+A day is far past anything the MVP plans, and "not predictable" is a state the
+callers already handle, so the ceiling costs nothing that exists and removes an
+out-of-memory read.
+
+## D66 — The library shows no purpose badge: a workout has no purpose
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Cards in `/workouts` carry the discipline glyph, the prescription's own measure
+(minutes for a ride, sets for a lift), the bar profile, the name and the
+folder/tag labels — and no `PurposeBadge`, though every other surface in the
+application leads with one.
+
+This displaces adding a `purpose` column to `Workout`, and inferring one from
+the shape of the step tree.
+
+*Rationale:* `WorkoutRead` has no purpose because `Workout` has none. Purpose is
+a field of **intent** (`SessionIntentRead.purpose`) — it says why *this session,
+on this date* exists, and the same 2×20 is a threshold session in March and a
+tune-up before a test in June. Storing one on the library row would make the
+library assert something it cannot know and would have to be overridden at every
+planning; inferring one from the targets would be a guess presented in the same
+chip that elsewhere carries a fact. The purpose is chosen where it is true: in
+the plan-a-session form.
+
+## D67 — Success criteria follow the purpose template until the athlete touches them
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The plan-a-session form loads `GET /purposes/{purpose}`'s `default_criteria`
+into its criteria editor and **re-derives them whenever the purpose changes** —
+until the first edit, add or removal, after which the list is the athlete's and
+the purpose no longer touches it. A "reset to the purpose's template" action
+puts it back under the template's control deliberately.
+
+This displaces the two simpler rules: filling the criteria once when the form
+opens and never again, and re-deriving them on every purpose change.
+
+*Rationale:* fill-once is wrong because the first thing anyone does in that
+form is pick the purpose — the criteria that were pre-filled belong to whatever
+the form defaulted to, not to the session being planned. Always-re-derive is
+wrong because it silently discards a rule the athlete wrote, and the purpose
+select is one keystroke away from being brushed. The touched flag distinguishes
+"I have not said anything about this" from "I have", which is the actual state
+of the world; the reset action means the first state is reachable again without
+starting over.
+
+## D68 — The builder mirrors the domain's bounds; the API's 422 stays the authority
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`lib/workout-draft.ts` restates a handful of constants from
+`app/domain/workout.py` and `app/domain/strength.py` — the channel→anchor map,
+the per-channel plausibility bounds, the nesting depth, the sets/reps/RIR/load
+ranges — and `validateDraft` refuses a save that would break them. Everything
+the client cannot see (an anchor with no version in force, a purpose that
+disagrees with the prescription's discipline, the flattened-step ceiling) is
+left to the backend, and `apiErrorMessages` renders whatever comes back into
+the same list of sentences.
+
+This displaces both extremes: validating nothing on the client and letting the
+422 be the only feedback, and generating a client-side validator from the
+OpenAPI schema.
+
+*Rationale:* the bounds duplicated here are the ones an athlete trips *while
+typing* — a cadence target as a percentage of FTP, an empty repeat block, a
+blank load on a kg line — and a round trip to be told so makes a forty-field
+form unusable. They are also the stable half of the rule set: they are
+plausibility limits, not policy. The rules deliberately left out are the ones
+that depend on state the browser does not hold, and pretending to check them
+would produce a client that is confidently wrong. The duplication is
+acknowledged rather than hidden: the module says which file each constant
+mirrors, and the 422 path is a first-class rendering, not a fallback.
+
+## D69 — "Edit" on a planned session edits the session, not the workout behind it
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The session sheet's Edit button opens the plan-a-session form on that session
+(PATCH `/planned-sessions/{id}`). When the session was planned from the
+library, a separate, quieter "Open workout" link goes to `/workouts/{id}`.
+
+This displaces slice 1's placeholder, which sent Edit to
+`/workouts/${workout_id ?? "new"}`.
+
+*Rationale:* a planned session carries a **frozen snapshot** of its
+prescription plus its own purpose, intent, notes and criteria (invariant 4).
+Editing the library workout changes neither this session nor any other already
+planned from it — so an Edit that opened the workout would appear to do nothing,
+and, worse, would silently change what *future* sessions get. Sending Edit at
+the session is the only reading under which the button does what it says. The
+workout is still one click away, labelled as the different thing it is.
+
+## D70 — The builder's draft is a string-typed client model, not a partial structure
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The workout builder's state is `WorkoutDraft` (`lib/workout-draft.ts`): the same
+tree shape as the API's structure document, but with every number held as the
+string the athlete typed and every node carrying a client-side `id`. Three pure
+functions cross the boundary — `structureFromDraft` (lenient, so the live
+preview keeps drawing), `validateDraft` (strict, and what stops a save) and
+`draftFromStructure` (the inverse, for the edit form).
+
+This displaces holding a `WorkoutStructure` with nullable fields and editing it
+in place.
+
+*Rationale:* a form and a payload want opposite things. `1` on its way to `12`
+is a legal thing to have in a field and an illegal duration to prescribe; a
+number-typed model coerces the empty field to `0` and makes it impossible to
+clear or to lead with a decimal point. Identity is the other half: steps and
+targets are positions in a tree, so the payload gives them no ids — but React
+needs stable keys and every edit needs to name the node it edits without an
+index path through the nesting. Client ids give both, and they are stripped on
+the way out, so nothing invented for the editor's convenience reaches the API.
+
+## D71 — Today's coach notes render on a neutral surface
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The Today view's "Watch for" panel — the mockup's violet, coach-tinted intent
+card — is rendered as a plain `Panel` in the ordinary ink, and the design
+system's `--color-coach-*` tokens go unused for another work package.
+
+This displaces reproducing the mockup's treatment for the field the panel is
+actually sourced from.
+
+*Rationale:* the tokens exist to satisfy build-plan invariant 7 — agent-written
+text must be visually distinguishable from computed findings wherever it lands.
+The field this panel reads, `SessionIntent.coach_notes`, is written by the
+*athlete* in the plan form; there is no agent in the MVP yet. Spending the
+violet on athlete-authored text now would either have to be taken back when
+WP-8 lands, or would leave the one visual signal that means "a model wrote
+this" already meaning something else.
+
+## D72 — Predicted load is computed on read, never stored
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+A planned session's predicted load, intensity factor and strength volume are
+derived every time they are read, from the intent version in force and the
+anchor versions it pinned (`app.domain.prediction`, called by
+`app.services.plan` and `app.services.planned_sessions`). There is no column,
+no migration and no cache.
+
+This displaces a stored `predicted_load` column maintained by a service hook
+on write.
+
+*Rationale:* the same reasoning as `app.domain.zones` ("zones are always
+computed, never stored"). Predicted load is a pure function of two things that
+are already immutable — the frozen prescription and the pins — so a stored
+copy can only ever agree with the function or be wrong, and the write hook
+that keeps them agreeing has to fire on session creation, on every intent
+revision, on copy, and on any future change to the prediction algorithm. The
+cost of computing it is a 1 Hz expansion of a prescription bounded at
+`MAX_PREDICTABLE_DURATION_S`, done once per card; the cost of storing it is a
+class of staleness bugs that only show up as a number nobody can explain. The
+one thing that *would* argue for storing it — reproducing a number computed by
+an older algorithm — is already answered better by the pins, which is what
+makes the recomputation reproducible in the first place.
+
+The week's pins are loaded in a single batched query
+(`AnchorRepository.get_many`), so "computed on read" costs a constant number
+of round-trips rather than one per session.
+
+## D73 — A success criterion declares its own smoothing window
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`Band` and `Ceiling` (`app.domain.criteria`) each carry `smoothing_s`: the
+seconds of trailing rolling mean applied to the channel before it is compared.
+A band defaults to 30 s, a ceiling to 0 — raw. Every band and ceiling in
+`app/resources/purpose_templates.json` states its window explicitly, and a
+test refuses a template that relies on the default. The decoder tolerates the
+key being absent, so criteria written before WP-3 still parse; criteria are
+tagged-union JSON, so no migration was needed.
+
+This displaces a smoothing constant inside WP-7's scoring engine.
+
+*Rationale:* two reasons, and the second is the binding one. First, power is
+spiky at 1 Hz: comparing raw samples to a band scores a perfectly-executed
+threshold interval far below a smart trainer doing identical physiological
+work, so an undeclared window measures the equipment rather than the
+execution. Second, the window is part of what was promised at planning time
+and has to freeze with the rest of the intent — if it lived in the scoring
+engine, a scoring-engine change would silently rewrite what already-scored
+sessions were judged against, which invariant 1 forbids. The defaults are
+opposite on purpose: a band judges sustained work, a ceiling judges
+excursions, and smoothing is exactly what hides an excursion.
+
+## D74 — Resolved targets and pins are part of the planned-session resource, not a detail-only view
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PlannedSessionRead` carries `pinned_anchors`, `resolved_steps` and
+`predicted_load` on **every** endpoint that answers with a whole session —
+list, get, create, update, move, copy — rather than only on
+`GET /planned-sessions/{id}`.
+
+This displaces a separate `PlannedSessionDetailRead` that only the get route
+returns.
+
+*Rationale:* the WP-3 work order says "extend the detail response", and a
+detail-only subtype would have been the smaller change. It was rejected
+because one resource with two shapes is a trap for a react-query cache: the
+week's optimistic mutation and the session sheet write into the same keys, and
+a list item that is structurally *almost* a session is exactly the thing that
+type-checks and then renders undefined. The cost that motivated the split —
+one anchor-version query per session — does not exist: `resolutions()` batches
+the whole page into one query, so a page of fifty sessions costs the same
+round-trips as one.
+
+## D75 — One zone ramp, seven stops, mirrored front and back; purple stays reserved
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`frontend/app/globals.css` declares a **seven-stop** positional zone ramp,
+`--color-zone-1` … `--color-zone-7`, and `frontend/lib/workout-profile.ts`
+buckets a %-of-FTP fraction through `COGGAN_7_LOWER = [0, 0.55, 0.75, 0.9,
+1.05, 1.2, 1.5]` — the same boundaries as `_ZONE_SCHEMES[ZoneModel.COGGAN_7]`
+in `backend/app/domain/zones.py`, with a test that fails if either table grows
+a stop the other does not have. Every zone surface reads those seven and
+nothing else; the heart-rate model (`lthr_5`) maps its five zones onto the same
+ramp (Z1→zone-1, Z2→zone-2, Z3→zone-4, Z4→zone-5, Z5→zone-7) rather than
+getting a ramp of its own.
+
+This displaces the five-token ramp (`--color-zone-rest`, `--color-zone-2` …
+`--color-zone-5`) and the display-only boundaries `0.45 / 0.75 / 0.88 / 1.05`
+that went with it — which the code's own comment described as "the Coggan-ish
+ones the mockup's colours imply, not the backend's zone model".
+
+The top two stops landed as `--color-zone-6: #cf3f57` (crimson) and
+`--color-zone-7: #ad3f74` (berry), not the work order's proposed `#c9414a` /
+`#8f2f3f`. The order's contract — seven stops, one ramp, purple never — is what
+binds; the hexes were explicitly proposals, and both were checked against
+`--color-card` (#131519) before landing. `#8f2f3f` reaches only 2.30:1, under
+the 3:1 WCAG 1.4.11 floor for a non-text graphical object, and the top zone is
+exactly the one drawn as a 30-second 1px-wide bar that cannot afford to
+disappear; `#c9414a` sits ΔE 9 from `--color-status-missed` (#e05c5c), close
+enough that a missed card and an anaerobic bar would read as the same red. The
+landed pair continues the hue rotation past orange into crimson and berry
+instead of darkening it: all seven stops clear 3:1 against the card (3.26–7.31)
+and adjacent stops are ≥ 26 ΔE apart.
+
+*Rationale:* three reasons, in order of how expensive they get later. The zone
+ramp is about to be read by a zone table, a histogram, a sparkline and a stream
+fill (WP-5), and a five-stop ramp means either two of `coggan_7`'s zones share
+a colour or every one of those surfaces invents its own — the fix costs one
+CSS block now and four components later. A card that paints 52 % FTP as "rest"
+while the backend calls the same number Z1 Recovery is a disagreement the
+athlete can see, and the reasoning that justified it ("deriving it from the
+athlete's anchors would mean fetching them per card") is right about *absolute*
+targets and wrong about relative ones: a `PercentOfAnchor` target is already a
+fraction of FTP, so mapping it through %FTP boundaries needs no anchor at all.
+The absolute-target path still scales against the workout's own hardest step
+and is unchanged. Finally, purple is spent: `--color-coach` (#b49bff) marks
+agent-written text and `--color-status-over` (#a78bfa) marks an over-target
+verdict, and invariant 7 requires interpretive content to stay visually
+distinguishable wherever it lands — so no training zone is purple, and WP-5's
+fitness/fatigue series must not be either. The CSS comment says so at the
+tokens, which is where someone reaching for a colour will be looking.
+
+*On numbering:* the work order's docs section asks for D59 to be written and
+for new entries to continue from D60. That instruction was written against a
+branch that predates slice 1 of WP-3; D59 (dark-only) exists and the log
+already runs to D74, so this entry continues from D75. Per the order's own §4
+rule, the deviation is recorded here rather than by editing the order.
+
+## D76 — An explanation travels with the number, not with the page
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+A computed metric carries its own `MetricExplanation` — formula, inputs,
+assumptions, citation — as data on the artefact (`PredictedLoadRead.explanation`,
+B5). The session sheet renders it behind a quiet disclosure, and the coverage
+that qualifies the number (`86 % of the time carried a power target`) is
+rendered beside the number itself rather than in a legend. `inputs` names the
+**anchor version's** value, provenance and effective date — "250 W (estimated,
+effective 2026-06-01)" — never the athlete's current FTP.
+
+This displaces contextual help attached to the screen: a tooltip, a glossary
+entry, or an "about TSS" paragraph on the page that shows it.
+
+*Rationale:* spec v2 §10 requires contextual education on every metric and §8.3
+requires every metric to carry a trust level, and neither has a work package of
+its own — so both only survive if the explanation is part of the artefact.
+Page copy has three failure modes that data does not: it can only agree with
+the function or be wrong, it has to be rewritten in each of the three places
+the number is rendered, and an MCP tool cannot hand it to the coaching agent,
+so the agent ends up citing facts the screen does not show. Establishing the
+type cost one dataclass while there was exactly one number to attach it to;
+retrofitting it would have meant touching every artefact WP-5 creates.
+
+The same reasoning is why the provenance line exists in the session sheet.
+`SessionIntent.pinned_anchor_versions` (D49) already made the resolution
+exactly correct and completely invisible: an FTP of 250 W that was *estimated*
+is a different claim from one that was *tested*, and every watt on the sheet
+inherits whichever it is. The three non-tested provenances are marked
+differently from `tested` rather than merely spelled differently, because a
+word alone is not a distinction a reader scanning numbers will pick up.
+
+## D77 — The calendar's week lives in `?week=`, replaced rather than pushed
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Which week `/calendar` shows is read from the `week` query param, not held in
+component state. The param is an ISO date **taken literally** — the same rule
+the endpoint follows (D55), so `?week=2026-08-05` shows the seven days from
+that Wednesday rather than being snapped back to its Monday. Anything that is
+not a real `YYYY-MM-DD` day (`isIsoDate` in `lib/dates.ts` refuses `next-week`,
+`2026-8-1` and `2026-02-31` alike) and anything absent both mean **this week**,
+so a bare `/calendar` is the evergreen address and is what the "This week"
+control returns to — never `?week=<this monday>`, which would be a bookmark
+that quietly becomes last week's.
+
+Stepping a week **replaces** the history entry rather than pushing one, and
+does it through `window.history.replaceState` rather than `router.replace`.
+`app/(app)/calendar/page.tsx` gained a `<Suspense>` boundary around
+`CalendarWeek`, which is what keeps the route prerendered as static now that it
+reads `useSearchParams`.
+
+This displaces `useState(() => mondayOf(today))` — a calendar whose position
+did not survive a reload, could not be bookmarked, and could not be sent to
+anyone.
+
+*Rationale, in three parts.*
+
+**Why the URL:** UI convention 1 — state that survives a reload has to be
+addressable. Which week you are looking at is the one thing on this page a
+person would bookmark or paste into a message, and it was the only WP-3 page
+still failing that rule.
+
+**Why replace, not push:** stepping a week adjusts the view of one page. With
+`push`, a minute of paging leaves eleven history entries and the back button
+comes to mean "undo one of my last eleven clicks" rather than "leave the
+calendar"; the athlete who arrived from Today has to press it twelve times to
+get back. The address is real either way — bookmarking and sharing are
+unaffected by which history verb wrote it — so the only thing at stake is the
+history stack, and replacing is what protects it.
+
+**Why the History API rather than the router:** `router.replace` and
+`router.push` **cannot drop a search param** in this Next major. Navigating
+from `/calendar?week=2026-08-10` to `/calendar` is a silent no-op — verified
+against a production build with a throwaway probe route, in both verbs and with
+a trailing `?` — which would have stranded "This week" on whatever week was
+last shown. `window.history.replaceState` is Next's own documented escape
+hatch for updating the URL without navigating, it syncs `usePathname` and
+`useSearchParams`, and it happens to express the intent more exactly than the
+router call did: this is not a navigation, it is the same page saying where it
+is. Recorded here because the no-op is silent, and the next person to reach for
+`router.replace(pathname)` will lose the same afternoon to it.
+
+## D78 — Every week total carries its own coverage, and a missing total is null
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PlanWeek.planned_duration_s` is `int | None` and travels with
+`duration_sessions_counted` / `duration_sessions_uncounted`, exactly as
+`planned_load` already travelled with its own pair. Each `by_discipline` row
+carries **both** pairs — duration *and* load — beside its two totals, and its
+`planned_duration_s` is nullable for the same reason. A total no session
+contributed to is `None`, the empty week included.
+
+This displaces `sum(card.planned_duration_s or 0 for card in cards)`, which
+answered `0` for a week of two distance rides and a lift — four hours of work
+rendered as a rest week — and displaces per-discipline rows that carried a
+naked `planned_load: null` with no coverage beside it.
+
+*Rationale.* The load field had already been argued to this shape (D72): a
+missing number means "not assessed", never zero, and a total is only honest
+next to the count it came from. Duration was left as a plain `int` because
+`or 0` looked like a summing detail rather than a claim — but it is the same
+claim, made about the same week, on the same card, and a strength week is
+precisely the case where it is wrong.
+
+The coverage pairs went onto the discipline rows because the review found the
+UI explaining a null cycling load with a hardcoded reason. That is what a row
+without coverage forces: the client can see the number is missing, cannot see
+how many sessions are behind it, and has to invent a story. A row that says
+"two sessions, none predictable" needs no story. It is also the only thing
+that makes the rows reconcile with the flat totals *as coverage* rather than
+only as sums.
+
+`session_count` now reports the repository's true total rather than the number
+of rendered cards, and the `MAX_WEEK_SESSIONS` overflow is added to **both**
+uncounted counters. The cap exists so a corrupted date column cannot make one
+request load the table; it was silently discarding the total, so a truncated
+week claimed its totals covered everything it had counted. An unread row has
+no discipline to be attributed to, so the overflow shows up in the week's own
+pairs and not in `by_discipline` — recorded because the rows therefore do
+*not* sum to the week's counters on a truncated week, which is the honest
+answer rather than a reconciliation bug.
+
+## D79 — The planned-session list row is a lighter shape than the session
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`GET /api/v1/planned-sessions` answers with `PlannedSessionListItem`: id,
+date, discipline, status, the intent version in force, the version count, the
+timestamps and `pinned_anchors`. It carries **no** `resolved_steps`, **no**
+`predicted_load` and **no** `predicted_volume` — absent from the shape, not
+null in it. `GET /planned-sessions/{id}` and every write route (POST, PATCH,
+move, copy) still answer with the full `PlannedSessionRead`, which
+`PlannedSessionListItem` is the base of.
+
+This supersedes the part of **D74** that put the resolved fields on *every*
+endpoint answering with a whole session. The rest of D74 stands: the fields
+are part of the resource, not a detail-only view, and the member route proves
+it.
+
+*Rationale.* D74's argument was a react-query one — "one resource with two
+shapes is a trap for a cache" — and it was made against a `PlannedSessionRead`
+whose only measured cost was the anchor query, which `resolutions()` batches
+away. The cost that was not measured is the one that matters: 200 sessions ×
+200 flat steps is ≈ 19 MB of response body and ~3.8 s of **synchronous** CPU in
+the handler, because every row parses its prescription, flattens it, resolves
+every target, and runs the 1 Hz expansion behind `predict_endurance_load`.
+That is an event loop stalled for four seconds on a read.
+
+The cache argument survives because the list is already a different shape: a
+page is `{items, total, offset, limit}`, nothing in the frontend reads a list
+row as a session (checked — the browser client only ever POSTs to this
+collection and reads the week projection instead), and the fields are dropped
+whole rather than nulled, so a row cannot type-check as a session with nothing
+to predict. The alternative — keeping a numeric `predicted_load` summary
+without its explanation — was rejected because the number *is* the 1 Hz
+expansion: there is no cheap half of it, and a list that ran it per row would
+have kept 3.8 s of the 3.8 s.
+
+`pinned_anchors` stays: the whole page's pins are one query and no parsing,
+and a row that quotes a percentage without saying what resolves it is what
+invariant 4 exists to prevent.
+
+## D80 — A smoothing window is bounded above at an hour
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`MAX_SMOOTHING_S = 3600` in `app/domain/criteria.py`, checked in
+`_check_smoothing` beside the existing negative check, so `Band.smoothing_s`
+and `Ceiling.smoothing_s` are held to `[0, 3600]` and the API answers 422 for
+anything past it.
+
+This displaces a floor with no ceiling — the field accepted any non-negative
+integer the JSON carried, including `10**12`.
+
+*Rationale.* D73 put the window on the criterion so it freezes with the
+intent, which means whatever is stored is what WP-7 will be asked to build a
+rolling mean over. A window wider than the effort it judges does not measure
+the effort at all: an hour is already longer than any interval a criterion
+selects, and past it the criterion is stating something no recording could
+disagree with. Bounding it at construction keeps the refusal in the domain,
+where the negative check already is, rather than in a pydantic field that the
+MCP path and the stored-JSON decoder would both bypass. The templates are
+unaffected — the longest window in `purpose_templates.json` is 30 s.
+
+## D81 — Non-native enum columns carry no CHECK constraint, and the docstrings now say so
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`app/persistence/types.py:enum_column` compiles to a bare `VARCHAR(n)` on both
+SQLite and Postgres, where `n` is the longest member value — SQLAlchemy's
+`create_constraint` has defaulted to `False` since 1.4, and this codebase
+leaves it there. The docstrings in `types.py` and in
+`alembic/versions/0004_plan_state.py`, which both claimed "a `VARCHAR` plus a
+`CHECK` constraint", have been corrected to describe the emitted DDL,
+including the consequence the claim was hiding: a future member with a
+*longer* value widens the column and therefore needs a batch `ALTER COLUMN`
+migration, while a shorter one needs none.
+
+This displaces the alternative of making the docstring true —
+`create_constraint=True` with a named constraint. Verified as workable
+(non-native enums compile `CONSTRAINT <enum name> CHECK (col IN (...))` on
+both dialects, and SQLite's move-and-copy batch mode recreates it — though the
+default name is the *enum's*, so two tables storing `Discipline` would collide
+in one Postgres schema and every column would need an explicit `name=`), and
+rejected anyway: it would need a
+migration adding a constraint to every enum column that exists, and it buys
+nothing this application can reach. `validate_strings=True` already refuses an
+unknown member on the way in through the ORM, and the ORM is the only writer —
+there is no second application, no hand-written INSERT path, and a single
+athlete's database. The constraint would defend against a writer that does not
+exist, at the cost of a migration per enum column now and a second migration
+every time a member is added.
+
+The rule that stands: **verify the DDL before documenting it.** The false
+claim survived two files and a review because `native_enum=False` reads like
+"the constraint moved to a CHECK", which is what SQLAlchemy's own
+documentation once described and what `create_constraint` used to default to.
+`sa.Enum(...).create_constraint` answers the question in one line.
+
+## D82 — A dirty overlay refuses to close and asks inside itself, on every close reason alike
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The plan dialog and the session sheet both closed on `onOpenChange(false)`
+without looking at why, so a click on the backdrop, an Escape and the ✕ all
+threw away a half-written session in silence. The pattern adopted in their
+place, as `components/design/dirty-close.tsx` (`useDirtyClose` +
+`DiscardPrompt`):
+
+* **The surface does not close; it asks.** On a close request with unsaved
+  work the hook calls `eventDetails.cancel()` — Base UI 1.6 hands
+  `onOpenChange` a `reason` (`outside-press`, `escape-key`, `close-press`) and
+  a canceller — and raises an inline `role="alertdialog"` strip *inside* the
+  surface, whose "Keep editing" control takes initial focus.
+* **Every reason is treated alike**, the explicit close control included. A
+  guard on the ✕ alone would leave the two paths a stray click actually takes
+  unguarded, and two different behaviours for "close this" is a rule nobody can
+  hold.
+* **A pristine surface closes instantly.** The prompt is furniture when there
+  is nothing to protect.
+* **Dirtiness is a flag set by the athlete's own edits**, not a diff against an
+  initial value. Both forms fill themselves in after opening — the plan dialog
+  from `GET /purposes/{purpose}`, the workout editor through
+  `draftFromStructure` — and a diff would call an untouched form dirty and
+  offer to discard a draft nobody wrote.
+
+This displaces the two alternatives that were live. A browser `confirm()` is
+one line and was rejected outright: it cannot be styled for a dark canvas
+(D59), it stacks a second modal on the first, and it is the one dialog in the
+application the design system does not own. A **nested** Base UI dialog was
+rejected for the same stacking reason plus a real cost — focus would leave the
+draft to enter a second popup, and the thing at stake would be hidden behind
+the question about it.
+
+The route case is different and is handled differently: `WorkoutEditor` is a
+page, so its "← Library" link is intercepted (`preventDefault`, then
+`router.push` once discarded) and `beforeunload` covers the three exits the
+application cannot render a prompt into — the browser's back button, a typed
+URL and a closed tab.
+
+## D83 — The frontend never resolves a percentage against an anchor; it renders the ones the API already resolved
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`lib/targets.ts` used to export `describeBand(band, anchors)`, which
+multiplied a prescribed fraction by an anchor value the caller supplied. The
+Today view supplied it from three `GET /anchors/current` requests, and so
+rendered every planned session against **now** rather than against the anchor
+versions the intent pinned. That is invariant 4 inverted: the numbers on the
+page changed the moment a new FTP was appended, and an estimate was labelled
+with a later version's `tested` provenance.
+
+The fix is not "pass the pinned values instead". It is that **no such function
+exists**. `describeBand` and `describeBandSource` are deleted; the absolute
+figures come from `PlannedSessionRead.resolved_steps`, which the backend
+computed against the pins (`app.domain.resolution`), and `resolveBand` matches
+a band to its resolved targets by **anchor version id** rather than by channel
+alone — so a session prescribing `85 % LTHR` on some steps and `75 % max HR`
+on others reports each against its own anchor. What remains client-side is
+`describePrescribed`, which formats the percentage the plan states and needs no
+anchor at all.
+
+The rule that stands: **a client may format a prescription, not resolve one.**
+The only anchor value a browser can cheaply reach is the current one, so any
+resolution helper in the frontend is a loaded gun pointed at the pin. Where a
+resolved number is wanted, the API is the one place that knows which version to
+use, and it already ships both forms side by side (D74) precisely so the client
+never has to choose.
+
+This displaces the narrower fix of keeping `describeBand` and feeding it
+`pinned_anchors`, which was written and then reverted: it works, and it leaves
+in place the exact call the next page would make wrongly.
+
+## D84 — The strength purposes leave purple; the reservation is now measured, not remembered
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PURPOSE_TONES.max_strength` was `#A78BFA` / `#B49BFF` — **byte-identical** to
+`--color-status-over` and `--color-coach`. Four of its neighbours were the same
+violet family: `strength_endurance` `#8E86EE`, `hypertrophy` `#B77BE8`, `power`
+`#C084FC` (Tailwind violet-400), `core` `#7C8CE0`. D75 and the palette's own
+comment both say purple is spent on interpretive content (build-plan invariant
+7) and both were written *beside* a table that had already spent it.
+
+All five move to a **steel family** — cyan through azure, Lab hue 196–248, the
+only contiguous region of the wheel this eighteen-tone palette had not already
+claimed. `mobility` (teal) and `conditioning` (amber) were never violet and do
+not move; the strength family was never one hue family to begin with.
+
+| purpose | edge → | fg → | fg on card | fg on its own badge tint | ΔE00 to nearest reservation |
+| --- | --- | --- | --- | --- | --- |
+| `max_strength` | `#0090BB` | `#1CA8CD` | 6.56:1 | 5.61:1 | 27.31 |
+| `strength_endurance` | `#009095` | `#55A8AC` | 6.60:1 | 5.69:1 | 30.07 |
+| `hypertrophy` | `#14AABF` | `#69C3D3` | 9.01:1 | 7.38:1 | 27.30 |
+| `power` | `#3DAEDE` | `#7BC8EF` | 9.88:1 | 7.97:1 | 22.54 |
+| `core` | `#71A3B1` | `#9EBBC4` | 9.02:1 | 7.31:1 | 15.85 |
+
+**Every ΔE figure in this entry and every entry after it is CIEDE2000**
+(kL = kC = kH = 1), computed by `frontend/tests/colour.ts`. This is worth
+stating because D75's figures are **CIE76**, plain Euclidean distance in
+L\*a\*b\*, which flatters saturated colours: the zone-6 swap D75 reports as
+ΔE 74 is ΔE00 37, and zone-7's ΔE 51 is ΔE00 33. Both still clear any bar worth
+setting, but a threshold calibrated on CIE76 numbers would be roughly half as
+strict as it reads.
+
+What the move buys, in numbers:
+
+* **Distance from the reservations** (`--color-coach`, `--color-coach-strong`,
+  `--color-status-over`), minimum over all eighteen tones counting edge *and*
+  badge text: **0.00 → 11.92**. The floor is now `recovery`, a desaturated
+  slate that was never purple and is nowhere near it perceptually; the closest
+  tone that moved is `core` at 15.85.
+* **Distance within the strength family**: floor **2.16 → 8.72**.
+  `hypertrophy` and `power` used to be ΔE00 2.16 apart — two purposes an
+  athlete could not tell apart on adjacent cards.
+* **Distance across the whole palette** is unchanged at 1.33
+  (`threshold` / `conditioning`), a pre-existing pair this entry does not
+  touch. The tightest *new* neighbours are `endurance` / `power` at 8.44 and
+  `mobility` / `core` at 8.55 — both better separated than four pairs that
+  already shipped.
+* Every new tone clears **3:1 on `--color-card` for the badge text**, the bar
+  this palette sets for a 10px badge, with the worst at 5.61:1.
+
+The mockup drew its Strength badge in violet, so this is a **recorded departure
+from the mockup**: invariant 7 owns the hue and a badge does not get to
+countermand it. That is the whole of the cost — one badge family reads cooler
+than the picture.
+
+The part that matters more than the hexes: `lib/purpose.test.ts` now **measures
+the reservation** rather than restating it. Every tone's edge and text must be
+ΔE00 > 10 from each reserved colour, and a hex may not equal one outright. Ten
+is "nobody would call these the same colour at a glance", it is met by the
+whole table with margin, and it means the nineteenth purpose cannot re-spend
+purple by being typed in a different file from the token it collides with —
+which is exactly how this happened. A companion test checks every tone's badge
+contrast, so the next hex cannot be chosen for hue alone.
+
+This displaces the narrower fix of recolouring only the three tones a review
+named. It was tried and abandoned within the hour: with `power` at ΔE00 6.68
+and `core` at 8.27 from `--color-coach`, the only guard those three could pass
+was a threshold so low it would have admitted lavender.
+
+## D85 — Ink is WCAG AA on every surface it lands on; `ink-disabled` is narrowed to inactive controls
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`--color-ink-faint` was the mockup's `#5c636d`: **3.01:1** on `--color-card`,
+2.93:1 on `--color-accent-surface`. It carried 38 pieces of text at 9.5–10.5px
+— every `SectionLabel`, the anchor provenance line, the coverage notes under
+the load figures, the "N steps" on a calendar card. Small, grey, and below the
+AA floor for body text is not a style, it is text some people cannot read.
+
+`--color-ink-faint` becomes **`#7d848f`**, same hue and chroma, lifted in
+lightness only: 4.85:1 on `card`, 4.93:1 on `panel`, 4.72:1 on
+`accent-surface`, and **4.54:1 at its worst**, on `accent-surface-hover` — the
+lightest surface faint ink actually lands on. It stays visibly below
+`--color-ink-muted` `#8a9099` (5.68:1 on a card): ΔL\* 4.66, ΔE00 4.38. That
+gap is narrower than the mockup's, and deliberately so — the band between the
+AA floor and the next rung up is only 0.83 of a contrast ratio wide, and the
+hierarchy is carried by size, weight and case as much as by tone.
+
+`--color-ink-disabled` `#6b727c` (3.76:1) **stays below AA and is narrowed
+instead**. It was doing two jobs: dimming an unbuilt nav item, and striking
+through a missed session's duration. The second is content — what was *not*
+done is information — so missed text moves to `--color-ink-muted`, which is
+what the mockup itself uses for it (`color:#8A9099`, with the decoration at
+50 % alpha). What remains for `ink-disabled` is inactive user interface
+components, which WCAG 1.4.3 explicitly exempts, and the token now says so in
+the palette.
+
+Raising `ink-disabled` past 4.5:1 was the alternative and was rejected: it
+would have to pass `ink-muted` to stay distinguishable from `ink-faint`, at
+which point a disabled nav item reads as an enabled one and the dimming means
+nothing. A token that is *allowed* to be quiet is more useful than a fourth
+rung of readable grey.
+
+`frontend/tests/ink-contrast.test.ts` parses the palette and asserts the ratios
+— including that the rungs stay in order, and that `ink-disabled` stays *below*
+AA, so the exemption cannot quietly become a fifth content ink.
+
+## D86 — "No colour outside globals.css" is a test, and the palette gains the stops the mockup actually uses
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+D59 claimed the palette lives in `app/globals.css` and `lib/purpose.ts` and
+nowhere else. Ten inline literals had been added since, one arbitrary-value
+class at a time: `bg-[#101215]`, `hover:bg-[#171C24]`,
+`border-[rgb(224_92_92/0.3)]` five times over, `bg-[rgb(76_141_255/0.07)]` and
+its 0.08 twin. Every one of them re-encoded a colour that had, or should have
+had, a name. None of them was wrong in review, because a review reads a diff
+and the token it collides with is in another file.
+
+Three changes, in the order they have to happen.
+
+**The palette gains what was missing.** The literals existed because the tokens
+did not: `--color-missed-surface` / `--color-missed-border`,
+`--color-danger-surface` / `--color-danger-border`, `--color-warn-surface` /
+`--color-warn-border`, `--color-accent-wash`, `--color-accent-surface-hover`,
+`--color-chrome-active`. The two accent washes (.07 and .08) become one — a
+0.01 difference in alpha is not a design intent, it is a typo with a history.
+
+**Two stops the mockup uses and the palette had skipped.**
+`--color-hairline-card` (`rgb(255 255 255 / .07)`) is the mockup's single most
+common border, 28 of them, and the app was drawing every card and panel at .06;
+`--color-hairline-faint` (.05) is the well a chart sits in. Checked
+occurrence-by-occurrence rather than replaced wholesale: .06 stays where the
+mockup divides *inside* a surface and draws the chrome's outer edges, .09 stays
+on pressable controls. Likewise `--text-label` (10px) — the mockup's uppercase
+micro-heading is 10px at .09em tracking in all fourteen places, and
+`SectionLabel` was rendering it at `text-2xs` (9.5px), which is the *metric
+caption* beside a figure. The two sizes look alike and mean different things,
+so the scale now holds both.
+
+**The claim becomes a test.** `frontend/tests/no-literal-colours.test.ts` walks
+`components/` and `app/` and fails any file containing `#rgb`, `#rrggbb`,
+`#rrggbbaa`, `rgb(`, `rgba(`, `hsl(` or `hsla(`. One entry in the allowlist,
+`app/globals.css`, and it is checked to still be the palette; `lib/purpose.ts`
+is outside the scanned tree by construction, because a runtime lookup keyed by
+a value Tailwind cannot see has to be data. Adding an allowlist entry needs an
+entry here, not just a line in the set — an allowlist that grows silently is
+the thing the test exists to prevent. A Biome rule was considered and rejected:
+`noRestrictedSyntax` sees the class string but not the CSS file it should be
+compared against, and it would have to be repeated for `.ts`, `.tsx` and `.css`
+separately.
+
+The same reasoning produced the other guard in this change:
+`lib/workout-profile.test.ts` now **reads `backend/app/domain/zones.py` off
+disk** and compares the extracted `coggan_7` lower bounds against
+`COGGAN_7_LOWER`, count included. D75 says an eighth backend zone fails a
+frontend test; until now the test compared the frontend table against itself
+and asserted it had seven entries, which is true of any table with seven
+entries. The regex is anchored on the `ZoneModel.COGGAN_7:` key so a second
+scheme cannot be read by mistake and tolerant inside it — whitespace, zone
+names and float spelling are all free to change, the numbers are not.
+
+## D87 — The mockup modules WP-3 does not build, and the two small ones it does
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`docs/ui_mockups/Training App.dc.html` draws more than this work package ships,
+and until now the difference was undocumented — which makes every omission
+look like an oversight and every reviewer re-derive the same list. What follows
+is the list, with why each one waits. None of them is being built now.
+
+* **Grid / Agenda toggle and the agenda view.** A second layout for data the
+  grid already shows. WP-3-optional polish, deferred deliberately: the week
+  grid is the primary and a second view of the same seven days earns its
+  maintenance only once there is something the grid cannot show — a day with
+  four sessions, which the plan does not yet produce.
+* **The seven-tile day-summary strip.** Same reason, plus half its tiles
+  (adherence, actual load, time in zone) are *executed* numbers. Those arrive
+  with activity ingest.
+* **The sidebar FTP / athlete tile.** Wants the current FTP with its estimate
+  band and date, and a "Base · wk 4/6" block position. The anchor half is
+  reachable today; the block half is WP-6's periodisation and would be
+  fabricated. A tile that is half real reads as wholly real.
+* **Today's "Tomorrow" panel.** Needs tomorrow's session *and* a reason to
+  preview it — the mockup's version leads with readiness, which is WP-4 data.
+* **The toolbar's block/goal context line.** Same dependency as the athlete
+  tile's second half: there are no blocks or goals in the model yet.
+* **The missed card's reason chip** ("reason: sleep 5h 20m"). A reason for a
+  missed session is a WP-4 artefact — it comes from what the athlete or the
+  ingest says happened instead, and there is nothing to read.
+* **Weather glyphs.** No weather source, no plan to add one before WP-5.
+
+Two exceptions are built now, because the data already ships and withholding it
+was the arbitrary choice, not showing it:
+
+* **Today's header carries the planned load** — `planned 1:15 · 78 TSS`, from
+  the session's own `predicted_load`, in mono numerals. Nothing renders when it
+  is null: a session with no power target has no TSS, and `0 TSS` would be a
+  claim the arithmetic never made.
+* **The workout profile carries a time axis** — `0:00 … 1:00:00` under the
+  bars, from the flattened step durations, on the detail plot only. The labels
+  sit at even *fractions* of the total rather than at round clock intervals,
+  because the row is laid out with `justify-between` and nothing else positions
+  them: quarters land where they claim to, whereas ten-minute marks would sit
+  wherever flex put them and quietly misplace the third interval. Absent
+  entirely when any step is open-ended, for the same reason the TSS is.
+
+The rule this entry sets, for the work packages that inherit the mockup: **a
+module the data cannot support is not built and is listed here.** The mockup is
+a picture of the finished application, and the difference between a plan and a
+gap is whether someone wrote it down.
+
+## D88 — The open session joins the calendar's address, and a card's load carries its coverage
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Two corrections to WP-3's own work, one of them to something D77 claimed was
+finished.
+
+### The session sheet is a place
+
+`/calendar?session=<uuid>` opens the session sheet, alongside `?week=`. This
+displaces `useState<WeekSession | null>` in `CalendarWeek` — a sheet that could
+not be reloaded, bookmarked or sent to anyone, which is the same failure D77
+had just fixed one level up.
+
+**D77 overclaimed, and this entry says so.** Its wording — that the week was
+"the only WP-3 page still failing that rule" — was wrong when it was written:
+the sheet was already open beside it, held in component state, and a session is
+exactly the thing an athlete forwards to a coach. Entries here are append-only,
+so the correction is this paragraph rather than an edit to that one.
+
+**Not a `/sessions/{id}` route.** UI convention 1 says a sub-view worth linking
+to is a real route, and a session detail page is one — it arrives with WP-4/5,
+which give it the executed data, the charts and the map that make it a page
+rather than a panel. Building the route now would mean building it twice: the
+sheet's content is a *summary of a plan*, and the page's will be a comparison
+of plan against execution. The query param is the honest interim form — it
+addresses the same thing, costs nothing to move later, and does not pretend the
+section exists.
+
+**Push to open, replace to close.** Opening a card pushes a history entry, so
+the browser's Back gesture — the one every phone already has, and the one
+desktop users reach for before they look for a ✕ — closes the sheet. Closing
+replaces, so opening and closing a dozen cards in a row does not bury the page
+the athlete arrived from under a dozen identical entries. The asymmetry has one
+visible consequence, accepted deliberately: after a close, Back returns to the
+address that is already showing, so the first press appears to do nothing. The
+alternative — calling `history.back()` on close — has to know whether *this*
+page pushed the entry it would be popping, and gets it wrong the moment a
+deep-linked sheet is closed (there is no entry to go back to, and the press
+leaves the application).
+
+Both are `window.history.*`, never the router: `router.replace` and
+`router.push` **cannot drop a search param** in this Next major (D77), and
+closing the sheet is precisely a param being dropped. `writeUrl` takes a patch
+— `{ session: null }` — rather than a query string, so each control touches
+only its own facet and neither can erase the other.
+
+**Open-state is derived, never duplicated.** The component reads
+`useSearchParams`; there is no second copy in state to disagree with the
+address bar when the athlete presses Back. The test mock for `next/navigation`
+was rewritten to match: it subscribes to `pushState` / `replaceState` /
+`popstate` through `useSyncExternalStore`, the way Next itself does, which is
+what lets `window.history.back()` be a real assertion in a component test
+rather than a simulated one. The `afterUrlChange()` helper it replaces is gone.
+
+**The param is validated for uuid shape before it is spent** (`lib/ids.ts`,
+`isUuid` — the sibling of `isIsoDate`). The id is a *path segment*: without the
+guard, `?session=yesterday` becomes `GET /planned-sessions/yesterday`, and the
+404 renders as a session that has been deleted. Garbage is treated as absent
+and swept out of the address bar; a well-formed id that names nothing is a
+different thing — the link was a session once, or is a byte wrong — and the
+sheet says so and keeps the param, because dropping it would make a dead link
+look like one that worked.
+
+**The sheet no longer needs a card.** It is handed a `sessionId` and, when the
+week on screen happens to carry one, a `card`; the card is an optimisation that
+renders the header from the first frame, never a requirement. A deep link to a
+session outside the shown week reads the same facts off
+`GET /planned-sessions/{id}`, and asks the library for the workout's name —
+because a session's title *is* its workout's name and the session resource does
+not restate it, so without that request the sheet would head itself "Endurance"
+while the card behind it says "Long endurance".
+
+**Paging weeks leaves the session param alone**, which is the opposite of the
+rule first drafted for it, for a reason found by trying to test it: the sheet
+is a *modal*, so the week controls are inert while one is open and cannot page
+out from under it. A rule that cannot be reached is dead code, and `?week=…&
+session=…` naming a session outside that week stays a link this page honours.
+
+One thing the URL costs: a browser Back press is not interceptable, so it
+closes the sheet without the `useDirtyClose` prompt an unapplied move/copy date
+gets from Escape, an outside press or the ✕. Hijacking the history stack to
+recover the prompt is worse than losing a typed date.
+
+### A card's predicted load carries its coverage
+
+`WeekSessionRead` gains `predicted_load_coverage: float | None`, null exactly
+when `predicted_load` is. The card already carried the load and the intensity
+factor while the session resource's `PredictedLoadRead` carried a third field
+the card did not, so any client rendering card-level loads — WP-5's week strip
+will — could not tell a fully covered prediction from a 40 %-covered one. That
+is the same rule D78 applied to every week total, one level down: **no total
+without its coverage.**
+
+It is passed through, not recomputed: the service already holds the
+`PredictedLoad` the session endpoint renders, so the card's number and the
+sheet's come out of one call to `predict_endurance_load`. A test asserts the
+two are equal for the same session anyway — they cannot drift while the
+plumbing holds, and a second computation is the obvious way to add the next
+field.
+
+No UI renders it yet, deliberately: the calendar card shows duration, purpose
+and step count, and load arrives on a card with WP-5's week strip. The field
+ships now because the contract is what other clients build against, and adding
+it later would mean a second round of `just api-sync` in someone else's PR.

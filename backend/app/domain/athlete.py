@@ -18,6 +18,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from app.domain.plan import PlanState
+
 
 class Sex(StrEnum):
     """Biological sex, as it affects physiological reference values.
@@ -59,6 +61,10 @@ class AthleteProfile:
         capabilities: Free-form per-discipline capability stub, keyed by
             :class:`Discipline` value. Opaque to the MVP: stored, returned,
             never interpreted.
+        plan_state: Whether the training plan is being enforced
+            (`app.domain.plan.PlanState`). A property of the plan rather than
+            of the person, but there is one athlete and one plan, so it lives
+            on the profile instead of on a table with a single row of its own.
     """
 
     name: str | None = None
@@ -68,6 +74,7 @@ class AthleteProfile:
     capabilities: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    plan_state: PlanState = PlanState.ACTIVE
 
     def __post_init__(self) -> None:
         """Reject values that are typos rather than measurements."""

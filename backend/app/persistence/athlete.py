@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.athlete import AthleteProfile, Sex
+from app.domain.plan import PlanState
 from app.persistence.db import Base, flush
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
@@ -46,6 +47,15 @@ class Athlete(Base):
     height_cm: Mapped[float | None] = mapped_column(Float)
     #: Free-form per-discipline capability stub (see `app.domain.athlete`).
     capabilities: Mapped[dict[str, Any]] = mapped_column(JSONColumn, default=dict)
+    #: Whether the plan is being enforced (`app.domain.plan`). Unlike the
+    #: fields above it carries a `server_default`: it was added to a table that
+    #: already had its one row, and "no answer yet" is not a state a plan can
+    #: be in — an existing profile is on an active plan.
+    plan_state: Mapped[PlanState] = mapped_column(
+        enum_column(PlanState),
+        default=PlanState.ACTIVE,
+        server_default=PlanState.ACTIVE.value,
+    )
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
@@ -61,6 +71,7 @@ class Athlete(Base):
             sex=self.sex,
             height_cm=self.height_cm,
             capabilities=dict(self.capabilities or {}),
+            plan_state=self.plan_state,
         )
 
 

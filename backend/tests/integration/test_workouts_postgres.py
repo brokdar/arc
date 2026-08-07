@@ -7,6 +7,7 @@ enum VARCHARs, and — the one that bit in the unit suite — the referential
 actions, which SQLite ignores unless a pragma turns them on.
 """
 
+import json
 from typing import Any
 
 from httpx import AsyncClient
@@ -73,11 +74,11 @@ async def scalar(statement: str) -> Any:
     return value
 
 
-async def execute(statement: str) -> None:
+async def execute(statement: str, **params: Any) -> None:
     """Run one raw SQL statement against the real database."""
     engine = create_async_engine(get_settings().postgres.async_url)
     async with engine.begin() as conn:
-        await conn.execute(text(statement))
+        await conn.execute(text(statement), params or None)
     await engine.dispose()
 
 
@@ -126,6 +127,52 @@ async def test_pinned_anchor_versions_are_queryable(client: AsyncClient) -> None
     )
 
     assert pinned == appended.json()["id"]
+
+
+async def test_criteria_stored_before_smoothing_existed_still_read_back(
+    client: AsyncClient,
+) -> None:
+    # Criteria are tagged-union JSONB, not columns, so `smoothing_s` shipped
+    # without a migration and the decoder's tolerance is what stands in for
+    # one. This writes a WP-2-era row through raw SQL — no `smoothing_s`
+    # anywhere — and reads the session back through the API.
+    await client.post(
+        ANCHORS, json={"anchor_type": "ftp", "value": 250, "provenance": "estimated"}
+    )
+    session = (
+        await client.post(
+            SESSIONS,
+            json={"date": "2026-08-10", "purpose": "sweet_spot", "structure": RIDE},
+        )
+    ).json()
+    legacy = [
+        {
+            "kind": "time_in_band",
+            "selector": {"kind": "role", "role": "work"},
+            "band": {"channel": "power", "low": 0.95, "high": 1.05},
+            "min_fraction": 0.8,
+        },
+        {
+            "kind": "ceiling",
+            "channel": "power",
+            "limit": {"kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 0.6},
+            "max_seconds_above": 120,
+        },
+    ]
+    # Written as raw SQL rather than through the API: the row has to look
+    # exactly as WP-2 wrote it, and every write path now adds the key.
+    await execute(
+        "UPDATE planned_session_intents "
+        "SET success_criteria = CAST(:criteria AS jsonb)",
+        criteria=json.dumps(legacy),
+    )
+
+    fetched = await client.get(f"{SESSIONS}/{session['id']}")
+
+    assert fetched.status_code == 200, fetched.text
+    band, ceiling = fetched.json()["intent"]["success_criteria"]
+    assert band["band"]["smoothing_s"] == 30
+    assert ceiling["smoothing_s"] == 0
 
 
 # --- ILIKE --------------------------------------------------------------------

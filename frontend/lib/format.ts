@@ -1,0 +1,178 @@
+/**
+ * Display formatting for the numerals the UI is made of.
+ *
+ * Every value produced here is meant to be rendered in the mono face — the
+ * design system reserves JetBrains Mono for durations, dates, counts and
+ * percentages so columns of them line up. Pure functions, no locale lookups:
+ * the app is single-athlete and self-hosted, and a calendar that renders
+ * `28.07` on one machine and `7/28` on another is worse than one that always
+ * renders the same thing.
+ */
+
+const EM_DASH = "—";
+
+/**
+ * Seconds as `h:mm` — the calendar card's duration (`0:42`, `3:10`).
+ *
+ * Returns an em dash for a missing duration so a card keeps its shape when the
+ * prescription has none (a strength session, an unstructured ride).
+ */
+export function formatDurationHm(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return EM_DASH;
+  }
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return `${hours}:${String(minutes).padStart(2, "0")}`;
+}
+
+/**
+ * Seconds as a stopwatch reading: `4:00`, `1:08:42`.
+ *
+ * Used for step durations inside a workout, where minutes:seconds is the unit
+ * an athlete thinks in, unlike the h:mm above.
+ */
+export function formatDurationClock(
+  seconds: number | null | undefined,
+): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return EM_DASH;
+  }
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const mm = hours > 0 ? String(minutes).padStart(2, "0") : String(minutes);
+  return hours > 0
+    ? `${hours}:${mm}:${String(secs).padStart(2, "0")}`
+    : `${mm}:${String(secs).padStart(2, "0")}`;
+}
+
+/** An ISO date (`2026-07-28`) as `28.07`. */
+export function formatDayMonth(isoDate: string): string {
+  const [, month, day] = splitIsoDate(isoDate);
+  return `${day}.${month}`;
+}
+
+/** An ISO date (`2026-07-28`) as `28.07.2026`. */
+export function formatDayMonthYear(isoDate: string): string {
+  const [year, month, day] = splitIsoDate(isoDate);
+  return `${day}.${month}.${year}`;
+}
+
+/**
+ * Seconds as the headline says them: `3h10`, `45min`, `30s`.
+ *
+ * Prose, not a clock reading — `formatDurationHm` renders `3:10` for a column
+ * of durations that must line up, and this renders the same duration for the
+ * middle of a sentence, where a colon reads as a time of day.
+ */
+export function formatDurationWords(
+  seconds: number | null | undefined,
+): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return EM_DASH;
+  }
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) {
+    return `${total}s`;
+  }
+  if (total < 3600) {
+    return `${Math.round(total / 60)}min`;
+  }
+  // Round to the minute first, so 3h59m40s becomes 4h rather than 3h60.
+  const minutes = Math.round(total / 60);
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h${String(rest).padStart(2, "0")}`;
+}
+
+/**
+ * A step's length as an interval is spoken: `4′`, `1′30″`, `40″`.
+ *
+ * The primes are what "5×4′" is written with on a training plan, and the
+ * headline composer is the only caller — everywhere else a duration belongs
+ * in a column and gets `formatDurationClock`.
+ */
+export function formatMinutesPrime(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return EM_DASH;
+  }
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes === 0) {
+    return `${rest}″`;
+  }
+  return rest === 0 ? `${minutes}′` : `${minutes}′${rest}″`;
+}
+
+/**
+ * Read a duration a person typed. The inverse of `formatDurationClock`.
+ *
+ * Accepts `mm:ss` and `h:mm:ss` — and a bare number as **minutes**, because
+ * that is what someone typing `40` into a field labelled "Duration" means.
+ * Returns `null` for anything it cannot read, which is what the builder shows
+ * as a validation message rather than silently prescribing zero.
+ */
+export function parseDurationInput(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const parts = trimmed.split(":");
+  if (parts.length > 3) {
+    return null;
+  }
+  if (parts.length === 1) {
+    const minutes = Number(trimmed);
+    return Number.isFinite(minutes) && minutes >= 0
+      ? Math.round(minutes * 60)
+      : null;
+  }
+  let total = 0;
+  for (const part of parts) {
+    const value = Number(part.trim());
+    if (part.trim() === "" || !Number.isFinite(value) || value < 0) {
+      return null;
+    }
+    total = total * 60 + value;
+  }
+  return Math.round(total);
+}
+
+/**
+ * Read a number a person typed, or `null`.
+ *
+ * Every numeric field in the builder holds a *string*, because a half-typed
+ * number is a legal thing to have in a form and coercing it to 0 on every
+ * keystroke makes the field impossible to clear. Parsing happens once, here,
+ * when the draft is turned into a payload.
+ */
+export function parseNumberInput(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** A fraction (`0.75`) as a whole-number percentage (`75%`). */
+export function formatPercent(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`;
+}
+
+/** `3 sets` / `1 set` — the strength card's stand-in for a duration. */
+export function formatSets(sets: number | null | undefined): string {
+  if (sets === null || sets === undefined) {
+    return EM_DASH;
+  }
+  return `${sets} ${sets === 1 ? "set" : "sets"}`;
+}
+
+function splitIsoDate(isoDate: string): [string, string, string] {
+  const [year = "", month = "", day = ""] = isoDate.slice(0, 10).split("-");
+  return [year, month, day];
+}

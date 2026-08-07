@@ -241,6 +241,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/plan/week": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Plan Week
+     * @description Get seven consecutive days of the plan, empty days included.
+     *
+     *     Each session is summarized for a calendar card; its full detail — step
+     *     tree, criteria, pins, intent history — stays at
+     *     `GET /api/v1/planned-sessions/{id}`.
+     */
+    get: operations["plan-get_plan_week"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/planned-sessions": {
     parameters: {
       query?: never;
@@ -251,6 +275,13 @@ export interface paths {
     /**
      * List Planned Sessions
      * @description List planned sessions in date order, optionally within a date range.
+     *
+     *     A list row is lighter than the session it names (D79): no resolved step
+     *     tree and no predicted-load explanation, because a page of two hundred
+     *     sessions carrying either is measured in megabytes and in seconds of
+     *     synchronous CPU. The pins stay — they are one query for the whole page —
+     *     and the whole session is one request away at
+     *     `GET /planned-sessions/{id}`.
      */
     get: operations["planned-sessions-list_planned_sessions"];
     put?: never;
@@ -297,6 +328,31 @@ export interface paths {
     patch: operations["planned-sessions-update_planned_session"];
     trace?: never;
   };
+  "/api/v1/planned-sessions/{planned_session_id}/copy": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Copy Planned Session
+     * @description Copy a planned session onto another date.
+     *
+     *     The copy is a **new** planned session: status `planned`, its own intent
+     *     chain starting at version 1, and its anchors pinned at the versions in
+     *     force now — a prescription freezes when it is planned, and this one is
+     *     being planned now (invariant 4, D57).
+     */
+    post: operations["planned-sessions-copy_planned_session"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/planned-sessions/{planned_session_id}/intents": {
     parameters: {
       query?: never;
@@ -334,6 +390,31 @@ export interface paths {
     get: operations["planned-sessions-get_planned_session_intent"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/planned-sessions/{planned_session_id}/move": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Move Planned Session
+     * @description Move a planned session to another date.
+     *
+     *     Its own verb rather than `PATCH ... {"date": ...}`, which does the same
+     *     thing: dragging a card across the calendar is one intention, and the audit
+     *     trail should be able to say so (D56). Nothing about the prescription
+     *     changes — no intent version, no re-pinning.
+     */
+    post: operations["planned-sessions-move_planned_session"];
     delete?: never;
     options?: never;
     head?: never;
@@ -642,6 +723,7 @@ export interface components {
       height_cm: number | null;
       /** Name */
       name: string | null;
+      plan_state: components["schemas"]["PlanState"];
       sex: components["schemas"]["Sex"];
       /**
        * Updated At
@@ -654,8 +736,9 @@ export interface components {
      * @description Payload for partially updating the profile.
      *
      *     Omitted fields are left unchanged; an explicit ``null`` clears a field
-     *     (for ``sex`` and ``capabilities``, "clear" means back to ``unspecified``
-     *     and ``{}`` — those two have an empty value rather than an absent one).
+     *     (for ``sex``, ``capabilities`` and ``plan_state``, "clear" means back to
+     *     ``unspecified``, ``{}`` and ``active`` — those three have an empty value
+     *     rather than an absent one).
      */
     AthleteUpdate: {
       /** Capabilities */
@@ -668,6 +751,7 @@ export interface components {
       height_cm?: number | null;
       /** Name */
       name?: string | null;
+      plan_state?: components["schemas"]["PlanState"] | null;
       sex?: components["schemas"]["Sex"] | null;
     };
     /**
@@ -680,6 +764,11 @@ export interface components {
       high: number;
       /** Low */
       low: number;
+      /**
+       * Smoothing S
+       * @default 30
+       */
+      smoothing_s: number;
     };
     /**
      * CeilingSchema
@@ -698,6 +787,11 @@ export interface components {
         | components["schemas"]["AbsoluteLimitSchema"];
       /** Max Seconds Above */
       max_seconds_above: number;
+      /**
+       * Smoothing S
+       * @default 0
+       */
+      smoothing_s: number;
     };
     /**
      * Channel
@@ -872,6 +966,22 @@ export interface components {
       /** Password */
       password: string;
     };
+    /**
+     * MetricExplanationRead
+     * @description Why a computed number is the number. Travels with it; not page copy.
+     */
+    MetricExplanationRead: {
+      /** Assumptions */
+      assumptions: string[];
+      /** Citation */
+      citation: string | null;
+      /** Formula */
+      formula: string;
+      /** Inputs */
+      inputs: {
+        [key: string]: string;
+      };
+    };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -894,10 +1004,10 @@ export interface components {
       /** Total */
       total: number;
     };
-    /** Page[PlannedSessionRead] */
-    Page_PlannedSessionRead_: {
+    /** Page[PlannedSessionListItem] */
+    Page_PlannedSessionListItem_: {
       /** Items */
-      items: components["schemas"]["PlannedSessionRead"][];
+      items: components["schemas"]["PlannedSessionListItem"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -947,6 +1057,129 @@ export interface components {
       pct_low: number;
     };
     /**
+     * PinnedAnchorRead
+     * @description One anchor version this session's percentages resolve against.
+     *
+     *     The pin is the product's most distinctive invariant (build-plan invariant
+     *     4, D49) and it is worth nothing invisible: showing the provenance is what
+     *     makes an `estimated` FTP read as an estimate rather than a fact.
+     */
+    PinnedAnchorRead: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /**
+       * Anchor Version Id
+       * Format: uuid
+       */
+      anchor_version_id: string;
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      provenance: components["schemas"]["Provenance"];
+      unit: components["schemas"]["AnchorUnit"];
+      /** Value */
+      value: number;
+    };
+    /**
+     * PlanState
+     * @description Whether the plan is being enforced.
+     *
+     *     ``PAUSED`` does not pause the application: see the module docstring for
+     *     what it does and does not stop.
+     * @enum {string}
+     */
+    PlanState: "active" | "paused";
+    /**
+     * PlanWeekDayRead
+     * @description One day of the week, with the sessions planned for it.
+     */
+    PlanWeekDayRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Sessions */
+      sessions: components["schemas"]["WeekSessionRead"][];
+    };
+    /**
+     * PlanWeekDisciplineRead
+     * @description One week's totals for one discipline.
+     *
+     *     The two axes keep their own columns. ``planned_load`` is TSS and
+     *     ``total_sets`` counts strength sets; there is deliberately no field that
+     *     could hold their sum, because they measure different things (spec v2
+     *     §5.4, §8.3).
+     *
+     *     Both totals carry their own coverage pair, so a row explains its own
+     *     missing number instead of leaving a client to invent a reason for it.
+     */
+    PlanWeekDisciplineRead: {
+      discipline: components["schemas"]["Discipline"];
+      /** Duration Sessions Counted */
+      duration_sessions_counted: number;
+      /** Duration Sessions Uncounted */
+      duration_sessions_uncounted: number;
+      /** Load Sessions Counted */
+      load_sessions_counted: number;
+      /** Load Sessions Uncounted */
+      load_sessions_uncounted: number;
+      /** Planned Duration S */
+      planned_duration_s: number | null;
+      /** Planned Load */
+      planned_load: number | null;
+      /** Session Count */
+      session_count: number;
+      /** Total Sets */
+      total_sets: number | null;
+    };
+    /**
+     * PlanWeekRead
+     * @description Seven consecutive days of the plan, empty days included.
+     */
+    PlanWeekRead: {
+      /** By Discipline */
+      by_discipline: components["schemas"]["PlanWeekDisciplineRead"][];
+      /** Days */
+      days: components["schemas"]["PlanWeekDayRead"][];
+      /** Duration Sessions Counted */
+      duration_sessions_counted: number;
+      /** Duration Sessions Uncounted */
+      duration_sessions_uncounted: number;
+      /**
+       * End
+       * Format: date
+       */
+      end: string;
+      /** Load Sessions Counted */
+      load_sessions_counted: number;
+      /** Load Sessions Uncounted */
+      load_sessions_uncounted: number;
+      /** Planned Duration S */
+      planned_duration_s: number | null;
+      /** Planned Load */
+      planned_load: number | null;
+      /** Session Count */
+      session_count: number;
+      /**
+       * Start
+       * Format: date
+       */
+      start: string;
+    };
+    /**
+     * PlannedSessionCopy
+     * @description Payload for copying a planned session onto another date.
+     */
+    PlannedSessionCopy: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+    };
+    /**
      * PlannedSessionCreate
      * @description Payload for planning a session.
      */
@@ -982,8 +1215,67 @@ export interface components {
       workout_id?: string | null;
     };
     /**
+     * PlannedSessionListItem
+     * @description One planned session as a **list row**: everything but the expensive parts.
+     *
+     *     Deliberately not `PlannedSessionRead` (D79, superseding that half of D74).
+     *     A page of this collection is a page of *sessions*, and serving the resolved
+     *     step tree and the load explanation for every one of them costs megabytes
+     *     of body and seconds of CPU that no list view spends. What is dropped is
+     *     dropped whole rather than emptied: `resolved_steps`, `predicted_load` and
+     *     `predicted_volume` are **absent from this shape**, not null in it, so a
+     *     client cannot mistake a list row for a session that has no prediction.
+     *
+     *     `GET /planned-sessions/{id}` — and every write route, which answers with
+     *     the session it wrote — returns the full `PlannedSessionRead`.
+     */
+    PlannedSessionListItem: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      intent: components["schemas"]["SessionIntentRead"];
+      /** Intent Versions */
+      intent_versions: number;
+      /** Pinned Anchors */
+      pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * PlannedSessionMove
+     * @description Payload for moving a planned session to another date.
+     */
+    PlannedSessionMove: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+    };
+    /**
      * PlannedSessionRead
      * @description One planned session, with the intent version in force.
+     *
+     *     The resolved fields are computed on every read from the intent's frozen
+     *     prescription and the anchor versions it pinned — never stored, so
+     *     appending a new anchor cannot change what an existing session says.
      */
     PlannedSessionRead: {
       /**
@@ -1005,6 +1297,12 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      /** Pinned Anchors */
+      pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      predicted_load: components["schemas"]["PredictedLoadRead"] | null;
+      predicted_volume: components["schemas"]["PredictedVolumeRead"] | null;
+      /** Resolved Steps */
+      resolved_steps: components["schemas"]["ResolvedStepRead"][];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
       /**
        * Updated At
@@ -1048,6 +1346,40 @@ export interface components {
         | null;
       /** Workout Id */
       workout_id?: string | null;
+    };
+    /**
+     * PredictedLoadRead
+     * @description What this prescription is expected to cost, and how that was arrived at.
+     */
+    PredictedLoadRead: {
+      /**
+       * Anchor Version Id
+       * Format: uuid
+       */
+      anchor_version_id: string;
+      /** Coverage */
+      coverage: number;
+      explanation: components["schemas"]["MetricExplanationRead"];
+      /** Intensity Factor */
+      intensity_factor: number;
+      /** Load */
+      load: number;
+    };
+    /**
+     * PredictedVolumeRead
+     * @description What a strength prescription is expected to cost. **Not** a load.
+     *
+     *     Kilograms and TSS are different axes (spec v2 §5.4, §8.3): never add
+     *     ``volume_load_kg`` to ``PredictedLoadRead.load``, and never render the two
+     *     in one column. Exactly one of the two is ever present on a session.
+     */
+    PredictedVolumeRead: {
+      /** Coverage */
+      coverage: number;
+      /** Total Sets */
+      total_sets: number;
+      /** Volume Load Kg */
+      volume_load_kg: number | null;
     };
     /**
      * Provenance
@@ -1178,6 +1510,47 @@ export interface components {
       kind: "repeat";
       /** Times */
       times: number;
+    };
+    /**
+     * ResolvedStepRead
+     * @description One flattened step of the prescription, with its targets resolved.
+     */
+    ResolvedStepRead: {
+      /** Distance M */
+      distance_m: number | null;
+      /** Duration S */
+      duration_s: number | null;
+      /** End Targets */
+      end_targets: components["schemas"]["ResolvedTargetRead"][];
+      /** Index */
+      index: number;
+      /** Is Ramp */
+      is_ramp: boolean;
+      /** Name */
+      name: string | null;
+      role: components["schemas"]["StepRole"];
+      /** Start Targets */
+      start_targets: components["schemas"]["ResolvedTargetRead"][];
+    };
+    /**
+     * ResolvedTargetRead
+     * @description One channel's target, said both ways.
+     *
+     *     The prescription and the numbers are both returned because they are both
+     *     the truth: ``88–93 % FTP`` is what survives an FTP change and what a
+     *     purpose template can express, ``220–232 W`` is what the athlete rides.
+     */
+    ResolvedTargetRead: {
+      /** Anchor Version Id */
+      anchor_version_id: string | null;
+      channel: components["schemas"]["Channel"];
+      /** Prescribed */
+      prescribed: string;
+      /** Resolved High */
+      resolved_high: number | null;
+      /** Resolved Low */
+      resolved_low: number | null;
+      unit: components["schemas"]["ChannelUnit"];
     };
     /**
      * ScoringAxis
@@ -1439,6 +1812,47 @@ export interface components {
     ValidationErrorDetail: {
       /** Detail */
       detail: string | unknown[];
+    };
+    /**
+     * WeekSessionRead
+     * @description One planned session, as a calendar card shows it.
+     */
+    WeekSessionRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Intent Text */
+      intent_text: string | null;
+      /** Intent Version */
+      intent_version: number;
+      /** Planned Duration S */
+      planned_duration_s: number | null;
+      /** Predicted Intensity Factor */
+      predicted_intensity_factor: number | null;
+      /** Predicted Load */
+      predicted_load: number | null;
+      /** Predicted Load Coverage */
+      predicted_load_coverage: number | null;
+      /** Predicted Volume Load Kg */
+      predicted_volume_load_kg: number | null;
+      purpose: components["schemas"]["Purpose"];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Step Count */
+      step_count: number;
+      /** Title */
+      title: string | null;
+      /** Total Sets */
+      total_sets: number | null;
+      /** Workout Id */
+      workout_id: string | null;
     };
     /**
      * WorkoutCreate
@@ -2235,6 +2649,47 @@ export interface operations {
       };
     };
   };
+  "plan-get_plan_week": {
+    parameters: {
+      query?: {
+        /** @description First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week. */
+        start?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanWeekRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "planned-sessions-list_planned_sessions": {
     parameters: {
       query?: {
@@ -2259,7 +2714,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Page_PlannedSessionRead_"];
+          "application/json": components["schemas"]["Page_PlannedSessionListItem_"];
         };
       };
       /** @description No valid session */
@@ -2500,6 +2955,68 @@ export interface operations {
       };
     };
   };
+  "planned-sessions-copy_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionCopy"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "planned-sessions-list_planned_session_intents": {
     parameters: {
       query?: never;
@@ -2595,6 +3112,68 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-move_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionMove"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

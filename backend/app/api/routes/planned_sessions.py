@@ -12,6 +12,7 @@ needs to explain a score.
 
 import datetime as dt
 import uuid
+from collections.abc import Mapping
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
@@ -20,10 +21,19 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.schemas.planned_sessions import (
+    MetricExplanationRead,
+    PinnedAnchorRead,
+    PlannedSessionCopy,
     PlannedSessionCreate,
+    PlannedSessionListItem,
+    PlannedSessionMove,
     PlannedSessionRead,
     PlannedSessionsPage,
     PlannedSessionUpdate,
+    PredictedLoadRead,
+    PredictedVolumeRead,
+    ResolvedStepRead,
+    ResolvedTargetRead,
     SessionIntentRead,
     SessionIntentsRead,
 )
@@ -33,6 +43,9 @@ from app.api.schemas.workouts import (
     structure_document,
 )
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
+from app.domain.anchors import AnchorType
+from app.domain.prediction import PinnedAnchor, PredictedLoad, PredictedVolume
+from app.domain.resolution import ResolvedStep, ResolvedTarget
 from app.domain.sessions import SessionStatus
 from app.domain.workout import workout_body_from_json
 from app.persistence.db import SessionDep
@@ -40,7 +53,7 @@ from app.persistence.planned_sessions import (
     PlannedSessionIntentRow,
     PlannedSessionRow,
 )
-from app.services.planned_sessions import PlannedSessionService
+from app.services.planned_sessions import PlannedSessionService, SessionResolution
 from app.services.workouts import WorkoutSummary
 
 router = APIRouter(prefix="/planned-sessions", tags=["planned-sessions"])
@@ -111,7 +124,100 @@ def intent_to_read(intent: PlannedSessionIntentRow) -> SessionIntentRead:
     )
 
 
-def to_read(row: PlannedSessionRow) -> PlannedSessionRead:
+def _target_to_read(target: ResolvedTarget) -> ResolvedTargetRead:
+    """Project one resolved target onto its response shape."""
+    return ResolvedTargetRead(
+        channel=target.channel,
+        prescribed=target.prescribed,
+        resolved_low=target.resolved_low,
+        resolved_high=target.resolved_high,
+        unit=target.unit,
+        anchor_version_id=target.anchor_version_id,
+    )
+
+
+def _step_to_read(step: ResolvedStep) -> ResolvedStepRead:
+    """Project one resolved flat step onto its response shape."""
+    return ResolvedStepRead(
+        index=step.index,
+        role=step.role,
+        name=step.name,
+        duration_s=step.duration_s,
+        distance_m=step.distance_m,
+        is_ramp=step.is_ramp,
+        start_targets=[_target_to_read(target) for target in step.start_targets],
+        end_targets=[_target_to_read(target) for target in step.end_targets],
+    )
+
+
+def _pins_to_read(
+    anchors: Mapping[AnchorType, PinnedAnchor],
+) -> list[PinnedAnchorRead]:
+    """Project the pinned anchor versions, in anchor-type order."""
+    return [
+        PinnedAnchorRead(
+            anchor_type=anchor_type,
+            anchor_version_id=pinned.version_id,
+            value=pinned.version.value,
+            unit=pinned.version.unit,
+            provenance=pinned.version.provenance,
+            effective_date=pinned.version.effective_date,
+        )
+        for anchor_type, pinned in sorted(
+            anchors.items(), key=lambda item: item[0].value
+        )
+    ]
+
+
+def _load_to_read(predicted: PredictedLoad | None) -> PredictedLoadRead | None:
+    """Project a predicted load, explanation and all."""
+    if predicted is None:
+        return None
+    return PredictedLoadRead(
+        load=predicted.load,
+        intensity_factor=predicted.intensity_factor,
+        coverage=predicted.coverage,
+        anchor_version_id=predicted.anchor_version_id,
+        explanation=MetricExplanationRead(
+            formula=predicted.explanation.formula,
+            inputs=dict(predicted.explanation.inputs),
+            assumptions=list(predicted.explanation.assumptions),
+            citation=predicted.explanation.citation,
+        ),
+    )
+
+
+def _volume_to_read(predicted: PredictedVolume | None) -> PredictedVolumeRead | None:
+    """Project a predicted strength volume. Kilograms, never a load."""
+    if predicted is None:
+        return None
+    return PredictedVolumeRead(
+        volume_load_kg=predicted.volume_load_kg,
+        total_sets=predicted.total_sets,
+        coverage=predicted.coverage,
+    )
+
+
+def to_list_item(
+    row: PlannedSessionRow, anchors: Mapping[AnchorType, PinnedAnchor]
+) -> PlannedSessionListItem:
+    """Project a stored planned session onto its list-row shape (D79)."""
+    return PlannedSessionListItem(
+        id=row.id,
+        date=row.date,
+        discipline=row.discipline,
+        status=row.status,
+        intent=intent_to_read(row.current_intent),
+        intent_versions=len(row.intents),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        pinned_anchors=_pins_to_read(anchors),
+    )
+
+
+def to_read(
+    row: PlannedSessionRow, resolution: SessionResolution
+) -> PlannedSessionRead:
     """Project a stored planned session onto its response shape."""
     return PlannedSessionRead(
         id=row.id,
@@ -122,7 +228,24 @@ def to_read(row: PlannedSessionRow) -> PlannedSessionRead:
         intent_versions=len(row.intents),
         created_at=row.created_at,
         updated_at=row.updated_at,
+        pinned_anchors=_pins_to_read(resolution.anchors),
+        resolved_steps=[_step_to_read(step) for step in resolution.steps],
+        predicted_load=_load_to_read(resolution.predicted_load),
+        predicted_volume=_volume_to_read(resolution.predicted_volume),
     )
+
+
+async def one_to_read(
+    service: PlannedSessionService, row: PlannedSessionRow
+) -> PlannedSessionRead:
+    """Resolve one session's pins and project it.
+
+    Every endpoint that answers with a whole session goes through here, so the
+    resolved targets and the predicted load are part of the resource rather
+    than something only the detail route happens to include.
+    """
+    resolutions = await service.resolutions([row])
+    return to_read(row, resolutions[row.id])
 
 
 @router.get("")
@@ -133,7 +256,15 @@ async def list_planned_sessions(
     end: EndFilter = None,
     session_status: StatusFilter = None,
 ) -> PlannedSessionsPage:
-    """List planned sessions in date order, optionally within a date range."""
+    """List planned sessions in date order, optionally within a date range.
+
+    A list row is lighter than the session it names (D79): no resolved step
+    tree and no predicted-load explanation, because a page of two hundred
+    sessions carrying either is measured in megabytes and in seconds of
+    synchronous CPU. The pins stay — they are one query for the whole page —
+    and the whole session is one request away at
+    `GET /planned-sessions/{id}`.
+    """
     sessions, total = await service.list(
         start=start,
         end=end,
@@ -141,8 +272,11 @@ async def list_planned_sessions(
         offset=page.offset,
         limit=page.limit,
     )
+    # One query for the whole page's pins, not one per session — and no
+    # prescription parsed, no 1 Hz expansion run.
+    anchors = await service.pins(sessions)
     return PlannedSessionsPage(
-        items=[to_read(session) for session in sessions],
+        items=[to_list_item(session, anchors[session.id]) for session in sessions],
         total=total,
         offset=page.offset,
         limit=page.limit,
@@ -175,7 +309,7 @@ async def create_planned_session(
             ]
         ),
     )
-    return to_read(row)
+    return await one_to_read(service, row)
 
 
 @router.get("/{planned_session_id}", responses=NOT_FOUND)
@@ -183,7 +317,7 @@ async def get_planned_session(
     service: ServiceDep, planned_session_id: uuid.UUID
 ) -> PlannedSessionRead:
     """Get one planned session with the intent version in force."""
-    return to_read(await service.get(planned_session_id))
+    return await one_to_read(service, await service.get(planned_session_id))
 
 
 @router.patch("/{planned_session_id}", responses=NOT_FOUND | BAD_BODY | INVALID)
@@ -208,7 +342,49 @@ async def update_planned_session(
             for criterion in payload.success_criteria
         ]
     row = await service.update(planned_session_id, updates, actor=actor)
-    return to_read(row)
+    return await one_to_read(service, row)
+
+
+@router.post("/{planned_session_id}/move", responses=NOT_FOUND | BAD_BODY | INVALID)
+async def move_planned_session(
+    service: ServiceDep,
+    actor: ActorDep,
+    planned_session_id: uuid.UUID,
+    payload: PlannedSessionMove,
+) -> PlannedSessionRead:
+    """Move a planned session to another date.
+
+    Its own verb rather than `PATCH ... {"date": ...}`, which does the same
+    thing: dragging a card across the calendar is one intention, and the audit
+    trail should be able to say so (D56). Nothing about the prescription
+    changes — no intent version, no re-pinning.
+    """
+    return await one_to_read(
+        service, await service.move(planned_session_id, date=payload.date, actor=actor)
+    )
+
+
+@router.post(
+    "/{planned_session_id}/copy",
+    status_code=status.HTTP_201_CREATED,
+    responses=NOT_FOUND | BAD_BODY | INVALID,
+)
+async def copy_planned_session(
+    service: ServiceDep,
+    actor: ActorDep,
+    planned_session_id: uuid.UUID,
+    payload: PlannedSessionCopy,
+) -> PlannedSessionRead:
+    """Copy a planned session onto another date.
+
+    The copy is a **new** planned session: status `planned`, its own intent
+    chain starting at version 1, and its anchors pinned at the versions in
+    force now — a prescription freezes when it is planned, and this one is
+    being planned now (invariant 4, D57).
+    """
+    return await one_to_read(
+        service, await service.copy(planned_session_id, date=payload.date, actor=actor)
+    )
 
 
 @router.delete(

@@ -55,6 +55,23 @@ from app.domain.workout import (
     StepRole,
 )
 
+#: Trailing rolling mean a :class:`Band` applies when it does not say
+#: otherwise, in seconds. Thirty is the conventional window for steady work
+#: and the one normalized power is defined over.
+DEFAULT_BAND_SMOOTHING_S = 30
+
+#: Trailing rolling mean a :class:`Ceiling` applies when it does not say
+#: otherwise. Zero — raw samples — because a ceiling is about excursions.
+DEFAULT_CEILING_SMOOTHING_S = 0
+
+#: Longest smoothing window a criterion may declare, in seconds. An hour is
+#: longer than any window that can still mean something: a rolling mean wider
+#: than the interval it judges flattens the thing being judged, and a band
+#: smoothed over an hour scores the ride rather than the step. Without a bound
+#: the field takes any integer the JSON carries, and WP-7 would be asked to
+#: build a 10¹²-sample window on a read path.
+MAX_SMOOTHING_S = 3_600
+
 
 class CriterionKind(StrEnum):
     """The five MVP criterion types, as they appear in the ``kind`` tag."""
@@ -152,11 +169,22 @@ class Band:
         channel: Which channel is being judged.
         low: Lower bound as a fraction of the prescribed target.
         high: Upper bound as a fraction.
+        smoothing_s: Seconds of trailing rolling mean applied to the channel
+            before it is compared to the band; 0 means raw samples. Power is
+            spiky at 1 Hz, so a raw comparison scores a perfectly-executed
+            threshold interval far below a smart trainer doing identical
+            physiological work — an undeclared window measures the equipment,
+            not the execution. The window lives here, and not in the scoring
+            engine, because it is part of what was promised at planning time
+            and freezes with the rest of the intent: a scoring-engine constant
+            would let a code change silently rewrite what already-scored
+            sessions were judged against (invariant 1).
     """
 
     channel: Channel
     low: float
     high: float
+    smoothing_s: int = DEFAULT_BAND_SMOOTHING_S
 
     def __post_init__(self) -> None:
         """Reject bands that are inverted, negative or absurdly wide."""
@@ -168,6 +196,7 @@ class Band:
             raise ValueError(
                 f"band high must be at most {MAX_TARGET_FRACTION}, got {self.high}"
             )
+        _check_smoothing(self.smoothing_s)
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,11 +261,22 @@ class Ceiling:
     """No more than ``max_seconds_above`` spent above ``limit`` on ``channel``.
 
     ``max_seconds_above`` of 0 means a hard cap — the recovery-ride rule.
+
+    Args:
+        channel: Which channel is being capped.
+        limit: The cap, absolute or a percentage of an anchor.
+        max_seconds_above: How long above the limit is still a pass.
+        smoothing_s: Seconds of trailing rolling mean applied before the
+            comparison. Defaults to 0 — raw — because a ceiling is about
+            excursions and smoothing is exactly what hides them. Declared
+            explicitly for the same reason a :class:`Band`'s is: it freezes
+            with the intent rather than living in the scoring engine.
     """
 
     channel: Channel
     limit: Limit
     max_seconds_above: int
+    smoothing_s: int = DEFAULT_CEILING_SMOOTHING_S
 
     def __post_init__(self) -> None:
         """Reject limits the channel cannot carry.
@@ -251,6 +291,7 @@ class Ceiling:
             raise ValueError(
                 f"max_seconds_above must not be negative, got {self.max_seconds_above}"
             )
+        _check_smoothing(self.smoothing_s)
         if isinstance(self.limit, PercentLimit):
             allowed = CHANNEL_ANCHORS[self.channel]
             if self.limit.anchor_type not in allowed:
@@ -320,6 +361,20 @@ def _check_fraction(value: float, name: str) -> None:
         raise ValueError(f"{name} must be between 0 and 1, got {value}")
 
 
+def _check_smoothing(seconds: int) -> None:
+    """Bound a smoothing window to [0, :data:`MAX_SMOOTHING_S`].
+
+    ``0`` is legal and means raw samples; the ceiling is what keeps the field
+    from carrying a number no window could mean.
+    """
+    if seconds < 0:
+        raise ValueError(f"smoothing_s must not be negative, got {seconds}")
+    if seconds > MAX_SMOOTHING_S:
+        raise ValueError(
+            f"smoothing_s must be at most {MAX_SMOOTHING_S} s, got {seconds}"
+        )
+
+
 def kind_of(criterion: SuccessCriterion) -> CriterionKind:
     """Return the tag of a criterion."""
     match criterion:
@@ -386,15 +441,25 @@ def selector_from_json(document: Any, path: str) -> StepSelector:
 
 
 def band_to_json(band: Band) -> dict[str, Any]:
-    """Serialize a band."""
-    return {"channel": band.channel.value, "low": band.low, "high": band.high}
+    """Serialize a band. The smoothing window is always written out."""
+    return {
+        "channel": band.channel.value,
+        "low": band.low,
+        "high": band.high,
+        "smoothing_s": band.smoothing_s,
+    }
 
 
-_BAND_FIELDS = frozenset({"channel", "low", "high"})
+_BAND_FIELDS = frozenset({"channel", "low", "high", "smoothing_s"})
 
 
 def band_from_json(document: Any, path: str) -> Band:
     """Deserialize a band.
+
+    ``smoothing_s`` may be absent and then takes the dataclass default: the
+    field was added after criteria had already been stored, and criteria are
+    tagged-union JSON rather than columns, so tolerance here is what stands in
+    for a migration.
 
     Raises:
         ValueError: When the document is not a legal band.
@@ -404,8 +469,21 @@ def band_from_json(document: Any, path: str) -> Band:
     channel = as_enum(Channel, field(body, "channel", path), f"{path}.channel")
     low = as_float(field(body, "low", path), f"{path}.low")
     high = as_float(field(body, "high", path), f"{path}.high")
+    smoothing = _smoothing_from_json(body, path, DEFAULT_BAND_SMOOTHING_S)
     with located(path):
-        return Band(channel=channel, low=low, high=high)
+        return Band(channel=channel, low=low, high=high, smoothing_s=smoothing)
+
+
+def _smoothing_from_json(body: Any, path: str, default: int) -> int:
+    """Read an optional ``smoothing_s``, falling back to ``default``.
+
+    Raises:
+        ValueError: When the key is present but is not an integer.
+    """
+    value = optional(body, "smoothing_s")
+    if value is None:
+        return default
+    return as_int(value, f"{path}.smoothing_s")
 
 
 def limit_to_json(limit: Limit) -> dict[str, Any]:
@@ -469,6 +547,7 @@ def criterion_to_json(criterion: SuccessCriterion) -> dict[str, Any]:
                 "channel": criterion.channel.value,
                 "limit": limit_to_json(criterion.limit),
                 "max_seconds_above": criterion.max_seconds_above,
+                "smoothing_s": criterion.smoothing_s,
             }
         case SetsCompleted():
             return {"kind": kind.value, "min_fraction": criterion.min_fraction}
@@ -479,7 +558,9 @@ def criterion_to_json(criterion: SuccessCriterion) -> dict[str, Any]:
 _CRITERION_FIELDS: dict[CriterionKind, frozenset[str]] = {
     CriterionKind.TIME_IN_BAND: frozenset({"kind", "selector", "band", "min_fraction"}),
     CriterionKind.DURATION_FLOOR: frozenset({"kind", "min_seconds"}),
-    CriterionKind.CEILING: frozenset({"kind", "channel", "limit", "max_seconds_above"}),
+    CriterionKind.CEILING: frozenset(
+        {"kind", "channel", "limit", "max_seconds_above", "smoothing_s"}
+    ),
     CriterionKind.SETS_COMPLETED: frozenset({"kind", "min_fraction"}),
     CriterionKind.LOAD_WITHIN: frozenset({"kind", "pct_tolerance"}),
 }
@@ -519,11 +600,13 @@ def criterion_from_json(document: Any, path: str = "criterion") -> SuccessCriter
             max_seconds_above = as_int(
                 field(body, "max_seconds_above", path), f"{path}.max_seconds_above"
             )
+            smoothing = _smoothing_from_json(body, path, DEFAULT_CEILING_SMOOTHING_S)
             with located(path):
                 return Ceiling(
                     channel=channel,
                     limit=limit,
                     max_seconds_above=max_seconds_above,
+                    smoothing_s=smoothing,
                 )
         case CriterionKind.SETS_COMPLETED:
             completed = as_float(
