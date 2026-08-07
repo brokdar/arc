@@ -77,6 +77,22 @@ async def test_uploading_a_corrupt_file_answers_with_the_quarantine_record(
     assert "quarantined_path" not in record
 
 
+async def test_a_body_that_is_not_multipart_is_a_400_the_contract_names(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # Found by Schemathesis: a declared boundary the body never uses is
+    # refused by the framework before the handler runs, and the 400 it
+    # answers has to be in the contract rather than an undocumented status.
+    response = await client.post(
+        UPLOAD,
+        content=b"--wrong\r\nNone--wrong--\r\n",
+        headers={"Content-Type": "multipart/form-data; boundary=8e3159a4da379356"},
+    )
+
+    assert response.status_code == 400
+    assert "detail" in response.json()
+
+
 async def test_an_empty_upload_is_refused(data_root: Path, client: AsyncClient) -> None:
     response = await client.post(
         UPLOAD, files={"file": ("empty.fit", b"", "application/octet-stream")}

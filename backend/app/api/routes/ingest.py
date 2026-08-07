@@ -47,6 +47,15 @@ CONFLICT: Responses = {
 INVALID: Responses = {
     422: {"model": ValidationErrorDetail, "description": "The upload is unusable"}
 }
+#: The framework refuses a multipart envelope it cannot parse — a boundary
+#: that never appears in the body, a truncated envelope — before the handler
+#: runs. Found by Schemathesis: the status is real, so the contract names it.
+BAD_BODY: Responses = {
+    400: {
+        "model": ErrorDetail,
+        "description": "The multipart body itself could not be parsed",
+    }
+}
 #: The upload's success description, spelled out because "200" reads as
 #: "ingested" and here it does not have to be: a refused file is a *result*.
 UPLOAD_OK: Responses = {
@@ -103,7 +112,7 @@ def to_report(report: IngestReport) -> IngestReportRead:
     )
 
 
-@router.post("/upload", responses=UPLOAD_OK | INVALID)
+@router.post("/upload", responses=UPLOAD_OK | INVALID | BAD_BODY)
 async def upload_activity_file(
     request: Request, service: ServiceDep, actor: ActorDep, file: UploadDep
 ) -> IngestReportRead:

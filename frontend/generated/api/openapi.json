@@ -5407,6 +5407,16 @@
             },
             "description": "The pipeline's report on the file. **A refused file is a 200 too**, with `outcome: \"quarantined\"`, the ids in `quarantine_ids` and the reason in `detail`: being unreadable, too short or a suspected duplicate is a result, not a failed request. The other outcomes are `ingested` (one `session_id` per sport in the file), `duplicate_file` (the hash was already known, and `session_ids` says what it is already stored as) and `error`. Only a request that is itself wrong \u2014 an empty part, a file over the size limit \u2014 answers 4xx, so a client must branch on `outcome` and never on the status."
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The multipart body itself could not be parsed"
+          },
           "401": {
             "content": {
               "application/json": {

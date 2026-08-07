@@ -3558,6 +3558,15 @@ export interface operations {
           "application/json": components["schemas"]["IngestReportRead"];
         };
       };
+      /** @description The multipart body itself could not be parsed */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description No valid session */
       401: {
         headers: {
