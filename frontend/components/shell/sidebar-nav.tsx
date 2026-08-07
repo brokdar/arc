@@ -8,6 +8,7 @@ import {
   CalendarIcon,
   CoachIcon,
   type IconProps,
+  InboxIcon,
   SessionsIcon,
   SettingsIcon,
   TodayIcon,
@@ -39,21 +40,21 @@ interface NavItem {
 /**
  * The sections of the app, in the order the sidebar lists them.
  *
- * All seven the mockup previews, not just the three that exist: the shape of
+ * All of them the mockup previews, not just the ones that exist: the shape of
  * the application is part of what the shell communicates, and a nav that grows
- * a row per release reads as a different product each time (D61). The four
+ * a row per release reads as a different product each time (D61). The ones
  * that have no page render dimmed and inert.
+ *
+ * Inbox is the eighth and is not one the mockup drew: the watched folder needs
+ * a queue the athlete can answer, and it sits *after* Sessions because that is
+ * the direction the athlete travels — you go looking for the inbox because of
+ * a ride that is missing from the log, not the other way round.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/today", label: "Today", icon: TodayIcon, ready: true },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon, ready: true },
-  {
-    href: "/sessions",
-    label: "Sessions",
-    icon: SessionsIcon,
-    ready: false,
-    arrives: "Sessions arrive with WP-4, once activities are ingested",
-  },
+  { href: "/sessions", label: "Sessions", icon: SessionsIcon, ready: true },
+  { href: "/inbox", label: "Inbox", icon: InboxIcon, ready: true },
   { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
   {
     href: "/analysis",

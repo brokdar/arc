@@ -23,6 +23,17 @@ export interface InlineConfirmProps {
   readonly cancelLabel: string;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  /**
+   * Whether the thing being confirmed is already in flight.
+   *
+   * Only the confirming button is disabled by it. The way out stays open —
+   * disabling both would trap the athlete inside the question for as long as
+   * the request takes — but a second confirm is not a second answer, it is the
+   * same answer twice, and the second one loses: the record has already been
+   * resolved by the first, so its 409 arrives *after* the success and paints a
+   * refusal over work that went through.
+   */
+  readonly disabled?: boolean;
   readonly className?: string;
 }
 
@@ -39,6 +50,7 @@ export function InlineConfirm({
   cancelLabel,
   onConfirm,
   onCancel,
+  disabled = false,
   className,
 }: InlineConfirmProps) {
   return (
@@ -63,7 +75,13 @@ export function InlineConfirm({
       >
         {cancelLabel}
       </Button>
-      <Button type="button" size="xs" variant="destructive" onClick={onConfirm}>
+      <Button
+        type="button"
+        size="xs"
+        variant="destructive"
+        disabled={disabled}
+        onClick={onConfirm}
+      >
         {confirmLabel}
       </Button>
     </div>

@@ -416,6 +416,19 @@
         "title": "BandSchema",
         "type": "object"
       },
+      "Body_ingest-upload_activity_file": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "A FIT, GPX or TCX file.",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": ["file"],
+        "title": "Body_ingest-upload_activity_file",
+        "type": "object"
+      },
       "CeilingSchema": {
         "additionalProperties": false,
         "description": "No more than this long spent above this limit on this channel.",
@@ -471,6 +484,12 @@
         "description": "The unit each channel is measured in.",
         "enum": ["W", "bpm", "rpm"],
         "title": "ChannelUnit",
+        "type": "string"
+      },
+      "ClassificationSource": {
+        "description": "How a session's discipline was arrived at.\n\nStored beside the discipline so the athlete's override (which sets\n``discipline_overridden``) can be told from a guess, and so a guess can be\ntold from the file saying so outright.\n\n``MANUAL`` is the third answer and belongs to the sessions nobody\nclassified: a hand-entered gym session (B-6) has a discipline because the\nathlete typed one, which is neither a file's sport field nor an inference\nover channels it does not have. Spelling it ``sport_field`` would put the\nweakest claim in this system \u2014 \"the recording said so\" \u2014 on the one\nsession that has no recording.",
+        "enum": ["sport_field", "heuristic", "manual"],
+        "title": "ClassificationSource",
         "type": "string"
       },
       "Discipline": {
@@ -671,6 +690,139 @@
         "title": "HealthStatus",
         "type": "object"
       },
+      "IngestEventRead": {
+        "description": "One file the pipeline looked at. Append-only.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "file_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Hash"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/IngestOutcome"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "file_hash",
+          "outcome",
+          "detail",
+          "session_id",
+          "at"
+        ],
+        "title": "IngestEventRead",
+        "type": "object"
+      },
+      "IngestOutcome": {
+        "description": "What happened to one file the pipeline looked at.\n\n``DUPLICATE_FILE`` is a success, not a failure: re-seeing a hash the\npipeline has already ingested is the idempotency guarantee working, and it\nis logged rather than raised.",
+        "enum": ["ingested", "duplicate_file", "quarantined", "error"],
+        "title": "IngestOutcome",
+        "type": "string"
+      },
+      "IngestReportRead": {
+        "description": "What the pipeline did with one file.\n\n``session_ids`` is a list because one file may hold several sports\n(A4.5), and it is populated for a ``duplicate_file`` outcome too \u2014 with\nthe sessions the file was *already* ingested as, which is what the client\nneeds to link to when it says \"you already have this ride\".",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "file_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Hash"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/IngestOutcome"
+          },
+          "quarantine_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Quarantine Ids",
+            "type": "array"
+          },
+          "session_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Session Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "filename",
+          "file_hash",
+          "outcome",
+          "detail",
+          "session_ids",
+          "quarantine_ids"
+        ],
+        "title": "IngestReportRead",
+        "type": "object"
+      },
       "LoadKind": {
         "description": "How the load of a prescribed set is expressed.\n\nFour kinds because four are genuinely different questions: an absolute\nweight, a fraction of a one-rep max, a target effort, and \"your own body\".\nScoring treats them differently \u2014 `load_within` tolerance is meaningless\nfor bodyweight \u2014 so the kind is part of the value, not a formatting hint.",
         "enum": ["kg", "percent_e1rm", "rpe", "bodyweight"],
@@ -719,6 +871,164 @@
         "title": "LoadWithinSchema",
         "type": "object"
       },
+      "LoggedSetCreate": {
+        "additionalProperties": false,
+        "description": "One set of a manually entered session.",
+        "properties": {
+          "exercise_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Id"
+          },
+          "exercise_name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Name"
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reps": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Reps",
+            "type": "integer"
+          },
+          "rir": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rir"
+          }
+        },
+        "required": ["reps"],
+        "title": "LoggedSetCreate",
+        "type": "object"
+      },
+      "LoggedSetRead": {
+        "description": "One set the athlete logged by hand.",
+        "properties": {
+          "exercise_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Id"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "rir": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rir"
+          },
+          "set_index": {
+            "title": "Set Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "exercise_id",
+          "exercise_name",
+          "set_index",
+          "reps",
+          "load_kg",
+          "rir",
+          "notes"
+        ],
+        "title": "LoggedSetRead",
+        "type": "object"
+      },
       "LoginRequest": {
         "description": "Credentials for the single-user login.",
         "properties": {
@@ -729,6 +1039,72 @@
         },
         "required": ["password"],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "ManualSessionCreate": {
+        "additionalProperties": false,
+        "description": "A session the athlete performed and is typing in (B-6).\n\nNo file, no recording row, no streams \u2014 a session row with\n``recording_kind=manual`` and its sets. Strength by default, because that\nis what has no device file worth ingesting.",
+        "properties": {
+          "discipline": {
+            "$ref": "#/components/schemas/SessionDiscipline",
+            "default": "strength"
+          },
+          "duration_s": {
+            "maximum": 86400.0,
+            "minimum": 60.0,
+            "title": "Duration S",
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "sets": {
+            "items": {
+              "$ref": "#/components/schemas/LoggedSetCreate"
+            },
+            "maxItems": 200,
+            "title": "Sets",
+            "type": "array"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "timezone": {
+            "default": "UTC",
+            "description": "IANA name, fixed offset (UTC+02:00), or UTC.",
+            "maxLength": 64,
+            "pattern": "^[^\\x00]*$",
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": ["start_time", "duration_s"],
+        "title": "ManualSessionCreate",
         "type": "object"
       },
       "MetricExplanationRead": {
@@ -820,6 +1196,32 @@
         "title": "Page[ExerciseRead]",
         "type": "object"
       },
+      "Page_IngestEventRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestEventRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[IngestEventRead]",
+        "type": "object"
+      },
       "Page_PlannedSessionListItem_": {
         "properties": {
           "items": {
@@ -844,6 +1246,58 @@
         },
         "required": ["items", "total", "offset", "limit"],
         "title": "Page[PlannedSessionListItem]",
+        "type": "object"
+      },
+      "Page_QuarantineRecordRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QuarantineRecordRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[QuarantineRecordRead]",
+        "type": "object"
+      },
+      "Page_SessionListItem_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[SessionListItem]",
         "type": "object"
       },
       "Page_WorkoutRead_": {
@@ -1757,6 +2211,128 @@
         "title": "PurposeTemplatesRead",
         "type": "object"
       },
+      "QuarantineReason": {
+        "description": "Why a file (or one activity within it) was not ingested.\n\nMachine-readable because both the quarantine row and the inbox UI show it,\nand because the confirm/reject actions (B-4) differ by reason: only a\n``SUSPECTED_DUPLICATE`` has something safe to ingest on reject.\n\nThe first four are `app.domain.streams.validate`'s verdicts. The last two\nare the pipeline's own (WP-4 Phase B) \u2014 a file it could not read at all,\nand a file whose time range overlaps a session already ingested \u2014 and are\nnamed here so the column's vocabulary is complete from the first migration.",
+        "enum": [
+          "no_samples",
+          "non_monotonic_timestamps",
+          "too_short",
+          "implausible_channel",
+          "unreadable_file",
+          "suspected_duplicate"
+        ],
+        "title": "QuarantineReason",
+        "type": "string"
+      },
+      "QuarantineRecordRead": {
+        "description": "One file the pipeline refused, and what was decided about it.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "file_hash": {
+            "title": "File Hash",
+            "type": "string"
+          },
+          "file_sport_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Sport Index"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/QuarantineReason"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/QuarantineStatus"
+          },
+          "suspected_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suspected Session Id"
+          }
+        },
+        "required": [
+          "id",
+          "original_filename",
+          "file_hash",
+          "file_sport_index",
+          "reason",
+          "detail",
+          "status",
+          "suspected_session_id",
+          "created_at",
+          "resolved_at"
+        ],
+        "title": "QuarantineRecordRead",
+        "type": "object"
+      },
+      "QuarantineRejectRead": {
+        "description": "The outcome of overruling the pipeline on a suspected duplicate.\n\nBoth halves, because both changed: the record is now\n``rejected_ingested``, and the file went back through the pipeline as its\nown session.",
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/QuarantineRecordRead"
+          },
+          "report": {
+            "$ref": "#/components/schemas/IngestReportRead"
+          }
+        },
+        "required": ["record", "report"],
+        "title": "QuarantineRejectRead",
+        "type": "object"
+      },
+      "QuarantineStatus": {
+        "description": "What the athlete decided about a quarantined file.\n\n``PENDING`` until they act. ``CONFIRMED_DISCARDED`` means the quarantined\ncopy was thrown away \u2014 never the original of an already-ingested twin.\n``REJECTED_INGESTED`` means \"this is not a duplicate\", and the file went\nback through the pipeline as its own session.",
+        "enum": ["pending", "confirmed_discarded", "rejected_ingested"],
+        "title": "QuarantineStatus",
+        "type": "string"
+      },
       "RampStepSchema": {
         "additionalProperties": false,
         "description": "Move from one set of targets to another over a duration or distance.",
@@ -1858,6 +2434,181 @@
         },
         "required": ["start_targets", "end_targets"],
         "title": "RampStepSchema",
+        "type": "object"
+      },
+      "RecordingKind": {
+        "description": "Whether a session came from a device file or was entered by hand.",
+        "enum": ["device", "manual"],
+        "title": "RecordingKind",
+        "type": "string"
+      },
+      "RecordingRead": {
+        "description": "One device file's account of a session (A4.3, A4.4).\n\nEverything a session detail page needs to explain its own numbers: which\nmeter produced the power, how the choice was made, how irregular the file\nwas, and what was subtracted from elapsed time to get the duration that\ntraining load is computed over.",
+        "properties": {
+          "anomaly_count": {
+            "title": "Anomaly Count",
+            "type": "integer"
+          },
+          "channels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "elapsed_time_s": {
+            "title": "Elapsed Time S",
+            "type": "number"
+          },
+          "file_hash": {
+            "title": "File Hash",
+            "type": "string"
+          },
+          "file_sport_index": {
+            "title": "File Sport Index",
+            "type": "integer"
+          },
+          "hr_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hr Source"
+          },
+          "hr_source_candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hr Source Candidates",
+            "type": "array"
+          },
+          "hr_source_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hr Source Rule"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "median_time_delta_s": {
+            "title": "Median Time Delta S",
+            "type": "number"
+          },
+          "moving_time_s": {
+            "title": "Moving Time S",
+            "type": "number"
+          },
+          "original_ext": {
+            "title": "Original Ext",
+            "type": "string"
+          },
+          "power_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power Source"
+          },
+          "power_source_candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Power Source Candidates",
+            "type": "array"
+          },
+          "power_source_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power Source Rule"
+          },
+          "recording_stops": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingStopRead"
+            },
+            "title": "Recording Stops",
+            "type": "array"
+          },
+          "recording_time_s": {
+            "title": "Recording Time S",
+            "type": "number"
+          },
+          "sport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport"
+          }
+        },
+        "required": [
+          "id",
+          "file_hash",
+          "file_sport_index",
+          "original_ext",
+          "sport",
+          "elapsed_time_s",
+          "recording_time_s",
+          "recording_stops",
+          "median_time_delta_s",
+          "moving_time_s",
+          "power_source_candidates",
+          "power_source",
+          "power_source_rule",
+          "hr_source_candidates",
+          "hr_source",
+          "hr_source_rule",
+          "channels",
+          "anomaly_count",
+          "created_at"
+        ],
+        "title": "RecordingRead",
+        "type": "object"
+      },
+      "RecordingStopRead": {
+        "description": "One recording pause, as a half-open row range on the 1 Hz grid.",
+        "properties": {
+          "end_index": {
+            "title": "End Index",
+            "type": "integer"
+          },
+          "start_index": {
+            "title": "Start Index",
+            "type": "integer"
+          }
+        },
+        "required": ["start_index", "end_index"],
+        "title": "RecordingStopRead",
         "type": "object"
       },
       "RepeatBlockSchema-Input": {
@@ -2096,6 +2847,12 @@
         "title": "ScoringAxis",
         "type": "string"
       },
+      "SessionDiscipline": {
+        "description": "What a *recorded* session was.\n\nA superset of `app.domain.athlete.Discipline`, and deliberately a separate\nenum: `Discipline` is the vocabulary of things we **prescribe**, and every\npurpose, workout and planned session is one of its two members. A device\nfile, by contrast, can hold a walk, a swim or a sport the head unit does\nnot name \u2014 things we never plan and never score, but must still be able to\ningest without lying about. ``OTHER`` is that bucket.\n\nThe two shared members carry the **same string values** as `Discipline`,\nso the WP-6 candidate query is a value comparison and the athlete-facing\nvocabulary is one vocabulary (see :func:`as_planned_discipline`).",
+        "enum": ["cycling", "strength", "other"],
+        "title": "SessionDiscipline",
+        "type": "string"
+      },
       "SessionIntentRead": {
         "description": "One version of a planned session's intent.\n\nCarries WP-1's versioning vocabulary verbatim, because it is one of the\nversioned artefacts invariant 1 describes.",
         "properties": {
@@ -2283,11 +3040,246 @@
         "title": "SessionIntentsRead",
         "type": "object"
       },
+      "SessionListItem": {
+        "description": "One completed session, as a row in the log.",
+        "properties": {
+          "classification_source": {
+            "$ref": "#/components/schemas/ClassificationSource"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/SessionDiscipline"
+          },
+          "discipline_overridden": {
+            "title": "Discipline Overridden",
+            "type": "boolean"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "recording_kind": {
+            "$ref": "#/components/schemas/RecordingKind"
+          },
+          "recording_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Time S"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "local_date",
+          "start_time",
+          "timezone",
+          "discipline",
+          "classification_source",
+          "discipline_overridden",
+          "recording_kind",
+          "status",
+          "duration_s",
+          "recording_time_s",
+          "rpe"
+        ],
+        "title": "SessionListItem",
+        "type": "object"
+      },
+      "SessionMatchStatus": {
+        "description": "Where a completed session stands relative to the plan.\n\nReserved (addenda R-note on WP-6): the MVP produces ``UNMATCHED`` and\nnothing else \u2014 WP-6 owns this lifecycle and adds its members then. The\ncolumn exists now so that arrival is code rather than a migration; every\nmember WP-6 needs (``matched``, ``unplanned``, ``displaced``) is no longer\nthan ``unmatched``, so it will not widen the column either (D81).",
+        "enum": ["unmatched"],
+        "title": "SessionMatchStatus",
+        "type": "string"
+      },
+      "SessionRead": {
+        "description": "One completed session with the recordings behind it.",
+        "properties": {
+          "classification_source": {
+            "$ref": "#/components/schemas/ClassificationSource"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/SessionDiscipline"
+          },
+          "discipline_overridden": {
+            "title": "Discipline Overridden",
+            "type": "boolean"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "end_time": {
+            "format": "date-time",
+            "title": "End Time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "logged_sets": {
+            "items": {
+              "$ref": "#/components/schemas/LoggedSetRead"
+            },
+            "title": "Logged Sets",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "recording_kind": {
+            "$ref": "#/components/schemas/RecordingKind"
+          },
+          "recording_time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Time S"
+          },
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingRead"
+            },
+            "title": "Recordings",
+            "type": "array"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "local_date",
+          "start_time",
+          "timezone",
+          "discipline",
+          "classification_source",
+          "discipline_overridden",
+          "recording_kind",
+          "status",
+          "duration_s",
+          "recording_time_s",
+          "rpe",
+          "notes",
+          "end_time",
+          "recordings",
+          "logged_sets",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SessionRead",
+        "type": "object"
+      },
       "SessionStatus-Input": {
         "description": "Where a planned session ended up.\n\n``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6\nsets it when a low-similarity activity is deliberately linked; the member\nexists now so the column does not need a migration then.",
         "enum": ["planned", "completed", "missed", "displaced"],
         "title": "SessionStatus",
         "type": "string"
+      },
+      "SessionUpdate": {
+        "additionalProperties": false,
+        "description": "Corrections to a session's guessed facts.\n\nBoth fields are overrides of something inferred from a file: setting the\ndiscipline records that the athlete decided it, and setting the timezone\nre-derives ``local_date``, which is what puts a late-evening ride back on\nthe right day.\n\n**Optional by omission, never nullable.** Neither field can be *cleared*:\na session always has a discipline and always has a timezone, so the\nservice refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``\nkeeps the Python-side ``= None`` \"unset\" default while dropping the\n``null`` branch from the contract, so the schema promises exactly what the\nparser accepts \u2014 the same rule the optional *query* parameters follow\n(`.claude/rules/api-optional-query-params.md`), applied to a request body.\nOther update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay\n``X | None`` on purpose: for those, ``null`` means \"clear this field\".",
+        "properties": {
+          "discipline": {
+            "$ref": "#/components/schemas/SessionDiscipline",
+            "title": "Discipline"
+          },
+          "timezone": {
+            "description": "An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. Anything else is refused: a timezone that cannot be resolved makes the session's date unrecoverable.",
+            "maxLength": 64,
+            "pattern": "^[^\\x00]*$",
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "title": "SessionUpdate",
+        "type": "object"
       },
       "SetsCompletedSchema": {
         "additionalProperties": false,
@@ -4094,6 +5086,442 @@
         "tags": ["exercises"]
       }
     },
+    "/api/v1/ingest/events": {
+      "get": {
+        "description": "List the ingest log, newest first.\n\nOne row per file the pipeline looked at, including the ones it had already\nseen: \"nothing happened because I already have it\" is the answer to most\nof the questions this log is opened for.",
+        "operationId": "ingest-list_ingest_events",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_IngestEventRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Ingest Events",
+        "tags": ["ingest"]
+      }
+    },
+    "/api/v1/ingest/quarantine": {
+      "get": {
+        "description": "List quarantined files, still-pending ones first.\n\nPending first because the page is a queue: what is waiting on the athlete\noutranks what they have already dealt with, whenever it arrived.",
+        "operationId": "ingest-list_quarantine",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_QuarantineRecordRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Quarantine",
+        "tags": ["ingest"]
+      }
+    },
+    "/api/v1/ingest/quarantine/{record_id}/confirm": {
+      "post": {
+        "description": "Accept the verdict: discard the quarantined copy of this file.\n\nOnly the copy in ``quarantine/``. If the same file also produced a session\n\u2014 a multisport file with one good sport and one refused \u2014 its original\nstays where it is, because nothing in this system deletes an original.",
+        "operationId": "ingest-confirm_quarantine",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Record Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineRecordRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such quarantine record"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The record is already resolved, or holds nothing safe to ingest"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Confirm Quarantine",
+        "tags": ["ingest"]
+      }
+    },
+    "/api/v1/ingest/quarantine/{record_id}/reject": {
+      "post": {
+        "description": "Overrule the verdict: ingest this file anyway.\n\nTwo verdicts can be overruled \u2014 `suspected_duplicate` (\"this is a\ndifferent session\") and `implausible_channel` (\"one channel is broken, the\nride is not\"; the cleaner nulls what it cannot believe, so nothing\nout-of-range reaches analysis). A corrupt or too-short file offers confirm\n(discard) and a re-drop after fixing it \u2014 disagreeing with the parser does\nnot make the bytes readable, so rejecting one is a 409 rather than an\ningest that would fail identically.\n\nThe answer is 200 even when the re-ingest did not produce a session: the\ndecision has been recorded either way, and the report says what came of it.",
+        "operationId": "ingest-reject_quarantine",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Record Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineRejectRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such quarantine record"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The record is already resolved, or holds nothing safe to ingest"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Reject Quarantine",
+        "tags": ["ingest"]
+      }
+    },
+    "/api/v1/ingest/upload": {
+      "post": {
+        "description": "Upload one activity file and ingest it now.\n\nThe same pipeline the watched folder runs, so the outcomes are the same:\na new session, a file already known by its hash, or a quarantine record\nwith the reason it was refused. An upload above the size limit is refused\nwith a 422.",
+        "operationId": "ingest-upload_activity_file",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ingest-upload_activity_file"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestReportRead"
+                }
+              }
+            },
+            "description": "The pipeline's report on the file. **A refused file is a 200 too**, with `outcome: \"quarantined\"`, the ids in `quarantine_ids` and the reason in `detail`: being unreadable, too short or a suspected duplicate is a result, not a failed request. The other outcomes are `ingested` (one `session_id` per sport in the file), `duplicate_file` (the hash was already known, and `session_ids` says what it is already stored as) and `error`. Only a request that is itself wrong \u2014 an empty part, a file over the size limit \u2014 answers 4xx, so a client must branch on `outcome` and never on the status."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The multipart body itself could not be parsed"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The upload is unusable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Upload Activity File",
+        "tags": ["ingest"]
+      }
+    },
+    "/api/v1/manual-sessions": {
+      "post": {
+        "description": "Record a session performed without a device file \u2014 a gym session (B-6).\n\nProduces the same session row a file would, with\n`recording_kind=manual` and no recording: WP-6 matches both with one\nquery, and the sets are stored so WP-7's strength alignment has something\nto read.",
+        "operationId": "sessions-create_manual_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualSessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Manual Session",
+        "tags": ["sessions"]
+      }
+    },
     "/api/v1/plan/week": {
       "get": {
         "description": "Get seven consecutive days of the plan, empty days included.\n\nEach session is summarized for a calendar card; its full detail \u2014 step\ntree, criteria, pins, intent history \u2014 stays at\n`GET /api/v1/planned-sessions/{id}`.",
@@ -4946,6 +6374,263 @@
         ],
         "summary": "Get Purpose",
         "tags": ["purposes"]
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "description": "List completed sessions, newest first, optionally within a date range.\n\nA log rather than a calendar, so it reads backwards \u2014 the opposite of\n`GET /planned-sessions`, and deliberately: what happened is read from the\nmost recent, what is planned is read forwards.",
+        "operationId": "sessions-list_sessions",
+        "parameters": [
+          {
+            "description": "Earliest athlete-local date to include (inclusive).",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "description": "Earliest athlete-local date to include (inclusive).",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Latest athlete-local date to include (inclusive).",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "description": "Latest athlete-local date to include (inclusive).",
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Restrict to one discipline; omit for all of them.",
+            "in": "query",
+            "name": "discipline",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SessionDiscipline",
+              "description": "Restrict to one discipline; omit for all of them."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SessionListItem_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Sessions",
+        "tags": ["sessions"]
+      }
+    },
+    "/api/v1/sessions/{session_id}": {
+      "get": {
+        "description": "Get one completed session with its recordings' metadata.\n\nNot the samples: those are in `data/streams/` and WP-5 serves them.",
+        "operationId": "sessions-get_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session",
+        "tags": ["sessions"]
+      },
+      "patch": {
+        "description": "Correct a session's discipline or its timezone.\n\nA discipline override is recorded as one (`discipline_overridden`), so no\nlater re-classification can quietly undo it. A timezone override\n**re-derives** `local_date`, which is the point of storing the zone rather\nthan the offset that happened to be true once (D93).",
+        "operationId": "sessions-update_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Session",
+        "tags": ["sessions"]
       }
     },
     "/api/v1/workout-labels": {

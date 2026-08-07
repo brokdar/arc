@@ -241,6 +241,158 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/ingest/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Ingest Events
+     * @description List the ingest log, newest first.
+     *
+     *     One row per file the pipeline looked at, including the ones it had already
+     *     seen: "nothing happened because I already have it" is the answer to most
+     *     of the questions this log is opened for.
+     */
+    get: operations["ingest-list_ingest_events"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/ingest/quarantine": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Quarantine
+     * @description List quarantined files, still-pending ones first.
+     *
+     *     Pending first because the page is a queue: what is waiting on the athlete
+     *     outranks what they have already dealt with, whenever it arrived.
+     */
+    get: operations["ingest-list_quarantine"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/ingest/quarantine/{record_id}/confirm": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Confirm Quarantine
+     * @description Accept the verdict: discard the quarantined copy of this file.
+     *
+     *     Only the copy in ``quarantine/``. If the same file also produced a session
+     *     — a multisport file with one good sport and one refused — its original
+     *     stays where it is, because nothing in this system deletes an original.
+     */
+    post: operations["ingest-confirm_quarantine"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/ingest/quarantine/{record_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Quarantine
+     * @description Overrule the verdict: ingest this file anyway.
+     *
+     *     Two verdicts can be overruled — `suspected_duplicate` ("this is a
+     *     different session") and `implausible_channel` ("one channel is broken, the
+     *     ride is not"; the cleaner nulls what it cannot believe, so nothing
+     *     out-of-range reaches analysis). A corrupt or too-short file offers confirm
+     *     (discard) and a re-drop after fixing it — disagreeing with the parser does
+     *     not make the bytes readable, so rejecting one is a 409 rather than an
+     *     ingest that would fail identically.
+     *
+     *     The answer is 200 even when the re-ingest did not produce a session: the
+     *     decision has been recorded either way, and the report says what came of it.
+     */
+    post: operations["ingest-reject_quarantine"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/ingest/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload Activity File
+     * @description Upload one activity file and ingest it now.
+     *
+     *     The same pipeline the watched folder runs, so the outcomes are the same:
+     *     a new session, a file already known by its hash, or a quarantine record
+     *     with the reason it was refused. An upload above the size limit is refused
+     *     with a 422.
+     */
+    post: operations["ingest-upload_activity_file"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/manual-sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Manual Session
+     * @description Record a session performed without a device file — a gym session (B-6).
+     *
+     *     Produces the same session row a file would, with
+     *     `recording_kind=manual` and no recording: WP-6 matches both with one
+     *     query, and the sets are stored so WP-7's strength alignment has something
+     *     to read.
+     */
+    post: operations["sessions-create_manual_session"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/plan/week": {
     parameters: {
       query?: never;
@@ -463,6 +615,61 @@ export interface paths {
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Sessions
+     * @description List completed sessions, newest first, optionally within a date range.
+     *
+     *     A log rather than a calendar, so it reads backwards — the opposite of
+     *     `GET /planned-sessions`, and deliberately: what happened is read from the
+     *     most recent, what is planned is read forwards.
+     */
+    get: operations["sessions-list_sessions"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session
+     * @description Get one completed session with its recordings' metadata.
+     *
+     *     Not the samples: those are in `data/streams/` and WP-5 serves them.
+     */
+    get: operations["sessions-get_session"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Session
+     * @description Correct a session's discipline or its timezone.
+     *
+     *     A discipline override is recorded as one (`discipline_overridden`), so no
+     *     later re-classification can quietly undo it. A timezone override
+     *     **re-derives** `local_date`, which is the point of storing the zone rather
+     *     than the offset that happened to be true once (D93).
+     */
+    patch: operations["sessions-update_session"];
     trace?: never;
   };
   "/api/v1/workout-labels": {
@@ -770,6 +977,14 @@ export interface components {
        */
       smoothing_s: number;
     };
+    /** Body_ingest-upload_activity_file */
+    "Body_ingest-upload_activity_file": {
+      /**
+       * File
+       * @description A FIT, GPX or TCX file.
+       */
+      file: string;
+    };
     /**
      * CeilingSchema
      * @description No more than this long spent above this limit on this channel.
@@ -805,6 +1020,23 @@ export interface components {
      * @enum {string}
      */
     ChannelUnit: "W" | "bpm" | "rpm";
+    /**
+     * ClassificationSource
+     * @description How a session's discipline was arrived at.
+     *
+     *     Stored beside the discipline so the athlete's override (which sets
+     *     ``discipline_overridden``) can be told from a guess, and so a guess can be
+     *     told from the file saying so outright.
+     *
+     *     ``MANUAL`` is the third answer and belongs to the sessions nobody
+     *     classified: a hand-entered gym session (B-6) has a discipline because the
+     *     athlete typed one, which is neither a file's sport field nor an inference
+     *     over channels it does not have. Spelling it ``sport_field`` would put the
+     *     weakest claim in this system — "the recording said so" — on the one
+     *     session that has no recording.
+     * @enum {string}
+     */
+    ClassificationSource: "sport_field" | "heuristic" | "manual";
     /**
      * Discipline
      * @description The two disciplines the MVP trains.
@@ -926,6 +1158,63 @@ export interface components {
       status: string;
     };
     /**
+     * IngestEventRead
+     * @description One file the pipeline looked at. Append-only.
+     */
+    IngestEventRead: {
+      /**
+       * At
+       * Format: date-time
+       */
+      at: string;
+      /** Detail */
+      detail: string | null;
+      /** File Hash */
+      file_hash: string | null;
+      /** Filename */
+      filename: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      outcome: components["schemas"]["IngestOutcome"];
+      /** Session Id */
+      session_id: string | null;
+    };
+    /**
+     * IngestOutcome
+     * @description What happened to one file the pipeline looked at.
+     *
+     *     ``DUPLICATE_FILE`` is a success, not a failure: re-seeing a hash the
+     *     pipeline has already ingested is the idempotency guarantee working, and it
+     *     is logged rather than raised.
+     * @enum {string}
+     */
+    IngestOutcome: "ingested" | "duplicate_file" | "quarantined" | "error";
+    /**
+     * IngestReportRead
+     * @description What the pipeline did with one file.
+     *
+     *     ``session_ids`` is a list because one file may hold several sports
+     *     (A4.5), and it is populated for a ``duplicate_file`` outcome too — with
+     *     the sessions the file was *already* ingested as, which is what the client
+     *     needs to link to when it says "you already have this ride".
+     */
+    IngestReportRead: {
+      /** Detail */
+      detail: string | null;
+      /** File Hash */
+      file_hash: string | null;
+      /** Filename */
+      filename: string;
+      outcome: components["schemas"]["IngestOutcome"];
+      /** Quarantine Ids */
+      quarantine_ids: string[];
+      /** Session Ids */
+      session_ids: string[];
+    };
+    /**
      * LoadKind
      * @description How the load of a prescribed set is expressed.
      *
@@ -959,12 +1248,86 @@ export interface components {
       pct_tolerance: number;
     };
     /**
+     * LoggedSetCreate
+     * @description One set of a manually entered session.
+     */
+    LoggedSetCreate: {
+      /** Exercise Id */
+      exercise_id?: string | null;
+      /** Exercise Name */
+      exercise_name?: string | null;
+      /** Load Kg */
+      load_kg?: number | null;
+      /** Notes */
+      notes?: string | null;
+      /** Reps */
+      reps: number;
+      /** Rir */
+      rir?: number | null;
+    };
+    /**
+     * LoggedSetRead
+     * @description One set the athlete logged by hand.
+     */
+    LoggedSetRead: {
+      /** Exercise Id */
+      exercise_id: string | null;
+      /** Exercise Name */
+      exercise_name: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Load Kg */
+      load_kg: number | null;
+      /** Notes */
+      notes: string | null;
+      /** Reps */
+      reps: number;
+      /** Rir */
+      rir: number | null;
+      /** Set Index */
+      set_index: number;
+    };
+    /**
      * LoginRequest
      * @description Credentials for the single-user login.
      */
     LoginRequest: {
       /** Password */
       password: string;
+    };
+    /**
+     * ManualSessionCreate
+     * @description A session the athlete performed and is typing in (B-6).
+     *
+     *     No file, no recording row, no streams — a session row with
+     *     ``recording_kind=manual`` and its sets. Strength by default, because that
+     *     is what has no device file worth ingesting.
+     */
+    ManualSessionCreate: {
+      /** @default strength */
+      discipline: components["schemas"]["SessionDiscipline"];
+      /** Duration S */
+      duration_s: number;
+      /** Notes */
+      notes?: string | null;
+      /** Rpe */
+      rpe?: number | null;
+      /** Sets */
+      sets?: components["schemas"]["LoggedSetCreate"][];
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      /**
+       * Timezone
+       * @description IANA name, fixed offset (UTC+02:00), or UTC.
+       * @default UTC
+       */
+      timezone: string;
     };
     /**
      * MetricExplanationRead
@@ -1004,10 +1367,43 @@ export interface components {
       /** Total */
       total: number;
     };
+    /** Page[IngestEventRead] */
+    Page_IngestEventRead_: {
+      /** Items */
+      items: components["schemas"]["IngestEventRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
     /** Page[PlannedSessionListItem] */
     Page_PlannedSessionListItem_: {
       /** Items */
       items: components["schemas"]["PlannedSessionListItem"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[QuarantineRecordRead] */
+    Page_QuarantineRecordRead_: {
+      /** Items */
+      items: components["schemas"]["QuarantineRecordRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[SessionListItem] */
+    Page_SessionListItem_: {
+      /** Items */
+      items: components["schemas"]["SessionListItem"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -1443,6 +1839,80 @@ export interface components {
       items: components["schemas"]["PurposeTemplateRead"][];
     };
     /**
+     * QuarantineReason
+     * @description Why a file (or one activity within it) was not ingested.
+     *
+     *     Machine-readable because both the quarantine row and the inbox UI show it,
+     *     and because the confirm/reject actions (B-4) differ by reason: only a
+     *     ``SUSPECTED_DUPLICATE`` has something safe to ingest on reject.
+     *
+     *     The first four are `app.domain.streams.validate`'s verdicts. The last two
+     *     are the pipeline's own (WP-4 Phase B) — a file it could not read at all,
+     *     and a file whose time range overlaps a session already ingested — and are
+     *     named here so the column's vocabulary is complete from the first migration.
+     * @enum {string}
+     */
+    QuarantineReason:
+      | "no_samples"
+      | "non_monotonic_timestamps"
+      | "too_short"
+      | "implausible_channel"
+      | "unreadable_file"
+      | "suspected_duplicate";
+    /**
+     * QuarantineRecordRead
+     * @description One file the pipeline refused, and what was decided about it.
+     */
+    QuarantineRecordRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Detail */
+      detail: string | null;
+      /** File Hash */
+      file_hash: string;
+      /** File Sport Index */
+      file_sport_index: number | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Original Filename */
+      original_filename: string;
+      reason: components["schemas"]["QuarantineReason"];
+      /** Resolved At */
+      resolved_at: string | null;
+      status: components["schemas"]["QuarantineStatus"];
+      /** Suspected Session Id */
+      suspected_session_id: string | null;
+    };
+    /**
+     * QuarantineRejectRead
+     * @description The outcome of overruling the pipeline on a suspected duplicate.
+     *
+     *     Both halves, because both changed: the record is now
+     *     ``rejected_ingested``, and the file went back through the pipeline as its
+     *     own session.
+     */
+    QuarantineRejectRead: {
+      record: components["schemas"]["QuarantineRecordRead"];
+      report: components["schemas"]["IngestReportRead"];
+    };
+    /**
+     * QuarantineStatus
+     * @description What the athlete decided about a quarantined file.
+     *
+     *     ``PENDING`` until they act. ``CONFIRMED_DISCARDED`` means the quarantined
+     *     copy was thrown away — never the original of an already-ingested twin.
+     *     ``REJECTED_INGESTED`` means "this is not a duplicate", and the file went
+     *     back through the pipeline as its own session.
+     * @enum {string}
+     */
+    QuarantineStatus: "pending" | "confirmed_discarded" | "rejected_ingested";
+    /**
      * RampStepSchema
      * @description Move from one set of targets to another over a duration or distance.
      */
@@ -1472,6 +1942,77 @@ export interface components {
           | components["schemas"]["PercentOfAnchorSchema"]
           | components["schemas"]["AbsoluteRangeSchema"];
       };
+    };
+    /**
+     * RecordingKind
+     * @description Whether a session came from a device file or was entered by hand.
+     * @enum {string}
+     */
+    RecordingKind: "device" | "manual";
+    /**
+     * RecordingRead
+     * @description One device file's account of a session (A4.3, A4.4).
+     *
+     *     Everything a session detail page needs to explain its own numbers: which
+     *     meter produced the power, how the choice was made, how irregular the file
+     *     was, and what was subtracted from elapsed time to get the duration that
+     *     training load is computed over.
+     */
+    RecordingRead: {
+      /** Anomaly Count */
+      anomaly_count: number;
+      /** Channels */
+      channels: string[];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Elapsed Time S */
+      elapsed_time_s: number;
+      /** File Hash */
+      file_hash: string;
+      /** File Sport Index */
+      file_sport_index: number;
+      /** Hr Source */
+      hr_source: string | null;
+      /** Hr Source Candidates */
+      hr_source_candidates: string[];
+      /** Hr Source Rule */
+      hr_source_rule: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Median Time Delta S */
+      median_time_delta_s: number;
+      /** Moving Time S */
+      moving_time_s: number;
+      /** Original Ext */
+      original_ext: string;
+      /** Power Source */
+      power_source: string | null;
+      /** Power Source Candidates */
+      power_source_candidates: string[];
+      /** Power Source Rule */
+      power_source_rule: string | null;
+      /** Recording Stops */
+      recording_stops: components["schemas"]["RecordingStopRead"][];
+      /** Recording Time S */
+      recording_time_s: number;
+      /** Sport */
+      sport: string | null;
+    };
+    /**
+     * RecordingStopRead
+     * @description One recording pause, as a half-open row range on the 1 Hz grid.
+     */
+    RecordingStopRead: {
+      /** End Index */
+      end_index: number;
+      /** Start Index */
+      start_index: number;
     };
     /**
      * RepeatBlockSchema
@@ -1571,6 +2112,23 @@ export interface components {
       | "response"
       | "fuelling";
     /**
+     * SessionDiscipline
+     * @description What a *recorded* session was.
+     *
+     *     A superset of `app.domain.athlete.Discipline`, and deliberately a separate
+     *     enum: `Discipline` is the vocabulary of things we **prescribe**, and every
+     *     purpose, workout and planned session is one of its two members. A device
+     *     file, by contrast, can hold a walk, a swim or a sport the head unit does
+     *     not name — things we never plan and never score, but must still be able to
+     *     ingest without lying about. ``OTHER`` is that bucket.
+     *
+     *     The two shared members carry the **same string values** as `Discipline`,
+     *     so the WP-6 candidate query is a value comparison and the athlete-facing
+     *     vocabulary is one vocabulary (see :func:`as_planned_discipline`).
+     * @enum {string}
+     */
+    SessionDiscipline: "cycling" | "strength" | "other";
+    /**
      * SessionIntentRead
      * @description One version of a planned session's intent.
      *
@@ -1635,6 +2193,109 @@ export interface components {
       items: components["schemas"]["SessionIntentRead"][];
     };
     /**
+     * SessionListItem
+     * @description One completed session, as a row in the log.
+     */
+    SessionListItem: {
+      classification_source: components["schemas"]["ClassificationSource"];
+      discipline: components["schemas"]["SessionDiscipline"];
+      /** Discipline Overridden */
+      discipline_overridden: boolean;
+      /** Duration S */
+      duration_s: number;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      recording_kind: components["schemas"]["RecordingKind"];
+      /** Recording Time S */
+      recording_time_s: number | null;
+      /** Rpe */
+      rpe: number | null;
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      status: components["schemas"]["SessionMatchStatus"];
+      /** Timezone */
+      timezone: string;
+    };
+    /**
+     * SessionMatchStatus
+     * @description Where a completed session stands relative to the plan.
+     *
+     *     Reserved (addenda R-note on WP-6): the MVP produces ``UNMATCHED`` and
+     *     nothing else — WP-6 owns this lifecycle and adds its members then. The
+     *     column exists now so that arrival is code rather than a migration; every
+     *     member WP-6 needs (``matched``, ``unplanned``, ``displaced``) is no longer
+     *     than ``unmatched``, so it will not widen the column either (D81).
+     * @enum {string}
+     */
+    SessionMatchStatus: "unmatched";
+    /**
+     * SessionRead
+     * @description One completed session with the recordings behind it.
+     */
+    SessionRead: {
+      classification_source: components["schemas"]["ClassificationSource"];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      discipline: components["schemas"]["SessionDiscipline"];
+      /** Discipline Overridden */
+      discipline_overridden: boolean;
+      /** Duration S */
+      duration_s: number;
+      /**
+       * End Time
+       * Format: date-time
+       */
+      end_time: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      /** Logged Sets */
+      logged_sets: components["schemas"]["LoggedSetRead"][];
+      /** Notes */
+      notes: string | null;
+      recording_kind: components["schemas"]["RecordingKind"];
+      /** Recording Time S */
+      recording_time_s: number | null;
+      /** Recordings */
+      recordings: components["schemas"]["RecordingRead"][];
+      /** Rpe */
+      rpe: number | null;
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      status: components["schemas"]["SessionMatchStatus"];
+      /** Timezone */
+      timezone: string;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
      * SessionStatus
      * @description Where a planned session ended up.
      *
@@ -1644,6 +2305,34 @@ export interface components {
      * @enum {string}
      */
     "SessionStatus-Input": "planned" | "completed" | "missed" | "displaced";
+    /**
+     * SessionUpdate
+     * @description Corrections to a session's guessed facts.
+     *
+     *     Both fields are overrides of something inferred from a file: setting the
+     *     discipline records that the athlete decided it, and setting the timezone
+     *     re-derives ``local_date``, which is what puts a late-evening ride back on
+     *     the right day.
+     *
+     *     **Optional by omission, never nullable.** Neither field can be *cleared*:
+     *     a session always has a discipline and always has a timezone, so the
+     *     service refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``
+     *     keeps the Python-side ``= None`` "unset" default while dropping the
+     *     ``null`` branch from the contract, so the schema promises exactly what the
+     *     parser accepts — the same rule the optional *query* parameters follow
+     *     (`.claude/rules/api-optional-query-params.md`), applied to a request body.
+     *     Other update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay
+     *     ``X | None`` on purpose: for those, ``null`` means "clear this field".
+     */
+    SessionUpdate: {
+      /** Discipline */
+      discipline?: components["schemas"]["SessionDiscipline"];
+      /**
+       * Timezone
+       * @description An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. Anything else is refused: a timezone that cannot be resolved makes the session's date unrecoverable.
+       */
+      timezone?: string;
+    };
     /**
      * SetsCompletedSchema
      * @description At least this fraction of the prescribed strength sets performed.
@@ -2649,6 +3338,315 @@ export interface operations {
       };
     };
   };
+  "ingest-list_ingest_events": {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_IngestEventRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "ingest-list_quarantine": {
+    parameters: {
+      query?: {
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_QuarantineRecordRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "ingest-confirm_quarantine": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        record_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuarantineRecordRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such quarantine record */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The record is already resolved, or holds nothing safe to ingest */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "ingest-reject_quarantine": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        record_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuarantineRejectRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such quarantine record */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The record is already resolved, or holds nothing safe to ingest */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "ingest-upload_activity_file": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_ingest-upload_activity_file"];
+      };
+    };
+    responses: {
+      /** @description The pipeline's report on the file. **A refused file is a 200 too**, with `outcome: "quarantined"`, the ids in `quarantine_ids` and the reason in `detail`: being unreadable, too short or a suspected duplicate is a result, not a failed request. The other outcomes are `ingested` (one `session_id` per sport in the file), `duplicate_file` (the hash was already known, and `session_ids` says what it is already stored as) and `error`. Only a request that is itself wrong — an empty part, a file over the size limit — answers 4xx, so a client must branch on `outcome` and never on the status. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IngestReportRead"];
+        };
+      };
+      /** @description The multipart body itself could not be parsed */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The upload is unusable */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "sessions-create_manual_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ManualSessionCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "plan-get_plan_week": {
     parameters: {
       query?: {
@@ -3243,6 +4241,164 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "sessions-list_sessions": {
+    parameters: {
+      query?: {
+        /** @description Earliest athlete-local date to include (inclusive). */
+        start?: string;
+        /** @description Latest athlete-local date to include (inclusive). */
+        end?: string;
+        /** @description Restrict to one discipline; omit for all of them. */
+        discipline?: components["schemas"]["SessionDiscipline"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_SessionListItem_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "sessions-get_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "sessions-update_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SessionUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

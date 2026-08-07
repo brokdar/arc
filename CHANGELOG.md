@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-4 — ingestion: watched folder, FIT parsing, sessions & streams
+
+Device files become sessions. Decisions D89–D100.
+
+**Streams and the session model (`backend/app/domain/`, `app/persistence/`)**
+
+- Every stream is resampled to a uniform **1 Hz grid** before it is stored, and
+  row `i` of every column describes the same instant (A4.1). Row index — not
+  timestamp — is the addressing unit for everything downstream. A recording
+  pause longer than 30 s is a hole: the grid continues, every channel is
+  **null** across it, and the range is reported so its duration can be
+  subtracted from `recording_time_s`, which is the duration training load is
+  computed over (A4.4, A5.1). Sub-threshold gaps are filled per channel —
+  latitude, longitude and elevation interpolate; power, HR, cadence, speed and
+  temperature hold.
+- Raw and cleaned columns are **both** stored, and every repair is recorded
+  (A4.2). The raw column keeps the spike from a dropped magnet, a
+  parallel `*_fixed` column is what analysis reads, and each substituted region
+  becomes a `stream_anomalies` row naming the rows, the kind of repair and the
+  value put there. A `_fixed` column never holds a value outside the channel's
+  plausible range. A channel that needed nothing stores a `resampled_only` row,
+  so "clean" is distinguishable from "not checked".
+- Systemic garbage is **quarantined, not repaired**: no samples, more than
+  10 % of samples repeating a timestamp (a handful collapse by last-wins,
+  D91), under two minutes of elapsed *or recorded* time, or more than 10 % of
+  a channel implausible.
+- New tables: `sessions`, `recordings`, `stream_anomalies`,
+  `quarantine_records`, `ingest_events`, `logged_sets`. The **dedup key is
+  `(file_hash, file_sport_index)`** — one file may hold more than one sport
+  (A4.5). A session stores its athlete-local timezone (IANA name, `UTC+02:00`,
+  or `UTC`) and the `local_date` derived from it, so a midnight-crosser belongs
+  to the day it began (D93).
+
+**Ingestion (`backend/app/ingest/`)**
+
+- Parsers for **FIT** (Garmin SDK, falling back to `fitdecode` on a file the
+  strict reader gives up on), **GPX** (`gpxpy`, including the Garmin
+  TrackPointExtension sensors) and **TCX** (`tcxreader`). Each file yields one
+  activity per sport. Power and HR **source candidates are enumerated** from
+  FIT `device_info` and the rule that chose one is recorded verbatim, including
+  when it is only a tie-break (A4.3, D96).
+- A per-file pipeline: sha256 → dedup by hash against ingested recordings *and*
+  unresolved quarantine → parse → validate → overlap dedup (>70 % of the longer
+  range, D98) → file the original under `data/originals/YYYY/MM/<hash>.<ext>` →
+  session and recording rows → resample, clean, and write
+  `data/streams/<recording_id>.parquet`. Re-seeing a file is a `duplicate_file`
+  log line, never a second session. **Nothing under `data/originals/` is ever
+  deleted**, and any unanticipated failure still ends with the file kept and a
+  record saying what happened.
+- A **watched folder**: an APScheduler job sweeps `data/inbox/` every 30 s,
+  skipping dotfiles and files that are still arriving (recently modified, or
+  changed size since the last sweep). Configured by `INGEST__SCAN_INTERVAL_SECONDS`,
+  `INGEST__SETTLE_SECONDS` and `INGEST__OVERLAP_THRESHOLD`.
+
+**API (`backend/app/api/`)**
+
+- `POST /api/v1/ingest/upload` (multipart) writes into the inbox and runs the
+  pipeline synchronously, answering with the outcome: sessions created,
+  quarantine records raised, or the sessions the file already existed as. A
+  file it cannot use is a **200 with a reason**, not an error (D97).
+- `GET /api/v1/ingest/quarantine` (pending first) and
+  `POST /api/v1/ingest/quarantine/{id}/confirm` | `/reject`. Confirm discards
+  the quarantined copy and never an original; reject overrules the verdict it
+  disagrees with (D107): a suspected duplicate re-ingests as its own session,
+  an implausible-channel refusal ingests with the broken channel nulled and
+  its anomalies recorded. Rejecting anything else is a 409 — a corrupt
+  file has nothing safe to ingest. `GET /api/v1/ingest/events` is the
+  append-only log of every file the pipeline looked at.
+- `GET /api/v1/sessions?start=&end=&discipline=` (paginated, newest first) and
+  `GET /api/v1/sessions/{id}` — the session plus its recordings' metadata:
+  sources, stops, sample regularity and the repair count. **Not** the streams;
+  those are WP-5's. `PATCH /api/v1/sessions/{id}` corrects the discipline
+  (recorded as an override) or the timezone (which re-derives `local_date`).
+- `POST /api/v1/manual-sessions` records a session performed without a device
+  file — a gym session — with its logged sets (D99).
+
+**Frontend (`frontend/`)**
+
+- **`/inbox`** — the queue of everything the watched folder could not decide on
+  its own. Each row names the verdict in English, repeats the API's own detail,
+  says what to do about it, and links a suspected duplicate to the session it
+  looks like. "Discard this copy" takes two clicks; "Not a duplicate" is
+  offered only where there is something safe to ingest, which is the one reason
+  the API accepts a reject. Below the queue, the paginated ingest log. An
+  upload control posts a file and reports the outcome — a quarantined file
+  included, because that is a 200 with a reason and the page branches on the
+  outcome rather than the status (D97, D100).
+- **`/sessions`** — the log, newest first, filtered by discipline on the
+  server. Each row: local date, discipline, duration, recording kind, the
+  match badge (taken as a prop, not assumed), and a **load column that holds
+  its position** with a placeholder naming WP-5 as the reason it is empty.
+- **`/sessions/{id}`** — the session's metadata and the recording's account of
+  it: start and end in the session's own timezone, elapsed against recording
+  time with the paused total derived from the stop ranges, sample regularity,
+  repair count, and which meter produced each channel *with the rule that chose
+  it*. Logged sets for a hand-entered session. Two small correction forms for
+  the discipline and the timezone, the second re-deriving the session's date.
+  Every absent value keeps its slot and says why it is absent.
+- The sidebar gains **Sessions** and **Inbox**; eight sections now, and only
+  three of them still dimmed (D100).
+
+**Dependencies**
+
+- Added `garmin-fit-sdk`, `fitdecode`, `gpxpy`, `tcxreader` and `pyarrow`, all
+  forbidden in `app/domain` (D95), plus the dev-only `fit-tool` that builds the
+  committed synthetic golden FIT files (D94).
+
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions

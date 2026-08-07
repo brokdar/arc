@@ -5,6 +5,7 @@ Postgres belongs in tests/integration.
 """
 
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
 import bcrypt
@@ -20,7 +21,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
-from app.main import create_app
+from app.ingest.inbox import forget_seen_files
+from app.main import DATA_SUBDIRECTORIES, create_app
 from app.persistence import load_models
 from app.persistence.db import Base, get_session, set_session_factory
 
@@ -47,6 +49,32 @@ def _auth_env(password_hash: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[N
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _auth_env: None
+) -> Iterator[Path]:
+    """A throwaway runtime data tree, with `DATA__ROOT` pointed at it.
+
+    Request this **before** `client` in a test signature: the ingest pipeline
+    reads the tree from `get_settings()`, and the cache clear here has to
+    happen before anything resolves it.
+
+    The subdirectories are created here rather than by the lifespan, because
+    the `app` fixture builds the application without running one.
+    """
+    root = tmp_path / "runtime-data"
+    for name in DATA_SUBDIRECTORIES:
+        (root / name).mkdir(parents=True)
+    monkeypatch.setenv("DATA__ROOT", str(root))
+    get_settings.cache_clear()
+    # The inbox sweep remembers file sizes by path across calls; a fresh
+    # temporary directory must not be compared against another test's.
+    forget_seen_files()
+    yield root
+    get_settings.cache_clear()
+    forget_seen_files()
 
 
 @pytest.fixture

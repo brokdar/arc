@@ -9,6 +9,8 @@ import {
   formatMinutesPrime,
   formatPercent,
   formatSets,
+  formatUtcStamp,
+  localStamp,
   parseDurationInput,
   parseNumberInput,
 } from "@/lib/format";
@@ -115,5 +117,55 @@ describe("parseNumberInput", () => {
     expect(parseNumberInput("0")).toBe(0);
     expect(parseNumberInput("82.5")).toBe(82.5);
     expect(parseNumberInput("eighty")).toBeNull();
+  });
+});
+
+describe("localStamp", () => {
+  it("reads an instant in a named zone, DST and all", () => {
+    // August in Zurich is CEST (+02:00); January is CET (+01:00). Only a
+    // timezone database knows that, which is why `Intl` is used for this form.
+    expect(localStamp("2026-08-05T05:14:00Z", "Europe/Zurich")).toEqual({
+      date: "2026-08-05",
+      time: "07:14",
+    });
+    expect(localStamp("2026-01-05T05:14:00Z", "Europe/Zurich")).toEqual({
+      date: "2026-01-05",
+      time: "06:14",
+    });
+  });
+
+  it("reads the fixed-offset form the backend writes when a file implies one", () => {
+    expect(localStamp("2026-08-03T16:02:00Z", "UTC+02:00")).toEqual({
+      date: "2026-08-03",
+      time: "18:02",
+    });
+    expect(localStamp("2026-08-03T02:02:00Z", "UTC-05:30")).toEqual({
+      // Across midnight backwards: the previous day, which is the whole
+      // reason the session date is derived from the zone.
+      date: "2026-08-02",
+      time: "20:32",
+    });
+  });
+
+  it("reads UTC as UTC", () => {
+    expect(localStamp("2026-08-03T16:02:00Z", "UTC")).toEqual({
+      date: "2026-08-03",
+      time: "16:02",
+    });
+  });
+
+  it("returns null rather than a plausible wrong time", () => {
+    expect(localStamp("2026-08-03T16:02:00Z", "Middle-earth/Shire")).toBeNull();
+    expect(localStamp("not a timestamp", "UTC")).toBeNull();
+  });
+});
+
+describe("formatUtcStamp", () => {
+  it("prints a log line's instant without moving it anywhere", () => {
+    expect(formatUtcStamp("2026-08-07T14:32:09Z")).toBe("07.08 14:32");
+  });
+
+  it("holds the slot when there is no instant to print", () => {
+    expect(formatUtcStamp("")).toBe("—");
   });
 });

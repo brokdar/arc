@@ -74,6 +74,30 @@ class DataSettings(BaseModel):
     """Root of the runtime data tree — inbox/, originals/, streams/, quarantine/."""
 
 
+class IngestSettings(BaseModel):
+    """The watched folder and the two thresholds the pipeline reads."""
+
+    scan_interval_seconds: int = 30
+    """How often the scheduler sweeps `data/inbox/` (build-plan WP-4.3)."""
+
+    settle_seconds: float = 2.0
+    """How long a file must have sat unchanged before it is read.
+
+    A file still being copied is a truncated file, and reading it would
+    quarantine a perfectly good ride. The scan skips anything modified more
+    recently than this *and* anything whose size changed since the last sweep.
+    """
+
+    overlap_threshold: float = 0.70
+    """Fraction of an activity's time range that may overlap an existing
+    session before it is quarantined as a suspected duplicate (B-2).
+
+    Not 1.0: the same ride exported twice by two platforms differs at both
+    ends by a few seconds, and two genuinely different sessions do not overlap
+    by two thirds of their length.
+    """
+
+
 class McpSettings(BaseModel):
     """MCP server settings.
 
@@ -118,6 +142,7 @@ class Settings(BaseSettings):
     postgres: PostgresSettings = PostgresSettings()
     auth: AuthSettings = AuthSettings()
     data: DataSettings = DataSettings()
+    ingest: IngestSettings = IngestSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()
 

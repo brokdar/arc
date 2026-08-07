@@ -51,7 +51,10 @@ playwright/.cache/
 
 # === Project ===
 logs/
-data/
+# The runtime data tree (inbox/, originals/, streams/, quarantine/) at the
+# repository root. Anchored: an unanchored `data/` also swallows
+# `backend/tests/data/`, where WP-4's committed golden FIT files live.
+/data/
 .data-dev/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock

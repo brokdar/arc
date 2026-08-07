@@ -107,6 +107,27 @@ export function SessionsIcon(props: IconProps) {
   );
 }
 
+/** Inbox — a tray with the notch a file drops through. */
+export function InboxIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M4 3.4h8l2 6v2.2a1.4 1.4 0 0 1-1.4 1.4H3.4A1.4 1.4 0 0 1 2 11.6V9.4z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M2 9.4h3.2l.9 1.6h3.8l.9-1.6H14"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Glyph>
+  );
+}
+
 /** Analysis — a trend line with two turns. */
 export function AnalysisIcon(props: IconProps) {
   return (

@@ -61,6 +61,104 @@ export function formatDayMonthYear(isoDate: string): string {
   return `${day}.${month}.${year}`;
 }
 
+/** A date and a clock reading, both already in the zone they were asked for. */
+export interface LocalStamp {
+  /** `YYYY-MM-DD`, ready for `formatDayMonthYear`. */
+  readonly date: string;
+  /** `HH:MM`, 24-hour. */
+  readonly time: string;
+}
+
+/** `UTC+02:00` / `UTC-05:30` — the offset form the backend writes (D93). */
+const FIXED_OFFSET = /^UTC([+-])(\d{2}):(\d{2})$/;
+
+/**
+ * An instant, read in one session's own timezone.
+ *
+ * A completed session stores a UTC start plus the zone it was ridden in, and
+ * that zone is one of exactly three things (`app.domain.activity.
+ * parse_timezone`): the literal `UTC`, a fixed offset the head unit implied,
+ * or an IANA name for the rare file that carries one. All three are resolved
+ * here — the first two by arithmetic, the third by `Intl`, which is the only
+ * thing that knows where a DST boundary falls.
+ *
+ * `null` for a zone that resolves to none of them, so a caller renders the
+ * placeholder rather than a plausible-looking wrong time. The backend refuses
+ * to *store* such a value, so this is the shape of a bug, not of a session.
+ *
+ * The one deliberate exception to this module's no-locale rule, and it is not
+ * really one: the locale is pinned and the hour cycle forced, so the output is
+ * the same on every machine — `Intl` is used as a timezone database, not as a
+ * formatter.
+ */
+export function localStamp(
+  isoInstant: string,
+  timezone: string,
+): LocalStamp | null {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) {
+    return null;
+  }
+  if (timezone === "UTC") {
+    return utcStamp(instant);
+  }
+  const fixed = FIXED_OFFSET.exec(timezone);
+  if (fixed) {
+    const magnitude = Number(fixed[2]) * 60 + Number(fixed[3]);
+    const minutes = fixed[1] === "-" ? -magnitude : magnitude;
+    return utcStamp(new Date(instant.getTime() + minutes * 60_000));
+  }
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(instant);
+  } catch {
+    return null;
+  }
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  const [year, month, day, hour, minute] = [
+    part("year"),
+    part("month"),
+    part("day"),
+    part("hour"),
+    part("minute"),
+  ];
+  if (!year || !month || !day || !hour || !minute) {
+    return null;
+  }
+  return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
+}
+
+/** The UTC calendar date and clock reading of a `Date`. */
+function utcStamp(instant: Date): LocalStamp {
+  const iso = instant.toISOString();
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+
+/**
+ * A UTC instant as the ingest log prints it: `07.08 14:32`.
+ *
+ * Deliberately not converted to anywhere: the log records what the *server*
+ * did, and its column is headed with the zone rather than each row carrying
+ * one. Sessions get `localStamp`, because a ride happened somewhere.
+ */
+export function formatUtcStamp(isoInstant: string): string {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) {
+    return EM_DASH;
+  }
+  const { date, time } = utcStamp(instant);
+  return `${formatDayMonth(date)} ${time}`;
+}
+
 /**
  * Seconds as the headline says them: `3h10`, `45min`, `30s`.
  *

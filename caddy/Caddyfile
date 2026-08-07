@@ -11,7 +11,19 @@
 # The /mcp route reaches the MCP server, which authenticates every request
 # with a bearer key from MCP__API_KEYS — unauthenticated calls get a 401 from
 # the MCP server itself, not from Caddy.
+#
+# `request_body max_size` is the first bound on an upload: the API refuses
+# anything over 100 MB (MAX_UPLOAD_BYTES) from the Content-Length header, but
+# only after the request has reached it. This closes the connection at the
+# edge instead, so a body nobody will accept is never spooled to the API
+# container's disk. The 128 MB is deliberately above the application's limit:
+# the 422 explaining the real rule should be what an athlete with a slightly
+# too-large file sees, not a bare connection reset.
 {$CADDY_SITE_ADDRESS::80} {
+	request_body {
+		max_size 128MB
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000
 	}

@@ -88,3 +88,33 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "PATCH /api/v1/planned-sessions/{planned_session_id}"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# WP-4 adds three write operations whose rules a JSON schema cannot express,
+# each pinned by a unit test (test_ingest_api, test_sessions_api):
+#
+#   * an upload must not be empty and must be under 100 MB — a schema can
+#     describe "a file part", not "a file with bytes in it". (A file whose
+#     *contents* are unusable is not a refusal: it answers 200 with a
+#     `quarantined` outcome, which is a result and not an error.)
+#   * a session's timezone override must resolve to a real zone: an IANA name,
+#     a UTC±HH:MM offset, or UTC. A stored timezone that cannot be resolved
+#     makes the session's date unrecoverable (D93), so it is refused where it
+#     is written, and a patch that supplies no field at all is refused too.
+#   * a manually entered session's sets name exactly one of exercise_id and
+#     exercise_name, and its duration, RPE, reps, load and RIR carry bounds
+#     that are domain rules rather than schema ones.
+
+[[operations]]
+include-name = "POST /api/v1/ingest/upload"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/sessions/{session_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "POST /api/v1/manual-sessions"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

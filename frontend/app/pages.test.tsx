@@ -3,13 +3,17 @@ import { redirect } from "next/navigation";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import CalendarPage from "@/app/(app)/calendar/page";
+import InboxPage from "@/app/(app)/inbox/page";
 import AppLayout from "@/app/(app)/layout";
+import SessionPage from "@/app/(app)/sessions/[id]/page";
+import SessionsPage from "@/app/(app)/sessions/page";
 import TodayPage from "@/app/(app)/today/page";
 import WorkoutPage from "@/app/(app)/workouts/[id]/page";
 import WorkoutsPage from "@/app/(app)/workouts/page";
 import LoginPage from "@/app/login/page";
 import Home from "@/app/page";
 import { Providers } from "@/app/providers";
+import { ACTIVITY_IDS } from "@/tests/mocks/fixtures";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -102,6 +106,46 @@ describe("route shells", () => {
     expect(await screen.findByText("New workout")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Save workout" }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the inbox", async () => {
+    render(
+      <Providers>
+        <InboxPage />
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Inbox", level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the session log", async () => {
+    render(
+      <Providers>
+        <SessionsPage />
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Sessions", level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("routes a session id at its detail page", async () => {
+    render(
+      <Providers>
+        {
+          await SessionPage({
+            params: Promise.resolve({ id: ACTIVITY_IDS.outdoorRide }),
+          })
+        }
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Corrections" }),
     ).toBeInTheDocument();
   });
 

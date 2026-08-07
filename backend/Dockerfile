@@ -16,8 +16,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.14-alpine
 WORKDIR /app
 
-# bash for scripts, curl for the container healthcheck
-RUN apk add --no-cache bash curl
+# bash for scripts, curl for the container healthcheck, tzdata because alpine
+# ships no zoneinfo database and `app.domain.activity.parse_timezone` resolves
+# IANA names through stdlib `zoneinfo` — without it a session whose file named
+# a region would fail to date itself in the image and nowhere else.
+RUN apk add --no-cache bash curl tzdata
 
 RUN addgroup -g 1001 -S app && \
     adduser -S app -u 1001 -G app

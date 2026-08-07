@@ -16,6 +16,11 @@ dependencies = [
     "structlog>=25.5.0",
     "bcrypt>=5",
     "itsdangerous>=2.2",
+    "garmin-fit-sdk>=21.212.0",
+    "fitdecode>=0.11.0",
+    "gpxpy>=1.6.2",
+    "tcxreader>=0.4.11",
+    "pyarrow>=25.0.0",
 ]
 
 [dependency-groups]
@@ -31,6 +36,7 @@ dev = [
     "pyrefly>=1.1.0",
     "import-linter>=2.3",
     "hypothesis>=6.165.1",
+    "fit-tool>=0.9.16",
 ]
 
 [build-system]
@@ -96,6 +102,10 @@ keep-runtime-typing = true
     "S105",  # hardcoded test credentials
     "S106",
     "D",     # docstrings optional in tests
+    # Blocking filesystem calls in an async test are the point: WP-4's ingest
+    # writes real files, and asserting one exists is not event-loop work worth
+    # an async filesystem layer. The rule still applies to `app/`.
+    "ASYNC240",
 ]
 
 [tool.pytest.ini_options]
@@ -147,6 +157,23 @@ forbidden_modules = [
     "fastmcp",
     "bcrypt",
     "itsdangerous",
+    # WP-4's file readers and the parquet writer. All five are I/O: they open
+    # files. The domain never sees a FIT record or an arrow table — it sees
+    # `RawSample` and plain sequences — so `app.ingest` is the only layer that
+    # may import them (work order §1).
+    "garmin_fit_sdk",
+    # `garmin-fit-sdk`'s wheel also installs top-level `dist` and `tests`
+    # packages — a packaging defect in that distribution, not a decision of
+    # ours. They are named here because the self-maintaining guard in
+    # tests/unit/test_domain_purity_contract.py checks every import name a
+    # dependency provides, and forbidding them is true anyway: nothing in
+    # `app.domain` has business importing a package called `tests`.
+    "dist",
+    "tests",
+    "fitdecode",
+    "gpxpy",
+    "tcxreader",
+    "pyarrow",
     "app.persistence",
     "app.services",
     "app.api",
