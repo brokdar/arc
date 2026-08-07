@@ -24,7 +24,8 @@ otherwise independent of this module.
 import datetime as dt
 import re
 from enum import StrEnum
-from zoneinfo import ZoneInfo
+from functools import cache
+from zoneinfo import ZoneInfo, available_timezones
 
 from app.domain.athlete import Discipline
 
@@ -166,8 +167,13 @@ class IngestOutcome(StrEnum):
 
 # --- discipline classification (work order A-5) -------------------------------
 
-#: Raw sport strings that name a discipline outright. Keys are lowercased and
-#: stripped before lookup. FIT's `sport` enum is the source of most of them;
+#: Raw sport strings that name a discipline outright. **Keys are matched
+#: against the file's string lowercased and stripped** (see
+#: :func:`classify_discipline`), so every key here is lowercase and one key
+#: covers every casing a source uses — but not every *spelling*: Strava writes
+#: ``VirtualRide``, which lowercases to ``virtualride``, while a FIT sub-sport
+#: and most exporters write ``virtual_ride``, and neither is reachable from the
+#: other. Both are listed. FIT's `sport` enum is the source of most of them;
 #: GPX and TCX carry free text, which is why the map is on strings rather than
 #: on a parsed enum.
 SPORT_FIELD_DISCIPLINE: dict[str, SessionDiscipline] = {
@@ -175,6 +181,7 @@ SPORT_FIELD_DISCIPLINE: dict[str, SessionDiscipline] = {
     "biking": SessionDiscipline.CYCLING,
     "ride": SessionDiscipline.CYCLING,
     "virtualride": SessionDiscipline.CYCLING,
+    "virtual_ride": SessionDiscipline.CYCLING,
     "e_biking": SessionDiscipline.CYCLING,
     "training": SessionDiscipline.STRENGTH,
     "strength_training": SessionDiscipline.STRENGTH,
@@ -283,12 +290,39 @@ def timezone_label(local_offset: dt.timedelta | None) -> str:
     return fixed_offset_label(local_offset)
 
 
+#: Keys the zone database ships that are not IANA zone *names*: ``localtime``
+#: is a copy of whatever the host's clock is set to and ``Factory`` is the
+#: database's "nobody configured a timezone" placeholder. Both are TZif files
+#: on ``zoneinfo``'s search path, so `ZoneInfo` resolves them happily — and the
+#: browser's `Intl` resolves neither, so storing one gives the UI a timezone it
+#: cannot render and re-derives the athlete's local date from whatever
+#: ``/etc/localtime`` the container happens to have.
+_NON_IANA_ZONE_KEYS = frozenset({"localtime", "Factory", "posixrules"})
+
+
+@cache
+def _iana_timezones() -> frozenset[str]:
+    """Every IANA zone name this installation knows, scanned once.
+
+    Cached because :func:`zoneinfo.available_timezones` walks the whole zone
+    directory, and :func:`parse_timezone` runs per session read.
+    """
+    return frozenset(available_timezones()) - _NON_IANA_ZONE_KEYS
+
+
 def parse_timezone(tz: str) -> dt.tzinfo:
     """Resolve a stored timezone string to a ``tzinfo``.
 
     Accepts the three forms the session column can hold: :data:`UTC_TIMEZONE`,
     a fixed offset as written by :func:`fixed_offset_label`, and an IANA region
     name for the rare source that provides one.
+
+    The IANA branch accepts only names in :func:`zoneinfo.available_timezones`
+    less :data:`_NON_IANA_ZONE_KEYS` — a stricter test than "``ZoneInfo`` took
+    it", and deliberately so: this value is stored and then handed to the
+    frontend, which resolves it with `Intl`. A name Python accepts and `Intl`
+    does not is a session whose date the UI cannot re-derive, and the athlete
+    is the one who finds out.
 
     Raises:
         ValueError: When the string is none of those. Callers store this value;
@@ -306,13 +340,16 @@ def parse_timezone(tz: str) -> dt.tzinfo:
             return dt.timezone(offset)
         except ValueError as exc:
             raise ValueError(f"{tz!r} is not a usable UTC offset") from exc
+    unresolvable = ValueError(
+        f"{tz!r} is neither {UTC_TIMEZONE!r}, a UTC±HH:MM offset, nor a "
+        "known IANA timezone name"
+    )
+    if tz not in _iana_timezones():
+        raise unresolvable
     try:
         return ZoneInfo(tz)
     except (KeyError, ValueError) as exc:
-        raise ValueError(
-            f"{tz!r} is neither {UTC_TIMEZONE!r}, a UTC±HH:MM offset, nor a "
-            "known IANA timezone name"
-        ) from exc
+        raise unresolvable from exc
 
 
 def session_date(start_utc: dt.datetime, tz: str) -> dt.date:

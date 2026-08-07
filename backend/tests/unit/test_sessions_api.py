@@ -12,7 +12,7 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from tests.unit.golden_fit import OUTDOOR_STOP_S, golden
+from tests.unit.golden_fit import golden
 
 SESSIONS = "/api/v1/sessions"
 MANUAL = "/api/v1/manual-sessions"
@@ -77,7 +77,8 @@ async def test_the_list_row_reports_recording_time_not_elapsed(
 
     [item] = (await client.get(SESSIONS)).json()["items"]
 
-    assert item["recording_time_s"] == 1800.0
+    # 2400 s elapsed minus the stop's 599 rows (D101).
+    assert item["recording_time_s"] == 1801.0
     assert item["duration_s"] == item["recording_time_s"]
 
 
@@ -130,11 +131,12 @@ async def test_the_detail_counts_repairs_and_not_the_channels_that_needed_none(
 
     [recording] = session["recordings"]
     assert recording["anomaly_count"] == 1
-    assert recording["elapsed_time_s"] - recording["recording_time_s"] == (
-        OUTDOOR_STOP_S
-    )
     [stop] = recording["recording_stops"]
     assert stop == {"start_index": 601, "end_index": 1200}
+    # Exactly the stop's row range separates the two durations (D101).
+    assert recording["elapsed_time_s"] - recording["recording_time_s"] == (
+        stop["end_index"] - stop["start_index"]
+    )
 
 
 async def test_the_detail_does_not_carry_streams(

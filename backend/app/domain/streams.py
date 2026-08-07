@@ -263,15 +263,19 @@ class ResampleResult:
     Args:
         frame: The 1 Hz grid.
         elapsed_time_s: Last sample's instant minus the first's.
-        recording_time_s: ``elapsed_time_s`` minus every gap longer than the
-            threshold. **The duration term in training load** (A5.1) — not
-            moving time, not elapsed.
+        recording_time_s: ``elapsed_time_s`` minus the rows the recording stops
+            cover — **exactly** ``elapsed_time_s - Σ(end_index - start_index)``
+            over :attr:`recording_stops`, so the athlete-facing "paused" total
+            a consumer derives by subtracting the two agrees with the ranges it
+            can see. **The duration term in training load** (A5.1) — not moving
+            time, not elapsed.
         recording_stops: The ``[start_index, end_index)`` row ranges that were
             subtracted, in order.
         median_time_delta_s: Median spacing of the original samples — the
             one-number answer to "how irregular was this file", which is the
             first thing worth knowing when a derived value looks wrong.
-        moving_time_s: Time spent at or above :data:`MOVING_SPEED_MS`.
+        moving_time_s: Time spent at or above :data:`MOVING_SPEED_MS`, counting
+            only samples whose speed is inside :data:`PLAUSIBLE_RANGE`.
             Display only.
     """
 
@@ -293,6 +297,32 @@ def _row_index(sample_t: dt.datetime, t0: dt.datetime, row_count: int) -> int:
     return min(int((sample_t - t0).total_seconds()), row_count - 1)
 
 
+def _stop_ranges(
+    ordered: Sequence[RawSample], t0: dt.datetime, row_count: int, gap_threshold_s: int
+) -> list[tuple[int, int]]:
+    """The ``[start_index, end_index)`` row ranges no sample covers.
+
+    One range per gap longer than ``gap_threshold_s``, spanning the rows
+    strictly between the two samples that bracket it — the earlier sample's own
+    row was recorded, and so was the later one's.
+
+    The single definition of a recording stop: :func:`resample` reports these
+    ranges and subtracts their **row counts** from recording time, and
+    :func:`validate` re-derives the same number before it decides a file is too
+    short. Subtracting anything else (the raw inter-sample delta, say) would
+    make ``elapsed - recording`` disagree with the ranges by a second per stop.
+    """
+    stops: list[tuple[int, int]] = []
+    for earlier, later in pairwise(ordered):
+        if (later.t - earlier.t).total_seconds() <= gap_threshold_s:
+            continue
+        start = _row_index(earlier.t, t0, row_count) + 1
+        end = _row_index(later.t, t0, row_count)
+        if end > start:
+            stops.append((start, end))
+    return stops
+
+
 def resample(
     samples: Sequence[RawSample], *, gap_threshold_s: int = GAP_THRESHOLD_S
 ) -> ResampleResult:
@@ -307,14 +337,25 @@ def resample(
     recording stop: the rows between them stay null in every channel and the
     range is reported in :attr:`ResampleResult.recording_stops`. Nothing is
     interpolated across a stop — a coffee stop is not 600 seconds of zero
-    watts, and the two must never be confused.
+    watts, and the two must never be confused. What is subtracted from
+    recording time is the **length of that row range**, not the raw gap
+    between the two samples: the rows either side of the stop were recorded,
+    so counting them as paused would leave ``elapsed - recording`` a second
+    larger than the ranges the same result reports.
 
     **Sub-threshold gaps** are filled per channel by :data:`FILL_RULE`:
     ``lat``/``lon``/``elevation`` linearly, ``power``/``hr``/``cadence``/
-    ``speed``/``temp`` by holding the previous reading. The rule is applied per
-    *channel*, so a file that reports power every second and temperature every
-    minute leaves temperature null across its own longer gaps rather than
-    holding a reading for a minute.
+    ``speed``/``temp`` by holding the previous reading — at most
+    ``gap_threshold_s - 1`` missing rows, so the two readings a fill bridges
+    are never more than ``gap_threshold_s`` seconds apart. The rule is applied
+    per *channel*, so a file that reports power every second and temperature
+    every minute leaves temperature null across its own longer gaps rather
+    than holding a reading for a minute.
+
+    **Moving time** counts the intervals whose earlier sample reports a speed
+    at or above :data:`MOVING_SPEED_MS`. A speed outside
+    :data:`PLAUSIBLE_RANGE` — the 900 m/s a GPS glitch writes — is not
+    evidence of movement and is skipped rather than believed.
 
     Rows before a channel's first sample and after its last stay null: the
     frame spans the activity, not each channel's own coverage.
@@ -350,16 +391,8 @@ def resample(
 
     pairs = list(pairwise(ordered))
     deltas = [(later.t - earlier.t).total_seconds() for earlier, later in pairs]
-    stops: list[tuple[int, int]] = []
-    stopped_s = 0.0
-    for (earlier, later), delta in zip(pairs, deltas, strict=True):
-        if delta <= gap_threshold_s:
-            continue
-        stopped_s += delta
-        start = _row_index(earlier.t, t0, row_count) + 1
-        end = _row_index(later.t, t0, row_count)
-        if end > start:
-            stops.append((start, end))
+    stops = _stop_ranges(ordered, t0, row_count, gap_threshold_s)
+    stopped_s = float(sum(end - start for start, end in stops))
 
     stopped_rows = bytearray(row_count)
     for start, end in stops:
@@ -372,10 +405,13 @@ def resample(
         for channel, points in observed.items()
     }
 
+    low_speed, high_speed = PLAUSIBLE_RANGE[StreamChannel.SPEED]
     moving_time_s = 0.0
     for (earlier, _later), delta in zip(pairs, deltas, strict=True):
         speed = earlier.values.get(StreamChannel.SPEED)
-        if delta <= gap_threshold_s and speed is not None and speed >= MOVING_SPEED_MS:
+        if speed is None or not low_speed <= speed <= high_speed:
+            continue  # a 900 m/s GPS glitch is not thirty seconds of riding
+        if delta <= gap_threshold_s and speed >= MOVING_SPEED_MS:
             moving_time_s += delta
 
     return ResampleResult(
@@ -399,9 +435,15 @@ def _fill(
 ) -> tuple[float | None, ...]:
     """Place one channel's observations on the grid and close its short gaps.
 
-    A gap is closed only when it is at most ``gap_threshold_s`` rows wide *and*
-    holds no recording-stop row. Both tests are needed: a stop of 30.5 s spans
-    30 rows, which the width test alone would let through.
+    **The line:** a hole of at most ``gap_threshold_s - 1`` **missing rows** is
+    closed — equivalently, the two readings it lies between are at most
+    ``gap_threshold_s`` seconds apart, which is the same distance that makes a
+    gap a recording stop rather than a dropout. With the default threshold that
+    is 29 missing rows, and :func:`clean` repairs to the same line.
+
+    A gap is closed only when it also holds no recording-stop row. Both tests
+    are needed: a stop of 30.5 s spans 30 rows, which the width test alone
+    would let through.
     """
     column: list[float | None] = [None] * row_count
     for index, value in points.items():
@@ -431,13 +473,16 @@ class AnomalyKind(StrEnum):
     carried forward at the last good reading. ``GAP_INTERPOLATED`` — the same
     run on a positional channel, filled with a straight line.
 
-    ``DROPPED`` — an implausible region the repair rules declined to repair,
-    set to null: a run too long to repair honestly, one that touches a
-    recording stop, or one lying outside the channel's own believable readings
-    (before its first, after its last). It is a repair like the others
+    ``DROPPED`` — an implausible **value** the repair rules declined to repair,
+    set to null: one in a run too long to repair honestly, one in a run that
+    touches a recording stop, or one outside the channel's own believable
+    readings (before its first, after its last). It is a repair like the others
     precisely because a null is a claim ("there is no data here") replacing a
     value the file did contain, and A4.2's rule is that every such claim is
-    recorded.
+    recorded. A row that was **already** null is not dropped and never appears
+    here: nothing was substituted for it, and a channel the device samples once
+    a minute would otherwise arrive as an hour of anomalies about rows no
+    device ever wrote.
 
     ``RESAMPLED_ONLY`` — nothing was repaired. One row per untouched channel,
     spanning the whole frame, so "this channel needed no cleaning" can be told
@@ -496,11 +541,13 @@ class CleanResult:
 #: glitch — and clipped to the last good reading.
 SPIKE_MAX_S = 3
 
-#: Longest run repaired at all. Above this the data is missing, not noisy, and
-#: :data:`AnomalyKind.DROPPED` nulls it rather than inventing half a minute of
-#: training. Equal to :data:`GAP_THRESHOLD_S` by construction: the threshold
-#: that makes a gap a recording stop is the threshold that makes a run
-#: unrepairable.
+#: Furthest apart the two believable readings flanking a bad run may be for it
+#: to be repaired at all — so at most ``REPAIR_MAX_S - 1`` **missing rows** are
+#: repaired (29 with the default), which is the line :func:`_fill` bridges a
+#: hole in the grid on. Beyond it the data is missing, not noisy: nothing is
+#: invented, and any implausible number inside the run is nulled and recorded.
+#: Equal to :data:`GAP_THRESHOLD_S` by construction: the distance that makes a
+#: gap a recording stop is the distance that makes a run unrepairable.
 REPAIR_MAX_S = GAP_THRESHOLD_S
 
 
@@ -541,25 +588,32 @@ def clean(
     * ``<= spike_max_s`` — clipped to the last good reading
       (:attr:`AnomalyKind.SPIKE_CLIPPED`). A 1 900 W spike from a dropped
       magnet is three seconds of nonsense between two believable readings.
-    * ``<= repair_max_s`` — held at the last good reading
-      (:attr:`AnomalyKind.DROPOUT_HELD`), or filled linearly for the positional
-      channels (:attr:`AnomalyKind.GAP_INTERPOLATED`), per :data:`FILL_RULE`.
-    * longer — nulled (:attr:`AnomalyKind.DROPPED`). Never invented.
+    * at most ``repair_max_s - 1`` **missing rows** — that is, the believable
+      readings either side of it are at most ``repair_max_s`` seconds apart —
+      held at the last good reading (:attr:`AnomalyKind.DROPOUT_HELD`), or
+      filled linearly for the positional channels
+      (:attr:`AnomalyKind.GAP_INTERPOLATED`), per :data:`FILL_RULE`. With the
+      default that is 29 rows, the same line :func:`resample` bridges a hole in
+      the grid on, so the two passes never disagree about one row.
+    * longer — not repaired. Never invented.
 
-    Three regions are **not** repaired, and are nulled instead. Rows *inside a
-    recording stop* are already null and stay null; a run that so much as
-    touches one is not repaired at all, because a reading taken as the device
-    stopped or resumed is no more trustworthy than the gap itself. Rows
-    *before a channel's first believable reading or after its last* are not
-    repaired either — holding backwards would fabricate a warm-up, and there
-    is no second endpoint to interpolate towards.
+    Four regions are therefore **not** repaired. Rows *inside a recording stop*
+    are already null and stay null; a run that so much as touches one is not
+    repaired at all, because a reading taken as the device stopped or resumed
+    is no more trustworthy than the gap itself. Rows *before a channel's first
+    believable reading or after its last* are not repaired either — holding
+    backwards would fabricate a warm-up, and there is no second endpoint to
+    interpolate towards. And a run longer than the line above is left alone.
 
-    In each of those three cases an implausible **value** is replaced by
-    ``None`` and the region is recorded as :attr:`AnomalyKind.DROPPED`; a row
-    that was already ``None`` stays ``None`` and is not an anomaly, because
-    nothing was substituted for it. "Declined to repair" therefore never means
-    "passed a bad number through", and a channel is certified
-    :attr:`AnomalyKind.RESAMPLED_ONLY` only when it genuinely needed nothing.
+    In each of those cases an implausible **value** is replaced by ``None`` and
+    recorded as :attr:`AnomalyKind.DROPPED`; a row that was already ``None``
+    stays ``None`` and is **not** an anomaly, because nothing was substituted
+    for it. An anomaly is always a claim that recorded data was altered, so a
+    declined run made only of nulls — a channel sampled once a minute, a strap
+    that dropped out for two — produces none at all, and a channel is certified
+    :attr:`AnomalyKind.RESAMPLED_ONLY` when and only when its fixed column is
+    byte-identical to its raw one. "Declined to repair" still never means
+    "passed a bad number through".
 
     The raw columns are returned untouched — the spike stays in ``power``, and
     ``power_fixed`` is what a metric reads.
@@ -629,8 +683,13 @@ def _clean_channel(
             span = end - start
             if span <= spike_max_s:
                 kind, substituted = AnomalyKind.SPIKE_CLIPPED, before
-            elif span > repair_max_s:
-                kind, substituted = AnomalyKind.DROPPED, None
+            elif span + 1 > repair_max_s:
+                # The flanking readings are more than ``repair_max_s`` seconds
+                # apart, which is where `_fill` stops bridging too. Leave the
+                # run alone: pass two nulls whatever numbers are in it and
+                # records exactly those rows, so a run made only of nulls
+                # produces no anomaly at all.
+                continue
             elif FILL_RULE[channel] is FillRule.INTERPOLATE:
                 kind, substituted = AnomalyKind.GAP_INTERPOLATED, None
             else:
@@ -653,12 +712,15 @@ def _clean_channel(
                 )
             )
 
-    # Pass two: whatever pass one declined to repair must not survive as a
-    # number. Declining is a judgement about the *repair* — there is nothing to
-    # interpolate towards, or the neighbouring reading is as suspect as the gap
-    # — and it is never a judgement that the value is fine. Nulling it is a
-    # substitution like any other, so it is recorded; a row that was already
-    # null is not, because nothing was substituted for it.
+    # Pass two: whatever pass one declined to repair — an over-long run, a run
+    # touching a recording stop, a region outside the channel's own believable
+    # readings — must not survive as a number. Declining is a judgement about
+    # the *repair* (there is nothing to interpolate towards, or the
+    # neighbouring reading is as suspect as the gap), never a judgement that
+    # the value is fine. Nulling it is a substitution like any other, so it is
+    # recorded; a row that was already null is not, because nothing was
+    # substituted for it, and the anomaly rows therefore cover exactly the rows
+    # this pass changed.
     surviving = [not believable(value) and value is not None for value in column]
     for start, end in _runs(surviving, 0, len(column)):
         for index in range(start, end):
@@ -720,6 +782,7 @@ def validate(
     *,
     min_duration_s: int = MIN_DURATION_S,
     max_implausible_fraction: float = MAX_IMPLAUSIBLE_FRACTION,
+    gap_threshold_s: int = GAP_THRESHOLD_S,
 ) -> QuarantineVerdict | None:
     """Decide whether an activity can be ingested at all.
 
@@ -739,7 +802,13 @@ def validate(
        ``max_implausible_fraction``. Above it the file's clock is broken rather
        than chatty, and last-wins would be silently discarding a large part of
        the recording.
-    3. **Too short.** Under ``min_duration_s`` of elapsed time.
+    3. **Too short.** Under ``min_duration_s`` of elapsed time, *or* under
+       ``min_duration_s`` of recording time — the two are different files. Two
+       samples 200 s apart clear the elapsed gate and would become a session
+       whose recording time is a second, which is the number WP-5 divides by;
+       the recording-time analogue is computed from :func:`_stop_ranges`, the
+       same function :func:`resample` subtracts, so a file this admits cannot
+       resample to less than ``min_duration_s``.
     4. **An implausible channel.** More than ``max_implausible_fraction`` of
        the samples carrying a channel are outside :data:`PLAUSIBLE_RANGE`.
        Channels are examined in :class:`StreamChannel` order, so the verdict is
@@ -751,10 +820,14 @@ def validate(
 
     Args:
         activity: One parsed sport within one file.
-        min_duration_s: Shortest elapsed duration accepted.
+        min_duration_s: Shortest duration accepted, applied to elapsed time and
+            to recording time alike.
         max_implausible_fraction: Share of a channel's samples that may be out
             of range — and share of samples that may repeat a timestamp —
             before the file is refused.
+        gap_threshold_s: Seconds above which a gap is a recording stop; must be
+            the value :func:`resample` will be called with, or the two disagree
+            about how much of the file was recorded.
 
     Returns:
         The verdict, or ``None`` when the activity is fit to ingest.
@@ -785,6 +858,19 @@ def validate(
             detail=(
                 f"the activity lasts {elapsed_s:.0f} s; at least {min_duration_s} s "
                 "is needed for a session"
+            ),
+        )
+
+    stops = _stop_ranges(ordered, ordered[0].t, int(elapsed_s) + 1, gap_threshold_s)
+    recording_s = elapsed_s - sum(end - start for start, end in stops)
+    if recording_s < min_duration_s:
+        return QuarantineVerdict(
+            reason=QuarantineReason.TOO_SHORT,
+            detail=(
+                f"the activity spans {elapsed_s:.0f} s but only {recording_s:.0f} s "
+                f"of it was recorded — the rest is {len(stops)} recording stop(s); "
+                f"at least {min_duration_s} s of recording time is needed for a "
+                "session"
             ),
         )
 

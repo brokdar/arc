@@ -52,6 +52,25 @@ HR_DEVICE_TYPES = frozenset({"heart_rate", 120})
 #: `device_index` 0 is the head unit itself; the SDK renders it as this.
 CREATOR_INDEX = "creator"
 
+#: What a device label says when the file did not name the part.
+UNKNOWN_DEVICE_PART = "unknown"
+
+#: `device_info` fields naming the maker, in preference order.
+MANUFACTURER_FIELDS = ("manufacturer",)
+
+#: `device_info` fields naming the product, in preference order.
+#:
+#: FIT stores one product number, but the profile gives it manufacturer-
+#: specific *subfields*: a Garmin sensor writes its number under
+#: `garmin_product`, a Favero one under `favero_product`. The SDK reports the
+#: base field **and** the subfield; `fitdecode` reports only the subfield. Read
+#: the base field first and the same bytes would label a Garmin strap
+#: ``garmin/1234`` through one decoder and ``garmin/unknown`` through the
+#: other — provenance that depends on which reader ran. The subfields come
+#: first, and both decoders resolve them through the same profile, so a
+#: resolved name (``edge_530``) comes out of both or neither.
+PRODUCT_FIELDS = ("garmin_product", "favero_product", "product")
+
 #: Record fields read for each channel, in preference order. The `enhanced_`
 #: variants are the wider-range ones a modern head unit writes; either may be
 #: the only one present.
@@ -125,12 +144,26 @@ FRAME_GROUPS = {
 def _read_with_fitdecode(path: Path, *, sdk_error: Exception) -> Messages:
     """Decode frame by frame, keeping whatever survived a truncated write.
 
+    A head unit that stopped mid-write leaves a partial final frame, and
+    `fitdecode` raises when it reaches it — but only *after* yielding every
+    whole frame ahead of it. Those frames are the ride, so they are harvested
+    and the decode error is fatal only when nothing came back. The file also
+    loses its trailing `session`, `lap` and `activity` messages, which is why
+    a recovered ride has no sport, no laps and no local offset: the parser
+    reports what the bytes said, and nothing more.
+
+    Whether what survived is *enough* is not decided here.
+    :func:`app.domain.streams.validate` is the one place that judges a
+    recording fit to ingest, and a parser that second-guessed it would
+    quarantine files under a different rule than every other format.
+
     Raises:
-        UnreadableFileError: When this reader cannot find records either. The
+        UnreadableFileError: When no record frame could be recovered. The
             message names the SDK's complaint as well, because that is the one
             a well-formed-but-unsupported file fails with.
     """
     messages: Messages = {group: [] for group in FRAME_GROUPS.values()}
+    decode_error: Exception | None = None
     try:
         with fitdecode.FitReader(str(path)) as reader:
             for frame in reader:
@@ -140,15 +173,26 @@ def _read_with_fitdecode(path: Path, *, sdk_error: Exception) -> Messages:
                 messages[group].append(
                     {field.name: field.value for field in frame.fields}
                 )
-    except Exception as exc:
-        raise UnreadableFileError(
-            f"the file is not a readable FIT recording ({exc}; the Garmin "
-            f"decoder said: {sdk_error})"
-        ) from exc
-    if not messages["record_mesgs"]:
+    except Exception as exc:  # noqa: BLE001 — harvesting is the point
+        decode_error = exc
+
+    records = messages["record_mesgs"]
+    if not records:
+        detail = (
+            f"{decode_error}; the Garmin decoder said: {sdk_error}"
+            if decode_error is not None
+            else f"the Garmin decoder said: {sdk_error}"
+        )
         raise UnreadableFileError(
             "the file is not a readable FIT recording: no samples could be "
-            f"decoded from it (the Garmin decoder said: {sdk_error})"
+            f"decoded from it ({detail})"
+        )
+    if decode_error is not None:
+        logger.info(
+            "fit_partial_recovery",
+            path=str(path),
+            records=len(records),
+            error=str(decode_error),
         )
     return messages
 
@@ -340,10 +384,30 @@ def _device_labels(
         if kind not in device_types:
             continue
         index = _device_index(device.get("device_index"))
-        manufacturer = device.get("manufacturer", "unknown")
-        product = device.get("product", "unknown")
-        labelled.append((index, f"{manufacturer}/{product} #{index}"))
+        labelled.append((index, _device_label(device, index)))
     return [label for _, label in sorted(labelled, key=lambda entry: entry[0])]
+
+
+def _device_label(device: Mapping[str, Any], index: int) -> str:
+    """One sensor's provenance label, spelled the same for either decoder.
+
+    The single normalisation point for `device_info`: both readers reach it
+    with their own field spellings and leave with one string, so the label a
+    recording carries does not depend on which decoder opened the file.
+    """
+    manufacturer = _named_part(device, MANUFACTURER_FIELDS)
+    product = _named_part(device, PRODUCT_FIELDS)
+    return f"{manufacturer}/{product} #{index}"
+
+
+def _named_part(device: Mapping[str, Any], fields: Sequence[str]) -> str:
+    """The first of ``fields`` this device names, or ``"unknown"``."""
+    for name in fields:
+        value = device.get(name)
+        if value is None or isinstance(value, bool) or value == "":
+            continue
+        return str(value)
+    return UNKNOWN_DEVICE_PART
 
 
 def _device_index(raw: Any) -> int:

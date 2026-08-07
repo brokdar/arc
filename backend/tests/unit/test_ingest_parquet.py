@@ -67,6 +67,7 @@ def test_a_written_frame_reads_back_identical(tmp_path: Path) -> None:
     for channel, column in cleaned.fixed.items():
         assert stored.fixed[channel] == column, channel.value
     assert stored.sources[StreamChannel.POWER] == activity.power_source
+    assert stored.sources[StreamChannel.HR] == activity.hr_source
 
 
 def test_every_stored_column_has_one_entry_per_row(tmp_path: Path) -> None:
@@ -121,17 +122,25 @@ def test_the_file_says_when_it_started_and_where_its_numbers_came_from(
     activity, resampled, cleaned = ride_frame()
     path = stream_path(tmp_path, uuid.uuid7())
     assert activity.power_source is not None
+    assert activity.hr_source is not None
 
     write_streams(
         path,
         frame=resampled.frame,
         cleaned=cleaned,
-        sources={StreamChannel.POWER: activity.power_source},
+        sources={
+            StreamChannel.POWER: activity.power_source,
+            StreamChannel.HR: activity.hr_source,
+        },
     )
     metadata = pq.read_table(path).schema.metadata
 
     assert metadata[T0_KEY.encode()].decode() == resampled.frame.t0.isoformat()
     assert metadata[f"{SOURCE_PREFIX}power".encode()].decode() == activity.power_source
+    # Power and heart rate are the two channels the MVP labels (A4.3), so both
+    # are asserted: with only the power key checked, dropping the HR label from
+    # the metadata broke nothing.
+    assert metadata[f"{SOURCE_PREFIX}hr".encode()].decode() == activity.hr_source
     assert DEVICE_TIME_COLUMN in pq.read_table(path).column_names
 
 

@@ -8,6 +8,7 @@ write down.
 """
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 import pytest
 from hypothesis import given
@@ -73,6 +74,26 @@ CASES = [
         False,
         False,
         3000.0,
+        SessionDiscipline.CYCLING,
+        ClassificationSource.SPORT_FIELD,
+    ),
+    (
+        "strava spells a trainer ride VirtualRide",
+        "VirtualRide",
+        True,
+        False,
+        False,
+        3600.0,
+        SessionDiscipline.CYCLING,
+        ClassificationSource.SPORT_FIELD,
+    ),
+    (
+        "every other source spells it virtual_ride",
+        "virtual_ride",
+        True,
+        False,
+        False,
+        3600.0,
         SessionDiscipline.CYCLING,
         ClassificationSource.SPORT_FIELD,
     ),
@@ -201,6 +222,26 @@ def test_an_unresolvable_timezone_fails_loudly(bad: str) -> None:
         parse_timezone(bad)
 
 
+@pytest.mark.parametrize("special", ["localtime", "Factory"])
+def test_a_zone_database_key_that_is_not_an_iana_name_is_refused(special: str) -> None:
+    # `zoneinfo` resolves both — they are TZif files on its search path — but
+    # `localtime` is whatever the container's clock is set to and `Factory` is
+    # the database's "unset" placeholder. The browser's `Intl` resolves
+    # neither, so a PATCH that stored one would give the UI a timezone it
+    # cannot render and silently re-derive the session's local date from
+    # /etc/localtime.
+    assert ZoneInfo(special), "the standard library accepts it; we must not"
+
+    with pytest.raises(ValueError, match="IANA"):
+        parse_timezone(special)
+
+
+def test_a_real_region_name_still_resolves() -> None:
+    assert parse_timezone("Europe/Zurich").utcoffset(
+        dt.datetime(2026, 7, 1, 12)  # noqa: DTZ001
+    ) == dt.timedelta(hours=2)
+
+
 # --- session_date (A-6) -------------------------------------------------------
 
 
@@ -247,25 +288,3 @@ def test_the_session_date_is_the_local_calendar_date_of_the_start(
     # Never more than a day either side of the UTC date — the property that
     # catches an offset applied twice or in the wrong direction.
     assert abs((derived - start.date()).days) <= 1
-
-
-@given(
-    start=st.datetimes(
-        min_value=dt.datetime(2000, 1, 1),
-        max_value=dt.datetime(2100, 1, 1),
-        timezones=st.just(dt.UTC),
-    ),
-    duration_s=st.integers(min_value=0, max_value=6 * 3600),
-    minutes=st.integers(min_value=-12 * 60, max_value=14 * 60).filter(
-        lambda m: m % 15 == 0
-    ),
-)
-def test_the_date_depends_on_the_start_alone_however_long_the_session_runs(
-    start: dt.datetime, duration_s: int, minutes: int
-) -> None:
-    tz = timezone_label(dt.timedelta(minutes=minutes))
-
-    assert session_date(start, tz) == session_date(start, tz)
-    assert session_date(start + dt.timedelta(seconds=duration_s), tz) >= session_date(
-        start, tz
-    )

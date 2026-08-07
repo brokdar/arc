@@ -23,6 +23,7 @@ from app.domain.streams import (
     MOVING_SPEED_MS,
     PLAUSIBLE_RANGE,
     AnomalyKind,
+    CleanResult,
     ParsedActivity,
     RawSample,
     StreamChannel,
@@ -62,11 +63,17 @@ def activity(samples: list[RawSample], **kwargs: object) -> ParsedActivity:
 #: with spacings that span the sub-second-regular, the irregular and the
 #: recording-stop cases.
 @st.composite
-def offsets(draw: st.DrawFn, *, min_samples: int = 2) -> list[float]:
-    """Strictly increasing sample offsets, in seconds from the first sample."""
+def offsets(
+    draw: st.DrawFn, *, min_samples: int = 2, max_gap_s: int = 90
+) -> list[float]:
+    """Strictly increasing sample offsets, in seconds from the first sample.
+
+    ``max_gap_s`` bounds the spacing: at the default some draws contain
+    recording stops, and at :data:`GAP_THRESHOLD_S` none of them can.
+    """
     gaps = draw(
         st.lists(
-            st.integers(min_value=1, max_value=90),
+            st.integers(min_value=1, max_value=max_gap_s),
             min_size=min_samples - 1,
             max_size=40,
         )
@@ -139,9 +146,14 @@ def noisy_samples(draw: st.DrawFn) -> list[RawSample]:
 def test_every_column_has_one_entry_per_row(samples: list[RawSample]) -> None:
     frame = resample(samples).frame
 
-    assert frame.row_count == len(frame.device_t)
+    # Against the samples, not against the frame's own row count: comparing a
+    # column's length to `len(frame.device_t)` would hold for any frame,
+    # including one a whole second short.
+    expected_rows = int((samples[-1].t - samples[0].t).total_seconds()) + 1
+    assert frame.row_count == expected_rows
+    assert len(frame.device_t) == expected_rows
     for column in frame.columns.values():
-        assert len(column) == frame.row_count
+        assert len(column) == expected_rows
 
 
 @given(power_samples())
@@ -161,18 +173,28 @@ def test_the_grid_spans_the_activity_one_row_per_second(
 
 @given(power_samples())
 @settings(max_examples=200)
-def test_recording_time_is_elapsed_minus_the_long_gaps(
+def test_recording_time_is_exactly_elapsed_minus_the_stop_rows(
     samples: list[RawSample],
 ) -> None:
     result = resample(samples)
 
+    # The relation the session page derives "paused" from: it subtracts the two
+    # numbers and shows the result beside the stop ranges. Subtracting the raw
+    # inter-sample delta instead — one second wider than the range emitted —
+    # made the two disagree by a second per stop.
+    stopped_rows = sum(end - start for start, end in result.recording_stops)
+    assert result.elapsed_time_s - result.recording_time_s == pytest.approx(
+        stopped_rows, abs=1e-9
+    )
+    assert result.recording_time_s <= result.elapsed_time_s
+    # And a stop is reported for every gap over the threshold, so the relation
+    # is not satisfied by reporting none of them.
     long_gaps = sum(
-        (later.t - earlier.t).total_seconds()
+        1
         for earlier, later in zip(samples, samples[1:], strict=False)
         if (later.t - earlier.t).total_seconds() > GAP_THRESHOLD_S
     )
-    assert result.recording_time_s == pytest.approx(result.elapsed_time_s - long_gaps)
-    assert result.recording_time_s <= result.elapsed_time_s
+    assert len(result.recording_stops) == long_gaps
 
 
 @given(power_samples())
@@ -216,11 +238,14 @@ def test_a_pause_leaves_a_hole_and_the_grid_continues() -> None:
     result = resample(samples)
 
     assert result.elapsed_time_s == 1199
-    # The gap runs from the last sample before the stop to the first after it:
-    # 601 s, so elapsed exceeds recording time by the length of the stop.
-    assert result.recording_time_s == pytest.approx(1199 - 601)
-    assert result.elapsed_time_s - result.recording_time_s == pytest.approx(600, abs=2)
     assert result.recording_stops == ((300, 900),)
+    # Exactly the rows the stop covers — the seconds either side of it were
+    # recorded. `approx(600, abs=2)` would pass on 599 too, which is what this
+    # returned while the athlete's "paused" total was a second short per stop.
+    stopped_rows = sum(end - start for start, end in result.recording_stops)
+    assert stopped_rows == 600
+    assert result.elapsed_time_s - result.recording_time_s == stopped_rows
+    assert result.recording_time_s == 599.0
     assert result.frame.row_count == 1200
     power = result.frame.columns[StreamChannel.POWER]
     assert power[299] == 200.0
@@ -288,6 +313,59 @@ def test_moving_time_counts_only_the_seconds_above_walking_pace() -> None:
 
     assert result.moving_time_s == pytest.approx(20.0)
     assert result.elapsed_time_s == 30.0
+
+
+def test_an_implausible_speed_does_not_buy_moving_time() -> None:
+    # A GPS glitch reports 900 m/s. It is a sensor fault, not the fastest ten
+    # seconds of the athlete's life, and the cleaner will null it — so the
+    # display number derived from the raw samples must not count it either.
+    _low, high = PLAUSIBLE_RANGE[StreamChannel.SPEED]
+    samples = [
+        sample(0, speed=8.0),
+        sample(10, speed=high + 865.0),
+        sample(20, speed=8.0),
+        sample(30, speed=8.0),
+    ]
+
+    result = resample(samples)
+
+    assert result.moving_time_s == pytest.approx(20.0), (
+        "the ten seconds after the glitch are not moving time"
+    )
+
+
+def test_a_hole_is_bridged_to_the_same_line_by_the_grid_and_the_cleaner() -> None:
+    # One boundary, two code paths: a hole is closed when the believable
+    # readings either side of it are at most GAP_THRESHOLD_S seconds apart —
+    # 29 missing rows — and left alone at 30. The two used to disagree by one
+    # row, so a 30-row hole was bridged by one pass and dropped by the other.
+    dense = [sample(second, hr=150.0) for second in range(180)]
+
+    def with_sparse_temp(distance_s: int) -> tuple[float | None, ...]:
+        """Temperature at 0 and `distance_s`, on a second-by-second recording."""
+        samples = list(dense)
+        samples[0] = sample(0, hr=150.0, temp=18.0)
+        samples[distance_s] = sample(distance_s, hr=150.0, temp=20.0)
+        return resample(samples).frame.columns[StreamChannel.TEMP]
+
+    assert with_sparse_temp(GAP_THRESHOLD_S)[1:GAP_THRESHOLD_S] == (18.0,) * 29
+    assert set(with_sparse_temp(GAP_THRESHOLD_S + 1)[1 : GAP_THRESHOLD_S + 1]) == {None}
+
+    def with_bad_run(rows: int) -> CleanResult:
+        """A run of `rows` implausible heart rates between believable ones."""
+        samples = list(dense)
+        for second in range(30, 30 + rows):
+            samples[second] = sample(second, hr=9999.0)
+        result = resample(samples)
+        return clean(result.frame, recording_stops=result.recording_stops)
+
+    (repaired,) = with_bad_run(GAP_THRESHOLD_S - 1).anomalies
+    assert repaired.kind is AnomalyKind.DROPOUT_HELD
+    assert (repaired.start_index, repaired.end_index) == (30, 59)
+
+    (declined,) = with_bad_run(GAP_THRESHOLD_S).anomalies
+    assert declined.kind is AnomalyKind.DROPPED
+    assert (declined.start_index, declined.end_index) == (30, 60)
 
 
 def test_median_time_delta_reports_the_sampling_regularity() -> None:
@@ -388,6 +466,65 @@ def test_a_run_too_long_to_repair_is_nulled_and_said_so() -> None:
     assert (dropped.start_index, dropped.end_index) == (30, 90)
     assert set(cleaned.fixed[StreamChannel.POWER][30:90]) == {None}
     assert result.frame.columns[StreamChannel.POWER][60] == 9999.0
+
+
+def test_a_channel_the_device_samples_rarely_is_not_an_hour_of_anomalies() -> None:
+    # Temperature once a minute, every reading plausible, nothing repaired.
+    # The rows between two readings were never recorded, so nulling them
+    # substitutes nothing — and an anomaly is a claim that recorded data was
+    # altered. Twenty minutes of this used to arrive as nineteen `dropped`
+    # anomalies about rows no device ever wrote.
+    samples = [sample(second, hr=150.0) for second in range(1201)]
+    for second in range(0, 1201, 60):
+        samples[second] = sample(second, hr=150.0, temp=18.0 + second / 600)
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    assert not [one for one in cleaned.anomalies if one.kind is AnomalyKind.DROPPED]
+    temp = next(one for one in cleaned.anomalies if one.channel is StreamChannel.TEMP)
+    assert temp.kind is AnomalyKind.RESAMPLED_ONLY
+    assert (temp.start_index, temp.end_index) == (0, 1201)
+    # `resampled_only` still means byte-identical, holes included.
+    assert cleaned.fixed[StreamChannel.TEMP] == result.frame.columns[StreamChannel.TEMP]
+    assert cleaned.fixed[StreamChannel.TEMP][30] is None
+
+
+def test_a_declined_run_records_only_the_rows_it_substituted_for() -> None:
+    # One run too long to repair, holding both never-recorded rows and a single
+    # implausible reading. The anomaly must cover the spike and nothing else:
+    # the nulls around it were already null, and claiming them would attribute
+    # a repair to data that was never there.
+    samples = [sample(second, hr=150.0) for second in range(120)]
+    for second in list(range(20)) + list(range(100, 120)):
+        samples[second] = sample(second, hr=150.0, power=200.0)
+    samples[60] = sample(60, hr=150.0, power=9999.0)
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    raw = result.frame.columns[StreamChannel.POWER]
+    assert raw[60] == 9999.0
+    assert set(raw[20:60]) == {None}, "the run really is mostly holes"
+    assert set(raw[61:100]) == {None}
+
+    fixed = cleaned.fixed[StreamChannel.POWER]
+    assert fixed[60] is None
+    assert set(fixed[20:100]) == {None}
+    assert fixed[19] == 200.0, "the recorded rows either side are kept"
+    assert fixed[100] == 200.0
+
+    (dropped,) = [
+        one
+        for one in cleaned.anomalies
+        if one.channel is StreamChannel.POWER and one.kind is AnomalyKind.DROPPED
+    ]
+    assert (dropped.start_index, dropped.end_index) == (60, 61)
+    assert not [
+        one
+        for one in cleaned.anomalies
+        if one.channel is StreamChannel.POWER and one.kind is not AnomalyKind.DROPPED
+    ]
 
 
 def test_an_untouched_channel_says_it_was_only_resampled() -> None:
@@ -621,6 +758,39 @@ def test_a_too_short_activity_is_quarantined() -> None:
     assert "59" in verdict.detail
 
 
+def test_a_file_that_is_almost_all_recording_stop_is_quarantined() -> None:
+    # Two samples 200 s apart clear the elapsed gate — and would become a
+    # session whose recording time is one second, which is the number WP-5
+    # divides by.
+    samples = [sample(0, power=200.0), sample(200, power=210.0)]
+
+    verdict = validate(activity(samples))
+
+    assert verdict is not None
+    assert verdict.reason is QuarantineReason.TOO_SHORT
+    assert "recorded" in verdict.detail
+    assert resample(samples).recording_time_s == 1.0
+
+
+def test_the_short_gate_is_applied_to_recording_time_as_well_as_elapsed() -> None:
+    def with_stop(recorded_s: int) -> list[RawSample]:
+        """`recorded_s` + 1 rows of 1 Hz recording, a ten-minute stop, one more."""
+        return [sample(second, power=200.0) for second in range(recorded_s + 1)] + [
+            sample(recorded_s + 600, power=200.0)
+        ]
+
+    # Both files are elapsed-wise long enough; only one of them was recorded
+    # for long enough. The gate agrees with `resample` to the second.
+    assert resample(with_stop(119)).recording_time_s == 120.0
+    assert validate(activity(with_stop(119))) is None
+
+    assert resample(with_stop(118)).recording_time_s == 119.0
+    verdict = validate(activity(with_stop(118)))
+    assert verdict is not None
+    assert verdict.reason is QuarantineReason.TOO_SHORT
+    assert "119 s of it was recorded" in verdict.detail
+
+
 def test_a_systemically_broken_channel_is_quarantined_not_cleaned() -> None:
     _low, high = PLAUSIBLE_RANGE[StreamChannel.HR]
     samples = [sample(second, hr=150.0) for second in range(300)]
@@ -642,12 +812,15 @@ def test_a_few_spikes_are_a_repair_not_a_quarantine() -> None:
     assert validate(activity(samples)) is None
 
 
-@given(offsets(min_samples=3))
+@given(offsets(min_samples=3, max_gap_s=GAP_THRESHOLD_S))
 @settings(max_examples=100)
 def test_a_long_enough_plausible_activity_is_never_refused(
     offsets_s: list[float],
 ) -> None:
+    # Continuously recorded, so elapsed and recording time are the same number
+    # and the file clears both gates.
     assume(offsets_s[-1] >= 120)
     samples = [sample(offset, power=200.0, hr=150.0) for offset in offsets_s]
 
     assert validate(activity(samples)) is None
+    assert resample(samples).recording_stops == ()
