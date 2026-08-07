@@ -38,8 +38,8 @@ export interface HeadlineInput {
 
 /**
  * The share of prescribed time one band must hold before the session is
- * described as *steady* rather than mixed. Two thirds: below that, calling a
- * ride "steady Z2" would be describing a minority of it.
+ * described as *steady* rather than mixed. Three fifths: much below that,
+ * calling a ride "steady Z2" would be describing a minority of it.
  */
 const STEADY_SHARE = 0.6;
 
