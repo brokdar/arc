@@ -66,10 +66,18 @@ class ClassificationSource(StrEnum):
     Stored beside the discipline so the athlete's override (which sets
     ``discipline_overridden``) can be told from a guess, and so a guess can be
     told from the file saying so outright.
+
+    ``MANUAL`` is the third answer and belongs to the sessions nobody
+    classified: a hand-entered gym session (B-6) has a discipline because the
+    athlete typed one, which is neither a file's sport field nor an inference
+    over channels it does not have. Spelling it ``sport_field`` would put the
+    weakest claim in this system — "the recording said so" — on the one
+    session that has no recording.
     """
 
     SPORT_FIELD = "sport_field"
     HEURISTIC = "heuristic"
+    MANUAL = "manual"
 
 
 class RecordingKind(StrEnum):
