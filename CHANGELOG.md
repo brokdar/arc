@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D81.
+D55–D88.
 
 **API (`backend/app/`)**
 
@@ -20,6 +20,13 @@ D55–D81.
   version). `start` is taken literally so a client can page by a day; omitted,
   it defaults to the Monday of the current week (D55). Everything a card cannot
   show stays behind `GET /planned-sessions/{id}`.
+- `WeekSessionRead` carries `predicted_load_coverage` beside its
+  `predicted_load` — the same fraction `PredictedLoadRead.coverage` reports on
+  the session itself, passed through from the one prediction rather than
+  recomputed, and null exactly when the load is (D88). Without it a client
+  rendering card-level loads cannot tell a fully covered prediction from a
+  40 %-covered one, which is the rule D78 set for week totals applied one level
+  down. Nothing renders it yet; card-level load arrives with WP-5's week strip.
 - Added `POST /planned-sessions/{id}/move` and `/copy`: the calendar's two
   gestures get their own verbs and their own audit actions rather than being
   folded into the PATCH that can already change a date (D56). A copy is a *new*
@@ -323,6 +330,21 @@ D55–D81.
   discarding the rest of the query string; the library's search waits 250 ms
   for the typing to stop; and `ProvenanceMark` gained the `NotAssessed`
   treatment so its note reaches a screen reader.
+- **The open session sheet lives in the address too** —
+  `/calendar?session=<uuid>`, beside `?week=` (D88). It was
+  `useState<WeekSession | null>`: a sheet nobody could reload, bookmark or send
+  to their coach, which is the gap D77's wording claimed the week param had
+  closed. Opening a card *pushes* a history entry so the browser's Back gesture
+  closes the sheet; closing *replaces*, so paging through a dozen cards does
+  not bury the page the athlete arrived from. Open-state is derived from
+  `useSearchParams`, never duplicated in state. The param is checked for uuid
+  shape before it is spent on a request (`lib/ids.ts`): garbage is treated as
+  absent and swept out of the URL, while a well-formed id that names no session
+  gets the sheet's error state rather than a silent close. The sheet no longer
+  needs a card at all — a link to a session outside the week on screen reads
+  the session itself and asks the library for the workout's name. Not a
+  `/sessions/{id}` route: that section arrives with WP-4/5 and would be built
+  twice.
 - Each page renders exactly one `h1`: Today's belongs to the page and its
   session headlines are `h2`s, and the library and workout editor gained one.
 - Collision-prone `JSON.stringify(criterion)` and
@@ -393,6 +415,15 @@ D55–D81.
   is given, `copy` answers with a new id at version 1, and `POST` / `PATCH`
   echo the submitted intent — so a form that drops a field fails its test
   instead of passing against a canned reply.
+- The `next/navigation` test double **subscribes** to the address bar
+  (`pushState` / `replaceState` / `popstate` through `useSyncExternalStore`,
+  the way Next itself syncs), so `window.history.back()` closing the session
+  sheet is a real assertion in a component test rather than a simulated one.
+  The `afterUrlChange()` rerender helper it replaces is gone.
+- The Playwright fake serves session detail by id and hands out ids that are
+  real uuids, so the plan-a-week flow now ends by reloading the page with the
+  sheet open; its cards report no predicted load, which is what a fake with no
+  anchor in force would actually produce.
 
 ### WP-2 — workout model, library, purpose templates, planned sessions
 

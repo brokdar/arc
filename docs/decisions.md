@@ -2293,3 +2293,109 @@ The rule this entry sets, for the work packages that inherit the mockup: **a
 module the data cannot support is not built and is listed here.** The mockup is
 a picture of the finished application, and the difference between a plan and a
 gap is whether someone wrote it down.
+
+## D88 — The open session joins the calendar's address, and a card's load carries its coverage
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Two corrections to WP-3's own work, one of them to something D77 claimed was
+finished.
+
+### The session sheet is a place
+
+`/calendar?session=<uuid>` opens the session sheet, alongside `?week=`. This
+displaces `useState<WeekSession | null>` in `CalendarWeek` — a sheet that could
+not be reloaded, bookmarked or sent to anyone, which is the same failure D77
+had just fixed one level up.
+
+**D77 overclaimed, and this entry says so.** Its wording — that the week was
+"the only WP-3 page still failing that rule" — was wrong when it was written:
+the sheet was already open beside it, held in component state, and a session is
+exactly the thing an athlete forwards to a coach. Entries here are append-only,
+so the correction is this paragraph rather than an edit to that one.
+
+**Not a `/sessions/{id}` route.** UI convention 1 says a sub-view worth linking
+to is a real route, and a session detail page is one — it arrives with WP-4/5,
+which give it the executed data, the charts and the map that make it a page
+rather than a panel. Building the route now would mean building it twice: the
+sheet's content is a *summary of a plan*, and the page's will be a comparison
+of plan against execution. The query param is the honest interim form — it
+addresses the same thing, costs nothing to move later, and does not pretend the
+section exists.
+
+**Push to open, replace to close.** Opening a card pushes a history entry, so
+the browser's Back gesture — the one every phone already has, and the one
+desktop users reach for before they look for a ✕ — closes the sheet. Closing
+replaces, so opening and closing a dozen cards in a row does not bury the page
+the athlete arrived from under a dozen identical entries. The asymmetry has one
+visible consequence, accepted deliberately: after a close, Back returns to the
+address that is already showing, so the first press appears to do nothing. The
+alternative — calling `history.back()` on close — has to know whether *this*
+page pushed the entry it would be popping, and gets it wrong the moment a
+deep-linked sheet is closed (there is no entry to go back to, and the press
+leaves the application).
+
+Both are `window.history.*`, never the router: `router.replace` and
+`router.push` **cannot drop a search param** in this Next major (D77), and
+closing the sheet is precisely a param being dropped. `writeUrl` takes a patch
+— `{ session: null }` — rather than a query string, so each control touches
+only its own facet and neither can erase the other.
+
+**Open-state is derived, never duplicated.** The component reads
+`useSearchParams`; there is no second copy in state to disagree with the
+address bar when the athlete presses Back. The test mock for `next/navigation`
+was rewritten to match: it subscribes to `pushState` / `replaceState` /
+`popstate` through `useSyncExternalStore`, the way Next itself does, which is
+what lets `window.history.back()` be a real assertion in a component test
+rather than a simulated one. The `afterUrlChange()` helper it replaces is gone.
+
+**The param is validated for uuid shape before it is spent** (`lib/ids.ts`,
+`isUuid` — the sibling of `isIsoDate`). The id is a *path segment*: without the
+guard, `?session=yesterday` becomes `GET /planned-sessions/yesterday`, and the
+404 renders as a session that has been deleted. Garbage is treated as absent
+and swept out of the address bar; a well-formed id that names nothing is a
+different thing — the link was a session once, or is a byte wrong — and the
+sheet says so and keeps the param, because dropping it would make a dead link
+look like one that worked.
+
+**The sheet no longer needs a card.** It is handed a `sessionId` and, when the
+week on screen happens to carry one, a `card`; the card is an optimisation that
+renders the header from the first frame, never a requirement. A deep link to a
+session outside the shown week reads the same facts off
+`GET /planned-sessions/{id}`, and asks the library for the workout's name —
+because a session's title *is* its workout's name and the session resource does
+not restate it, so without that request the sheet would head itself "Endurance"
+while the card behind it says "Long endurance".
+
+**Paging weeks leaves the session param alone**, which is the opposite of the
+rule first drafted for it, for a reason found by trying to test it: the sheet
+is a *modal*, so the week controls are inert while one is open and cannot page
+out from under it. A rule that cannot be reached is dead code, and `?week=…&
+session=…` naming a session outside that week stays a link this page honours.
+
+One thing the URL costs: a browser Back press is not interceptable, so it
+closes the sheet without the `useDirtyClose` prompt an unapplied move/copy date
+gets from Escape, an outside press or the ✕. Hijacking the history stack to
+recover the prompt is worse than losing a typed date.
+
+### A card's predicted load carries its coverage
+
+`WeekSessionRead` gains `predicted_load_coverage: float | None`, null exactly
+when `predicted_load` is. The card already carried the load and the intensity
+factor while the session resource's `PredictedLoadRead` carried a third field
+the card did not, so any client rendering card-level loads — WP-5's week strip
+will — could not tell a fully covered prediction from a 40 %-covered one. That
+is the same rule D78 applied to every week total, one level down: **no total
+without its coverage.**
+
+It is passed through, not recomputed: the service already holds the
+`PredictedLoad` the session endpoint renders, so the card's number and the
+sheet's come out of one call to `predict_endurance_load`. A test asserts the
+two are equal for the same session anyway — they cannot drift while the
+plumbing holds, and a second computation is the obvious way to add the next
+field.
+
+No UI renders it yet, deliberately: the calendar card shows duration, purpose
+and step count, and load arrives on a card with WP-5's week strip. The field
+ships now because the contract is what other clients build against, and adding
+it later would mean a second round of `just api-sync` in someone else's PR.

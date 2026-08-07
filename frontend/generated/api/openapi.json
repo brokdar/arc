@@ -2717,6 +2717,17 @@
             ],
             "title": "Predicted Load"
           },
+          "predicted_load_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Load Coverage"
+          },
           "predicted_volume_load_kg": {
             "anyOf": [
               {
@@ -2788,6 +2799,7 @@
           "intent_version",
           "predicted_load",
           "predicted_intensity_factor",
+          "predicted_load_coverage",
           "predicted_volume_load_kg"
         ],
         "title": "WeekSessionRead",

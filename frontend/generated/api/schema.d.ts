@@ -1839,6 +1839,8 @@ export interface components {
       predicted_intensity_factor: number | null;
       /** Predicted Load */
       predicted_load: number | null;
+      /** Predicted Load Coverage */
+      predicted_load_coverage: number | null;
       /** Predicted Volume Load Kg */
       predicted_volume_load_kg: number | null;
       purpose: components["schemas"]["Purpose"];

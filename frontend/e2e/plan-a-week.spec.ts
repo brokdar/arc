@@ -142,7 +142,20 @@ async function mockApi(page: Page) {
         workoutId: (body.workout_id as string) ?? null,
         intent: (body.intent_text as string) ?? null,
       });
-      return route.fulfill(json({ id: SESSION_ID }, 201));
+      return route.fulfill(json({ id: sessionId(0) }, 201));
+    }
+    // The session behind a card, which is what the sheet fetches — by id, so
+    // a link to one works without the calendar having been anywhere first.
+    if (path.includes("/planned-sessions/") && method === "GET") {
+      const ordinal = state.sessions.findIndex(
+        (_, index) => sessionId(index) === path.split("/").pop(),
+      );
+      const session = state.sessions[ordinal];
+      return route.fulfill(
+        session
+          ? json(plannedSessionRead(ordinal, session, state.workouts[0]))
+          : json({ detail: "That session no longer exists" }, 404),
+      );
     }
     if (path.includes("/planned-sessions/")) {
       return route.fulfill(json({ detail: "not needed" }, 404));
@@ -157,6 +170,64 @@ async function mockApi(page: Page) {
   });
 
   return state;
+}
+
+/**
+ * The id of the nth planned session — a **real** uuid, because the app checks.
+ *
+ * `?session=` is validated for uuid shape before it is spent on a request
+ * (D88), so a fake handing out `<uuid><ordinal>` would be handing out ids the
+ * application is right to refuse.
+ */
+function sessionId(ordinal: number): string {
+  return `${SESSION_ID.slice(0, -1)}${ordinal}`;
+}
+
+/**
+ * The session behind a card, agreeing with the card in every field they share.
+ *
+ * Nothing is predicted: no anchor is in force in this fake (`/anchors/current`
+ * answers 404), so a prescription written in % of FTP resolves to nothing and
+ * has no load — which is what the card says too.
+ */
+function plannedSessionRead(
+  ordinal: number,
+  session: { workoutId: string | null; intent: string | null },
+  workout: PlannedWorkout | undefined,
+) {
+  const id = sessionId(ordinal);
+  return {
+    id,
+    date: ISO_TODAY,
+    discipline: "cycling",
+    status: "planned",
+    intent_versions: 1,
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+    intent: {
+      // The versioned artefact *is* the planned session: every version of the
+      // intent hangs off the session's own id.
+      id: `${SESSION_ID.slice(0, -1)}e`,
+      artefact_id: id,
+      version: 1,
+      as_of: "2026-08-01T00:00:00Z",
+      superseded_by: null,
+      recompute_reason: null,
+      edited_post_hoc: false,
+      purpose: "endurance",
+      intent_text: session.intent,
+      coach_notes: null,
+      workout_id: session.workoutId,
+      pinned_anchor_versions: {},
+      structure: workout?.structure ?? { discipline: "cycling", steps: [] },
+      success_criteria: [],
+      summary: { step_count: 1, total_duration_s: 1200, total_sets: null },
+    },
+    pinned_anchors: [],
+    resolved_steps: [],
+    predicted_load: null,
+    predicted_volume: null,
+  };
 }
 
 function workoutRead(name: string, structure: unknown) {
@@ -187,7 +258,7 @@ function week(
       sessions:
         iso === ISO_TODAY
           ? sessions.map((session, ordinal) => ({
-              id: `${SESSION_ID}${ordinal}`,
+              id: sessionId(ordinal),
               date: iso,
               discipline: "cycling",
               purpose: "endurance",
@@ -199,8 +270,12 @@ function week(
               step_count: 1,
               intent_text: session.intent,
               intent_version: 1,
-              predicted_load: 42.5,
-              predicted_intensity_factor: 0.92,
+              // Nothing is predictable here and the sheet says the same: the
+              // prescription is written in % of FTP and this fake has no
+              // anchor in force to resolve it against.
+              predicted_load: null,
+              predicted_intensity_factor: null,
+              predicted_load_coverage: null,
               predicted_volume_load_kg: null,
             }))
           : [],
@@ -217,9 +292,10 @@ function week(
     planned_duration_s: sessions.length > 0 ? sessions.length * 1200 : null,
     duration_sessions_counted: sessions.length,
     duration_sessions_uncounted: 0,
-    planned_load: sessions.length > 0 ? sessions.length * 42.5 : null,
-    load_sessions_counted: sessions.length,
-    load_sessions_uncounted: 0,
+    // No session is predictable, so the week has no load — null, never 0.
+    planned_load: null,
+    load_sessions_counted: 0,
+    load_sessions_uncounted: sessions.length,
     by_discipline:
       sessions.length > 0
         ? [
@@ -229,9 +305,9 @@ function week(
               planned_duration_s: sessions.length * 1200,
               duration_sessions_counted: sessions.length,
               duration_sessions_uncounted: 0,
-              planned_load: sessions.length * 42.5,
-              load_sessions_counted: sessions.length,
-              load_sessions_uncounted: 0,
+              planned_load: null,
+              load_sessions_counted: 0,
+              load_sessions_uncounted: sessions.length,
               total_sets: null,
             },
           ]
@@ -318,4 +394,27 @@ test("write a workout, plan it, and see it on the week", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: /Threshold 2×20/ }),
   ).toBeVisible();
+
+  // --- and so is the session you have open ----------------------------------
+  // The same rule one level down (D88). Only a real reload can prove it: the
+  // sheet used to be component state, which no address could describe.
+  await page.getByRole("button", { name: /Threshold 2×20/ }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/calendar\\?session=${sessionId(0)}$`),
+  );
+
+  const sheet = page.getByRole("dialog");
+  await expect(
+    sheet.getByRole("heading", { name: "Threshold 2×20" }),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(
+    page.getByRole("dialog").getByRole("heading", { name: "Threshold 2×20" }),
+  ).toBeVisible();
+
+  // Closing takes the session back out and leaves the address bare.
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page).toHaveURL(/\/calendar$/);
 });

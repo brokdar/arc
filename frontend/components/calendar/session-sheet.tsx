@@ -27,6 +27,7 @@ import {
 import { useExercises } from "@/components/workouts/exercise-catalogue";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
+import { apiErrorMessages } from "@/lib/api-errors";
 import { describeCriterion } from "@/lib/criteria";
 import { weekdayLabel } from "@/lib/dates";
 import {
@@ -44,14 +45,23 @@ type PredictedVolume = Schemas["PredictedVolumeRead"];
 type PlannedSession = Schemas["PlannedSessionRead"];
 
 export interface SessionSheetProps {
-  /** The card that was clicked. `null` closes the sheet. */
-  readonly session: WeekSession | null;
+  /** The session the address bar says is open. `null` closes the sheet. */
+  readonly sessionId: string | null;
+  /**
+   * The calendar card for `sessionId`, when the week on screen carries one.
+   *
+   * An optimisation, never a requirement: it renders the header from the first
+   * frame instead of a request later. A link to a session on another week
+   * arrives with no card, and the sheet reads the same facts off the session
+   * it fetches.
+   */
+  readonly card: WeekSession | null;
   readonly onClose: () => void;
   readonly onMove: (sessionId: string, toDate: string) => void;
   readonly onCopy: (sessionId: string, toDate: string) => void;
   readonly onDelete: (sessionId: string) => void;
   /** Opens the plan form on this session, pre-filled. */
-  readonly onEdit: (session: WeekSession) => void;
+  readonly onEdit: (sessionId: string, date: string) => void;
   readonly busy?: boolean;
   /**
    * Why the last action from this sheet failed. Rendered here rather than on
@@ -65,20 +75,48 @@ export interface SessionSheetProps {
 }
 
 /**
+ * What the sheet's header states, from whichever source has it.
+ *
+ * The card and the session resource carry the same facts under different
+ * names — the card because a calendar needs them without a second request,
+ * the resource because it is the session. This is the one place that knows
+ * they are the same facts, so nothing below has to ask which one it is
+ * looking at.
+ */
+interface SheetHeader {
+  readonly date: string;
+  readonly discipline: WeekSession["discipline"];
+  readonly purpose: WeekSession["purpose"];
+  readonly status: WeekSession["status"];
+  readonly title: string;
+  readonly intentText: string | null;
+  readonly intentVersion: number;
+  readonly plannedDurationS: number | null;
+  readonly totalSets: number | null;
+}
+
+/**
  * The full planned session, in a side sheet.
+ *
+ * **Which session is open is the URL's** (`/calendar?session=<id>`), and this
+ * component is handed the id rather than an object: a sheet is a place, and a
+ * place has to survive a reload, a bookmark and a Back press (UI convention 1,
+ * D88).
  *
  * The calendar card carries a summary (D55); everything else — the step tree,
  * the criteria, the coach notes, the intent history — lives behind
- * `GET /planned-sessions/{id}` and is fetched when the sheet opens. The card
- * we already have renders the header immediately, so the sheet is never blank
- * while that request is in flight.
+ * `GET /planned-sessions/{id}` and is fetched when the sheet opens. When the
+ * card is on screen it renders the header immediately, so the sheet is never
+ * blank while that request is in flight; when the link arrived from somewhere
+ * else the same header is read off the session itself, one request later.
  *
  * The move and copy pickers are a *draft*: a date typed into one and not acted
  * on is work, and an outside press used to throw it away without a word. Now
  * anything unapplied makes the sheet ask before it closes (`useDirtyClose`).
  */
 export function SessionSheet({
-  session,
+  sessionId,
+  card,
   onClose,
   onMove,
   onCopy,
@@ -88,19 +126,41 @@ export function SessionSheet({
   problems = [],
   notice = null,
 }: SessionSheetProps) {
-  const { data: detail, isPending } = $api.useQuery(
+  const {
+    data: detail,
+    isPending,
+    error: detailError,
+  } = $api.useQuery(
     "get",
     "/api/v1/planned-sessions/{planned_session_id}",
-    { params: { path: { planned_session_id: session?.id ?? "" } } },
-    { enabled: session !== null },
+    { params: { path: { planned_session_id: sessionId ?? "" } } },
+    { enabled: sessionId !== null },
   );
 
-  const sessionDate = session?.date ?? "";
+  /**
+   * The library workout's name, fetched only when there is no card to read it
+   * off. A session's title *is* its workout's name (`app.services.plan._card`)
+   * and the session resource does not restate it, so a deep link would
+   * otherwise head the sheet with the purpose while the card behind it says
+   * the workout — the same session, named two ways, on one screen.
+   */
+  const namedWorkoutId =
+    card === null ? (detail?.intent.workout_id ?? null) : null;
+  const { data: workout } = $api.useQuery(
+    "get",
+    "/api/v1/workouts/{workout_id}",
+    { params: { path: { workout_id: namedWorkoutId ?? "" } } },
+    { enabled: namedWorkoutId !== null },
+  );
+
+  const header = sheetHeader(card, detail ?? null, workout?.name ?? null);
+  const sessionDate = header?.date ?? "";
   const [moveDate, setMoveDate] = useState(sessionDate);
   const [copyDate, setCopyDate] = useState(sessionDate);
 
   // Reopening the sheet on a different card must not keep the previous card's
-  // dates in the inputs.
+  // dates in the inputs — nor may the date arriving a request late leave the
+  // pickers empty behind it.
   useEffect(() => {
     setMoveDate(sessionDate);
     setCopyDate(sessionDate);
@@ -108,16 +168,44 @@ export function SessionSheet({
 
   // An unapplied date in either picker is the only draft this sheet holds.
   const guard = useDirtyClose({
-    dirty: moveDate !== sessionDate || copyDate !== sessionDate,
+    dirty:
+      sessionDate !== "" &&
+      (moveDate !== sessionDate || copyDate !== sessionDate),
     onClose,
   });
 
-  if (session === null) {
+  if (sessionId === null) {
     return null;
   }
 
+  // Nothing to head the sheet with yet: either the fetch is in flight, or the
+  // link names a session this plan does not have. A link that resolves to
+  // nothing says so — closing over it would make a dead link look like one
+  // that worked.
+  if (header === null) {
+    return (
+      <Sheet open onOpenChange={guard.onOpenChange}>
+        <SheetContent>
+          <header className="flex flex-col gap-2.5 border-hairline border-b px-6 py-5">
+            <div className="flex items-center justify-end">
+              <SheetCloseButton />
+            </div>
+            <SheetTitle>
+              {detailError ? "Could not open this session" : "Opening…"}
+            </SheetTitle>
+            <SheetDescription>
+              {detailError
+                ? (apiErrorMessages(detailError)[0] ??
+                  "This link names a session that is not in the plan.")
+                : "Fetching the session this link names."}
+            </SheetDescription>
+          </header>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
   const intent = detail?.intent;
-  const title = session.title ?? purposeLabel(session.purpose);
   const structure = intent?.structure;
   const strength =
     structure?.discipline === "strength"
@@ -129,33 +217,31 @@ export function SessionSheet({
       <SheetContent>
         <header className="flex flex-col gap-2.5 border-hairline border-b px-6 py-5">
           <div className="flex items-center gap-2.5">
-            <PurposeBadge purpose={session.purpose} size="md" />
+            <PurposeBadge purpose={header.purpose} size="md" />
             <span className="font-mono text-xs text-ink-faint">
-              {weekdayLabel(session.date)} {formatDayMonthYear(session.date)}
+              {weekdayLabel(header.date)} {formatDayMonthYear(header.date)}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
-              <StatusDot status={session.status} />
+              <StatusDot status={header.status} />
               <span className="text-ink-muted text-xs">
-                {STATUS_TONES[session.status].label}
+                {STATUS_TONES[header.status].label}
               </span>
             </span>
             <SheetCloseButton />
           </div>
-          <SheetTitle>{title}</SheetTitle>
+          <SheetTitle>{header.title}</SheetTitle>
           <SheetDescription>
-            {intent?.intent_text ??
-              session.intent_text ??
-              "No intent recorded for this session."}
+            {header.intentText ?? "No intent recorded for this session."}
           </SheetDescription>
           <div className="flex items-center gap-3 pt-1 font-mono text-2xs text-ink-faint">
             <span className="flex items-center gap-1.5">
-              <DisciplineIcon discipline={session.discipline} size={12} />
-              {session.discipline === "strength"
-                ? formatSets(session.total_sets)
-                : formatDurationHm(session.planned_duration_s)}
+              <DisciplineIcon discipline={header.discipline} size={12} />
+              {header.discipline === "strength"
+                ? formatSets(header.totalSets)
+                : formatDurationHm(header.plannedDurationS)}
             </span>
             <span>
-              intent v{intent?.version ?? session.intent_version}
+              intent v{header.intentVersion}
               {intent?.edited_post_hoc ? " · edited post hoc" : ""}
             </span>
           </div>
@@ -164,6 +250,13 @@ export function SessionSheet({
         <div className="flex flex-col gap-5 px-6 py-5">
           {isPending ? (
             <p className="text-ink-muted text-sm">Loading the prescription…</p>
+          ) : null}
+
+          {detailError ? (
+            <p role="alert" className="text-destructive text-sm">
+              {apiErrorMessages(detailError)[0] ??
+                "Could not load this prescription."}
+            </p>
           ) : null}
 
           {structure?.discipline === "cycling" ? (
@@ -231,7 +324,9 @@ export function SessionSheet({
           </section>
 
           <SessionActions
-            session={session}
+            sessionId={sessionId}
+            date={header.date}
+            workoutId={card?.workout_id ?? intent?.workout_id ?? null}
             busy={busy}
             moveDate={moveDate}
             copyDate={copyDate}
@@ -273,9 +368,55 @@ export function SessionSheet({
   );
 }
 
+/**
+ * The header's facts, from the session when it has arrived and from the card
+ * until then. `null` while there is neither.
+ *
+ * The session wins every field it holds: a card can be a refetch behind an
+ * edit, and the resource is the session. The one thing it does not hold is the
+ * title — a session is named after the library workout it was planned from,
+ * and only the card (or `GET /workouts/{id}`) knows that name.
+ */
+function sheetHeader(
+  card: WeekSession | null,
+  detail: PlannedSession | null,
+  workoutName: string | null,
+): SheetHeader | null {
+  if (detail) {
+    const { intent } = detail;
+    return {
+      date: detail.date,
+      discipline: detail.discipline,
+      purpose: intent.purpose,
+      status: detail.status,
+      title: card?.title ?? workoutName ?? purposeLabel(intent.purpose),
+      intentText: intent.intent_text,
+      intentVersion: intent.version,
+      plannedDurationS: intent.summary.total_duration_s,
+      totalSets: intent.summary.total_sets,
+    };
+  }
+  if (card) {
+    return {
+      date: card.date,
+      discipline: card.discipline,
+      purpose: card.purpose,
+      status: card.status,
+      title: card.title ?? purposeLabel(card.purpose),
+      intentText: card.intent_text,
+      intentVersion: card.intent_version,
+      plannedDurationS: card.planned_duration_s,
+      totalSets: card.total_sets,
+    };
+  }
+  return null;
+}
+
 /** Move / copy / delete / edit, the four things a plan entry can have done to it. */
 function SessionActions({
-  session,
+  sessionId,
+  date,
+  workoutId,
   busy,
   moveDate,
   copyDate,
@@ -286,7 +427,9 @@ function SessionActions({
   onDelete,
   onEdit,
 }: {
-  session: WeekSession;
+  sessionId: string;
+  date: string;
+  workoutId: string | null;
   busy: boolean;
   moveDate: string;
   copyDate: string;
@@ -295,7 +438,7 @@ function SessionActions({
   onMove: (sessionId: string, toDate: string) => void;
   onCopy: (sessionId: string, toDate: string) => void;
   onDelete: (sessionId: string) => void;
-  onEdit: (session: WeekSession) => void;
+  onEdit: (sessionId: string, date: string) => void;
 }) {
   return (
     <section className="flex flex-col gap-3 border-hairline border-t pt-5">
@@ -316,8 +459,8 @@ function SessionActions({
         </div>
         <Button
           variant="secondary"
-          disabled={busy || moveDate === session.date}
-          onClick={() => onMove(session.id, moveDate)}
+          disabled={busy || moveDate === date}
+          onClick={() => onMove(sessionId, moveDate)}
         >
           Move
         </Button>
@@ -339,7 +482,7 @@ function SessionActions({
         <Button
           variant="secondary"
           disabled={busy}
-          onClick={() => onCopy(session.id, copyDate)}
+          onClick={() => onCopy(sessionId, copyDate)}
         >
           Copy
         </Button>
@@ -350,16 +493,14 @@ function SessionActions({
             prescription — not the library workout it may have come from.
             Editing the workout would change every session planned from it,
             which is exactly what the frozen snapshot exists to prevent. */}
-        <Button variant="outline" onClick={() => onEdit(session)}>
+        <Button variant="outline" onClick={() => onEdit(sessionId, date)}>
           Edit session
         </Button>
-        {session.workout_id ? (
+        {workoutId ? (
           <Button
             variant="ghost"
             className="text-ink-muted"
-            render={
-              <Link href={`/workouts/${session.workout_id}`}>Open workout</Link>
-            }
+            render={<Link href={`/workouts/${workoutId}`}>Open workout</Link>}
           />
         ) : null}
         {/* Deleting a planned session destroys its intent history with it, and
@@ -370,7 +511,7 @@ function SessionActions({
           question="Delete this session?"
           confirmLabel="Delete"
           disabled={busy}
-          onConfirm={() => onDelete(session.id)}
+          onConfirm={() => onDelete(sessionId)}
         />
       </div>
     </section>

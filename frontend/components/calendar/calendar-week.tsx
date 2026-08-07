@@ -2,13 +2,12 @@
 
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   PlanStateBanner,
   PlanStateToggle,
 } from "@/components/calendar/plan-state";
-import type { WeekSession } from "@/components/calendar/session-card";
 import { SessionSheet } from "@/components/calendar/session-sheet";
 import { WeekGrid } from "@/components/calendar/week-grid";
 import { WeekRail } from "@/components/calendar/week-rail";
@@ -30,6 +29,7 @@ import {
   formatDayMonthYear,
   formatDurationHm,
 } from "@/lib/format";
+import { isUuid } from "@/lib/ids";
 import { moveSessionInWeek, type PlanWeek } from "@/lib/plan-week";
 
 /** Every cached week, whichever `start` it was fetched with. */
@@ -43,13 +43,14 @@ const WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
  * (D55). Everything else is the server's: this component holds no copy of the
  * plan beyond react-query's cache.
  *
- * **Which week is shown lives in the URL** (`/calendar?week=2026-08-03`), not
- * in component state: it is the one thing on this page a person would bookmark
- * or send to someone, and state that survives a reload has to be addressable
- * (UI convention 1). The param is taken literally, not snapped to a Monday —
- * the same rule the endpoint follows (D55) — so a link to a Wednesday shows
- * the seven days from that Wednesday. Anything unreadable, and anything at
- * all missing, means this week (D77).
+ * **Where you are lives in the URL** — both facets of it. Which week is shown
+ * is `?week=2026-08-03` (D77) and which session is open is `?session=<id>`
+ * (D88), because a session someone is reading is a place they would bookmark,
+ * reload or send to their coach, and state that survives a reload has to be
+ * addressable (UI convention 1). The week param is taken literally, not
+ * snapped to a Monday — the same rule the endpoint follows (D55) — so a link
+ * to a Wednesday shows the seven days from that Wednesday. Anything
+ * unreadable, and anything at all missing, means this week.
  *
  * **No mutation fails quietly.** A move that the server refuses rolls the grid
  * back *and* says so in a strip on the page; a delete keeps the sheet open
@@ -70,50 +71,100 @@ export function CalendarWeek() {
   const start = isIsoDate(requested) ? requested : thisWeek;
 
   /**
-   * Show `next`, by moving the address bar.
+   * Move the address bar: set the named params, drop the ones set to `null`,
+   * and carry every other one through untouched.
    *
-   * `window.history.replaceState` rather than `router.replace`, for two
-   * reasons that happen to agree.
+   * The native History API rather than `router.push` / `router.replace`,
+   * because those two **cannot drop a search param** in this Next major:
+   * navigating from `/calendar?week=…` to `/calendar` is a silent no-op
+   * (verified against a production build, D77), which would strand both "This
+   * week" and closing the sheet on whatever the URL last said. `pushState` /
+   * `replaceState` are Next's own documented escape hatch for updating the URL
+   * without navigating, and they sync `usePathname` / `useSearchParams`, so
+   * the component still re-renders off the address bar.
    *
-   * The choice: **replace, not push**. Stepping a week adjusts the view of one
-   * page; pushing would make the back button mean "undo one of my last eleven
+   * Carrying the untouched params through is the point of taking a patch
+   * rather than a whole query string: this page's address has two facets
+   * already, and rebuilding it from either one alone would silently drop the
+   * other.
+   */
+  const writeUrl = (
+    changes: Readonly<Record<string, string | null>>,
+    how: "push" | "replace",
+  ) => {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null) {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    const query = params.toString();
+    const url = query ? `${pathname}?${query}` : pathname;
+    if (how === "push") {
+      window.history.pushState(null, "", url);
+    } else {
+      window.history.replaceState(null, "", url);
+    }
+  };
+
+  /**
+   * Show `next`, and close whatever sheet was open.
+   *
+   * **Replace, not push**: stepping a week adjusts the view of one page, and
+   * pushing would make the back button mean "undo one of my last eleven
    * clicks" instead of "leave the calendar", eleven entries deep after a
    * minute of paging. The URL is a real address either way — a bookmark and a
-   * shared link both work — so only the history stack is at stake, and that is
-   * what replacing protects.
-   *
-   * The constraint: `router.replace` and `router.push` **cannot drop a search
-   * param** in this Next major. Navigating from `/calendar?week=…` to
-   * `/calendar` is a silent no-op (verified against a production build), which
-   * would strand "This week" on whatever week was last shown. The native
-   * History API is Next's own documented escape hatch for updating the URL
-   * without navigating, and it syncs `usePathname` / `useSearchParams`, so the
-   * component still re-renders off the address bar.
+   * shared link both work — so only the history stack is at stake (D77).
    *
    * This week is the bare `/calendar`, never `?week=<this monday>`: a URL
    * whose meaning is "the week I am in" is still right tomorrow, so the
    * address someone bookmarks does not quietly become last week's.
    *
-   * Every *other* param is carried through untouched. The week is one facet of
-   * this page's address and rebuilding the query string from it alone would
-   * silently drop whatever the next facet turns out to be.
+   * The open sheet is left exactly as it is — deliberately, and it costs
+   * nothing: the sheet is a modal, so these controls are inert while one is
+   * open and this cannot run underneath it. The two params are independent
+   * facets of one address, and `?week=…&session=…` naming a session outside
+   * that week is a link this page honours (D88).
    */
   const showWeek = (next: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (next === thisWeek) {
-      params.delete("week");
-    } else {
-      params.set("week", next);
-    }
-    const query = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      query ? `${pathname}?${query}` : pathname,
-    );
+    writeUrl({ week: next === thisWeek ? null : next }, "replace");
   };
 
-  const [openSession, setOpenSession] = useState<WeekSession | null>(null);
+  /**
+   * Which session is open, read off the URL rather than held beside it.
+   *
+   * Derived, not duplicated: a copy in state would be the thing the address
+   * bar disagrees with the moment the athlete presses Back, and Back closing
+   * the sheet is the whole point of pushing an entry when it opens.
+   */
+  const sessionParam = searchParams.get("session");
+  const openSessionId = isUuid(sessionParam) ? sessionParam : null;
+
+  // A `session` that is not an id names no session. Treated as absent and
+  // swept out of the address bar, rather than spent on
+  // `GET /planned-sessions/<garbage>` or left in a URL the page is ignoring.
+  // `writeUrl` is left out of the deps deliberately: it closes over this
+  // render's params, and re-running on every render would have this sweep
+  // fight whatever else has since written to them.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the param is the input
+  useEffect(() => {
+    if (sessionParam !== null && !isUuid(sessionParam)) {
+      writeUrl({ session: null }, "replace");
+    }
+  }, [sessionParam]);
+
+  const openSession = (sessionId: string) =>
+    // Push, so the browser's Back gesture closes the sheet — the one thing
+    // every athlete already knows how to do on a phone.
+    writeUrl({ session: sessionId }, "push");
+
+  const closeSession = () =>
+    // Replace, so opening and closing a dozen cards does not bury the page
+    // the athlete arrived from under a dozen identical entries.
+    writeUrl({ session: null }, "replace");
+
   // The plan form is one component in two modes: `{ date }` plans a new
   // session on that day, `{ date, sessionId }` revises an existing one.
   const [planning, setPlanning] = useState<{
@@ -146,6 +197,20 @@ export function CalendarWeek() {
   // week's data, kept deliberately. Said with opacity rather than a spinner —
   // the numbers are real, they are just not this week's yet.
   const stale = week.isPlaceholderData;
+
+  /**
+   * The card behind the open sheet, when the week on screen carries one.
+   *
+   * `null` is a normal answer, not a failure: a link to a session on another
+   * week arrives with no card at all, and the sheet renders itself from the
+   * session it fetches instead. Handing it over when we do have it is what
+   * keeps the header on screen from the first frame rather than after a
+   * request (D55).
+   */
+  const openCard =
+    week.data?.days
+      .flatMap((day) => day.sessions)
+      .find((session) => session.id === openSessionId) ?? null;
 
   const invalidateWeeks = () =>
     queryClient.invalidateQueries({ queryKey: WEEK_QUERY_PREFIX });
@@ -195,6 +260,16 @@ export function CalendarWeek() {
     "/api/v1/planned-sessions/{planned_session_id}",
     { onSuccess: invalidateWeeks },
   );
+
+  // One action's outcome at a time, and no outcome outlives the sheet it was
+  // reported in. The close handler used to do this; the URL closes the sheet
+  // now, and a Back press calls no handler at all.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the open session is the input
+  useEffect(() => {
+    setCopiedTo(null);
+    remove.reset();
+    copy.reset();
+  }, [openSessionId]);
 
   function moveSession(sessionId: string, toDate: string) {
     move.mutate({
@@ -325,7 +400,7 @@ export function CalendarWeek() {
               <WeekGrid
                 days={week.data.days}
                 today={today}
-                onOpen={setOpenSession}
+                onOpen={(session) => openSession(session.id)}
                 onMove={moveSession}
                 onPlan={(date) => setPlanning({ date })}
               />
@@ -335,21 +410,17 @@ export function CalendarWeek() {
       </PageBody>
 
       <SessionSheet
-        session={openSession}
+        sessionId={openSessionId}
+        card={openCard}
         busy={busy}
         problems={sheetProblems}
         notice={copiedTo ? `Copied to ${formatDayMonthYear(copiedTo)}.` : null}
-        onClose={() => {
-          setOpenSession(null);
-          setCopiedTo(null);
-          remove.reset();
-          copy.reset();
-        }}
+        onClose={closeSession}
         onMove={(sessionId, toDate) => {
           // The optimistic update lands the card immediately, so the sheet has
           // nothing left to say; a refusal surfaces in the page's strip.
           moveSession(sessionId, toDate);
-          setOpenSession(null);
+          closeSession();
         }}
         onCopy={(sessionId, toDate) => {
           // One action's outcome at a time: the sheet has one status line and
@@ -372,12 +443,12 @@ export function CalendarWeek() {
           // was pressed would take the server's refusal with it.
           remove.mutate(
             { params: { path: { planned_session_id: sessionId } } },
-            { onSuccess: () => setOpenSession(null) },
+            { onSuccess: closeSession },
           );
         }}
-        onEdit={(session) => {
-          setPlanning({ date: session.date, sessionId: session.id });
-          setOpenSession(null);
+        onEdit={(sessionId, date) => {
+          setPlanning({ date, sessionId });
+          closeSession();
         }}
       />
 

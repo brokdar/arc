@@ -86,6 +86,12 @@ class WeekSession:
     predicted_load: float | None
     #: Planned NP over the pinned FTP. ``None`` alongside `predicted_load`.
     predicted_intensity_factor: float | None
+    #: Fraction of the prescribed duration that carried a power target, the
+    #: same number `PredictedLoad.coverage` carries on the session resource
+    #: and from the same computation. ``None`` exactly when `predicted_load`
+    #: is: a load without it cannot be told apart from a fully covered one,
+    #: and a card is where that mistake gets made (D88).
+    predicted_load_coverage: float | None
     #: Σ ``sets × reps × kg`` for a strength session, when its loads are in
     #: kilograms. Kilograms, **not** a load: never add this to
     #: `predicted_load` (spec v2 §5.4).
@@ -313,7 +319,7 @@ def _card(
     intent = row.current_intent
     body = workout_body_from_json(intent.structure)
     summary = WorkoutSummary(body)
-    load, factor, volume = _predict(body, anchors)
+    load, factor, coverage, volume = _predict(body, anchors)
     return WeekSession(
         id=row.id,
         date=row.date,
@@ -329,25 +335,31 @@ def _card(
         intent_version=intent.version,
         predicted_load=load,
         predicted_intensity_factor=factor,
+        predicted_load_coverage=coverage,
         predicted_volume_load_kg=volume,
     )
 
 
 def _predict(
     body: WorkoutBody, anchors: Mapping[AnchorType, PinnedAnchor]
-) -> tuple[float | None, float | None, float | None]:
-    """Return ``(load, intensity_factor, volume_load_kg)`` for one prescription.
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Return ``(load, intensity_factor, coverage, volume_load_kg)``.
 
     Exactly one of the two axes is ever populated: a strength prescription has
     kilograms and no TSS, an endurance one has TSS and no kilograms. The
     split is the point — see `app.domain.prediction`.
+
+    The coverage travels with the load rather than being recomputed anywhere:
+    it comes off the same `PredictedLoad` the session resource renders, so a
+    card and its sheet cannot disagree about how much of the ride the number
+    was integrated over.
     """
     if isinstance(body, StrengthWorkout):
-        return None, None, predict_strength_volume(body).volume_load_kg
+        return None, None, None, predict_strength_volume(body).volume_load_kg
     predicted = predict_endurance_load(body, anchors)
     if predicted is None:
-        return None, None, None
-    return predicted.load, predicted.intensity_factor, None
+        return None, None, None, None
+    return predicted.load, predicted.intensity_factor, predicted.coverage, None
 
 
 def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ...]:

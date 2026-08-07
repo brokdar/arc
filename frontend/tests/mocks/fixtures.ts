@@ -16,10 +16,12 @@ type Schemas = components["schemas"];
  *   non-null exactly when `workout_id` is (`app.services.plan._card`);
  * * a strength card has no `planned_duration_s` and an endurance card no
  *   `total_sets` (`WorkoutSummary`);
- * * `step_count`, `total_sets`, durations, predicted load, intensity factor
- *   and volume load are all **derived from the structure below**, not chosen —
- *   the numbers here were computed by running `app.domain.prediction` over
- *   these exact documents at FTP 250 W;
+ * * `step_count`, `total_sets`, durations, predicted load, intensity factor,
+ *   coverage and volume load are all **derived from the structure below**, not
+ *   chosen — the numbers here were computed by running `app.domain.prediction`
+ *   over these exact documents at FTP 250 W, and a card's
+ *   `predicted_load_coverage` is the very field its session's
+ *   `predicted_load.coverage` carries, because on the real API it is;
  * * an intent pins **exactly** the anchors its prescription and its criteria
  *   refer to, no more and no fewer (`SessionIntent.__post_init__`), so the
  *   sessions with no percentage-of-anchor target pin nothing;
@@ -507,6 +509,7 @@ const SEEDS: readonly SessionSeed[] = [
       intent_version: 1,
       predicted_load: null,
       predicted_intensity_factor: null,
+      predicted_load_coverage: null,
       predicted_volume_load_kg: 1920,
     },
     structure: STRENGTH_STRUCTURE,
@@ -535,6 +538,9 @@ const SEEDS: readonly SessionSeed[] = [
       intent_version: 2,
       predicted_load: VO2_PREDICTED_LOAD.load,
       predicted_intensity_factor: VO2_PREDICTED_LOAD.intensity_factor,
+      // The card's coverage is the session's own, not a second measurement
+      // of it: both come out of `predict_endurance_load` (D88).
+      predicted_load_coverage: VO2_PREDICTED_LOAD.coverage,
       predicted_volume_load_kg: null,
     },
     structure: VO2_STRUCTURE,
@@ -564,6 +570,7 @@ const SEEDS: readonly SessionSeed[] = [
       // Prescribed off heart rate: nothing to integrate over watts.
       predicted_load: null,
       predicted_intensity_factor: null,
+      predicted_load_coverage: null,
       predicted_volume_load_kg: null,
     },
     structure: RECOVERY_STRUCTURE,
@@ -590,6 +597,7 @@ const SEEDS: readonly SessionSeed[] = [
       intent_version: 1,
       predicted_load: null,
       predicted_intensity_factor: null,
+      predicted_load_coverage: null,
       // Bodyweight throughout: kilograms exist once it is performed.
       predicted_volume_load_kg: null,
     },
@@ -617,6 +625,7 @@ const SEEDS: readonly SessionSeed[] = [
       intent_version: 1,
       predicted_load: LONG_PREDICTED_LOAD.load,
       predicted_intensity_factor: LONG_PREDICTED_LOAD.intensity_factor,
+      predicted_load_coverage: LONG_PREDICTED_LOAD.coverage,
       predicted_volume_load_kg: null,
     },
     structure: LONG_STRUCTURE,

@@ -35,16 +35,51 @@ vi.mock("next/link", () => ({
 }));
 
 /**
- * `next/navigation`, reading jsdom's own address bar.
+ * `next/navigation`, reading jsdom's own address bar — and noticing it move.
  *
- * The component writes its position with `window.history.replaceState`, so
- * pointing the mock at `window.location` means the tests assert the real
- * observable — where the browser ends up — instead of a spy's call list.
+ * The component writes its position with the native History API, so pointing
+ * the mock at `window.location` means the tests assert the real observable —
+ * where the browser ends up — instead of a spy's call list.
+ *
+ * Subscribed, not merely read: Next patches `pushState` / `replaceState` so
+ * that a component which writes the URL re-renders off it, and a component
+ * whose open sheet is *derived* from the URL is only testable against a mock
+ * that does the same. `popstate` is in the same subscription, which is what
+ * makes a Back press a real assertion here rather than a simulated one.
  */
-vi.mock("next/navigation", () => ({
-  usePathname: () => window.location.pathname,
-  useSearchParams: () => new URLSearchParams(window.location.search),
-}));
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const MOVED = "arc-test:url-moved";
+
+  for (const method of ["pushState", "replaceState"] as const) {
+    const original = window.history[method].bind(window.history);
+    window.history[method] = ((...args: Parameters<History["pushState"]>) => {
+      original(...args);
+      window.dispatchEvent(new Event(MOVED));
+    }) as History["pushState"];
+  }
+
+  const subscribe = (onMoved: () => void) => {
+    window.addEventListener(MOVED, onMoved);
+    window.addEventListener("popstate", onMoved);
+    return () => {
+      window.removeEventListener(MOVED, onMoved);
+      window.removeEventListener("popstate", onMoved);
+    };
+  };
+  const useAddressBar = () =>
+    useSyncExternalStore(
+      subscribe,
+      () => `${window.location.pathname}${window.location.search}`,
+      () => "/calendar",
+    );
+
+  return {
+    usePathname: () => useAddressBar().split("?")[0] ?? "/",
+    useSearchParams: () =>
+      new URLSearchParams(useAddressBar().split("?")[1] ?? ""),
+  };
+});
 
 const start = mondayOf(todayIsoDate());
 
@@ -60,25 +95,11 @@ function renderCalendar() {
       mutations: { retry: false },
     },
   });
-  // A fresh element each time: React bails out of a re-render given the same
-  // element by reference, and the URL this component reads is outside it.
-  const tree = () => (
+  return render(
     <QueryClientProvider client={queryClient}>
       <CalendarWeek />
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
-  const result = render(tree());
-  return {
-    ...result,
-    /**
-     * Re-render the way Next's router does after a `history.replaceState`.
-     * Nothing in a test environment tells React the address bar moved, so
-     * without this the component would never notice its own navigation.
-     */
-    afterUrlChange() {
-      result.rerender(tree());
-    },
-  };
 }
 
 /** Apply the moves a stateful fake has accepted, the way the server would. */
@@ -98,6 +119,26 @@ function withMoves(
       ...day,
       sessions: sessions.filter((session) => session.date === day.date),
     })),
+  };
+}
+
+/**
+ * The same week with nothing planned in it — every total null, never 0, the
+ * way `app.services.plan` builds one.
+ */
+function emptyWeek(weekStart: string): ReturnType<typeof planWeekFixture> {
+  const week = planWeekFixture(weekStart);
+  return {
+    ...week,
+    days: week.days.map((day) => ({ ...day, sessions: [] })),
+    session_count: 0,
+    planned_duration_s: null,
+    duration_sessions_counted: 0,
+    duration_sessions_uncounted: 0,
+    planned_load: null,
+    load_sessions_counted: 0,
+    load_sessions_uncounted: 0,
+    by_discipline: [],
   };
 }
 
@@ -357,13 +398,12 @@ describe("CalendarWeek", () => {
   it("steps a week at a time by writing the position into the URL", async () => {
     const requested = recordWeekRequests();
 
-    const view = renderCalendar();
+    renderCalendar();
     await screen.findByText("Strength — lower");
 
     await userEvent.click(screen.getByRole("button", { name: "Next week" }));
     expect(addressBar()).toBe(`/calendar?week=${addDays(start, 7)}`);
 
-    view.afterUrlChange();
     await waitFor(() => expect(requested).toContain(addDays(start, 7)));
 
     await userEvent.click(
@@ -382,15 +422,195 @@ describe("CalendarWeek", () => {
     );
     const requested = recordWeekRequests();
 
-    const view = renderCalendar();
+    renderCalendar();
     await screen.findByText("Strength — lower");
     expect(requested).toContain(addDays(start, 21));
 
     await userEvent.click(screen.getByRole("button", { name: "This week" }));
     expect(addressBar()).toBe("/calendar");
 
-    view.afterUrlChange();
     await waitFor(() => expect(requested).toContain(start));
+  });
+
+  /**
+   * The open sheet is the second facet of this page's address (D88). It used
+   * to be `useState<WeekSession | null>`, which could not be reloaded,
+   * bookmarked or sent to anyone — the exact failure `?week=` had already
+   * been fixed for.
+   */
+  describe("the open session in the address bar", () => {
+    it("opens the session the address bar names, without a click", async () => {
+      window.history.replaceState(
+        null,
+        "",
+        `/calendar?session=${SESSION_IDS.vo2}`,
+      );
+
+      renderCalendar();
+
+      const sheet = await screen.findByRole("dialog");
+      expect(
+        within(sheet).getByRole("heading", { name: "VO₂ 5×4′" }),
+      ).toBeInTheDocument();
+    });
+
+    /**
+     * The link has to work from anywhere, so the sheet cannot depend on the
+     * card: with an empty week on screen every fact it shows — the date, the
+     * intent, the workout's own name — is read off the session it fetched.
+     */
+    it("opens a session the week on screen does not carry", async () => {
+      server.use(
+        http.get("/api/v1/plan/week", ({ query, response }) =>
+          response(200).json(emptyWeek(query.get("start") ?? start)),
+        ),
+      );
+      window.history.replaceState(
+        null,
+        "",
+        `/calendar?session=${SESSION_IDS.long}`,
+      );
+
+      renderCalendar();
+
+      const sheet = await screen.findByRole("dialog");
+      // The name is the library workout's, which only the card carries — so
+      // with no card the sheet asks the library rather than heading itself
+      // "Endurance" while the calendar calls the same session something else.
+      expect(
+        await within(sheet).findByRole("heading", { name: "Long endurance" }),
+      ).toBeInTheDocument();
+      expect(
+        within(sheet).getByText(/Build durability before the Ötztal/),
+      ).toBeInTheDocument();
+    });
+
+    it("puts the open session in the address bar, and takes only it back out", async () => {
+      window.history.replaceState(null, "", "/calendar?week=2026-03-04");
+
+      renderCalendar();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+      );
+
+      expect(addressBar()).toBe(
+        `/calendar?week=2026-03-04&session=${SESSION_IDS.vo2}`,
+      );
+
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      // The week the athlete was reading is not collateral damage.
+      expect(addressBar()).toBe("/calendar?week=2026-03-04");
+    });
+
+    /**
+     * Opening pushes a history entry, which is the whole reason the gesture
+     * every phone already has closes the sheet. Nothing here simulates that:
+     * `history.back()` is the browser's own, and the component notices it
+     * because its open-state is derived from the URL rather than kept beside
+     * it.
+     */
+    it("closes the sheet when the browser goes back", async () => {
+      renderCalendar();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+      );
+      await screen.findByRole("dialog");
+
+      window.history.back();
+
+      await waitFor(() => expect(addressBar()).toBe("/calendar"));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+    });
+
+    /**
+     * The two facets do not interfere: the sheet is a modal, so the week
+     * controls are inert while one is open and cannot page out from under it.
+     * What is left to prove is that neither param erases the other on the way
+     * in — an address naming both is a link someone sent.
+     */
+    it("keeps the week the address names while the sheet is open", async () => {
+      const requested = recordWeekRequests();
+      window.history.replaceState(
+        null,
+        "",
+        `/calendar?week=2026-03-04&session=${SESSION_IDS.vo2}`,
+      );
+
+      renderCalendar();
+      await screen.findByRole("dialog");
+
+      expect(requested).toContain("2026-03-04");
+      expect(screen.getByText("04.03 – 10.03.2026")).toBeInTheDocument();
+      // The week controls are behind the modal, and not reachable from it.
+      expect(
+        screen.queryByRole("button", { name: "Next week" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("treats a session parameter that is not an id as absent", async () => {
+      const asked: string[] = [];
+      server.use(
+        http.get(
+          "/api/v1/planned-sessions/{planned_session_id}",
+          ({ params, response }) => {
+            asked.push(params.planned_session_id);
+            return response(200).json(
+              plannedSessionFixture(params.planned_session_id),
+            );
+          },
+        ),
+      );
+      window.history.replaceState(
+        null,
+        "",
+        "/calendar?week=2026-03-04&session=yesterday",
+      );
+
+      renderCalendar();
+      await screen.findByText("Strength — lower");
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      // Never spent on a request: the id is a path segment, and the 404 would
+      // have read as a session that had been deleted.
+      expect(asked).toEqual([]);
+      // And swept out of the address bar, rather than left there being ignored.
+      await waitFor(() =>
+        expect(addressBar()).toBe("/calendar?week=2026-03-04"),
+      );
+    });
+
+    /**
+     * A well-formed id that names nothing is a different thing from garbage:
+     * the link was a session once, or was mistyped by a byte. Dropping the
+     * param would make a dead link look like one that worked.
+     */
+    it("says a link names no session rather than closing over it", async () => {
+      server.use(
+        http.get(
+          "/api/v1/planned-sessions/{planned_session_id}",
+          ({ response }) =>
+            response(404).json({ detail: "That session no longer exists" }),
+        ),
+      );
+      window.history.replaceState(
+        null,
+        "",
+        `/calendar?session=${SESSION_IDS.copy}`,
+      );
+
+      renderCalendar();
+
+      const sheet = await screen.findByRole("dialog");
+      expect(
+        await within(sheet).findByText("That session no longer exists"),
+      ).toBeInTheDocument();
+      expect(addressBar()).toBe(`/calendar?session=${SESSION_IDS.copy}`);
+    });
   });
 
   it("opens a sheet with the full prescription and its criteria", async () => {
@@ -912,11 +1132,10 @@ describe("CalendarWeek", () => {
       }),
     );
 
-    const view = renderCalendar();
+    renderCalendar();
     await screen.findByText("Strength — lower");
 
     await userEvent.click(screen.getByRole("button", { name: "Next week" }));
-    view.afterUrlChange();
 
     await waitFor(() =>
       expect(screen.getByTestId("week-body")).toHaveAttribute(
@@ -974,13 +1193,12 @@ describe("CalendarWeek", () => {
       "/calendar?week=2026-03-04&view=list",
     );
 
-    const view = renderCalendar();
+    renderCalendar();
     await screen.findByText("Strength — lower");
 
     await userEvent.click(screen.getByRole("button", { name: "Next week" }));
     expect(addressBar()).toBe("/calendar?week=2026-03-11&view=list");
 
-    view.afterUrlChange();
     await userEvent.click(screen.getByRole("button", { name: "This week" }));
     // Only the week is dropped on the way back to the bare address.
     expect(addressBar()).toBe("/calendar?view=list");

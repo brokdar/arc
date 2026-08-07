@@ -236,8 +236,49 @@ async def test_a_card_carries_what_a_calendar_renders(client: AsyncClient) -> No
         "intent_version": 1,
         "predicted_load": pytest.approx(44.5, abs=0.5),
         "predicted_intensity_factor": pytest.approx(0.762, abs=0.005),
+        # 3 × 480 s of the 2760 s prescribed carried a power target: the
+        # warm-up and the recoveries state none, so this load is an
+        # under-estimate and the card says by how much.
+        "predicted_load_coverage": pytest.approx(1_440 / RIDE_DURATION_S),
         "predicted_volume_load_kg": None,
     }
+
+
+async def test_a_cards_coverage_is_the_sessions_own(client: AsyncClient) -> None:
+    """The card and the sheet report one coverage, not two that agree.
+
+    Both come out of `predict_endurance_load`, so this cannot drift while the
+    plumbing holds — which is exactly why it is worth pinning: the card field
+    was added later than the session's, and a second computation is the
+    obvious way to add the next one.
+    """
+    await append_ftp(client)
+    session = await plan(client, MONDAY)
+
+    (card,) = cards(await week(client, MONDAY))
+    detail = await client.get(f"{SESSIONS}/{session['id']}")
+    predicted = detail.json()["predicted_load"]
+
+    assert card["predicted_load_coverage"] == predicted["coverage"]
+    assert card["predicted_load"] == predicted["load"]
+    # And the sentence the sheet renders beside the number is that same
+    # fraction spelled out, not a second measurement of it.
+    assert predicted["explanation"]["inputs"]["coverage"] == (
+        f"{predicted['coverage']:.1%} of the duration carried a power target"
+    )
+
+
+async def test_a_card_with_no_load_has_no_coverage_either(
+    client: AsyncClient,
+) -> None:
+    # Null exactly when the load is null: a coverage beside a missing total
+    # would be a fraction of nothing.
+    await plan(client, MONDAY, purpose="technique", structure=DISTANCE_RIDE)
+
+    (card,) = cards(await week(client, MONDAY))
+
+    assert card["predicted_load"] is None
+    assert card["predicted_load_coverage"] is None
 
 
 async def test_the_duration_is_derived_from_the_frozen_step_tree(

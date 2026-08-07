@@ -54,6 +54,13 @@ class WeekSessionRead(BaseModel):
     #: Planned normalized power over the pinned FTP; null alongside
     #: ``predicted_load``.
     predicted_intensity_factor: float | None
+    #: Fraction of the prescribed duration that carried a power target — the
+    #: same number ``PredictedLoadRead.coverage`` carries on
+    #: ``GET /planned-sessions/{id}``, from the same computation. Null exactly
+    #: when ``predicted_load`` is. **Never render a card's load without it**:
+    #: below 1.0 the load is an under-estimate, and a 40%-covered prediction
+    #: is indistinguishable from a complete one otherwise (D88).
+    predicted_load_coverage: float | None
     #: Σ ``sets × reps × kg`` for a strength session whose loads are in
     #: kilograms. **Kilograms, not a load** — never add it to
     #: ``predicted_load``, and never render the two in one column.
