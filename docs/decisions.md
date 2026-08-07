@@ -2399,3 +2399,202 @@ No UI renders it yet, deliberately: the calendar card shows duration, purpose
 and step count, and load arrives on a card with WP-5's week strip. The field
 ships now because the contract is what other clients build against, and adding
 it later would mean a second round of `just api-sync` in someone else's PR.
+
+## D89 — Every stream is stored on a uniform 1 Hz index grid, and the row index is the address
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`app.domain.streams.resample` puts every recording on a uniform one-second
+grid before anything is written, and **row `i` of every column describes the
+same instant**. What it displaces: the build plan's WP-4.1 parquet schema,
+which stored `t` as the device recorded it and left downstream code to address
+samples by timestamp.
+
+The reasoning is addenda A4.1 and is not primarily about tidiness. Normalized
+power's "30 s rolling mean" is a 30-*sample* window, and over a file that
+samples at 1 Hz while moving and every 4 s while stopped it is not 30 seconds
+— with a fourth-power weighting on the error. Time in zone is a sum of Δt.
+WP-5's alignment is index arithmetic. Prefix sums, which make every range
+query over a selection O(1), require uniform spacing. And chart↔map linked
+brushing — the top named feature — is a single integer of hover state on a
+grid and a binary search plus four interpolations off one.
+
+Four numbers had to be picked, and are pinned by tests rather than left to the
+next reader:
+
+* **Row count is `floor(elapsed_s) + 1`.** Both endpoints are included, so a
+  10-second recording is 11 rows. Row `i` covers `[t0 + i, t0 + i + 1)`, and a
+  sample is placed by the floor of its offset.
+* **Where several samples share a second, the last one wins.** Not a mean: the
+  frame's `device_t` column names the real recorded instant behind each row,
+  and an average is a value no device ever wrote. Sub-second sampling is rare
+  in this data and averaging would need a per-channel rule (a mean latitude is
+  not a mean cadence).
+* **A gap longer than 30 s is a recording stop.** The grid continues, every
+  channel is null across it, and the range is reported as
+  `[start_index, end_index)`. **A hole is not zero watts**, and the two must
+  never be confused — this is the single rule the rest of the ingest design
+  protects.
+* **`recording_time_s` is elapsed minus the whole of every such gap**, which
+  is the duration term in load (A5.1). Not moving time, not elapsed. A ten
+  minute coffee stop makes elapsed exceed recording time by ~600 s, with one
+  entry in `recording_stops`.
+
+Sub-threshold gaps are filled per channel, and the rule is a property of what
+the channel *is*: `lat`, `lon` and `elevation` interpolate linearly because
+they are positions and the intermediate values genuinely lay between the two
+ends; `power`, `hr`, `cadence`, `speed` and `temp` hold the previous reading
+because they are instantaneous rates and interpolating one invents a ramp the
+athlete never rode. The rule is applied per channel rather than per file, so a
+file recording power every second and temperature every minute leaves
+temperature null across its own gaps instead of holding a reading for a minute.
+
+## D90 — Raw and cleaned columns are both stored, and every repair is a row
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+Each channel is written twice — `power` and `power_fixed` — and every region
+that differs between them is a `stream_anomaly` row naming the channel, the
+`[start, end)` rows, what was done and the value substituted. All analysis
+reads the `_fixed` columns. What it displaces: the all-or-nothing ingest of
+build-plan WP-4.1, where a file either validated and was stored as recorded or
+was quarantined.
+
+Real files are neither. A three-second spike to 1 900 W from a dropped magnet
+and a forty-second heart-rate dropout are ordinary, and an ingest that passes
+them through corrupts every derived value silently while one that repairs them
+corrupts the audit trail silently. **A repaired sample is a derived value, and
+derived values record what they came from** — the same rule D76 states for
+computed numbers, one level down.
+
+Three details the work order left open, decided here:
+
+* **`AnomalyKind` gains `dropped`, a fifth member** beyond the four A4.2
+  names. A run of implausible values longer than 30 s cannot be repaired
+  honestly, so it is set to null — and a null is itself a claim ("there is no
+  data here") replacing a value the file contained. Leaving it unrecorded
+  would be exactly the unrecorded repair this entry exists to prevent, and
+  reusing `dropout_held` for it would be a lie about what happened.
+* **`resampled_only` is a per-channel marker, not a per-gap one.** It is
+  written once per channel that needed no repair at all, spanning the frame.
+  The alternative reading — one row per region the grid filled — would put
+  tens of thousands of anomaly rows on an ordinary four-second-sampled ride
+  and say nothing that `device_t` does not already say per row. The grid's own
+  filling of sub-threshold gaps is the storage contract (D89), visible in
+  `device_t`, and is deliberately not an anomaly; anomalies record repairs of
+  implausible or missing data.
+* **The plausible ranges the build plan does not give.** It bounds power
+  (0–2500 W), heart rate (25–230) and speed (<35 m/s). Cleaning needs a bound
+  per channel, so cadence (0–250), elevation (−500–9000 m), temperature
+  (−40–60 °C) and latitude/longitude (their own domains) are bounded too, wide
+  enough that no real recording touches them: a value outside one of these is
+  a sensor fault or a unit error, never a hard effort.
+
+Runs are treated by length: at most 3 s is a spike and is clipped to the last
+good reading; up to 30 s is held (or interpolated, for the positional
+channels); longer is dropped. Rows inside a recording stop are never repaired,
+and neither is a run that touches one — a reading taken as the device stopped
+or resumed is no more trustworthy than the gap itself. Rows before a channel's
+first good reading or after its last stay null rather than being held
+backwards, which would fabricate a warm-up.
+
+## D91 — Systemic garbage is quarantined; noise is repaired
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`app.domain.streams.validate` returns a machine-readable
+`QuarantineReason` plus a human detail string, and the pipeline moves the file
+rather than fixing it, when: the parser produced no samples; timestamps repeat
+after a stable sort; elapsed duration is under 2 minutes; or **more than 10 %**
+of a present channel's samples are outside its plausible range. Everything
+else is D90's business. What it displaces: nothing in the build plan, which
+listed the triggers but not the boundary between "repair it" and "refuse it".
+
+The 10 % line is where a channel stops being noisy and starts being wrong — a
+unit error, a mis-decoded field, a dead sensor. Repairing it would mean
+substituting for most of it, and a cleaned-up average of nonsense is worse
+than a file the athlete is told about.
+
+Two of the four deserve their own note. **Repeated timestamps are refused
+rather than deduplicated**: a stable sort always yields a non-decreasing
+sequence, so the only thing sorting cannot fix is two readings claiming the
+same instant, and the grid cannot represent both without silently discarding
+one. Merely *unsorted* samples are not a reason for anything — they are sorted
+and ingested. And the reason enum carries `unreadable_file` and
+`suspected_duplicate` from the first migration even though `validate` never
+returns them: they are the pipeline's own verdicts in Phase B, and a column
+whose vocabulary is complete on day one needs no migration when the pipeline
+arrives.
+
+## D92 — A completed session is a `session`; the planned one keeps its name
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+WP-4 introduces a second thing called a session — the real-world event — beside
+WP-2's planned session, and the two are joined by nothing until WP-6. The
+naming, decided once here because every later work package reads it:
+
+* The completed session is `sessions` / `SessionRow`, in
+  `app.persistence.activity`, with its vocabulary in `app.domain.activity` and
+  its stream mathematics in `app.domain.streams`. The ingest trail
+  (`quarantine_records`, `ingest_events`) is in `app.persistence.ingest_log`.
+* The planned session keeps `planned_sessions` / `PlannedSessionRow` and
+  `app.domain.sessions`, untouched.
+* No name is used for both. `SessionMatchStatus` (the completed session's,
+  reserved for WP-6) is not `SessionStatus` (the planned one's); modules are
+  named `activity`, never `sessions`, on both sides of the persistence
+  boundary, so the only module called `sessions.py` remains the planned one.
+
+What it displaces: naming the new persistence module `sessions.py`, symmetric
+with `planned_sessions.py` but leaving `app.domain.sessions` (planned) and
+`app.persistence.sessions` (completed) as the same name for opposite things.
+
+**`SessionDiscipline` is a separate enum from `Discipline`**, with a third
+member `other`. `Discipline` is the vocabulary of what we *prescribe*, and
+every purpose, workout and planned session is one of its two members; a device
+file can hold a walk, a swim or a sport a head unit does not name, which we
+never plan and never score but must ingest without lying about. The shared
+members carry identical string values, so WP-6's candidate query stays a value
+comparison, and `as_planned_discipline` is the one place the mapping lives.
+The alternative — adding `other` to `Discipline` — would have advertised a
+discipline no workout can have through every existing API schema, and would
+have changed the generated client for a value the API rejects.
+
+Four columns exist that the work order's table list does not name, each
+because Phase B needs it and an empty table is the cheap moment to add one:
+`sessions.rpe` (manual entry, B-6), `recordings.sport` (the raw sport string,
+so a classification can be re-read without re-parsing the original — A4.3's
+argument applied to the sport field), and `quarantine_records.file_sport_index`
+(A4.5 requires the quarantine record to accommodate a multisport file).
+`sessions.weight_provenance` reuses the anchors' own `Provenance` rather than
+inventing a parallel enum, because R3's requirement is that the weight is
+pinned *like an anchor*.
+
+## D93 — A session's timezone is best-effort from the file, and its date is the local date of its start
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The session stores a timezone string in one of three forms, in order of
+preference: an IANA region name when the source provides one (it usually does
+not), a fixed offset spelled `UTC+02:00` derived from FIT's `local_timestamp`,
+or `UTC` when the file said nothing. `local_date` is
+`app.domain.activity.session_date` of the start in that timezone, so a session
+that runs past midnight belongs to the day it began. What it displaces:
+storing UTC alone and deriving the day at read time.
+
+The date is stored rather than derived because it is the key WP-6 matches on
+and the column the session list pages by; deriving it per read would put the
+timezone rule in every caller. The timezone is athlete-overridable, and an
+override re-derives the date — which is the whole reason the column holds the
+zone and not just an offset that was true once.
+
+`UTC` and `UTC+00:00` are not both produced: a zero offset renders as `UTC`,
+because that is what the file is actually saying and the distinction would be
+invented. An unresolvable timezone string raises rather than falling back to
+UTC — a stored timezone that cannot be resolved makes the session's date
+unrecoverable, so it fails where it is written, not where it is read.
+
+One deployment consequence, fixed here: the runtime image is alpine, which
+ships no zoneinfo database, so `backend/Dockerfile` now installs `tzdata`.
+Without it an IANA name would resolve on every developer machine and fail in
+the only place that matters.
