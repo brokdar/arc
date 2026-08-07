@@ -9,8 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### WP-4 — ingestion: watched folder, FIT parsing, sessions & streams
 
-Device files become sessions. Decisions D89–D99. *(Backend only so far; the
-inbox and session pages are Phase C.)*
+Device files become sessions. Decisions D89–D100.
 
 **Streams and the session model (`backend/app/domain/`, `app/persistence/`)**
 
@@ -79,6 +78,31 @@ inbox and session pages are Phase C.)*
   (recorded as an override) or the timezone (which re-derives `local_date`).
 - `POST /api/v1/manual-sessions` records a session performed without a device
   file — a gym session — with its logged sets (D99).
+
+**Frontend (`frontend/`)**
+
+- **`/inbox`** — the queue of everything the watched folder could not decide on
+  its own. Each row names the verdict in English, repeats the API's own detail,
+  says what to do about it, and links a suspected duplicate to the session it
+  looks like. "Discard this copy" takes two clicks; "Not a duplicate" is
+  offered only where there is something safe to ingest, which is the one reason
+  the API accepts a reject. Below the queue, the paginated ingest log. An
+  upload control posts a file and reports the outcome — a quarantined file
+  included, because that is a 200 with a reason and the page branches on the
+  outcome rather than the status (D97, D100).
+- **`/sessions`** — the log, newest first, filtered by discipline on the
+  server. Each row: local date, discipline, duration, recording kind, the
+  match badge (taken as a prop, not assumed), and a **load column that holds
+  its position** with a placeholder naming WP-5 as the reason it is empty.
+- **`/sessions/{id}`** — the session's metadata and the recording's account of
+  it: start and end in the session's own timezone, elapsed against recording
+  time with the paused total derived from the stop ranges, sample regularity,
+  repair count, and which meter produced each channel *with the rule that chose
+  it*. Logged sets for a hand-entered session. Two small correction forms for
+  the discipline and the timezone, the second re-deriving the session's date.
+  Every absent value keeps its slot and says why it is absent.
+- The sidebar gains **Sessions** and **Inbox**; eight sections now, and only
+  three of them still dimmed (D100).
 
 **Dependencies**
 

@@ -955,3 +955,489 @@ export function workoutFixture(workoutId: string): Schemas["WorkoutRead"] {
     (WORKOUTS[0] as Schemas["WorkoutRead"])
   );
 }
+
+// --- WP-4: ingestion, quarantine and the session log -------------------------
+
+/**
+ * The completed sessions the log is built from, and the files behind them.
+ *
+ * Same rule as the week above — **the real API could have produced every byte**
+ * — and for these rows that rule has arithmetic in it:
+ *
+ * * a device session's `duration_s` **is** the sum of its recordings'
+ *   `recording_time_s` (`app.api.routes.activity._duration`), and
+ *   `recording_time_s` on the row repeats it; a manual session's duration is
+ *   wall clock and its `recording_time_s` is null, because there were no
+ *   pauses to subtract;
+ * * `elapsed_time_s − recording_time_s` equals the total length of the
+ *   `recording_stops`, which are half-open row ranges on the 1 Hz grid (D89) —
+ *   so the coffee stop below is 600 rows and 600 seconds;
+ * * `end_time − start_time` is the **elapsed** time, not the recording time;
+ * * `local_date` is the date of `start_time` read in `timezone`;
+ * * a channel absent from `channels` has a null source and no candidates, and
+ *   a source that had one candidate carries the rule `"only candidate"` —
+ *   the strings are `app.ingest.parsers.base`'s own;
+ * * `anomaly_count` counts **repairs**, so a clean trainer file is 0 (D99).
+ */
+export const ACTIVITY_IDS = {
+  outdoorRide: "0199a000-0000-7000-8000-000000000101",
+  trainerRide: "0199a000-0000-7000-8000-000000000102",
+  gym: "0199a000-0000-7000-8000-000000000103",
+} as const;
+
+export const QUARANTINE_IDS = {
+  /** The overlap duplicate: the only record that may be rejected. */
+  duplicate: "0199a000-0000-7000-8000-000000000201",
+  /** A file no parser could open: confirm-only, reject is a 409. */
+  unreadable: "0199a000-0000-7000-8000-000000000202",
+  /** Already dealt with, so it sits below the queue. */
+  discarded: "0199a000-0000-7000-8000-000000000203",
+} as const;
+
+const RECORDING_IDS = {
+  outdoorRide: "0199a000-0000-7000-8000-000000000301",
+  trainerRide: "0199a000-0000-7000-8000-000000000302",
+} as const;
+
+/** sha256 is 64 hex digits; these are the shape the column actually holds. */
+const HASHES = {
+  outdoorRide:
+    "1f3a9c0e7b5d24681f3a9c0e7b5d24681f3a9c0e7b5d24681f3a9c0e7b5d2468",
+  trainerRide:
+    "2b7e15163ad2a6db2b7e15163ad2a6db2b7e15163ad2a6db2b7e15163ad2a6db",
+  wahooCopy: "9d4c6f21ae08b3579d4c6f21ae08b3579d4c6f21ae08b3579d4c6f21ae08b357",
+  corrupt: "c0ffee11deadbeefc0ffee11deadbeefc0ffee11deadbeefc0ffee11deadbeef",
+  shortLap: "77aa33bb99cc55dd77aa33bb99cc55dd77aa33bb99cc55dd77aa33bb99cc55dd",
+} as const;
+
+/** The coffee stop: 600 rows of the 1 Hz grid, and therefore 600 seconds. */
+const COFFEE_STOP = { start_index: 3600, end_index: 4200 } as const;
+const OUTDOOR_ELAPSED_S = 9540;
+const OUTDOOR_RECORDING_S =
+  OUTDOOR_ELAPSED_S - (COFFEE_STOP.end_index - COFFEE_STOP.start_index);
+
+const OUTDOOR_RECORDING: Schemas["RecordingRead"] = {
+  id: RECORDING_IDS.outdoorRide,
+  file_hash: HASHES.outdoorRide,
+  file_sport_index: 0,
+  original_ext: "fit",
+  sport: "cycling",
+  elapsed_time_s: OUTDOOR_ELAPSED_S,
+  recording_time_s: OUTDOOR_RECORDING_S,
+  recording_stops: [COFFEE_STOP],
+  median_time_delta_s: 1,
+  moving_time_s: 8712,
+  power_source_candidates: ["Quarq DZero", "Garmin Edge 830"],
+  power_source: "Quarq DZero",
+  // The tie-break FIT forces on us, spelled as the parser spells it (D96).
+  power_source_rule: "lowest device_index among 2 candidates",
+  hr_source_candidates: ["Garmin HRM-Pro"],
+  hr_source: "Garmin HRM-Pro",
+  hr_source_rule: "only candidate",
+  channels: ["power", "hr", "cadence", "speed", "elevation", "lat", "lon"],
+  anomaly_count: 3,
+  created_at: "2026-08-05T07:55:12Z",
+};
+
+/** A clean indoor file: no GPS, no heart rate, nothing to repair. */
+const TRAINER_RECORDING: Schemas["RecordingRead"] = {
+  id: RECORDING_IDS.trainerRide,
+  file_hash: HASHES.trainerRide,
+  file_sport_index: 0,
+  original_ext: "fit",
+  sport: "virtual_ride",
+  elapsed_time_s: 3600,
+  recording_time_s: 3600,
+  recording_stops: [],
+  median_time_delta_s: 1,
+  moving_time_s: 3600,
+  power_source_candidates: ["Wahoo KICKR"],
+  power_source: "Wahoo KICKR",
+  power_source_rule: "only candidate",
+  hr_source_candidates: [],
+  hr_source: null,
+  hr_source_rule: null,
+  channels: ["power", "cadence", "speed"],
+  anomaly_count: 0,
+  created_at: "2026-08-03T17:10:00Z",
+};
+
+const GYM_SETS: Schemas["LoggedSetRead"][] = [
+  {
+    id: "0199a000-0000-7000-8000-000000000401",
+    set_index: 0,
+    exercise_id: "back_squat",
+    exercise_name: "Back Squat",
+    reps: 5,
+    load_kg: 100,
+    rir: 2,
+    notes: null,
+  },
+  {
+    id: "0199a000-0000-7000-8000-000000000402",
+    set_index: 1,
+    exercise_id: "back_squat",
+    exercise_name: "Back Squat",
+    reps: 5,
+    load_kg: 102.5,
+    rir: 1,
+    notes: null,
+  },
+  {
+    // Free text rather than a catalogue entry: the API allows either, and a
+    // set with no load is bodyweight rather than zero kilos.
+    id: "0199a000-0000-7000-8000-000000000403",
+    set_index: 2,
+    exercise_id: null,
+    exercise_name: "Pull-up",
+    reps: 8,
+    load_kg: null,
+    rir: null,
+    notes: "strict",
+  },
+];
+
+/** The three sessions the log starts with, newest first. */
+function seedSessions(): Schemas["SessionRead"][] {
+  return [
+    {
+      id: ACTIVITY_IDS.gym,
+      local_date: "2026-08-06",
+      start_time: "2026-08-06T16:30:00Z",
+      end_time: "2026-08-06T17:30:00Z",
+      timezone: "Europe/Zurich",
+      discipline: "strength",
+      classification_source: "manual",
+      discipline_overridden: false,
+      recording_kind: "manual",
+      status: "unmatched",
+      duration_s: 3600,
+      recording_time_s: null,
+      rpe: 7,
+      notes: "Felt strong; added a set of pull-ups at the end.",
+      recordings: [],
+      logged_sets: GYM_SETS,
+      created_at: "2026-08-06T17:34:00Z",
+      updated_at: "2026-08-06T17:34:00Z",
+    },
+    {
+      id: ACTIVITY_IDS.outdoorRide,
+      local_date: "2026-08-05",
+      start_time: "2026-08-05T05:14:00Z",
+      end_time: "2026-08-05T07:53:00Z",
+      timezone: "Europe/Zurich",
+      discipline: "cycling",
+      classification_source: "sport_field",
+      discipline_overridden: false,
+      recording_kind: "device",
+      status: "unmatched",
+      duration_s: OUTDOOR_RECORDING_S,
+      recording_time_s: OUTDOOR_RECORDING_S,
+      rpe: null,
+      notes: null,
+      recordings: [OUTDOOR_RECORDING],
+      logged_sets: [],
+      created_at: "2026-08-05T07:55:12Z",
+      updated_at: "2026-08-05T07:55:12Z",
+    },
+    {
+      id: ACTIVITY_IDS.trainerRide,
+      local_date: "2026-08-03",
+      start_time: "2026-08-03T16:02:00Z",
+      end_time: "2026-08-03T17:02:00Z",
+      // The offset form a head unit's local_timestamp implies (D93).
+      timezone: "UTC+02:00",
+      discipline: "cycling",
+      classification_source: "heuristic",
+      discipline_overridden: false,
+      recording_kind: "device",
+      status: "unmatched",
+      duration_s: 3600,
+      recording_time_s: 3600,
+      rpe: null,
+      notes: null,
+      recordings: [TRAINER_RECORDING],
+      logged_sets: [],
+      created_at: "2026-08-03T17:10:00Z",
+      updated_at: "2026-08-03T17:10:00Z",
+    },
+  ];
+}
+
+/** A detail response, projected onto the row the list endpoint returns. */
+export function toListItem(
+  session: Schemas["SessionRead"],
+): Schemas["SessionListItem"] {
+  const {
+    recordings: _recordings,
+    logged_sets: _sets,
+    notes: _notes,
+    end_time: _end,
+    created_at: _created,
+    updated_at: _updated,
+    ...row
+  } = session;
+  return row;
+}
+
+function seedQuarantine(): Schemas["QuarantineRecordRead"][] {
+  return [
+    {
+      id: QUARANTINE_IDS.duplicate,
+      // A second head unit's copy of the same ride: a different file, so a
+      // different hash — which is why it reached the *overlap* check at all.
+      original_filename: "wahoo-2026-08-05.fit",
+      file_hash: HASHES.wahooCopy,
+      file_sport_index: 0,
+      reason: "suspected_duplicate",
+      detail:
+        "87% of this activity's time range overlaps the session already recorded on 2026-08-05; confirm to discard it, or reject to keep both",
+      status: "pending",
+      suspected_session_id: ACTIVITY_IDS.outdoorRide,
+      created_at: "2026-08-06T06:12:31Z",
+      resolved_at: null,
+    },
+    {
+      id: QUARANTINE_IDS.unreadable,
+      original_filename: "corrupt-export.fit",
+      file_hash: HASHES.corrupt,
+      // Nothing parsed, so there is no activity to have an index.
+      file_sport_index: null,
+      reason: "unreadable_file",
+      detail: "not a FIT file: bad header magic",
+      status: "pending",
+      suspected_session_id: null,
+      created_at: "2026-08-06T06:12:33Z",
+      resolved_at: null,
+    },
+    {
+      id: QUARANTINE_IDS.discarded,
+      original_filename: "2026-07-30-lap.fit",
+      file_hash: HASHES.shortLap,
+      file_sport_index: 0,
+      reason: "too_short",
+      detail: "the activity lasts 74 s; at least 120 s is needed for a session",
+      status: "confirmed_discarded",
+      suspected_session_id: null,
+      created_at: "2026-07-30T18:44:02Z",
+      // A resolved record has a resolution time; a pending one does not.
+      resolved_at: "2026-07-31T08:00:00Z",
+    },
+  ];
+}
+
+function seedEvents(): Schemas["IngestEventRead"][] {
+  const meaningful: Schemas["IngestEventRead"][] = [
+    {
+      id: "0199a000-0000-7000-8000-000000000501",
+      at: "2026-08-06T06:12:33Z",
+      filename: "corrupt-export.fit",
+      file_hash: HASHES.corrupt,
+      outcome: "quarantined",
+      detail: "not a FIT file: bad header magic",
+      session_id: null,
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000502",
+      at: "2026-08-06T06:12:31Z",
+      filename: "wahoo-2026-08-05.fit",
+      file_hash: HASHES.wahooCopy,
+      outcome: "quarantined",
+      detail: "0 session(s) ingested, 1 quarantined",
+      session_id: null,
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000503",
+      at: "2026-08-05T08:02:10Z",
+      filename: "2026-08-05-morning-ride.fit",
+      file_hash: HASHES.outdoorRide,
+      outcome: "duplicate_file",
+      detail: "already ingested as 1 recording(s) of this file",
+      session_id: ACTIVITY_IDS.outdoorRide,
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000504",
+      at: "2026-08-05T07:55:12Z",
+      filename: "2026-08-05-morning-ride.fit",
+      file_hash: HASHES.outdoorRide,
+      outcome: "ingested",
+      detail: "1 session(s) ingested, 0 quarantined",
+      session_id: ACTIVITY_IDS.outdoorRide,
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000505",
+      at: "2026-08-03T17:10:00Z",
+      filename: "trainer-2026-08-03.fit",
+      file_hash: HASHES.trainerRide,
+      outcome: "ingested",
+      detail: "1 session(s) ingested, 0 quarantined",
+      session_id: ACTIVITY_IDS.trainerRide,
+    },
+    {
+      id: "0199a000-0000-7000-8000-000000000506",
+      at: "2026-07-30T18:44:02Z",
+      filename: "2026-07-30-lap.fit",
+      file_hash: HASHES.shortLap,
+      outcome: "quarantined",
+      detail: "the activity lasts 74 s; at least 120 s is needed for a session",
+      session_id: null,
+    },
+  ];
+  // Enough history that the log is genuinely longer than one page. Every one
+  // of these is the shape `_known_file` writes when a hash is already sitting
+  // unresolved in quarantine: `duplicate_file`, no session, that sentence.
+  const rescans = Array.from({ length: 20 }, (_, index) => ({
+    id: `0199a000-0000-7000-8000-0000000006${String(index).padStart(2, "0")}`,
+    at: `2026-07-${String(29 - Math.floor(index / 2)).padStart(2, "0")}T0${index % 2 === 0 ? 8 : 7}:15:00Z`,
+    filename: "2026-07-30-lap.fit",
+    file_hash: HASHES.shortLap,
+    outcome: "duplicate_file" as const,
+    detail: "already waiting in quarantine for a decision",
+    session_id: null,
+  }));
+  return [...meaningful, ...rescans];
+}
+
+/**
+ * The ingest mock's state: what the pipeline has already seen.
+ *
+ * The quarantine handlers are the reason this exists. A confirm that answered
+ * with a canned `confirmed_discarded` record could not fail when the page
+ * confirms the wrong record, and a second confirm on the same record has to
+ * be the 409 the API gives — which is only true if something remembers the
+ * first one. So the handlers mutate this, and `resetMockState` (called from
+ * `vitest.setup.ts` after every test) puts it back.
+ */
+export interface IngestMockState {
+  /** Newest first, the way the list endpoint answers. */
+  sessions: Schemas["SessionRead"][];
+  /** Pending first, then resolved — the order the API sorts them in. */
+  quarantine: Schemas["QuarantineRecordRead"][];
+  /** Newest first. */
+  events: Schemas["IngestEventRead"][];
+  /** Content hash → the sessions that file was ingested as. The dedup key. */
+  known: Map<string, string[]>;
+  /** How many ids this run has minted, so each one is different. */
+  minted: number;
+}
+
+function seedState(): IngestMockState {
+  return {
+    sessions: seedSessions(),
+    quarantine: seedQuarantine(),
+    events: seedEvents(),
+    known: new Map(),
+    minted: 0,
+  };
+}
+
+let state: IngestMockState = seedState();
+
+/** The current mock state. Call it per request; it is replaced, not mutated. */
+export function ingestState(): IngestMockState {
+  return state;
+}
+
+/** Put the ingest mock back to its seed. Wired into the global `afterEach`. */
+export function resetMockState(): void {
+  state = seedState();
+}
+
+/** A fresh uuid-shaped id, so nothing minted twice collides. */
+export function mintId(): string {
+  state.minted += 1;
+  return `0199a000-0000-7000-8000-0000000009${String(state.minted).padStart(2, "0")}`;
+}
+
+/**
+ * A stable 64-hex digest of some bytes.
+ *
+ * Not sha256 — it does not have to be, it has to be a *function of the
+ * content*, so that uploading the same file twice is a duplicate for the same
+ * reason the real pipeline says it is, rather than because a handler was told
+ * to say so.
+ */
+export function contentHash(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let index = 0; index < text.length; index += 1) {
+    a = Math.imul(a ^ text.charCodeAt(index), 0x01000193) >>> 0;
+    b = Math.imul(b + text.charCodeAt(index) + index, 0x85ebca6b) >>> 0;
+  }
+  const word = (seed: number) =>
+    Math.imul(seed ^ (seed >>> 15), 0x2545f491 >>> 0)
+      .toString(16)
+      .padStart(8, "0")
+      .slice(-8);
+  return [a, b, a ^ b, Math.imul(a, 31) >>> 0]
+    .map((seed) => `${word(seed)}${word(seed + 1)}`)
+    .join("");
+}
+
+/**
+ * A session built from an uploaded file, the way the pipeline would build one.
+ *
+ * The duration is derived from the file's own digest rather than chosen: a
+ * mock cannot parse FIT, but it can make the answer a function of what was
+ * posted, which is what keeps a test from passing against a file it never
+ * sent.
+ */
+export function ingestedSessionFixture(
+  hash: string,
+  filename: string,
+): Schemas["SessionRead"] {
+  const seed = Number.parseInt(hash.slice(0, 6), 16);
+  const elapsed = 1800 + (seed % 7200);
+  const stop = seed % 2 === 0 ? [] : [{ start_index: 600, end_index: 900 }];
+  const paused = stop.reduce(
+    (total, range) => total + (range.end_index - range.start_index),
+    0,
+  );
+  const recording = elapsed - paused;
+  const start = new Date(Date.UTC(2026, 7, 7, 5, 0, 0));
+  const id = mintId();
+  return {
+    id,
+    local_date: "2026-08-07",
+    start_time: start.toISOString().replace(".000", ""),
+    end_time: new Date(start.getTime() + elapsed * 1000)
+      .toISOString()
+      .replace(".000", ""),
+    timezone: "UTC",
+    discipline: "cycling",
+    classification_source: "sport_field",
+    discipline_overridden: false,
+    recording_kind: "device",
+    status: "unmatched",
+    duration_s: recording,
+    recording_time_s: recording,
+    rpe: null,
+    notes: null,
+    recordings: [
+      {
+        id: mintId(),
+        file_hash: hash,
+        file_sport_index: 0,
+        original_ext: filename.split(".").pop() ?? "fit",
+        sport: "cycling",
+        elapsed_time_s: elapsed,
+        recording_time_s: recording,
+        recording_stops: stop,
+        median_time_delta_s: 1,
+        moving_time_s: recording,
+        power_source_candidates: ["Quarq DZero"],
+        power_source: "Quarq DZero",
+        power_source_rule: "only candidate",
+        hr_source_candidates: [],
+        hr_source: null,
+        hr_source_rule: null,
+        channels: ["power", "cadence", "speed"],
+        anomaly_count: 0,
+        created_at: "2026-08-07T07:00:00Z",
+      },
+    ],
+    logged_sets: [],
+    created_at: "2026-08-07T07:00:00Z",
+    updated_at: "2026-08-07T07:00:00Z",
+  };
+}

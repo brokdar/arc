@@ -2847,3 +2847,60 @@ A5.1) and the wall-clock duration for a manual one, with `recording_time_s`
 null in that case to say there was nothing to subtract; and `PATCH
 /sessions/{id}` accepts exactly `discipline` and `timezone`, because it exists
 to correct what the pipeline guessed rather than to edit history.
+
+## D100 — The inbox is the eighth section, its upload panel is permanent, and reject is offered only where the API accepts it
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+Four shapes settled while building Phase C's pages. None of them is in the
+mockup — D87 records that it does not draw these screens — so each is built
+from the design system's own vocabulary and each displaced a plausible
+alternative.
+
+**The sidebar gains an eighth entry, `Inbox`, after `Sessions`.** D61 fixed the
+nav at the seven sections the mockup previews, on the reasoning that a nav
+which grows a row per release reads as a different product each time. The
+watched folder needs a queue the athlete can answer, and that queue is a place —
+it survives a reload, it is linked from an empty session log, and it is where a
+missing ride is explained. What it displaced: hanging the quarantine queue off
+`/sessions` as a tab, which would have made it client state rather than an
+address (UI convention 1), and hidden the one page whose whole job is to be
+found when something went wrong. It sits *after* Sessions because that is the
+direction the athlete travels: you go looking for the inbox because of a ride
+that is missing from the log, not the other way round. Three entries remain
+dimmed (Analysis, Coach, Settings), and `sidebar-nav.test.tsx` still enforces
+that a ready section carries no arrival note.
+
+**The upload control is a permanent panel at the top of `/inbox`, not an empty
+state that appears when the queue is clear.** UI convention 3 asks an empty
+state to name the missing input and the control that supplies it; the obvious
+reading is to render the control only when there is nothing waiting. That was
+tried and displaced: uploading a file that gets quarantined makes the queue
+non-empty, so the control — and the outcome message attached to it — would move
+or vanish at exactly the moment the athlete is reading it. One fixed position,
+copy that names both routes in ("drop them in the folder, or upload one here"),
+and the queue's own empty line beneath it.
+
+**Reject is rendered only for `suspected_duplicate`.** The API answers 409 for
+every other reason (D98), so the alternative was to render the button
+everywhere and print the refusal. Displaced: offering an action whose only
+possible outcome is a refusal is an offer the application does not mean. The
+409 is still rendered — it is reachable when a second tab or an MCP tool
+resolved the record first — and both the confirm and the reject path assert it,
+each card owning its own mutation so a refusal lands on the record it was
+about rather than under every row at once.
+
+**A metric grid's placeholder carries the work package that will fill it.** The
+load column on `/sessions` renders `NotAssessed` with the reason "Training load
+arrives with WP-5" rather than a bare dash. Same rule as D61's arrival notes on
+the dimmed nav entries, applied to a column: a slot that says nothing reads as
+a number that failed to load, and this one is a number that does not exist yet.
+
+One test-environment fact worth recording beside these, because it is invisible
+and cost an hour: **jsdom's `File`/`Blob`/`FormData` cannot be posted through
+`fetch`.** The fetch that MSW intercepts is Node's, and it brand-checks the
+values inside a `FormData`; a file picked up by an `<input type="file">` under
+jsdom therefore arrives at the server as a nameless, empty part, silently and
+with no error anywhere. `vitest.setup.ts` now installs the runtime's own three
+constructors over jsdom's. Without that, the upload tests would pass against a
+request that carried nothing.

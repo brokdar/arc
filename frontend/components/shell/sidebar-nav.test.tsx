@@ -39,6 +39,8 @@ describe("SidebarNav", () => {
     for (const [label, href] of [
       ["Today", "/today"],
       ["Calendar", "/calendar"],
+      ["Sessions", "/sessions"],
+      ["Inbox", "/inbox"],
       ["Workouts", "/workouts"],
     ] as const) {
       expect(screen.getByRole("link", { name: label })).toHaveAttribute(
@@ -67,13 +69,14 @@ describe("SidebarNav", () => {
     );
   });
 
-  it("lists all seven sections the app is going to have", () => {
+  it("lists all eight sections the app is going to have", () => {
     render(<SidebarNav />);
 
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       "Today",
       "Calendar",
       "Sessions",
+      "Inbox",
       "Workouts",
       "Analysis",
       "Coach",
@@ -102,9 +105,8 @@ describe("SidebarNav", () => {
 describe("a section whose page has not landed", () => {
   const unready = NAV_ITEMS.filter((item) => !item.ready);
 
-  it("previews four of them", () => {
+  it("previews three of them", () => {
     expect(unready.map((item) => item.label)).toEqual([
-      "Sessions",
       "Analysis",
       "Coach",
       "Settings",
