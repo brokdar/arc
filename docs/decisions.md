@@ -1521,3 +1521,134 @@ the 1 Hz expansion would try to materialise a list of 43 million floats on a
 A day is far past anything the MVP plans, and "not predictable" is a state the
 callers already handle, so the ceiling costs nothing that exists and removes an
 out-of-memory read.
+
+## D66 — The library shows no purpose badge: a workout has no purpose
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Cards in `/workouts` carry the discipline glyph, the prescription's own measure
+(minutes for a ride, sets for a lift), the bar profile, the name and the
+folder/tag labels — and no `PurposeBadge`, though every other surface in the
+application leads with one.
+
+This displaces adding a `purpose` column to `Workout`, and inferring one from
+the shape of the step tree.
+
+*Rationale:* `WorkoutRead` has no purpose because `Workout` has none. Purpose is
+a field of **intent** (`SessionIntentRead.purpose`) — it says why *this session,
+on this date* exists, and the same 2×20 is a threshold session in March and a
+tune-up before a test in June. Storing one on the library row would make the
+library assert something it cannot know and would have to be overridden at every
+planning; inferring one from the targets would be a guess presented in the same
+chip that elsewhere carries a fact. The purpose is chosen where it is true: in
+the plan-a-session form.
+
+## D67 — Success criteria follow the purpose template until the athlete touches them
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The plan-a-session form loads `GET /purposes/{purpose}`'s `default_criteria`
+into its criteria editor and **re-derives them whenever the purpose changes** —
+until the first edit, add or removal, after which the list is the athlete's and
+the purpose no longer touches it. A "reset to the purpose's template" action
+puts it back under the template's control deliberately.
+
+This displaces the two simpler rules: filling the criteria once when the form
+opens and never again, and re-deriving them on every purpose change.
+
+*Rationale:* fill-once is wrong because the first thing anyone does in that
+form is pick the purpose — the criteria that were pre-filled belong to whatever
+the form defaulted to, not to the session being planned. Always-re-derive is
+wrong because it silently discards a rule the athlete wrote, and the purpose
+select is one keystroke away from being brushed. The touched flag distinguishes
+"I have not said anything about this" from "I have", which is the actual state
+of the world; the reset action means the first state is reachable again without
+starting over.
+
+## D68 — The builder mirrors the domain's bounds; the API's 422 stays the authority
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`lib/workout-draft.ts` restates a handful of constants from
+`app/domain/workout.py` and `app/domain/strength.py` — the channel→anchor map,
+the per-channel plausibility bounds, the nesting depth, the sets/reps/RIR/load
+ranges — and `validateDraft` refuses a save that would break them. Everything
+the client cannot see (an anchor with no version in force, a purpose that
+disagrees with the prescription's discipline, the flattened-step ceiling) is
+left to the backend, and `apiErrorMessages` renders whatever comes back into
+the same list of sentences.
+
+This displaces both extremes: validating nothing on the client and letting the
+422 be the only feedback, and generating a client-side validator from the
+OpenAPI schema.
+
+*Rationale:* the bounds duplicated here are the ones an athlete trips *while
+typing* — a cadence target as a percentage of FTP, an empty repeat block, a
+blank load on a kg line — and a round trip to be told so makes a forty-field
+form unusable. They are also the stable half of the rule set: they are
+plausibility limits, not policy. The rules deliberately left out are the ones
+that depend on state the browser does not hold, and pretending to check them
+would produce a client that is confidently wrong. The duplication is
+acknowledged rather than hidden: the module says which file each constant
+mirrors, and the 422 path is a first-class rendering, not a fallback.
+
+## D69 — "Edit" on a planned session edits the session, not the workout behind it
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The session sheet's Edit button opens the plan-a-session form on that session
+(PATCH `/planned-sessions/{id}`). When the session was planned from the
+library, a separate, quieter "Open workout" link goes to `/workouts/{id}`.
+
+This displaces slice 1's placeholder, which sent Edit to
+`/workouts/${workout_id ?? "new"}`.
+
+*Rationale:* a planned session carries a **frozen snapshot** of its
+prescription plus its own purpose, intent, notes and criteria (invariant 4).
+Editing the library workout changes neither this session nor any other already
+planned from it — so an Edit that opened the workout would appear to do nothing,
+and, worse, would silently change what *future* sessions get. Sending Edit at
+the session is the only reading under which the button does what it says. The
+workout is still one click away, labelled as the different thing it is.
+
+## D70 — The builder's draft is a string-typed client model, not a partial structure
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The workout builder's state is `WorkoutDraft` (`lib/workout-draft.ts`): the same
+tree shape as the API's structure document, but with every number held as the
+string the athlete typed and every node carrying a client-side `id`. Three pure
+functions cross the boundary — `structureFromDraft` (lenient, so the live
+preview keeps drawing), `validateDraft` (strict, and what stops a save) and
+`draftFromStructure` (the inverse, for the edit form).
+
+This displaces holding a `WorkoutStructure` with nullable fields and editing it
+in place.
+
+*Rationale:* a form and a payload want opposite things. `1` on its way to `12`
+is a legal thing to have in a field and an illegal duration to prescribe; a
+number-typed model coerces the empty field to `0` and makes it impossible to
+clear or to lead with a decimal point. Identity is the other half: steps and
+targets are positions in a tree, so the payload gives them no ids — but React
+needs stable keys and every edit needs to name the node it edits without an
+index path through the nesting. Client ids give both, and they are stripped on
+the way out, so nothing invented for the editor's convenience reaches the API.
+
+## D71 — Today's coach notes render on a neutral surface
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The Today view's "Watch for" panel — the mockup's violet, coach-tinted intent
+card — is rendered as a plain `Panel` in the ordinary ink, and the design
+system's `--color-coach-*` tokens go unused for another work package.
+
+This displaces reproducing the mockup's treatment for the field the panel is
+actually sourced from.
+
+*Rationale:* the tokens exist to satisfy build-plan invariant 7 — agent-written
+text must be visually distinguishable from computed findings wherever it lands.
+The field this panel reads, `SessionIntent.coach_notes`, is written by the
+*athlete* in the plan form; there is no agent in the MVP yet. Spending the
+violet on athlete-authored text now would either have to be taken back when
+WP-8 lands, or would leave the one visual signal that means "a model wrote
+this" already meaning something else.

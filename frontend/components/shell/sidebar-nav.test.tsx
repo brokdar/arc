@@ -33,11 +33,29 @@ describe("SidebarNav", () => {
     );
   });
 
-  it("does not link to a section that has no page yet", () => {
+  it("links every section whose page has landed", () => {
     render(<SidebarNav />);
 
-    expect(screen.queryByRole("link", { name: "Today" })).toBeNull();
-    expect(screen.getByText("Today")).toBeInTheDocument();
+    for (const [label, href] of [
+      ["Today", "/today"],
+      ["Calendar", "/calendar"],
+      ["Workouts", "/workouts"],
+    ] as const) {
+      expect(screen.getByRole("link", { name: label })).toHaveAttribute(
+        "href",
+        href,
+      );
+    }
+  });
+
+  it("marks the section a nested route belongs to", () => {
+    pathname.current = "/workouts/new";
+    render(<SidebarNav />);
+
+    expect(screen.getByRole("link", { name: "Workouts" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("carries the wordmark back to the calendar", () => {

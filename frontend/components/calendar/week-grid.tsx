@@ -21,10 +21,18 @@ export interface WeekGridProps {
   readonly onOpen: (session: WeekSession) => void;
   /** Called when a card is dropped on a *different* day. */
   readonly onMove: (sessionId: string, toDate: string) => void;
+  /** Called with the day whose "+" was clicked, to open the plan form on it. */
+  readonly onPlan: (date: string) => void;
 }
 
 /** Seven Monday-first columns. The week endpoint always returns seven days. */
-export function WeekGrid({ days, today, onOpen, onMove }: WeekGridProps) {
+export function WeekGrid({
+  days,
+  today,
+  onOpen,
+  onMove,
+  onPlan,
+}: WeekGridProps) {
   const [dragging, setDragging] = useState(false);
 
   return (
@@ -37,6 +45,7 @@ export function WeekGrid({ days, today, onOpen, onMove }: WeekGridProps) {
           dragInProgress={dragging}
           onOpen={onOpen}
           onMove={onMove}
+          onPlan={onPlan}
           onDragStateChange={setDragging}
         />
       ))}
@@ -50,6 +59,7 @@ interface DayColumnProps {
   readonly dragInProgress: boolean;
   readonly onOpen: (session: WeekSession) => void;
   readonly onMove: (sessionId: string, toDate: string) => void;
+  readonly onPlan: (date: string) => void;
   readonly onDragStateChange: (dragging: boolean) => void;
 }
 
@@ -59,6 +69,7 @@ function DayColumn({
   dragInProgress,
   onOpen,
   onMove,
+  onPlan,
   onDragStateChange,
 }: DayColumnProps) {
   const [over, setOver] = useState(false);
@@ -96,7 +107,7 @@ function DayColumn({
         }
       }}
       className={cn(
-        "flex min-w-0 flex-col gap-2 rounded-card p-1 transition-colors",
+        "group/day flex min-w-0 flex-col gap-2 rounded-card p-1 transition-colors",
         over
           ? "bg-[rgb(76_141_255/0.07)] outline-2 outline-accent-border outline-dashed"
           : dragInProgress
@@ -135,8 +146,19 @@ function DayColumn({
       ))}
 
       {day.sessions.length === 0 ? (
-        <p className="px-1 py-3 text-2xs text-ink-faint">Rest</p>
+        <p className="px-1 pt-2 text-2xs text-ink-faint">Rest</p>
       ) : null}
+
+      {/* One affordance per day, so "plan something on Thursday" is a click on
+          Thursday rather than a click plus a date picker. */}
+      <button
+        type="button"
+        aria-label={`Plan a session on ${weekdayLabel(day.date)} ${formatDayMonth(day.date)}`}
+        onClick={() => onPlan(day.date)}
+        className="mt-1 rounded-button border border-hairline border-dashed py-1.5 text-ink-faint text-xs opacity-0 transition-opacity hover:bg-card-hover hover:text-ink-muted focus-visible:opacity-100 group-hover/day:opacity-100"
+      >
+        +
+      </button>
     </section>
   );
 }

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { describeCriterion, type SuccessCriterion } from "@/lib/criteria";
+import {
+  blankCriterion,
+  CRITERION_KIND_LABELS,
+  criterionKindsFor,
+  describeCriterion,
+  type SuccessCriterion,
+} from "@/lib/criteria";
 
 describe("describeCriterion", () => {
   it("phrases a time-in-band criterion in terms of the steps it selects", () => {
@@ -70,5 +76,39 @@ describe("describeCriterion", () => {
     expect(
       describeCriterion({ kind: "load_within", pct_tolerance: 0.05 }),
     ).toBe("Loads within 5% of what was prescribed");
+  });
+});
+
+describe("criterionKindsFor", () => {
+  it("offers each discipline only what it can be judged by", () => {
+    expect(criterionKindsFor("cycling")).not.toContain("sets_completed");
+    expect(criterionKindsFor("strength")).not.toContain("time_in_band");
+    // A minimum duration means the same thing on a bike and in a gym.
+    expect(criterionKindsFor("cycling")).toContain("duration_floor");
+    expect(criterionKindsFor("strength")).toContain("duration_floor");
+  });
+
+  it("labels every kind it offers", () => {
+    for (const kind of [
+      ...criterionKindsFor("cycling"),
+      ...criterionKindsFor("strength"),
+    ]) {
+      expect(CRITERION_KIND_LABELS[kind]).toBeTruthy();
+    }
+  });
+});
+
+describe("blankCriterion", () => {
+  it("starts each kind at a rule, not at a tautology", () => {
+    expect(describeCriterion(blankCriterion("time_in_band"))).toBe(
+      "80% of the work steps' time within 95%\u2013105% of the prescribed power",
+    );
+    expect(describeCriterion(blankCriterion("sets_completed"))).toBe(
+      "90% of the prescribed sets completed",
+    );
+    expect(blankCriterion("duration_floor")).toEqual({
+      kind: "duration_floor",
+      min_seconds: 3600,
+    });
   });
 });

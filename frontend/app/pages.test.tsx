@@ -4,6 +4,9 @@ import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import CalendarPage from "@/app/(app)/calendar/page";
 import AppLayout from "@/app/(app)/layout";
+import TodayPage from "@/app/(app)/today/page";
+import WorkoutPage from "@/app/(app)/workouts/[id]/page";
+import WorkoutsPage from "@/app/(app)/workouts/page";
 import LoginPage from "@/app/login/page";
 import Home from "@/app/page";
 import { Providers } from "@/app/providers";
@@ -63,6 +66,41 @@ describe("route shells", () => {
     expect(await screen.findByText("page content")).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", { name: "Sections" }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the today page", async () => {
+    render(
+      <Providers>
+        <TodayPage />
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the workout library", async () => {
+    render(
+      <Providers>
+        <WorkoutsPage />
+      </Providers>,
+    );
+
+    expect(await screen.findByLabelText("Search")).toBeInTheDocument();
+  });
+
+  it("routes /workouts/new at the creator, and an id at the editor", async () => {
+    render(
+      <Providers>
+        {await WorkoutPage({ params: Promise.resolve({ id: "new" }) })}
+      </Providers>,
+    );
+
+    expect(await screen.findByText("New workout")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save workout" }),
     ).toBeInTheDocument();
   });
 

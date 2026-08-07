@@ -288,7 +288,7 @@ describe("CalendarWeek", () => {
     );
     const sheet = await screen.findByRole("dialog");
 
-    expect(within(sheet).getByText("Barbell back squat")).toBeInTheDocument();
+    expect(within(sheet).getByText("Back Squat")).toBeInTheDocument();
     expect(within(sheet).getByText("Superset A")).toBeInTheDocument();
     expect(
       within(sheet).getByText(/4×5 · 82% e1RM · RIR 2/),
@@ -350,6 +350,44 @@ describe("CalendarWeek", () => {
     await waitFor(() =>
       expect(patched).toHaveBeenCalledWith({ plan_state: "active" }),
     );
+  });
+
+  it("plans a session on the day whose + was clicked", async () => {
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    const thursday = addDays(start, 3);
+    await userEvent.click(
+      within(screen.getByTestId(`day-${thursday}`)).getByRole("button", {
+        name: /^Plan a session on/,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Plan a session" }),
+    ).toBeInTheDocument();
+    // Pre-filled from the column, so planning Thursday is one click.
+    expect(await screen.findByLabelText("Date")).toHaveValue(thursday);
+  });
+
+  it("edits the session itself from the sheet, not the workout behind it", async () => {
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+    // The library workout is one click away, but it is a different thing.
+    expect(
+      within(sheet).getByRole("link", { name: "Open workout" }),
+    ).toHaveAttribute("href", "/workouts/0199a000-0000-7000-8000-0000000000aa");
+
+    await userEvent.click(
+      within(sheet).getByRole("button", { name: "Edit session" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Edit session" }),
+    ).toBeInTheDocument();
   });
 
   it("reports a week it could not load instead of showing an empty one", async () => {

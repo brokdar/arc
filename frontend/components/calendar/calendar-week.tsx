@@ -11,6 +11,7 @@ import type { WeekSession } from "@/components/calendar/session-card";
 import { SessionSheet } from "@/components/calendar/session-sheet";
 import { WeekGrid } from "@/components/calendar/week-grid";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
+import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
@@ -40,6 +41,12 @@ export function CalendarWeek() {
   const [today] = useState(todayIsoDate);
   const [start, setStart] = useState(() => mondayOf(today));
   const [openSession, setOpenSession] = useState<WeekSession | null>(null);
+  // The plan form is one component in two modes: `{ date }` plans a new
+  // session on that day, `{ date, sessionId }` revises an existing one.
+  const [planning, setPlanning] = useState<{
+    date: string;
+    sessionId?: string;
+  } | null>(null);
 
   const queryClient = useQueryClient();
   const weekInit = { params: { query: { start } } };
@@ -143,8 +150,11 @@ export function CalendarWeek() {
         >
           This week
         </Button>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
           <PlanStateToggle />
+          <Button size="sm" onClick={() => setPlanning({ date: today })}>
+            Plan a session
+          </Button>
         </div>
       </Toolbar>
 
@@ -178,6 +188,7 @@ export function CalendarWeek() {
             today={today}
             onOpen={setOpenSession}
             onMove={moveSession}
+            onPlan={(date) => setPlanning({ date })}
           />
         )}
       </PageBody>
@@ -203,7 +214,19 @@ export function CalendarWeek() {
           });
           setOpenSession(null);
         }}
+        onEdit={(session) => {
+          setPlanning({ date: session.date, sessionId: session.id });
+          setOpenSession(null);
+        }}
       />
+
+      {planning ? (
+        <SessionForm
+          date={planning.date}
+          sessionId={planning.sessionId ?? null}
+          onClose={() => setPlanning(null)}
+        />
+      ) : null}
     </>
   );
 }

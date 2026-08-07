@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { CalendarIcon, type IconProps, TodayIcon } from "@/components/icons";
+import {
+  CalendarIcon,
+  type IconProps,
+  TodayIcon,
+  WorkoutsIcon,
+} from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -20,8 +25,9 @@ interface NavItem {
 
 /** The sections of the app, in the order the sidebar lists them. */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/today", label: "Today", icon: TodayIcon, ready: false },
+  { href: "/today", label: "Today", icon: TodayIcon, ready: true },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon, ready: true },
+  { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
 ];
 
 export function SidebarNav() {
@@ -48,7 +54,10 @@ export function SidebarNav() {
       <ul className="flex flex-col gap-px">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          // Prefix match, so `/workouts/new` still lights up "Workouts": a
+          // nested route is somewhere *inside* a section, not somewhere else.
+          const active =
+            pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
             <li key={item.href}>
               {item.ready ? (

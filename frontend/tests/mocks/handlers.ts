@@ -2,7 +2,17 @@ import { createOpenApiHttp } from "openapi-msw";
 
 import type { paths } from "@/generated/api/schema";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
-import { plannedSessionFixture, planWeekFixture } from "@/tests/mocks/fixtures";
+import {
+  anchorVersionFixture,
+  EXERCISES,
+  plannedSessionFixture,
+  planWeekFixture,
+  purposeTemplateFixture,
+  SESSION_IDS,
+  WORKOUT_LABELS,
+  WORKOUTS,
+  workoutFixture,
+} from "@/tests/mocks/fixtures";
 
 /**
  * Typed MSW handlers: paths, params, and response bodies are all inferred
@@ -69,4 +79,69 @@ export const handlers = [
   http.delete("/api/v1/planned-sessions/{planned_session_id}", ({ response }) =>
     response(204).empty(),
   ),
+  http.post("/api/v1/planned-sessions", ({ response }) =>
+    response(201).json(plannedSessionFixture(SESSION_IDS.vo2)),
+  ),
+  http.patch(
+    "/api/v1/planned-sessions/{planned_session_id}",
+    ({ params, response }) =>
+      response(200).json(plannedSessionFixture(params.planned_session_id)),
+  ),
+
+  // The library, the catalogue and the templates the creator draws on. The
+  // list endpoint filters here the way the API does, so a search test is a
+  // test of the *component's* query, not of a stubbed result.
+  http.get("/api/v1/workouts", ({ query, response }) => {
+    const search = query.get("q")?.toLowerCase() ?? "";
+    const folder = query.get("folder");
+    const tag = query.get("tag");
+    const discipline = query.get("discipline");
+    const items = WORKOUTS.filter(
+      (workout) =>
+        (search === "" ||
+          workout.name.toLowerCase().includes(search) ||
+          (workout.description ?? "").toLowerCase().includes(search)) &&
+        (!folder || workout.folder === folder) &&
+        (!tag || workout.tags.includes(tag)) &&
+        (!discipline || workout.discipline === discipline),
+    );
+    return response(200).json({
+      items,
+      total: items.length,
+      offset: 0,
+      limit: 100,
+    });
+  }),
+  http.get("/api/v1/workouts/{workout_id}", ({ params, response }) =>
+    response(200).json(workoutFixture(params.workout_id)),
+  ),
+  http.post("/api/v1/workouts", ({ response }) =>
+    response(201).json(workoutFixture(WORKOUTS[0]?.id ?? "")),
+  ),
+  http.patch("/api/v1/workouts/{workout_id}", ({ params, response }) =>
+    response(200).json(workoutFixture(params.workout_id)),
+  ),
+  http.delete("/api/v1/workouts/{workout_id}", ({ response }) =>
+    response(204).empty(),
+  ),
+  http.get("/api/v1/workout-labels", ({ response }) =>
+    response(200).json(WORKOUT_LABELS),
+  ),
+  http.get("/api/v1/exercises", ({ response }) =>
+    response(200).json({
+      items: EXERCISES,
+      total: EXERCISES.length,
+      offset: 0,
+      limit: 200,
+    }),
+  ),
+  http.get("/api/v1/purposes/{purpose}", ({ params, response }) =>
+    response(200).json(purposeTemplateFixture(params.purpose)),
+  ),
+  http.get("/api/v1/anchors/current", ({ query, response }) => {
+    const anchorType = query.get("anchor_type");
+    return anchorType === "ftp" || anchorType === "lthr"
+      ? response(200).json(anchorVersionFixture(anchorType))
+      : response(404).json({ detail: "No max_hr version in force" });
+  }),
 ];

@@ -205,7 +205,7 @@ const STRENGTH_STRUCTURE: Schemas["StrengthStructureSchema"] = {
       label: null,
       items: [
         {
-          exercise_id: "barbell-back-squat",
+          exercise_id: "back_squat",
           sets: 4,
           reps: 5,
           load: { kind: "percent_e1rm", value: 0.82 },
@@ -220,7 +220,7 @@ const STRENGTH_STRUCTURE: Schemas["StrengthStructureSchema"] = {
       label: "Superset A",
       items: [
         {
-          exercise_id: "romanian-deadlift",
+          exercise_id: "romanian_deadlift",
           sets: 3,
           reps: 8,
           load: { kind: "kg", value: 80 },
@@ -230,7 +230,7 @@ const STRENGTH_STRUCTURE: Schemas["StrengthStructureSchema"] = {
           notes: null,
         },
         {
-          exercise_id: "hanging-leg-raise",
+          exercise_id: "hanging_leg_raise",
           sets: 3,
           reps: 12,
           load: { kind: "bodyweight", value: null },
@@ -304,4 +304,231 @@ export function plannedSessionFixture(
       },
     },
   };
+}
+
+// --- library, catalogue and templates ----------------------------------------
+
+export const WORKOUT_IDS = {
+  vo2: "0199a000-0000-7000-8000-0000000000aa",
+  long: "0199a000-0000-7000-8000-0000000000bb",
+  lower: "0199a000-0000-7000-8000-0000000000cc",
+} as const;
+
+const LONG_STRUCTURE: Schemas["EnduranceStructureSchema-Output"] = {
+  discipline: "cycling",
+  steps: [
+    {
+      kind: "steady",
+      role: "warmup",
+      name: "Roll out",
+      duration_s: 900,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.5,
+          pct_high: 0.6,
+        },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "work",
+      name: "Endurance",
+      duration_s: 9600,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.62,
+          pct_high: 0.72,
+        },
+        hr: { kind: "absolute", unit: "bpm", low: 120, high: 148 },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "cooldown",
+      name: "Spin home",
+      duration_s: 900,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.4,
+          pct_high: 0.5,
+        },
+      },
+      distance_m: null,
+    },
+  ],
+};
+
+/** The three workouts the library tests search through. */
+export const WORKOUTS: Schemas["WorkoutRead"][] = [
+  {
+    id: WORKOUT_IDS.vo2,
+    name: "VO₂ 5×4′",
+    description: "Five hard fours with three easy between.",
+    discipline: "cycling",
+    folder: "Intervals",
+    tags: ["vo2max", "indoor"],
+    structure: VO2_STRUCTURE,
+    summary: { step_count: 11, total_duration_s: 4140, total_sets: null },
+    created_at: "2026-07-01T09:00:00Z",
+    updated_at: "2026-07-01T09:00:00Z",
+  },
+  {
+    id: WORKOUT_IDS.long,
+    name: "Long endurance",
+    description: "Three and a half hours, flat as you can find.",
+    discipline: "cycling",
+    folder: "Base",
+    tags: ["endurance"],
+    structure: LONG_STRUCTURE,
+    summary: { step_count: 3, total_duration_s: 11400, total_sets: null },
+    created_at: "2026-06-20T09:00:00Z",
+    updated_at: "2026-06-20T09:00:00Z",
+  },
+  {
+    id: WORKOUT_IDS.lower,
+    name: "Strength — lower",
+    description: null,
+    discipline: "strength",
+    folder: "Gym",
+    tags: ["lower"],
+    structure: STRENGTH_STRUCTURE,
+    summary: { step_count: 3, total_duration_s: null, total_sets: 16 },
+    created_at: "2026-06-01T09:00:00Z",
+    updated_at: "2026-06-01T09:00:00Z",
+  },
+];
+
+export const WORKOUT_LABELS: Schemas["WorkoutLabelsRead"] = {
+  folders: ["Base", "Gym", "Intervals"],
+  tags: ["endurance", "indoor", "lower", "vo2max"],
+};
+
+/** A slice of the movement catalogue — enough to pick from and to name. */
+export const EXERCISES: Schemas["ExerciseRead"][] = [
+  {
+    id: "back_squat",
+    name: "Back Squat",
+    category: "squat",
+    unilateral: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "romanian_deadlift",
+    name: "Romanian Deadlift",
+    category: "hinge",
+    unilateral: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "hanging_leg_raise",
+    name: "Hanging Leg Raise",
+    category: "core",
+    unilateral: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+];
+
+const ENDURANCE_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
+  {
+    kind: "time_in_band",
+    band: { channel: "power", low: 0.92, high: 1.08 },
+    min_fraction: 0.7,
+    selector: { kind: "all", role: null, index: null },
+  },
+  { kind: "duration_floor", min_seconds: 5400 },
+];
+
+const VO2_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
+  {
+    kind: "time_in_band",
+    band: { channel: "power", low: 0.95, high: 1.05 },
+    min_fraction: 0.85,
+    selector: { kind: "role", role: "work", index: null },
+  },
+];
+
+const STRENGTH_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
+  { kind: "sets_completed", min_fraction: 0.9 },
+  { kind: "load_within", pct_tolerance: 0.05 },
+];
+
+/**
+ * A purpose's template. Three distinct shapes — endurance, VO₂max and the
+ * strength family — so a test can watch the criteria list change when the
+ * purpose does, and change *discipline* when it crosses the vocabulary.
+ */
+export function purposeTemplateFixture(
+  purpose: Schemas["Purpose"],
+): Schemas["PurposeTemplateRead"] {
+  const strength = STRENGTH_PURPOSES.has(purpose);
+  return {
+    purpose,
+    discipline: strength ? "strength" : "cycling",
+    description: null,
+    axes: strength
+      ? ["completion", "sets_load"]
+      : ["completion", "adherence", "discipline"],
+    default_criteria: strength
+      ? STRENGTH_DEFAULTS
+      : purpose === "vo2max"
+        ? VO2_DEFAULTS
+        : ENDURANCE_DEFAULTS,
+  };
+}
+
+const STRENGTH_PURPOSES = new Set<Schemas["Purpose"]>([
+  "max_strength",
+  "strength_endurance",
+  "hypertrophy",
+  "power",
+  "core",
+  "mobility",
+  "conditioning",
+]);
+
+/** The FTP in force, so the Today view can resolve `% of FTP` into watts. */
+export function anchorVersionFixture(
+  anchorType: Schemas["AnchorType"],
+): Schemas["AnchorVersionRead"] {
+  const values: Partial<
+    Record<Schemas["AnchorType"], [number, Schemas["AnchorUnit"]]>
+  > = {
+    ftp: [250, "W"],
+    lthr: [162, "bpm"],
+    max_hr: [188, "bpm"],
+  };
+  const [value, unit] = values[anchorType] ?? [250, "W"];
+  return {
+    id: `0199a000-0000-7000-8000-0000000000f1`,
+    anchor_type: anchorType,
+    value,
+    unit,
+    provenance: "tested",
+    source: "athlete",
+    staleness_state: "fresh",
+    effective_date: "2026-06-01",
+    protocol: null,
+    ci_low: null,
+    ci_high: null,
+    created_at: "2026-06-01T09:00:00Z",
+  };
+}
+
+/** One library workout, by id — the editor's GET. */
+export function workoutFixture(workoutId: string): Schemas["WorkoutRead"] {
+  return (
+    WORKOUTS.find((workout) => workout.id === workoutId) ??
+    (WORKOUTS[0] as Schemas["WorkoutRead"])
+  );
 }

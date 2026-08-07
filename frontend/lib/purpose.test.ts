@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import openapi from "@/generated/api/openapi.json";
-import { PURPOSE_TONES, purposeLabel, STATUS_TONES } from "@/lib/purpose";
+import type { Purpose } from "@/lib/purpose";
+import {
+  disciplineOfPurpose,
+  PURPOSE_TONES,
+  purposeInSentence,
+  purposeLabel,
+  purposesFor,
+  STATUS_TONES,
+} from "@/lib/purpose";
 
 /**
  * Read the vocabulary out of the committed contract rather than restating it.
@@ -56,5 +64,40 @@ describe("STATUS_TONES", () => {
     expect(Object.keys(STATUS_TONES).sort()).toEqual(
       enumValues("app__domain__sessions__SessionStatus").sort(),
     );
+  });
+});
+
+describe("purposeInSentence", () => {
+  it("lowercases a common noun phrase and leaves a proper form alone", () => {
+    expect(purposeInSentence("endurance")).toBe("endurance");
+    expect(purposeInSentence("sweet_spot")).toBe("sweet spot");
+    expect(purposeInSentence("max_strength")).toBe("max strength");
+    expect(purposeInSentence("vo2max")).toBe("VO\u2082max");
+  });
+});
+
+describe("the discipline split", () => {
+  const purposes = enumValues("Purpose") as Purpose[];
+
+  it("assigns every purpose to exactly one discipline", () => {
+    const cycling = purposesFor("cycling");
+    const strength = purposesFor("strength");
+
+    expect(cycling.length + strength.length).toBe(purposes.length);
+    expect(new Set([...cycling, ...strength]).size).toBe(purposes.length);
+  });
+
+  it("puts the strength family where the backend does", () => {
+    expect(purposesFor("strength")).toEqual([
+      "max_strength",
+      "strength_endurance",
+      "hypertrophy",
+      "power",
+      "core",
+      "mobility",
+      "conditioning",
+    ]);
+    expect(disciplineOfPurpose("vo2max")).toBe("cycling");
+    expect(disciplineOfPurpose("core")).toBe("strength");
   });
 });

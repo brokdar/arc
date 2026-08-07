@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### WP-3 — calendar & plan API, design system, week UI
 
-The plan becomes something you can look at and rearrange. Decisions D55–D63.
+The plan becomes something you can look at, rearrange, and fill. Decisions
+D55–D71.
 
 **API (`backend/app/`)**
 
@@ -66,6 +67,81 @@ The plan becomes something you can look at and rearrange. Decisions D55–D63.
 - Sections whose pages have not landed yet are listed dimmed rather than linked
   to a 404 (D61); calendar cards carry no bar profile, because the week payload
   deliberately carries no step trees (D62).
+
+**Web — workout library and creator**
+
+- Added `/workouts`: the library as a grid of cards — discipline glyph, the
+  prescription's own measure (minutes for a ride, sets for a lift), the bar
+  profile, description and the folder/tag labels — with a search box and
+  folder/tag filters that go to the server (`q`, `folder`, `tag`) rather than
+  filtering one fetched page. A card carries **no purpose badge**: a workout has
+  no purpose, because purpose is a property of planning a session, not of the
+  prescription (D66). The empty state names the remedy and carries the control.
+- Added `/workouts/new` and `/workouts/{id}` — one route, one form, two verbs
+  (POST / PATCH) — with name, folder (autocompleting from labels in use), tags,
+  description, and a discipline switch that is fixed once a workout is saved.
+- **Endurance builder**: a step-tree editor that mirrors the recursive model —
+  steady steps, ramps and repeat blocks, with children rendered *inside* the
+  block that repeats them, per-step role and duration-or-distance, reordering
+  and removal, and nesting stopped at the domain's `MAX_NESTING_DEPTH`.
+- **Per-channel targets** with a %-of-anchor / absolute toggle that switches the
+  *document*, not the formatting: percentage targets carry an anchor and two
+  fractions, absolute ones a unit and two numbers. Cadence is offered in
+  absolute form only, because no anchor derives it.
+- **Live profile preview**, drawn from the unsaved draft through the same
+  `profileBars` the calendar uses, so a repeat block's expansion is visible
+  while it is being typed.
+- **Strength builder**: rows of movement × sets × reps × load (kg / %e1RM / RPE
+  / bodyweight) × RIR × rest, grouped — and a group holding more than one row
+  *is* a superset, with no flag to keep in step with the count. The movement
+  picker resolves real names from `GET /exercises`, which the calendar sheet now
+  uses too instead of prettifying a slug.
+- The builder's state is a string-typed client draft with client-side node ids,
+  translated to and from the API's structure document by three pure functions
+  (D70). It mirrors the domain's plausibility bounds so an obvious mistake is
+  caught without a round trip, and renders the API's 422 verbatim when the
+  server refuses something the browser could not have known about (D68).
+
+**Web — planning a session**
+
+- Added the plan-a-session form, reached from the calendar toolbar, from a
+  per-day `+` on any column (pre-filled with that date), and from Today. It
+  takes a date, a purpose (grouped by discipline), a prescription from **either**
+  the library — with a picker that previews the profile — **or** the inline
+  builder, an intent line, notes to self, and the success criteria.
+- **Success criteria follow the purpose's template until the athlete touches
+  them** (D67): the template is loaded from `GET /purposes/{purpose}` and
+  re-derived whenever the purpose changes, until the first edit; a reset action
+  puts the list back under the template's control. Criteria are shown and edited
+  as the English sentences `describeCriterion` produces, and only the kinds the
+  discipline can be judged by are on offer.
+- **Editing** a planned session opens the same form pre-filled and PATCHes only
+  the fields that changed, so a note fixed in place does not re-pin anchors and
+  a body never carries both `workout_id` and `structure`. The session sheet's
+  Edit now edits the *session*; the library workout behind it is a separate,
+  quieter link (D69).
+
+**Web — Today**
+
+- Added `/today`: the purpose badge and date, a **one-sentence headline composed
+  from the plan** ("3h10 endurance ride — steady Z2", "1h09 VO₂max ride — 5×4′
+  at Z5", "10 sets of max strength — 3 movements, one superset") by a pure
+  helper, the intent line, the large bar profile with a zone legend, a Targets
+  panel giving each channel's band across the whole prescription, the success
+  criteria, and a "This week" list linking to the calendar.
+- Percentage targets are resolved into watts and bpm **only when the anchor they
+  name is in force**, and the resolved figure always shows the percentage it
+  came from; with no anchor entered, the panel stays in percentages rather than
+  inventing a number.
+- The athlete's own notes render on a neutral surface: the design system's
+  violet stays reserved for agent-written text (D71).
+- A day with nothing planned is a deliberate rest-day state with a way out of
+  it, and a day with two sessions renders both, the one still to do first.
+- Weather, readiness/HRV/TSB, RPE logging, load numbers and coach proposals are
+  in the mockup and deliberately absent here — they belong to work packages that
+  do not exist yet.
+- Today and Workouts are no longer dimmed in the sidebar, and a nested route
+  (`/workouts/new`) marks the section it belongs to.
 
 ### WP-2 — workout model, library, purpose templates, planned sessions
 

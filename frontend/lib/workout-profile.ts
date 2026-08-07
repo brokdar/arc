@@ -28,6 +28,21 @@ export interface ProfileBar {
 
 export type ZoneTone = "rest" | "z2" | "z3" | "z4" | "z5";
 
+/**
+ * What each band of the display ramp is called, for a legend or a headline.
+ *
+ * `Z1`…`Z5` rather than "recovery"/"threshold": the ramp is a display bucket
+ * (see `zoneToneFor`), not the athlete's computed zones, and naming it after a
+ * physiological state would claim more than the arithmetic supports.
+ */
+export const ZONE_LABELS: Readonly<Record<ZoneTone, string>> = {
+  rest: "Z1",
+  z2: "Z2",
+  z3: "Z3",
+  z4: "Z4",
+  z5: "Z5",
+};
+
 /** CSS custom properties for the zone ramp, in intensity order. */
 export const ZONE_COLORS: Readonly<Record<ZoneTone, string>> = {
   rest: "var(--color-zone-rest)",

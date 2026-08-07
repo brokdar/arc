@@ -74,6 +74,66 @@ export function describeCriterion(criterion: SuccessCriterion): string {
   }
 }
 
+/** The tag of each criterion in the union. */
+export type CriterionKind = SuccessCriterion["kind"];
+
+/** How the criteria editor names each kind in its "add" menu. */
+export const CRITERION_KIND_LABELS: Readonly<Record<CriterionKind, string>> = {
+  time_in_band: "Time in band",
+  duration_floor: "Minimum duration",
+  ceiling: "Ceiling",
+  sets_completed: "Sets completed",
+  load_within: "Load within tolerance",
+};
+
+/**
+ * Which criteria a discipline can be judged by.
+ *
+ * Mirrors the domain's `STRENGTH_ONLY_KINDS` / `ENDURANCE_ONLY_KINDS`: a
+ * `time_in_band` on a lifting session refers to a power trace that will never
+ * exist, and the backend refuses it. Offering it and then failing would be a
+ * worse way to say the same thing.
+ */
+export function criterionKindsFor(
+  discipline: Schemas["Discipline"],
+): CriterionKind[] {
+  return discipline === "cycling"
+    ? ["time_in_band", "duration_floor", "ceiling"]
+    : ["sets_completed", "load_within", "duration_floor"];
+}
+
+/**
+ * A criterion of this kind with defensible starting values.
+ *
+ * Not zeroes: a criterion is a rule, and a rule of "at least 0% of the time"
+ * passes every session ever ridden. These are the values a coach would write
+ * first and then adjust.
+ */
+export function blankCriterion(kind: CriterionKind): SuccessCriterion {
+  switch (kind) {
+    case "time_in_band":
+      return {
+        kind: "time_in_band",
+        band: { channel: "power", low: 0.95, high: 1.05 },
+        min_fraction: 0.8,
+        selector: { kind: "role", role: "work", index: null },
+      };
+    case "duration_floor":
+      return { kind: "duration_floor", min_seconds: 3600 };
+    case "ceiling":
+      return {
+        kind: "ceiling",
+        channel: "hr",
+        limit: { kind: "percent_of_anchor", anchor_type: "lthr", pct: 1.0 },
+        max_seconds_above: 300,
+      };
+    case "sets_completed":
+      return { kind: "sets_completed", min_fraction: 0.9 };
+    case "load_within":
+      return { kind: "load_within", pct_tolerance: 0.05 };
+  }
+}
+
 /** Which steps a criterion applies to, in words. */
 export function describeSelector(
   selector: Schemas["StepSelectorSchema"],

@@ -19,6 +19,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useExercises } from "@/components/workouts/exercise-catalogue";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { describeCriterion } from "@/lib/criteria";
@@ -41,6 +42,8 @@ export interface SessionSheetProps {
   readonly onMove: (sessionId: string, toDate: string) => void;
   readonly onCopy: (sessionId: string, toDate: string) => void;
   readonly onDelete: (sessionId: string) => void;
+  /** Opens the plan form on this session, pre-filled. */
+  readonly onEdit: (session: WeekSession) => void;
   readonly busy?: boolean;
 }
 
@@ -59,6 +62,7 @@ export function SessionSheet({
   onMove,
   onCopy,
   onDelete,
+  onEdit,
   busy = false,
 }: SessionSheetProps) {
   const { data: detail, isPending } = $api.useQuery(
@@ -176,6 +180,7 @@ export function SessionSheet({
             onMove={onMove}
             onCopy={onCopy}
             onDelete={onDelete}
+            onEdit={onEdit}
           />
         </div>
       </SheetContent>
@@ -190,12 +195,14 @@ function SessionActions({
   onMove,
   onCopy,
   onDelete,
+  onEdit,
 }: {
   session: WeekSession;
   busy: boolean;
   onMove: (sessionId: string, toDate: string) => void;
   onCopy: (sessionId: string, toDate: string) => void;
   onDelete: (sessionId: string) => void;
+  onEdit: (session: WeekSession) => void;
 }) {
   const [moveDate, setMoveDate] = useState(session.date);
   const [copyDate, setCopyDate] = useState(session.date);
@@ -256,14 +263,22 @@ function SessionActions({
       </div>
 
       <div className="flex items-center gap-2 pt-1">
-        <Button
-          variant="outline"
-          render={
-            // The workout creator lands in the next slice; the link is real so
-            // the affordance does not have to be rebuilt then.
-            <Link href={`/workouts/${session.workout_id ?? "new"}`}>Edit</Link>
-          }
-        />
+        {/* "Edit" means this *session* — its purpose, intent, criteria and
+            prescription — not the library workout it may have come from.
+            Editing the workout would change every session planned from it,
+            which is exactly what the frozen snapshot exists to prevent. */}
+        <Button variant="outline" onClick={() => onEdit(session)}>
+          Edit session
+        </Button>
+        {session.workout_id ? (
+          <Button
+            variant="ghost"
+            className="text-ink-muted"
+            render={
+              <Link href={`/workouts/${session.workout_id}`}>Open workout</Link>
+            }
+          />
+        ) : null}
         <Button
           variant="destructive"
           className="ml-auto"
@@ -332,6 +347,9 @@ function describeSteps(
 
 /** Strength lines, grouped; more than one line in a group is a superset. */
 function StrengthGroups({ structure }: { structure: StrengthStructure }) {
+  // Real names from the catalogue rather than a prettified slug: `barbell-
+  // back-squat` reads correctly by luck, `db_rdl` does not.
+  const { nameOf } = useExercises();
   return (
     <div className="flex flex-col gap-3">
       {structure.groups.map((group, groupIndex) => (
@@ -352,7 +370,7 @@ function StrengthGroups({ structure }: { structure: StrengthStructure }) {
               className="flex items-baseline justify-between gap-3 text-sm"
             >
               <span className="text-ink-secondary">
-                {prettifySlug(item.exercise_id)}
+                {nameOf(item.exercise_id)}
               </span>
               <span className="font-mono text-ink text-xs">
                 {item.sets}×{item.reps}
@@ -386,10 +404,4 @@ function describeLoad(load: Schemas["LoadSchema"]): string {
     case "bodyweight":
       return " · bodyweight";
   }
-}
-
-/** `barbell-back-squat` → `Barbell back squat`, until the catalogue is joined. */
-function prettifySlug(slug: string): string {
-  const words = slug.replace(/[-_]/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }

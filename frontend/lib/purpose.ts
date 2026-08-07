@@ -155,6 +155,52 @@ export function purposeLabel(purpose: Purpose): string {
 }
 
 /**
+ * The purpose as it reads mid-sentence: "endurance ride", "VO₂max ride".
+ *
+ * Derived from the label rather than stored beside it, so the vocabulary
+ * cannot grow a label and a sentence form that disagree. A label carrying an
+ * uppercase letter *after* the first is a proper form the language owns
+ * (VO₂max) and is left alone; everything else is a common noun phrase and is
+ * lowercased.
+ */
+export function purposeInSentence(purpose: Purpose): string {
+  const label = PURPOSE_TONES[purpose].label;
+  const tail = label.slice(1);
+  return tail === tail.toLowerCase() ? label.toLowerCase() : label;
+}
+
+/** Every purpose belonging to a discipline, in the vocabulary's own order. */
+export function purposesFor(discipline: Discipline): Purpose[] {
+  return (Object.keys(PURPOSE_TONES) as Purpose[]).filter(
+    (purpose) => disciplineOfPurpose(purpose) === discipline,
+  );
+}
+
+/**
+ * The discipline a purpose belongs to.
+ *
+ * Mirrors `app.domain.purpose.PURPOSE_DISCIPLINE`: the split is total over the
+ * enum on both sides, and the form needs it *before* it can send anything —
+ * a strength purpose on a bike prescription is a 422 the athlete should never
+ * have been able to compose. `purpose.test.ts` checks the table against the
+ * committed schema, so a purpose the backend gains fails here first.
+ */
+export function disciplineOfPurpose(purpose: Purpose): Discipline {
+  return STRENGTH_PURPOSES.has(purpose) ? "strength" : "cycling";
+}
+
+/** The strength half of the vocabulary. Everything else is cycling. */
+const STRENGTH_PURPOSES: ReadonlySet<Purpose> = new Set<Purpose>([
+  "max_strength",
+  "strength_endurance",
+  "hypertrophy",
+  "power",
+  "core",
+  "mobility",
+  "conditioning",
+]);
+
+/**
  * The status vocabulary as the status dot renders it.
  *
  * `planned` is the pending grey; the other three are the outcome colours the
