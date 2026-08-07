@@ -177,14 +177,13 @@ test("a session with no artefact offers the action that computes one", async ({
   await expect(page.getByText(/have not been computed/)).toBeVisible();
   await page.getByRole("button", { name: "Compute metrics" }).click();
 
-  // Appends, never overwrites — and the page says so, because "recompute"
-  // reads like "overwrite" to anyone coming from another platform. One
-  // assertion, not two: the artefact it just wrote makes the page swap this
-  // panel for the full analysis, so the message is gone a moment later.
-  await expect(page.getByRole("status")).toContainText(
-    "Wrote version 2. The previous version is still readable.",
-  );
-
-  // And the page moved on to the numbers.
+  // The durable outcome, not the transient one: writing the artefact makes
+  // the page swap this panel for the whole analysis, so the "Wrote version 2"
+  // line the button shows is gone a moment later by design. That message is
+  // asserted in the component test, where the parent does not re-render;
+  // here what matters is that the numbers arrived.
   await expect(page.getByLabel("Session metrics")).toBeVisible();
+
+  // Appended, never overwritten: the provenance panel names the new version.
+  await expect(page.getByText(/Version 2, computed/)).toBeVisible();
 });
