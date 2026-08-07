@@ -29,8 +29,10 @@ Device files become sessions. Decisions D89–D100.
   value put there. A `_fixed` column never holds a value outside the channel's
   plausible range. A channel that needed nothing stores a `resampled_only` row,
   so "clean" is distinguishable from "not checked".
-- Systemic garbage is **quarantined, not repaired**: no samples, non-monotonic
-  timestamps, under two minutes, or more than 10 % of a channel implausible.
+- Systemic garbage is **quarantined, not repaired**: no samples, more than
+  10 % of samples repeating a timestamp (a handful collapse by last-wins,
+  D91), under two minutes of elapsed *or recorded* time, or more than 10 % of
+  a channel implausible.
 - New tables: `sessions`, `recordings`, `stream_anomalies`,
   `quarantine_records`, `ingest_events`, `logged_sets`. The **dedup key is
   `(file_hash, file_sport_index)`** — one file may hold more than one sport
@@ -67,8 +69,10 @@ Device files become sessions. Decisions D89–D100.
   file it cannot use is a **200 with a reason**, not an error (D97).
 - `GET /api/v1/ingest/quarantine` (pending first) and
   `POST /api/v1/ingest/quarantine/{id}/confirm` | `/reject`. Confirm discards
-  the quarantined copy and never an original; reject re-ingests a suspected
-  duplicate as its own session. Rejecting anything else is a 409 — a corrupt
+  the quarantined copy and never an original; reject overrules the verdict it
+  disagrees with (D107): a suspected duplicate re-ingests as its own session,
+  an implausible-channel refusal ingests with the broken channel nulled and
+  its anomalies recorded. Rejecting anything else is a 409 — a corrupt
   file has nothing safe to ingest. `GET /api/v1/ingest/events` is the
   append-only log of every file the pipeline looked at.
 - `GET /api/v1/sessions?start=&end=&discipline=` (paginated, newest first) and

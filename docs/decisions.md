@@ -2904,3 +2904,198 @@ jsdom therefore arrives at the server as a nameless, empty part, silently and
 with no error anywhere. `vitest.setup.ts` now installs the runtime's own three
 constructors over jsdom's. Without that, the upload tests would pass against a
 request that carried nothing.
+
+## D101 — Recording time is elapsed minus the *rows* of every stop, exactly
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`resample` subtracts, per recording stop, the length of the
+`[start_index, end_index)` row range it reports — not the raw delta between
+the two samples that bracket the gap. The invariant is exact:
+`recording_time_s == elapsed_time_s − Σ(end_index − start_index)`. What it
+displaces: D89's fourth pinned number, "`recording_time_s` is elapsed minus
+the whole of every such gap", and with it the golden ride's 1800.0 s
+(now 1801.0).
+
+The two are not the same number, and the difference is one second per stop.
+The gap between a sample at `t` and one at `t + 600` is 600 s, but both of
+those seconds were recorded: the emitted range covers the 599 rows strictly
+between them. The session page derives the athlete-facing "paused" total by
+subtracting recording time from elapsed and renders it beside the stop ranges
+themselves, so the old arithmetic showed a total that disagreed with the
+ranges under it — 600 against 599 on a single-stop ride, and worse in
+proportion to how often the athlete stops. Picking the row range as the truth
+(rather than widening the range) keeps the row index the address, which is
+D89's whole point: any other choice would mean a duration no set of rows
+accounts for. `validate` now derives its recording-time gate from the same
+helper, so a file it admits cannot resample to less than `MIN_DURATION_S`,
+and the relation is pinned by a property test over every generated file
+rather than by the golden ride alone. The deviation from the reference
+platform's per-gap convention (A5.1) is at most one second per stop — far
+inside the parity fixtures' tolerance.
+
+## D102 — A stored timezone must be an IANA zone name, not merely something `zoneinfo` resolves
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`parse_timezone` accepts a name only when it is in
+`zoneinfo.available_timezones()` minus `{localtime, Factory, posixrules}`.
+What it displaces: "whatever `ZoneInfo(tz)` constructs", which was the check
+since the column was introduced.
+
+The zone database ships keys that are not zones. `localtime` is a copy of the
+host's `/etc/localtime` and `Factory` is the database's "nobody configured a
+timezone" placeholder; both are TZif files on the search path, so `ZoneInfo`
+builds them without complaint — and both appear in `available_timezones()` on
+our image, which is why the exclusion is explicit rather than implied by that
+call. The browser's `Intl` resolves neither. A `PATCH /sessions/{id}`
+carrying one therefore stored a timezone that Python could read and the UI
+could not, giving a session whose local date the frontend cannot re-derive
+and whose backend date would silently follow whatever clock the container was
+built with. The value is stored and then handed to another runtime, so the
+boundary that accepts it has to be as strict as the strictest consumer — the
+same reason a naive `start_utc` is refused rather than assumed.
+
+## D103 — A quarantine decision is committed before the pipeline that acts on it
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`reject` writes the status transition and its audit row on the service's own
+session and commits, then runs the ingest in a fresh `session_scope()`. It
+displaced sharing one transaction (a `flush` before the pipeline call), where
+the pipeline's own catch-all rollback erased the athlete's decision *and* its
+audit row while leaving the file already moved to `originals/`, produced a
+phantom second pending record, and answered 500 on the expired row. The
+decision is the athlete's act, not a step of the ingest; a failure afterwards
+costs one `error` ingest event and nothing else, and — because the record for
+that hash is already resolved — the rescue path is told not to open a new one
+(`quarantine_on_failure=False`).
+
+## D104 — Copy, commit, then delete: the inbox copy is the crash guard
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`_place` copies the arrival to a staging name in the destination directory
+and renames it into place; the inbox copy is unlinked only after the
+transaction naming that destination has committed. It displaced `shutil.move`
+before the commit, which loses the file outright to a process that dies in
+that window — bytes under `originals/` with no row, no event and an empty
+inbox are invisible for ever, whereas a duplicated copy is converged away by
+the next sweep through the existing destination-exists and dedup branches.
+The rename also means a destination that exists is a complete file rather
+than however much a killed process wrote.
+
+## D105 — `data/originals/` holds regular files only; an inbox link is materialised or removed
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`settled_files` skips anything that is not a regular non-symlink file, and
+`ingest_file` replaces a symbolic link handed to it (upload, direct call)
+with its target's bytes, removing the link if the target cannot be read.
+Containment guards resolve the parent directory, never the final component.
+It displaced accepting links, where `shutil.move` relocated the *link* into
+`originals/` (a backup of that tree captures pointers — invariant 8 violated)
+and `resolve()` walked the dedup guard outside the inbox, so the link was
+re-hashed every 30 s for ever — about 2 880 ingest events a day.
+
+## D106 — A file is taken on its second sighting at one size, never its first
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The settle rule requires both an mtime older than `INGEST__SETTLE_SECONDS`
+and a size equal to the one recorded on the previous sweep. It displaced
+"unmodified for long enough, or unseen", which passed every file on its first
+sighting on mtime alone — and `rsync -t`, `cp -p` and Syncthing all preserve
+the source's modification time, so a half-copied ride presents an old mtime
+and would be read truncated and quarantined. The cost is one sweep (30 s) of
+latency on a drop; the upload path is synchronous and unaffected, so
+"ingested within the minute" stays true.
+
+## D107 — Reject means "overrule this verdict", and the two overrulable verdicts waive different checks
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`suspected_duplicate` waives the file-hash and overlap duplicate checks;
+`implausible_channel` waives the implausible-channel check and nothing else.
+It displaced D98's "only a `suspected_duplicate` may be rejected", which was
+right only while a `_fixed` column could carry an out-of-range value. Now
+that the cleaner guarantees every `_fixed` entry is believable or null,
+force-ingesting a ride with one broken channel is safe: the channel arrives
+nulled with a `dropped` anomaly per region — a good ride with a bad strap was
+previously unrecoverable through the product, confirm-and-discard being the
+only offered action. Every other reason is still a 409 — nothing about
+disagreeing with the parser makes bytes readable, and a 90-second file does
+not gain a third minute.
+
+## D108 — A truncated FIT file yields the ride that was written, not a quarantine
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`parse_fit`'s `fitdecode` fallback returns the frames harvested before the
+decode error instead of discarding them: a file the head unit stopped writing
+mid-record (flat battery) ends in a partial frame, and `fitdecode` raises
+only after yielding every whole frame ahead of it. This displaces the
+previous behaviour, where the `except` around the frame loop re-raised as
+`UnreadableFileError` and threw away hundreds of already-decoded records.
+The parser deliberately does not judge whether the remnant is worth keeping —
+`app.domain.streams.validate` is the single gate for that, and a parser
+applying its own threshold would quarantine FIT files under a rule GPX and
+TCX do not share. Only an *empty* harvest is unreadable. The consequence is
+visible and intended: a recovered ride has no sport, no laps and no local
+offset, because FIT writes `session`, `lap` and `activity` at the end of the
+file, and inventing them would be worse than reporting less.
+
+## D109 — Per-channel source labels are power and heart rate only in the MVP
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The build plan says "source label per channel"; A4.3's actual ambiguity is a
+bike with two power meters and a strap that may or may not be the watch's
+own, so `ParsedActivity`, the recording row and the parquet metadata carry
+`power_source`/`hr_source` (with candidates and tie-break rule) and nothing
+else. Speed, cadence, elevation and temperature come from whatever the head
+unit fused, and FIT records no per-field provenance for them, so a label
+would be a guess dressed as a fact. This narrows the plan's wording rather
+than deferring work; the parquet metadata key is per-channel, so adding a
+third labelled channel later is a write-site change, not a format change.
+
+## D110 — An update payload is nullable only where `null` means "clear this"
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`SessionUpdate`'s two fields are typed `X | SkipJsonSchema[None]`, not
+`X | None`. A session always has a discipline and always has a timezone, so
+neither has a `null` to mean anything, and the service refuses one with
+"cannot be cleared" — while the contract went on advertising `null` as legal,
+the same schema/parser mismatch `.claude/rules/api-optional-query-params.md`
+records for query parameters, and the one Schemathesis flags as
+`API rejected schema-compliant request`. It displaced typing every optional
+body field `X | None` by habit: `AthleteUpdate` and `WorkoutUpdate` stay
+nullable *on purpose*, because there `null` is the clear-this-field verb. The
+rule is therefore not "bodies are never nullable" but "the schema offers
+`null` exactly where the service accepts one", and the discriminator is
+whether the field has an empty value at all.
+
+One trap comes with it: `Field(max_length=…)` beside `X | SkipJsonSchema[None]`
+is applied to the whole union rather than hoisted onto the string member, and
+`len(None)` raises inside pydantic — a 500 where the 422 belongs — so the
+bound moves into the annotated type (`TimezoneName`). Pinned by
+`test_a_session_field_that_cannot_be_cleared_is_refused` and
+`test_the_session_patch_contract_does_not_offer_null`.
+
+## D111 — A list's filter and page position are component state, not URL state
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The session log keeps its discipline filter and its page offset in
+`useState`, not in the query string, which reads against UI convention 1's
+"deep-link what a person would bookmark". Reviewed and kept. The convention's
+own test is whether the thing is a *place*: `/calendar?week=2026-08-03` is
+one — a week is a date range a person returns to, sends to a coach, and
+reloads onto. "Page 3 of the log, cycling only" is not; it is a scroll
+position with a name, and its meaning decays as sessions arrive, so the same
+URL means different rows tomorrow. The addressable thing behind the log is a
+session, and that already has a route (`/sessions/{id}`) that every row links
+to. What it displaced: mirroring both into the query string, which buys a
+shareable link nobody wants and costs a history entry per keystroke of the
+filter. The same reasoning covers the inbox's two pagers.
