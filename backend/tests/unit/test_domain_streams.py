@@ -94,6 +94,43 @@ def power_samples(draw: st.DrawFn) -> list[RawSample]:
     ]
 
 
+@st.composite
+def noisy_samples(draw: st.DrawFn) -> list[RawSample]:
+    """Samples whose channels may be anywhere, plausible or not.
+
+    Deliberately unconstrained: the cleaner's invariant has to hold for the
+    file that is nonsense from its first row as well as for the one with a
+    spike in the middle, and those are exactly the shapes a hand-written
+    fixture does not think of.
+    """
+    offsets_s = draw(offsets())
+    channels = draw(
+        st.lists(
+            st.sampled_from(
+                [
+                    StreamChannel.POWER,
+                    StreamChannel.HR,
+                    StreamChannel.ELEVATION,
+                    StreamChannel.SPEED,
+                ]
+            ),
+            min_size=1,
+            max_size=4,
+            unique=True,
+        )
+    )
+    values = st.floats(min_value=-20_000, max_value=20_000)
+    return [
+        RawSample(
+            t=START + dt.timedelta(seconds=offset),
+            values={
+                channel: draw(values) for channel in channels if draw(st.booleans())
+            },
+        )
+        for offset in offsets_s
+    ]
+
+
 # --- resample: the grid contract (A4.1) ---------------------------------------
 
 
@@ -398,6 +435,116 @@ def test_cleaning_never_changes_a_column_length_or_the_raw_frame(
         assert result.frame.columns[channel] == before[channel]
 
 
+def test_a_leading_spike_is_nulled_rather_than_certified_clean() -> None:
+    # There is no earlier believable reading to clip to, so the value cannot
+    # be repaired — which is not a licence to leave 9 999 W in the column that
+    # analysis reads.
+    samples = [sample(second, power=9999.0) for second in range(2)] + [
+        sample(second, power=200.0) for second in range(2, 300)
+    ]
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    assert result.frame.columns[StreamChannel.POWER][:2] == (9999.0, 9999.0)
+    assert cleaned.fixed[StreamChannel.POWER][:3] == (None, None, 200.0)
+    (anomaly,) = cleaned.anomalies
+    assert anomaly.kind is AnomalyKind.DROPPED
+    assert (anomaly.start_index, anomaly.end_index) == (0, 2)
+
+
+def test_a_trailing_spike_is_nulled_rather_than_certified_clean() -> None:
+    samples = [sample(second, power=200.0) for second in range(298)] + [
+        sample(second, power=9999.0) for second in range(298, 300)
+    ]
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    assert cleaned.fixed[StreamChannel.POWER][297:] == (200.0, None, None)
+    (anomaly,) = cleaned.anomalies
+    assert anomaly.kind is AnomalyKind.DROPPED
+    assert (anomaly.start_index, anomaly.end_index) == (298, 300)
+
+
+def test_an_implausible_run_beside_a_stop_is_nulled_not_passed_through() -> None:
+    # The run merges with the stop's null rows, so the repair rules decline it
+    # whole — the reading taken as the device stopped is as suspect as the gap.
+    # Declining to repair must still not leave the number behind.
+    samples = (
+        [sample(second, power=200.0) for second in range(58)]
+        + [sample(second, power=9999.0) for second in (58, 59)]
+        + [sample(second, power=210.0) for second in range(100, 300)]
+    )
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    assert result.recording_stops == ((60, 100),)
+    assert result.frame.columns[StreamChannel.POWER][58:60] == (9999.0, 9999.0)
+    fixed = cleaned.fixed[StreamChannel.POWER]
+    assert fixed[57] == 200.0
+    assert set(fixed[58:100]) == {None}
+    (anomaly,) = cleaned.anomalies
+    assert anomaly.kind is AnomalyKind.DROPPED
+    assert (anomaly.start_index, anomaly.end_index) == (58, 60)
+    assert anomaly.substituted_value is None
+
+
+def test_a_channel_with_nothing_believable_in_it_is_emptied_and_recorded() -> None:
+    # `validate` refuses a file made of this, but `clean` must not depend on
+    # having been called after it.
+    samples = [sample(second, power=9999.0) for second in range(300)]
+
+    result = resample(samples)
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    assert set(cleaned.fixed[StreamChannel.POWER]) == {None}
+    (anomaly,) = cleaned.anomalies
+    assert anomaly.kind is AnomalyKind.DROPPED
+    assert (anomaly.start_index, anomaly.end_index) == (0, 300)
+
+
+@given(noisy_samples())
+@settings(max_examples=300)
+def test_no_fixed_value_is_ever_out_of_range(samples: list[RawSample]) -> None:
+    # The invariant the whole raw/fixed split exists for: analysis reads only
+    # the fixed columns, so an implausible value surviving into one is worse
+    # than leaving the channel alone — it carries a claim of having been
+    # checked.
+    result = resample(samples)
+
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    for channel, column in cleaned.fixed.items():
+        low, high = PLAUSIBLE_RANGE[channel]
+        for index, value in enumerate(column):
+            assert value is None or low <= value <= high, (
+                f"{channel.value}[{index}] == {value}, outside {low}-{high}"
+            )
+
+
+@given(noisy_samples())
+@settings(max_examples=300)
+def test_resampled_only_is_never_claimed_for_a_channel_that_was_repaired(
+    samples: list[RawSample],
+) -> None:
+    result = resample(samples)
+
+    cleaned = clean(result.frame, recording_stops=result.recording_stops)
+
+    for channel, column in cleaned.fixed.items():
+        certified = any(
+            one.channel is channel and one.kind is AnomalyKind.RESAMPLED_ONLY
+            for one in cleaned.anomalies
+        )
+        if certified:
+            assert column == result.frame.columns[channel], (
+                "a channel certified as only resampled must be byte-identical "
+                "to its raw column"
+            )
+
+
 @given(power_samples())
 @settings(max_examples=100)
 def test_every_anomaly_addresses_a_real_half_open_range(
@@ -421,15 +568,40 @@ def test_an_activity_with_no_samples_is_quarantined() -> None:
     assert verdict.reason is QuarantineReason.NO_SAMPLES
 
 
-def test_repeated_timestamps_are_quarantined_not_sorted_away() -> None:
+def test_a_few_repeated_timestamps_are_collapsed_not_refused() -> None:
+    # A head unit writes a record either side of a pause; the grid's last-wins
+    # rule absorbs it, and refusing an otherwise perfect three-hour ride over
+    # one repeated second would be the opposite of proportionate.
     samples = [sample(second, power=200.0) for second in range(300)]
     samples.append(sample(100, power=250.0))
+
+    assert validate(activity(samples)) is None
+    # And the collapse really happens: one row, the later reading.
+    assert resample(samples).frame.columns[StreamChannel.POWER][100] == 250.0
+
+
+def test_a_clock_that_repeats_most_of_its_timestamps_is_quarantined() -> None:
+    samples = [sample(second, power=200.0) for second in range(300)]
+    samples.extend(sample(second, power=250.0) for second in range(0, 300, 2))
 
     verdict = validate(activity(samples))
 
     assert verdict is not None
     assert verdict.reason is QuarantineReason.NON_MONOTONIC_TIMESTAMPS
-    assert "timestamp" in verdict.detail
+    assert "broken clock" in verdict.detail
+
+
+def test_the_duplicate_threshold_is_the_implausible_channel_threshold() -> None:
+    # 30 repeats among 330 samples is 9 %, just under the line; 40 among 340
+    # is 12 %, just over it. Same threshold as an implausible channel, because
+    # it is the same isolated-versus-systemic judgement.
+    def with_duplicates(count: int) -> list[RawSample]:
+        samples = [sample(second, power=200.0) for second in range(300)]
+        samples.extend(sample(second, power=250.0) for second in range(count))
+        return samples
+
+    assert validate(activity(with_duplicates(30))) is None
+    assert validate(activity(with_duplicates(40))) is not None
 
 
 def test_out_of_order_samples_alone_are_not_a_reason() -> None:

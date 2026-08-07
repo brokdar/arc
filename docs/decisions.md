@@ -2470,11 +2470,13 @@ computed numbers, one level down.
 Three details the work order left open, decided here:
 
 * **`AnomalyKind` gains `dropped`, a fifth member** beyond the four A4.2
-  names. A run of implausible values longer than 30 s cannot be repaired
-  honestly, so it is set to null — and a null is itself a claim ("there is no
-  data here") replacing a value the file contained. Leaving it unrecorded
-  would be exactly the unrecorded repair this entry exists to prevent, and
-  reusing `dropout_held` for it would be a lie about what happened.
+  names. Some implausible values cannot be repaired honestly — a run longer
+  than 30 s, a run touching a recording stop, a run with no believable reading
+  on one side of it — so they are set to null. A null is itself a claim
+  ("there is no data here") replacing a value the file contained. Leaving it
+  unrecorded would be exactly the unrecorded repair this entry exists to
+  prevent, and reusing `dropout_held` for it would be a lie about what
+  happened.
 * **`resampled_only` is a per-channel marker, not a per-gap one.** It is
   written once per channel that needed no repair at all, spanning the frame.
   The alternative reading — one row per region the grid filled — would put
@@ -2495,8 +2497,22 @@ good reading; up to 30 s is held (or interpolated, for the positional
 channels); longer is dropped. Rows inside a recording stop are never repaired,
 and neither is a run that touches one — a reading taken as the device stopped
 or resumed is no more trustworthy than the gap itself. Rows before a channel's
-first good reading or after its last stay null rather than being held
-backwards, which would fabricate a warm-up.
+first believable reading or after its last are not repaired either: holding
+backwards would fabricate a warm-up, and there is no second endpoint to
+interpolate towards.
+
+**The governing invariant, from which those three exclusions follow: a
+`_fixed` column never holds a value outside its plausible range.** Every entry
+is a believable number or null. Declining to repair is a judgement about the
+*repair* — there is nothing to interpolate towards, or the neighbouring
+reading is as suspect as the gap — and never a judgement that the value is
+fine, so an unrepaired implausible value is nulled and recorded as `dropped`
+rather than passed through. Passing it through would be strictly worse than
+leaving the channel alone, because the fixed column carries a claim of having
+been checked and is the only column analysis reads. A row that was already
+null stays null and is not an anomaly: nothing was substituted for it. It
+follows that `resampled_only` certifies a channel only when its fixed column
+is identical to its raw one.
 
 ## D91 — Systemic garbage is quarantined; noise is repaired
 
@@ -2504,23 +2520,30 @@ backwards, which would fabricate a warm-up.
 
 `app.domain.streams.validate` returns a machine-readable
 `QuarantineReason` plus a human detail string, and the pipeline moves the file
-rather than fixing it, when: the parser produced no samples; timestamps repeat
-after a stable sort; elapsed duration is under 2 minutes; or **more than 10 %**
-of a present channel's samples are outside its plausible range. Everything
-else is D90's business. What it displaces: nothing in the build plan, which
-listed the triggers but not the boundary between "repair it" and "refuse it".
+rather than fixing it, when: the parser produced no samples; elapsed duration
+is under 2 minutes; **more than 10 %** of a present channel's samples are
+outside its plausible range; or **more than 10 %** of its samples repeat a
+timestamp already used. Everything else is D90's business. What it displaces:
+nothing in the build plan, which listed the triggers but not the boundary
+between "repair it" and "refuse it".
 
 The 10 % line is where a channel stops being noisy and starts being wrong — a
 unit error, a mis-decoded field, a dead sensor. Repairing it would mean
 substituting for most of it, and a cleaned-up average of nonsense is worse
 than a file the athlete is told about.
 
-Two of the four deserve their own note. **Repeated timestamps are refused
-rather than deduplicated**: a stable sort always yields a non-decreasing
-sequence, so the only thing sorting cannot fix is two readings claiming the
-same instant, and the grid cannot represent both without silently discarding
-one. Merely *unsorted* samples are not a reason for anything — they are sorted
-and ingested. And the reason enum carries `unreadable_file` and
+**The same 10 % governs repeated timestamps, deliberately.** A stable sort
+always yields a non-decreasing sequence, so the only thing sorting cannot fix
+is two readings claiming the same instant — but the grid *can* represent that:
+`resample` already collapses several samples in one second by last-wins (D89),
+and a head unit writing a record either side of a pause produces exactly that.
+A handful of repeats is therefore absorbed, not refused; above the threshold
+the clock is broken rather than chatty, and last-wins would be quietly
+discarding a large part of the recording. Refusing an otherwise perfect
+three-hour ride over one repeated second would contradict this entry's own
+isolated-versus-systemic principle. Merely *unsorted* samples are not a reason
+for anything — they are sorted and ingested. The reason enum carries
+`unreadable_file` and
 `suspected_duplicate` from the first migration even though `validate` never
 returns them: they are the pipeline's own verdicts in Phase B, and a column
 whose vocabulary is complete on day one needs no migration when the pipeline

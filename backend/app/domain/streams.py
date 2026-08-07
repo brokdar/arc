@@ -431,10 +431,13 @@ class AnomalyKind(StrEnum):
     carried forward at the last good reading. ``GAP_INTERPOLATED`` — the same
     run on a positional channel, filled with a straight line.
 
-    ``DROPPED`` — a run too long to repair honestly, set to null. It is a
-    repair like the others precisely because a null is a claim ("there is no
-    data here") replacing a value the file did contain, and A4.2's rule is
-    that every such claim is recorded.
+    ``DROPPED`` — an implausible region the repair rules declined to repair,
+    set to null: a run too long to repair honestly, one that touches a
+    recording stop, or one lying outside the channel's own believable readings
+    (before its first, after its last). It is a repair like the others
+    precisely because a null is a claim ("there is no data here") replacing a
+    value the file did contain, and A4.2's rule is that every such claim is
+    recorded.
 
     ``RESAMPLED_ONLY`` — nothing was repaired. One row per untouched channel,
     spanning the whole frame, so "this channel needed no cleaning" can be told
@@ -524,9 +527,16 @@ def clean(
 ) -> CleanResult:
     """Produce the ``*_fixed`` columns and the anomaly record behind them (A4.2).
 
-    A row is **bad** when its value is missing or outside
-    :data:`PLAUSIBLE_RANGE`. Bad rows are grouped into maximal runs, and each
-    run is treated by its length in seconds:
+    **The invariant:** a ``_fixed`` column never holds a value outside
+    :data:`PLAUSIBLE_RANGE`. Every entry is either a believable number or
+    ``None``. Analysis reads these columns and nothing else, so a single
+    implausible value surviving here is the silent corruption the raw/fixed
+    split exists to prevent — and it would be worse than the raw column, which
+    at least does not claim to have been checked.
+
+    A row is **bad** when its value is missing or outside the range. Bad rows
+    are grouped into maximal runs, and each run is treated by its length in
+    seconds:
 
     * ``<= spike_max_s`` — clipped to the last good reading
       (:attr:`AnomalyKind.SPIKE_CLIPPED`). A 1 900 W spike from a dropped
@@ -536,12 +546,20 @@ def clean(
       channels (:attr:`AnomalyKind.GAP_INTERPOLATED`), per :data:`FILL_RULE`.
     * longer — nulled (:attr:`AnomalyKind.DROPPED`). Never invented.
 
-    Two regions are left exactly as they are. Rows **inside a recording stop**
-    are already null and stay null; a run that so much as touches one is
-    skipped whole, because a reading taken as the device stopped or resumed is
-    no more trustworthy than the gap itself. Rows **before a channel's first
-    good reading or after its last** are also left null: holding backwards
-    would fabricate a warm-up.
+    Three regions are **not** repaired, and are nulled instead. Rows *inside a
+    recording stop* are already null and stay null; a run that so much as
+    touches one is not repaired at all, because a reading taken as the device
+    stopped or resumed is no more trustworthy than the gap itself. Rows
+    *before a channel's first believable reading or after its last* are not
+    repaired either — holding backwards would fabricate a warm-up, and there
+    is no second endpoint to interpolate towards.
+
+    In each of those three cases an implausible **value** is replaced by
+    ``None`` and the region is recorded as :attr:`AnomalyKind.DROPPED`; a row
+    that was already ``None`` stays ``None`` and is not an anomaly, because
+    nothing was substituted for it. "Declined to repair" therefore never means
+    "passed a bad number through", and a channel is certified
+    :attr:`AnomalyKind.RESAMPLED_ONLY` only when it genuinely needed nothing.
 
     The raw columns are returned untouched — the spike stays in ``power``, and
     ``power_fixed`` is what a metric reads.
@@ -584,58 +602,76 @@ def _clean_channel(
 ) -> tuple[tuple[float | None, ...], list[Anomaly]]:
     """Clean one channel's column; see :func:`clean` for the rules."""
     low, high = PLAUSIBLE_RANGE[channel]
-    good = [value is not None and low <= value <= high for value in raw]
-    good_indices = [index for index, ok in enumerate(good) if ok]
-    if not good_indices:
-        # Nothing believable to repair from. The column passes through as it
-        # is; `validate` is what refuses a file made of this.
-        return tuple(raw), [
-            Anomaly(
-                channel=channel,
-                start_index=0,
-                end_index=len(raw),
-                kind=AnomalyKind.RESAMPLED_ONLY,
-            )
-        ]
 
-    first, last = good_indices[0], good_indices[-1]
+    def believable(value: float | None) -> bool:
+        return value is not None and low <= value <= high
+
+    good = [believable(value) for value in raw]
+    good_indices = [index for index, ok in enumerate(good) if ok]
     column = list(raw)
     anomalies: list[Anomaly] = []
-    bad = [not ok for ok in good]
-    for start, end in _runs(bad, first + 1, last):
-        if any(stopped_rows[start:end]):
-            continue
-        # The run is maximal inside ``(first, last)``, so both neighbours are
-        # good rows and therefore real numbers; `cast` states that rather than
-        # adding a branch nothing can reach.
-        before = cast(float, raw[start - 1])
-        after = cast(float, raw[end])
-        span = end - start
-        if span <= spike_max_s:
-            kind, substituted = AnomalyKind.SPIKE_CLIPPED, before
-        elif span > repair_max_s:
-            kind, substituted = AnomalyKind.DROPPED, None
-        elif FILL_RULE[channel] is FillRule.INTERPOLATE:
-            kind, substituted = AnomalyKind.GAP_INTERPOLATED, None
-        else:
-            kind, substituted = AnomalyKind.DROPOUT_HELD, before
 
-        if kind is AnomalyKind.GAP_INTERPOLATED:
-            step = (after - before) / (span + 1)
-            for offset in range(span):
-                column[start + offset] = before + step * (offset + 1)
-        else:
-            for index in range(start, end):
-                column[index] = substituted
+    # Pass one: repair what can be repaired — the runs that lie between two
+    # believable readings and touch no recording stop. A channel with no
+    # believable reading at all has nothing to repair *from* and skips this
+    # entirely; pass two is what keeps its column honest.
+    if good_indices:
+        first, last = good_indices[0], good_indices[-1]
+        bad = [not ok for ok in good]
+        for start, end in _runs(bad, first + 1, last):
+            if any(stopped_rows[start:end]):
+                continue
+            # The run is maximal inside ``(first, last)``, so both neighbours
+            # are good rows and therefore real numbers; `cast` states that
+            # rather than adding a branch nothing can reach.
+            before = cast(float, raw[start - 1])
+            after = cast(float, raw[end])
+            span = end - start
+            if span <= spike_max_s:
+                kind, substituted = AnomalyKind.SPIKE_CLIPPED, before
+            elif span > repair_max_s:
+                kind, substituted = AnomalyKind.DROPPED, None
+            elif FILL_RULE[channel] is FillRule.INTERPOLATE:
+                kind, substituted = AnomalyKind.GAP_INTERPOLATED, None
+            else:
+                kind, substituted = AnomalyKind.DROPOUT_HELD, before
+
+            if kind is AnomalyKind.GAP_INTERPOLATED:
+                step = (after - before) / (span + 1)
+                for offset in range(span):
+                    column[start + offset] = before + step * (offset + 1)
+            else:
+                for index in range(start, end):
+                    column[index] = substituted
+            anomalies.append(
+                Anomaly(
+                    channel=channel,
+                    start_index=start,
+                    end_index=end,
+                    kind=kind,
+                    substituted_value=substituted,
+                )
+            )
+
+    # Pass two: whatever pass one declined to repair must not survive as a
+    # number. Declining is a judgement about the *repair* — there is nothing to
+    # interpolate towards, or the neighbouring reading is as suspect as the gap
+    # — and it is never a judgement that the value is fine. Nulling it is a
+    # substitution like any other, so it is recorded; a row that was already
+    # null is not, because nothing was substituted for it.
+    surviving = [not believable(value) and value is not None for value in column]
+    for start, end in _runs(surviving, 0, len(column)):
+        for index in range(start, end):
+            column[index] = None
         anomalies.append(
             Anomaly(
                 channel=channel,
                 start_index=start,
                 end_index=end,
-                kind=kind,
-                substituted_value=substituted,
+                kind=AnomalyKind.DROPPED,
             )
         )
+    anomalies.sort(key=lambda anomaly: (anomaly.start_index, anomaly.end_index))
 
     if not anomalies:
         anomalies.append(
@@ -696,19 +732,29 @@ def validate(
 
     1. **No samples.** A file whose parser found nothing.
     2. **Non-monotonic timestamps.** Samples are stable-sorted first, so what
-       survives is two readings claiming the same instant — which the grid
-       cannot represent without silently discarding one of them.
+       survives sorting is readings claiming the same instant. A few of those
+       are ordinary — a head unit writes a record either side of a pause, and
+       :func:`resample` collapses them by the same last-wins rule it applies to
+       any second carrying several samples — so they are tolerated up to
+       ``max_implausible_fraction``. Above it the file's clock is broken rather
+       than chatty, and last-wins would be silently discarding a large part of
+       the recording.
     3. **Too short.** Under ``min_duration_s`` of elapsed time.
     4. **An implausible channel.** More than ``max_implausible_fraction`` of
        the samples carrying a channel are outside :data:`PLAUSIBLE_RANGE`.
        Channels are examined in :class:`StreamChannel` order, so the verdict is
        deterministic for a file with more than one bad channel.
 
+    Checks 2 and 4 share a threshold on purpose: both draw the same line
+    between an isolated defect, which the grid or the cleaner absorbs and
+    records, and a systemic one, which no repair can honestly cover.
+
     Args:
         activity: One parsed sport within one file.
         min_duration_s: Shortest elapsed duration accepted.
-        max_implausible_fraction: Share of a channel's samples that may be
-            out of range before the file is refused.
+        max_implausible_fraction: Share of a channel's samples that may be out
+            of range — and share of samples that may repeat a timestamp —
+            before the file is refused.
 
     Returns:
         The verdict, or ``None`` when the activity is fit to ingest.
@@ -722,12 +768,13 @@ def validate(
 
     ordered = ordered_samples(samples)
     duplicates = sum(1 for earlier, later in pairwise(ordered) if earlier.t == later.t)
-    if duplicates:
+    if duplicates / len(ordered) > max_implausible_fraction:
         return QuarantineVerdict(
             reason=QuarantineReason.NON_MONOTONIC_TIMESTAMPS,
             detail=(
-                f"{duplicates} of {len(ordered)} samples repeat a timestamp already "
-                "used; sorting cannot separate two readings of the same instant"
+                f"{duplicates / len(ordered):.0%} of the {len(ordered)} samples "
+                "repeat a timestamp already used; that is a broken clock, not a "
+                "pause record, and resampling would discard most of the file"
             ),
         )
 
