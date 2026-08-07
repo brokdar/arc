@@ -1,4 +1,9 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "permissions": {
     "allow": [
       "Bash(just:*)",
@@ -23,6 +28,10 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": ".claude/statusline.sh"
   },
   "enabledPlugins": {
     "pyrefly-lsp@arc-local": true,
