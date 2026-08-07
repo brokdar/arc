@@ -13,6 +13,8 @@ import {
   plannedSessionFixture,
   planWeekFixture,
   purposeTemplateFixture,
+  RIDE_METRICS,
+  RIDE_STREAMS,
   SESSION_IDS,
   toListItem,
   WORKOUT_LABELS,
@@ -411,6 +413,55 @@ export const handlers = [
           detail: `Session ${params.session_id} not found`,
         });
   }),
+  // The chart payload. Served only for a session that has a recording: a
+  // typed-in gym session never had samples, and the 404's *detail* is the
+  // empty state the page renders, so the mock states it rather than an
+  // empty body.
+  http.get("/api/v1/sessions/{session_id}/streams", ({ params, response }) => {
+    const session = ingestState().sessions.find(
+      (row) => row.id === params.session_id,
+    );
+    if (!session) {
+      return response(404).json({
+        detail: `Session ${params.session_id} not found`,
+      });
+    }
+    if (session.recordings.length === 0) {
+      return response(404).json({
+        detail: `Session ${session.id} has no recorded stream: it was entered by hand, so there are no per-second samples to chart`,
+      });
+    }
+    return response(200).json(RIDE_STREAMS);
+  }),
+  // Recompute **appends**: the handler honours that by bumping the version
+  // and stating a reason, and by leaving the numbers alone — nothing about
+  // the ride changed, so nothing derived from it should either. A canned
+  // reply that always said "version 1" could not fail when the mutation
+  // stopped writing anything.
+  http.post(
+    "/api/v1/sessions/{session_id}/metrics/recompute",
+    async ({ params, request, response }) => {
+      const session = ingestState().sessions.find(
+        (row) => row.id === params.session_id,
+      );
+      if (!session) {
+        return response(404).json({
+          detail: `Session ${params.session_id} not found`,
+        });
+      }
+      const body = await request.json();
+      const next = {
+        ...RIDE_METRICS,
+        version: (session.metrics?.version ?? 0) + 1,
+        computed_at: NOW,
+        recompute_reason: body?.reason ?? "recomputed on request",
+      };
+      session.metrics = next;
+      session.load = next.load.training_load ?? null;
+      session.load_basis = next.load.load_basis ?? null;
+      return response(200).json(next);
+    },
+  ),
   // A correction answers with the session as corrected — including the date
   // a new timezone re-derives, which is the whole point of the field (D93).
   // Answering with the stored row would let a page that sent the wrong zone

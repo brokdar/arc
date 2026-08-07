@@ -10,6 +10,7 @@ import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
+import { SessionAnalysis } from "@/components/sessions/session-analysis";
 import { MatchBadge } from "@/components/sessions/session-list";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
@@ -45,18 +46,24 @@ export interface SessionDetailProps {
 }
 
 /**
- * One completed session: its metadata, and what the recording behind it says.
+ * One completed session: what it cost, what it looked like, and what it says
+ * about its own numbers.
  *
- * Deliberately a metadata page. The streams are in `data/streams/` and WP-5
- * serves them, so nothing here plots anything — what it does instead is
- * explain the session's own numbers, which is the part a chart cannot: which
- * meter produced the power and how that was decided, what was subtracted from
- * elapsed time to get the duration load will be computed over, how irregular
- * the file was, and how many samples the cleaner had to repair.
+ * The analysis comes first (WP-5): the header metrics, the stacked stream
+ * charts and the intervals detected in them. Underneath it the WP-4 sections
+ * stay, and they are not decoration — which meter produced the power and how
+ * that was decided, what was subtracted from elapsed time to get the duration
+ * the load was computed over, how irregular the file was, how many samples the
+ * cleaner had to repair. A chart cannot say any of that, and every one of them
+ * is a reason a number is the number.
  *
  * Every missing value holds its slot with the reason it is missing
  * (`NotAssessed`, UI convention 4) — a session with no power meter is not a
  * session that recorded zero watts.
+ *
+ * The mockup's right-hand column — the WP-7 execution axes, the WP-8 coach
+ * evaluation — is deliberately **not** here, not even as a placeholder: a
+ * stubbed scoring panel would be a claim about a session nothing has scored.
  */
 export function SessionDetail({ sessionId }: SessionDetailProps) {
   const valid = isUuid(sessionId);
@@ -132,6 +139,16 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
       </Toolbar>
 
       <PageBody className="flex flex-col gap-5">
+        <SessionAnalysis
+          sessionId={session.id}
+          // `?? null` rather than the field itself: a response that omits the
+          // key entirely — an older client, a hand-written fake — means the
+          // same thing as an explicit null, and the page has an answer for
+          // that. Crashing on a missing key would be a worse answer.
+          metrics={session.metrics ?? null}
+          hasRecording={session.recordings.length > 0}
+        />
+
         <section className="flex flex-col gap-2.5">
           <SectionLabel level={2}>Session</SectionLabel>
           <Panel className="px-5 py-4">

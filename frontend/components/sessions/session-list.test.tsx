@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionList } from "@/components/sessions/session-list";
 import {
   ACTIVITY_IDS,
+  RIDE_METRICS,
   sessionRunFixture,
   toListItem,
 } from "@/tests/mocks/fixtures";
@@ -88,17 +89,33 @@ describe("the session log", () => {
     expect(badge).toHaveAttribute("title", expect.stringContaining("WP-6"));
   });
 
-  it("holds the load column open instead of collapsing it", async () => {
+  it("shows the load and the model it came from", async () => {
+    renderList();
+    await screen.findByText("1–3 of 3");
+
+    // The ride is the one session with a metric artefact; the number and the
+    // basis come off it rather than being typed beside it, so the row and the
+    // page it opens cannot disagree (A5.2 — a load from heart rate and a load
+    // from power are not the same measurement).
+    const row = within(rowFor(ACTIVITY_IDS.outdoorRide));
+    expect(
+      row.getByText(String(Math.round(RIDE_METRICS.load.training_load ?? 0))),
+    ).toBeInTheDocument();
+    expect(row.getByText("power")).toBeInTheDocument();
+  });
+
+  it("holds the load column open when there is nothing to put in it", async () => {
     renderList();
     await screen.findByText("1–3 of 3");
 
     // UI convention 4: the slot keeps its position and says why it is empty.
-    for (const id of Object.values(ACTIVITY_IDS)) {
-      expect(
-        within(rowFor(id)).getByRole("img", {
-          name: "Not assessed: Training load arrives with WP-5",
-        }),
-      ).toBeInTheDocument();
+    // Two of the three seeded sessions have no artefact yet, which is a real
+    // state — not a loading one — and the reason names it.
+    for (const id of [ACTIVITY_IDS.gym, ACTIVITY_IDS.trainerRide]) {
+      const placeholder = within(rowFor(id)).getByRole("img", {
+        name: /Not assessed: No training load/,
+      });
+      expect(placeholder).toBeInTheDocument();
     }
   });
 

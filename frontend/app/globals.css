@@ -168,6 +168,24 @@
   --color-zone-6: #cf3f57; /* anaerobic     */
   --color-zone-7: #ad3f74; /* neuromuscular */
 
+  /* --- Stream charts (WP-5) --------------------------------------------- */
+  /* uPlot paints to a canvas, which cannot read a CSS variable: the stream
+     charts resolve these through `getComputedStyle` at draw time
+     (`lib/chart-tokens.ts`) so the palette still lives here and nowhere else.
+
+     The two fills are the traces' area under the line, kept far below the
+     stroke's weight so a four-hour ride reads as a shape rather than a block.
+     `--color-chart-band` is WP-6's planned-step overlay, `--color-chart-mark`
+     is the repaired-region tick (A4.2), and `--color-chart-reference` is the
+     FTP line — all three are neutral on purpose: they sit behind or across a
+     zone-coloured trace, and a hue there would be read as a zone. */
+  --color-chart-power-fill: rgb(224 96 60 / 0.16);
+  --color-chart-elevation-fill: rgb(255 255 255 / 0.05);
+  --color-chart-band: rgb(255 255 255 / 0.07);
+  --color-chart-mark: rgb(255 255 255 / 0.16);
+  --color-chart-reference: rgb(255 255 255 / 0.22);
+  --color-chart-grid: rgb(255 255 255 / 0.05);
+
   /* --- Radii ------------------------------------------------------------ */
   --radius: 9px;
   --radius-badge: 4px;

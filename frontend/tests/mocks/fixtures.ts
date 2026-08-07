@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 
 type Schemas = components["schemas"];
 
@@ -1158,6 +1159,18 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
   },
 ];
 
+/**
+ * The outdoor ride's metric artefact and stream payload, **generated**.
+ *
+ * `backend/scripts/emit_metrics_fixture.py` runs the real domain over a
+ * synthetic 1 Hz session and emits both halves together, so NP, IF, TSS, the
+ * zone distribution and the detected intervals in the fixture agree with each
+ * other and with the streams a test can plot. A hand-typed metric block would
+ * type-check and describe a ride no pipeline could produce, and the component
+ * test would then agree with the fixture rather than with the application.
+ */
+export { RIDE_METRICS, RIDE_STREAMS };
+
 /** The three sessions the log starts with, newest first. */
 function seedSessions(): Schemas["SessionRead"][] {
   return [
@@ -1201,11 +1214,12 @@ function seedSessions(): Schemas["SessionRead"][] {
       recording_time_s: OUTDOOR_RECORDING_S,
       rpe: null,
       notes: null,
-      // WP-5: nothing computed yet — a real state the page has an
-      // action for, not a placeholder.
-      load: null,
-      load_basis: null,
-      metrics: null,
+      // The one session with an artefact. Its load and basis are read off
+      // that artefact rather than typed beside it, so the row and the page it
+      // opens cannot disagree.
+      load: RIDE_METRICS.load.training_load ?? null,
+      load_basis: RIDE_METRICS.load.load_basis ?? null,
+      metrics: RIDE_METRICS,
       recordings: [OUTDOOR_RECORDING],
       logged_sets: [],
       created_at: "2026-08-05T07:55:12Z",

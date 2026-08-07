@@ -395,7 +395,15 @@ export function CalendarWeek() {
               stale ? "opacity-50" : ""
             }`}
           >
-            <WeekRail week={week.data} className="xl:w-[212px] xl:shrink-0" />
+            <WeekRail
+              week={week.data}
+              // Null becomes undefined so the Completed section appears only
+              // when something was actually recorded: a zero would read as a
+              // rest week, and "nothing happened yet" is a different fact.
+              completedDurationS={week.data.completed_duration_s ?? undefined}
+              completedLoad={week.data.completed_load ?? undefined}
+              className="xl:w-[212px] xl:shrink-0"
+            />
             <div className="min-w-0 flex-1">
               <WeekGrid
                 days={week.data.days}
