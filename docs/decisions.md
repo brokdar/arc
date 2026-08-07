@@ -2621,3 +2621,229 @@ One deployment consequence, fixed here: the runtime image is alpine, which
 ships no zoneinfo database, so `backend/Dockerfile` now installs `tzdata`.
 Without it an IANA name would resolve on every developer machine and fail in
 the only place that matters.
+
+## D94 — Golden FIT files are synthetic, committed, and byte-checked against their generator
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The operator has no real device exports to give us, so WP-4 §0 decision 4's
+synthetic files are what the pipeline is tested against. Four of them, built by
+`fit-tool` (a dev dependency) from `backend/tests/unit/golden_fit.py` and
+**committed as binaries** under `backend/tests/data/golden/`: an outdoor ride
+(GPS, power, HR, irregular sampling, a 600 s coffee stop, a 2 900 W spike, two
+laps, a +02:00 offset), an indoor trainer ride (no GPS, two ANT+ power meters),
+a strength watch recording (HR only, sport `training`), and a two-sport brick
+file. What it displaces: generating them at test time only, or committing
+binaries with no way to reproduce them.
+
+Both halves are needed. The binaries are committed so the definition-of-done
+check — drop a file into `data/inbox/` on a running stack — needs no code to
+produce one, and so a reviewer can see the fixture. The generator is committed
+so the bytes are not a mystery, and
+`test_the_committed_files_are_what_the_generator_produces` rebuilds all four
+into a temporary directory and asserts byte-equality: a `fit-tool` upgrade that
+changes the encoding is then a failed test rather than four files nobody can
+regenerate. Everything downstream is snapshotted from those bytes (sample
+counts, channels, the A4.4 durations, the A4.3 sources, the discipline), so the
+parser's contract is pinned in one place.
+
+The spike is 2 900 W rather than the 1 900 W the addenda mention in passing:
+`app.domain.streams.PLAUSIBLE_RANGE` tops power out at 2 500 W, and a value
+*inside* the range is a hard effort rather than a defect. A fixture that
+expected 1 900 W to be clipped would have been testing a repair the cleaner
+correctly declines to make.
+
+Real-file parse tests are marked operator-pending in a comment. **No pipeline
+test is skipped** in the meantime.
+
+One dependency consequence, fixed here rather than worked around: the
+`garmin-fit-sdk` wheel installs its own **top-level `tests` package** into
+site-packages, which shadowed this repo's namespace `tests` package and broke
+every `from tests.unit... import` in the suite. `backend/tests/` (and its two
+subpackages) therefore now carry `__init__.py` files, making ours a regular
+package that wins on `sys.path`. The files say so in their docstrings; they are
+load-bearing, not clutter.
+
+## D95 — The parsers and pyarrow are I/O, and only `app.ingest` may import them
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`garmin-fit-sdk`, `fitdecode`, `gpxpy`, `tcxreader` and `pyarrow` are named in
+the domain-purity contract's `forbidden_modules` (work order §1). All five open
+files; the domain never sees a FIT record or an arrow table, it sees
+`RawSample` and plain sequences. What it displaces: allowlisting `pyarrow` as
+"in-process computation" the way the purity test's comment anticipates for
+WP-5 — that argument is about *dataframes*, and `pyarrow.parquet` is a file
+reader.
+
+Two names in that list are not decisions of ours: `garmin-fit-sdk`'s wheel also
+installs top-level `dist` and `tests` packages, and the self-maintaining guard
+in `test_domain_purity_contract` checks every import name a distribution
+provides. Forbidding them is true anyway — nothing in `app.domain` has business
+importing a package called `tests` — and the alternative was teaching the guard
+about one library's packaging defect.
+
+`polars` is still not a dependency: nothing in WP-4 needs it (§0 decision 1),
+and a four-hour ride is 14 400 rows of plain Python lists.
+
+## D96 — FIT names every candidate source and nothing that chose between them, so the tie-break is recorded as a tie-break
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+A4.3 asks for the power-source candidates and the rule that picked one. The
+format does not cooperate: FIT writes a **single** `record.power` field and one
+`device_info` message per paired sensor, with nothing linking them. A bike with
+a crank meter and a smart trainer therefore produces two plausible sources and
+zero evidence about which fed the records.
+
+The rule, implemented in `app/ingest/parsers/base.py` and
+`app/ingest/parsers/fit.py`:
+
+* Candidates are the `device_info` entries whose ANT+ device type says they
+  produce the channel (`bike_power` for power, `heart_rate` for HR), labelled
+  `manufacturer/product #device_index` and ordered by `device_index`.
+* One candidate → that one, rule `"only candidate"`.
+* Several → the lowest `device_index`, rule
+  `"lowest device_index among N candidates"`. The wording is deliberate: it
+  names itself as a tie-break so nobody reads it as evidence.
+* No candidate but the channel is present (GPX, TCX, a FIT file with no
+  `device_info`) → source `record.power` / `record.hr`, rule
+  `"no matching device_info entry; the record field was used"`.
+* A channel with **no samples** gets no source at all, so a recording row never
+  advertises a meter for a column it does not have.
+
+What it displaces: picking silently, or inventing a manufacturer-priority table
+that would encode a preference nobody stated. The point of A4.3 is to make the
+ambiguity visible; a rule string that overclaims would hide it again.
+
+Related, in the same parser: the **`sport` field wins over `sub_sport`**. A-5's
+rule is that the file's own sport field maps first, and
+`SPORT_FIELD_DISCIPLINE` is written in that vocabulary — taking `sub_sport` in
+preference would demote a plain `cycling`/`indoor_cycling` ride to a heuristic
+classification for nothing. `sub_sport` is the fallback when `sport` is
+`generic`, where `strength_training` is the only thing the file says.
+
+## D97 — Upload is synchronous, and a refused file is a result rather than an error
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+`POST /api/v1/ingest/upload` writes the file into `data/inbox/` and runs the
+pipeline **before it answers**, returning the ingest report: the sessions
+created, the quarantine records raised, or the sessions the file already
+existed as. What it displaces: accepting the file, answering 202, and letting
+the 30 s sweep find it — which would leave the athlete looking at a page with
+nothing to say for up to half a minute, in exchange for latency nobody is
+waiting on.
+
+The status codes follow from that. A file the pipeline **cannot use** answers
+**200** with `outcome: "quarantined"` and the record id, because being told why
+a file was refused is the successful outcome of asking. The 4xx statuses are
+for requests that are wrong rather than files that are: 422 for an empty or
+oversized upload, 404 for a decision on a record that does not exist, 409 for a
+decision on one already resolved and for rejecting a non-duplicate.
+
+Uploaded filenames are rebuilt from `[A-Za-z0-9._-]` before anything touches
+the filesystem, with directory components dropped and a leading dot stripped
+(the sweep skips dotfiles, so a name starting with one would strand the file).
+The name on disk is prefixed with a uuid so two uploads called `activity.fit`
+cannot overwrite one another — the second one is a duplicate *by hash* or it is
+not a duplicate at all. The athlete's name is what the log and the quarantine
+record show. Uploads are bounded at 100 MB: an endpoint that writes to disk
+needs a bound, and a four-hour FIT file is under one.
+
+**File I/O in the pipeline is synchronous, on the event loop.** Hashing a
+megabyte, moving it and writing a parquet frame is tens of milliseconds, this
+is a single-user application, and an async filesystem layer would add a second
+failure mode to every path in the module for latency nobody is waiting on. It
+is a decision, not an oversight, and the module docstring says so.
+
+## D98 — Two duplicate checks, and what each of them means the athlete may do
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+The pipeline refuses a file twice for "duplicate", and the two refusals are not
+the same fact:
+
+* **By hash** — the same *bytes* arriving again. Checked against ingested
+  recordings **and** unresolved quarantine records before anything is parsed,
+  and answered with a `duplicate_file` ingest event, no error and no second
+  session. This is what makes the watched folder safe to point at a directory
+  a device keeps re-syncing. The redundant copy is deleted **only if it is in
+  the inbox**.
+* **By overlap** — the same *ride* arriving from a second source, where the
+  bytes differ. Quarantined as `suspected_duplicate` with the session it looks
+  like a copy of, for the athlete to rule on.
+
+`DECIDE (default: >70 %)` is taken, measured as the shared seconds over the
+**longer** of the two ranges. Two exports of one ride differ by a few seconds
+at each end and score near 1; a short recording that merely sits inside a long
+one scores near 0, which is right — it is not a copy of it. Measuring against
+the shorter range would quarantine every twenty-minute segment recorded during
+a four-hour ride.
+
+Only a `suspected_duplicate` can be **rejected**: a corrupt or implausible file
+has nothing in it that is safe to ingest, and disagreeing with the parser does
+not make the bytes readable, so rejecting one is a 409 (the work order's
+default). A reject waives exactly the two checks the athlete's decision
+overrules — the file-level hash check and the overlap check — and nothing else;
+per-activity dedup on `(hash, sport_index)` still applies, so a reject cannot
+produce a second copy of an activity that is already a session.
+
+**Confirm discards the quarantined copy and never an original.** The delete is
+guarded structurally rather than by convention: `IngestService._discard`
+refuses any path that is not inside `data/quarantine/`. The case that makes
+this matter is a multisport file with one good sport and one refused one — the
+file is filed as an *original* (it is the good sport's original), the
+quarantine record points at that same path, and confirming closes the record
+without deleting anything. For the same reason `_place` never moves a file that
+is already an original.
+
+Anything the pipeline did not anticipate ends in the same place: the
+transaction is rolled back, the file is kept (moved to `data/quarantine/`
+unless it is already an original), a quarantine record is written with
+`unreadable_file` and the failure in its detail, and the ingest event says
+`error`. `QuarantineReason` gains no `pipeline_error` member — the reason
+vocabulary was fixed by Phase A's migration, `unreadable_file` is the honest
+reading of "this run could not read it", and the detail carries the specifics.
+
+## D99 — The completed-session API: paths, the two overrides, and what "anomaly count" counts
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-4
+
+Four decisions taken while shaping the surface Phase C builds on.
+
+**Manual entry is `POST /api/v1/manual-sessions`, not `/sessions/manual`.** The
+work order names the latter; `.claude/rules/api-collection-facets.md` (D50)
+forbids it. `GET /sessions/manual` matches `GET /sessions/{session_id}` and
+answers 422 about uuid syntax where 405 is the truth, which is exactly what
+Schemathesis' `unsupported_method` check fails on. The rule says to move the
+path rather than add refusal handlers, so the path moved.
+
+**The list filters are `?start=` and `?end=`**, not the work order's
+`?from=&to=`. `GET /planned-sessions` already spells them that way, and one API
+with two spellings of "date window" costs every client a lookup. (`from` is
+also a Python keyword and would have needed an alias.)
+
+**`classification_source` gains a third member, `manual`.** A hand-entered
+session has a discipline because the athlete typed one, which is neither a
+file's sport field nor an inference over channels it does not have; an override
+on a device session is the same claim. Spelling either `sport_field` would put
+the weakest statement in this system — "the recording said so" — on a session
+that has no recording. The value is six characters against `sport_field`'s
+eleven, so the `VARCHAR(11)` column is unchanged and **no migration is needed**
+(see `enum_column`).
+
+**`RecordingRead.anomaly_count` counts repairs, not anomaly rows.** Every
+channel that needed no cleaning stores a `resampled_only` row, so that "nothing
+was repaired" can be told from "the cleaner never ran" (Phase A's
+`AnomalyKind`); counting those would tell an athlete their clean ride had eight
+anomalies. `RecordingRepository.repair_counts` excludes them and loads a whole
+page in one query; `anomaly_count` on the repository still counts every row,
+for whoever wants the table's size.
+
+Two smaller shapes worth naming: a list row's `duration_s` is the recording
+time for a device session (pauses removed — the duration load is computed over,
+A5.1) and the wall-clock duration for a manual one, with `recording_time_s`
+null in that case to say there was nothing to subtract; and `PATCH
+/sessions/{id}` accepts exactly `discipline` and `timezone`, because it exists
+to correct what the pipeline guessed rather than to edit history.

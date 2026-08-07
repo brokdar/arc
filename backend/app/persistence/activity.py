@@ -382,6 +382,20 @@ class RecordingRepository:
         )
         return result.scalar_one_or_none()
 
+    async def by_hash(self, file_hash: str) -> Sequence[RecordingRow]:
+        """Every recording already ingested from one file, in sport order.
+
+        The file-level half of the pipeline's dedup check: a hash that is
+        known at all must not be parsed again, whatever its sport count.
+        Ordered so the log line naming the twin is deterministic.
+        """
+        result = await self._session.execute(
+            select(RecordingRow)
+            .where(RecordingRow.file_hash == file_hash)
+            .order_by(RecordingRow.file_sport_index.asc())
+        )
+        return list(result.scalars())
+
     async def add(self, row: RecordingRow) -> RecordingRow:
         """Persist a recording and refresh generated fields.
 
@@ -399,10 +413,40 @@ class RecordingRepository:
         await flush(self._session)
 
     async def anomaly_count(self, recording_id: uuid.UUID) -> int:
-        """How many repairs were recorded for this recording."""
+        """How many anomaly rows this recording has, of every kind.
+
+        Includes the `resampled_only` certificates — one per channel that
+        needed nothing — so this is the size of the table, not the number of
+        repairs. :meth:`repair_counts` is what a reader wants.
+        """
         total = await self._session.scalar(
             select(func.count())
             .select_from(StreamAnomalyRow)
             .where(StreamAnomalyRow.recording_id == recording_id)
         )
         return total or 0
+
+    async def repair_counts(
+        self, recording_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, int]:
+        """Repairs per recording, in one query, `resampled_only` excluded.
+
+        A channel that needed no cleaning stores a `resampled_only` row so
+        that "nothing was repaired" can be told from "the cleaner never ran"
+        (`app.domain.streams.AnomalyKind`). It is not a repair, and counting
+        it would tell an athlete their clean ride had eight anomalies.
+        """
+        if not recording_ids:
+            return {}
+        result = await self._session.execute(
+            select(StreamAnomalyRow.recording_id, func.count())
+            .where(
+                StreamAnomalyRow.recording_id.in_(recording_ids),
+                StreamAnomalyRow.kind != AnomalyKind.RESAMPLED_ONLY,
+            )
+            .group_by(StreamAnomalyRow.recording_id)
+        )
+        counted = {recording_id: total for recording_id, total in result.all()}
+        return {
+            recording_id: counted.get(recording_id, 0) for recording_id in recording_ids
+        }
