@@ -16,9 +16,9 @@ setup("authenticate @fullstack", async ({ page }) => {
     .fill(process.env.E2E_PASSWORD ?? "ci-test-password");
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  // Landing on the home page means the API accepted the password and the
-  // browser is now holding a valid session cookie.
-  await expect(page.getByRole("heading", { name: "arc" })).toBeVisible();
+  // Landing on the calendar (the app's home since D60) means the API accepted
+  // the password and the browser is now holding a valid session cookie.
+  await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible();
 
   await page.context().storageState({ path: STORAGE_STATE });
 });
