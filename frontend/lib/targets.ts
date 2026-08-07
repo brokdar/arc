@@ -71,6 +71,7 @@ const ANCHOR_LABELS: Readonly<Record<AnchorType, string>> = {
   ftp: "FTP",
   lthr: "LTHR",
   max_hr: "max HR",
+  resting_hr: "resting HR",
   cp: "CP",
   w_prime: "W′",
 };

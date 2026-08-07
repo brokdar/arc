@@ -843,7 +843,7 @@ export interface components {
      *     yet, and :func:`app.domain.zones.zones_for` rejects them.
      * @enum {string}
      */
-    AnchorType: "ftp" | "lthr" | "max_hr" | "cp" | "w_prime";
+    AnchorType: "ftp" | "lthr" | "max_hr" | "resting_hr" | "cp" | "w_prime";
     /**
      * AnchorUnit
      * @description Units an anchor value can be expressed in.

@@ -23,10 +23,15 @@ DOMAIN_MAY_IMPORT = {
     # it for value objects; `pydantic_settings` (which reads the environment)
     # stays forbidden.
     "pydantic": "pure data modelling — validation and value objects, no I/O",
-    # WP-5 moves metrics computation into the domain and adds polars/pyarrow
-    # as dependencies; allowlist them here then (a dataframe library is
-    # in-process computation, not I/O) — that is the expected edit when this
-    # test first fails on them.
+    # This list anticipated polars/pyarrow being allowlisted when WP-5 moved
+    # metrics into the domain. It was not needed and the entry was never
+    # written (D112): the WP-5 metric functions are plain Python over
+    # `Sequence[float | None]`, exactly as `normalized_power` already was, and
+    # `app.ingest` reads the parquet file and hands the domain plain tuples.
+    # pyarrow stays on the *forbidden* side of the contract, where it has been
+    # since WP-4. The escape hatch `app.domain.metrics` documents — re-implement
+    # a body behind the same signature — is what a real workload would use, and
+    # it would need this allowlist then, not before.
 }
 
 

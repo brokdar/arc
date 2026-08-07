@@ -158,7 +158,8 @@ def default_zone_model(anchor_type: AnchorType) -> ZoneModel:
     """Return the zone model that derives from ``anchor_type``.
 
     Raises:
-        ValueError: For anchor types no MVP model derives from (``MAX_HR``,
+        ValueError: For anchor types no MVP model derives from (``MAX_HR``
+            and ``RESTING_HR``, which are HRSS inputs rather than zone bases,
             and the reserved ``CP``/``W_PRIME``).
     """
     model = DEFAULT_ZONE_MODEL.get(anchor_type)

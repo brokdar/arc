@@ -30,6 +30,11 @@ class AnchorType(StrEnum):
     FTP = "ftp"
     LTHR = "lthr"
     MAX_HR = "max_hr"
+    #: Resting heart rate. An anchor and not a profile field (D114): HRSS
+    #: reads it as the floor of the heart-rate reserve, so it needs the same
+    #: provenance, effective date and append-only history every other input to
+    #: a derived number has. No zone model derives from it.
+    RESTING_HR = "resting_hr"
     #: Reserved (WP-5+): critical power.
     CP = "cp"
     #: Reserved (WP-5+): the W′ work capacity above CP.
@@ -101,6 +106,7 @@ ANCHOR_UNITS: dict[AnchorType, AnchorUnit] = {
     AnchorType.FTP: AnchorUnit.WATT,
     AnchorType.LTHR: AnchorUnit.BPM,
     AnchorType.MAX_HR: AnchorUnit.BPM,
+    AnchorType.RESTING_HR: AnchorUnit.BPM,
     AnchorType.CP: AnchorUnit.WATT,
     AnchorType.W_PRIME: AnchorUnit.JOULE,
 }
@@ -112,6 +118,11 @@ ANCHOR_BOUNDS: dict[AnchorType, tuple[float, float]] = {
     AnchorType.FTP: (30.0, 700.0),
     AnchorType.LTHR: (60.0, 220.0),
     AnchorType.MAX_HR: (80.0, 240.0),
+    #: A trained endurance athlete's resting HR reaches the low 30s and a
+    #: sedentary one the low 100s; outside 25-120 bpm the number is a typo or
+    #: a reading taken during something other than rest, and HRSS divides by
+    #: the reserve it defines.
+    AnchorType.RESTING_HR: (25.0, 120.0),
     AnchorType.CP: (30.0, 700.0),
     AnchorType.W_PRIME: (1_000.0, 60_000.0),
 }
@@ -177,6 +188,24 @@ class AnchorVersion:
             raise ValueError(f"ci_high {self.ci_high} is below the value {self.value}")
         if self.created_at.tzinfo is None:
             raise ValueError("created_at must be timezone-aware UTC")
+
+
+def describe_anchor(version: AnchorVersion) -> str:
+    """Render an anchor version the way an explanation names its inputs.
+
+    The version's own value, provenance and effective date — never "the
+    current FTP": a number computed against a frozen version must keep
+    explaining itself after the athlete's FTP moves. Lives here rather than
+    beside any one consumer because the planned load (`app.domain.prediction`)
+    and every recorded metric (`app.domain.metrics`) have to name an anchor
+    the same way, or the same version reads as two different inputs on one
+    screen.
+    """
+    provenance = version.provenance.value.replace("_", " ")
+    return (
+        f"{version.value:g} {version.unit.value} "
+        f"({provenance}, effective {version.effective_date.isoformat()})"
+    )
 
 
 def _ordering_key(version: AnchorVersion) -> tuple[dt.date, dt.datetime]:

@@ -57,7 +57,7 @@
       },
       "AnchorType": {
         "description": "Anchor quantities the application knows about.\n\n``CP`` and ``W_PRIME`` are reserved by the build plan: the critical-power\nmodel is out of MVP scope, but the enum member exists so adding it later\nis not a migration of stored values. Nothing produces or consumes them\nyet, and :func:`app.domain.zones.zones_for` rejects them.",
-        "enum": ["ftp", "lthr", "max_hr", "cp", "w_prime"],
+        "enum": ["ftp", "lthr", "max_hr", "resting_hr", "cp", "w_prime"],
         "title": "AnchorType",
         "type": "string"
       },
