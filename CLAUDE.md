@@ -129,7 +129,14 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
 3. **Frontend component tests** (Vitest + MSW): mock the network with the
    TYPED handlers in `tests/mocks/handlers.ts` (openapi-msw) — never mock
    `lib/api/client.ts`. Untyped responses only via `http.untyped` for
-   infra-failure simulation.
+   infra-failure simulation. **A fixture must be a payload the real API could
+   produce, and a handler must honour the request**: type-checking proves the
+   shape, not the arithmetic, so derived numbers are computed by running the
+   backend domain over the same document rather than typed in, fields the
+   service derives from one another agree (`title` non-null iff `workout_id`
+   is), and a mutating handler echoes what it was sent. A canned reply cannot
+   fail when the form drops a field, and a test written against an impossible
+   fixture agrees with the fixture instead of the application.
 4. **UI e2e** (`frontend/e2e/*.spec.ts`, no backend): user flows against a
    production build with the API mocked/absent.
 5. **Full-stack smoke** (`@fullstack` tests, `just smoke`): wiring only —

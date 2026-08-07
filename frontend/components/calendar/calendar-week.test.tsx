@@ -81,6 +81,26 @@ function renderCalendar() {
   };
 }
 
+/** Apply the moves a stateful fake has accepted, the way the server would. */
+function withMoves(
+  week: ReturnType<typeof planWeekFixture>,
+  moves: Map<string, string>,
+): ReturnType<typeof planWeekFixture> {
+  const sessions = week.days
+    .flatMap((day) => day.sessions)
+    .map((session) => ({
+      ...session,
+      date: moves.get(session.id) ?? session.date,
+    }));
+  return {
+    ...week,
+    days: week.days.map((day) => ({
+      ...day,
+      sessions: sessions.filter((session) => session.date === day.date),
+    })),
+  };
+}
+
 /** The seven columns are `<section>`s; a section with a name is a region. */
 function dayColumns() {
   return screen.getAllByRole("region");
@@ -145,8 +165,10 @@ describe("CalendarWeek", () => {
   it("shows the discipline's own measure: minutes for a ride, sets for lifting", async () => {
     renderCalendar();
 
-    expect(await screen.findByText("1:09")).toBeInTheDocument();
-    expect(screen.getByText("16 sets")).toBeInTheDocument();
+    // 720 + 5 × (240 + 180) + 600 for the VO₂ ride; the lift has no duration
+    // at all and shows its ten sets instead.
+    expect(await screen.findByText("0:57")).toBeInTheDocument();
+    expect(screen.getByText("10 sets")).toBeInTheDocument();
   });
 
   it("moves a session to the day it is dropped on", async () => {
@@ -182,6 +204,84 @@ describe("CalendarWeek", () => {
         body: { date: friday },
       }),
     );
+  });
+
+  /**
+   * The fake used to answer every move with the session's *original* date, so
+   * "the card moved" could only ever be asserted about the request. It now
+   * applies what it is told, and the assertion is about the calendar.
+   */
+  it("lands the card on the day it was dropped on, and leaves it there", async () => {
+    const moves = new Map<string, string>();
+    server.use(
+      http.post(
+        "/api/v1/planned-sessions/{planned_session_id}/move",
+        async ({ params, request, response }) => {
+          const body = await request.json();
+          moves.set(params.planned_session_id, body.date);
+          return response(200).json({
+            ...plannedSessionFixture(params.planned_session_id),
+            date: body.date,
+          });
+        },
+      ),
+      http.get("/api/v1/plan/week", ({ query, response }) => {
+        const requested = query.get("start") ?? start;
+        return response(200).json(withMoves(planWeekFixture(requested), moves));
+      }),
+    );
+
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    const friday = addDays(start, 4);
+    fireEvent.drop(screen.getByTestId(`day-${friday}`), {
+      dataTransfer: { getData: () => SESSION_IDS.strength },
+    });
+
+    // Optimistically first, and still there after the week is refetched.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId(`day-${friday}`)).getByRole("button", {
+          name: /Strength — lower/,
+        }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(screen.getByTestId(`day-${start}`)).queryByRole("button", {
+        name: /Strength — lower/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * A card dropped back where it started has not moved. Firing the mutation
+   * would spend a request, an optimistic update and an invalidation of every
+   * cached week on saying nothing — and would append an audit row claiming
+   * the athlete rescheduled something.
+   */
+  it("does not move a card dropped back on its own day", async () => {
+    const moved = vi.fn();
+    server.use(
+      http.post(
+        "/api/v1/planned-sessions/{planned_session_id}/move",
+        ({ params, response }) => {
+          moved();
+          return response(200).json(
+            plannedSessionFixture(params.planned_session_id),
+          );
+        },
+      ),
+    );
+
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    fireEvent.drop(screen.getByTestId(`day-${start}`), {
+      dataTransfer: { getData: () => SESSION_IDS.strength },
+    });
+
+    expect(moved).not.toHaveBeenCalled();
   });
 
   it("hands the dragged session's id to the drop target", async () => {
@@ -315,7 +415,7 @@ describe("CalendarWeek", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      within(sheet).getByText(/Eat before you are hungry/),
+      within(sheet).getByText(/Two minutes in on the first one/),
     ).toBeInTheDocument();
   });
 
@@ -332,7 +432,7 @@ describe("CalendarWeek", () => {
     expect(within(sheet).getByText("50–60 % FTP")).toBeInTheDocument();
     expect(within(sheet).getByText(/125–150 W/)).toBeInTheDocument();
     // Repeats are expanded, so the list and the bars above it are the same
-    // eleven things in the same order.
+    // twelve things in the same order.
     expect(within(sheet).getAllByText("114–122 % FTP")).toHaveLength(5);
   });
 
@@ -366,11 +466,14 @@ describe("CalendarWeek", () => {
     );
     const sheet = await screen.findByRole("dialog");
 
-    expect(within(sheet).getByText("92")).toBeInTheDocument();
-    expect(within(sheet).getByText("IF 0.90")).toBeInTheDocument();
-    // Never a total without its coverage, on a session as on a week.
+    // Recomputed against the domain, not rounded off a guess: the 1 Hz
+    // expansion through a 30 s rolling mean puts this ride at 78 TSS.
+    expect(within(sheet).getByText("78")).toBeInTheDocument();
+    expect(within(sheet).getByText("IF 0.91")).toBeInTheDocument();
+    // Never a total without its coverage, on a session as on a week: the
+    // cool-down states no power target, so a sixth of the ride is uncovered.
     expect(
-      within(sheet).getByText(/86% of the time carried a power target/),
+      within(sheet).getByText(/82% of the time carried a power target/),
     ).toBeInTheDocument();
 
     await userEvent.click(within(sheet).getByText("How this was computed"));
@@ -454,7 +557,7 @@ describe("CalendarWeek", () => {
     );
   });
 
-  it("deletes a session from the sheet", async () => {
+  it("takes two clicks to delete a session, so a mis-click cannot", async () => {
     const deleted = vi.fn();
     server.use(
       http.delete(
@@ -471,11 +574,131 @@ describe("CalendarWeek", () => {
       await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
     );
     const sheet = await screen.findByRole("dialog");
+
+    await userEvent.click(
+      within(sheet).getByRole("button", { name: "Delete" }),
+    );
+    // Armed, not fired: deleting a session destroys its intent history.
+    expect(deleted).not.toHaveBeenCalled();
+    expect(within(sheet).getByText("Delete this session?")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(sheet).getByRole("button", { name: "Delete" }),
+    );
+    await waitFor(() => expect(deleted).toHaveBeenCalledWith(SESSION_IDS.vo2));
+  });
+
+  /**
+   * The sheet used to close the instant Delete was pressed, taking the
+   * server's refusal with it — the session stayed on the calendar and nothing
+   * on screen said why.
+   */
+  it("keeps the sheet open and says why when a delete is refused", async () => {
+    server.use(
+      http.delete(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        ({ response }) =>
+          response(404).json({ detail: "That session no longer exists" }),
+      ),
+    );
+
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(sheet).getByRole("button", { name: "Delete" }),
+    );
     await userEvent.click(
       within(sheet).getByRole("button", { name: "Delete" }),
     );
 
-    await waitFor(() => expect(deleted).toHaveBeenCalledWith(SESSION_IDS.vo2));
+    expect(
+      await within(sheet).findByText("That session no longer exists"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  /**
+   * A rollback on its own is indistinguishable from a drag that did not take:
+   * the card slides back to where it started and the calendar says nothing.
+   */
+  it("rolls a refused move back and says so on the page", async () => {
+    server.use(
+      http.post(
+        "/api/v1/planned-sessions/{planned_session_id}/move",
+        ({ response }) => response(422).json({ detail: "The plan is paused" }),
+      ),
+    );
+
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    const monday = start;
+    const friday = addDays(start, 4);
+    fireEvent.drop(screen.getByTestId(`day-${friday}`), {
+      dataTransfer: { getData: () => SESSION_IDS.strength },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The plan is paused",
+    );
+    // Rolled back: the card is on Monday again, not on Friday.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId(`day-${monday}`)).getByRole("button", {
+          name: /Strength — lower/,
+        }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(screen.getByTestId(`day-${friday}`)).queryByRole("button", {
+        name: /Strength — lower/,
+      }),
+    ).not.toBeInTheDocument();
+
+    // And the strip can be got rid of once it has been read.
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("The plan is paused")).not.toBeInTheDocument();
+  });
+
+  it("says a copy landed, and where", async () => {
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    fireEvent.change(within(sheet).getByLabelText("Copy to"), {
+      target: { value: addDays(start, 3) },
+    });
+    await userEvent.click(within(sheet).getByRole("button", { name: "Copy" }));
+
+    expect(await within(sheet).findByRole("status")).toHaveTextContent(
+      /^Copied to /,
+    );
+  });
+
+  it("says why a copy was refused instead of closing over it", async () => {
+    server.use(
+      http.post(
+        "/api/v1/planned-sessions/{planned_session_id}/copy",
+        ({ response }) =>
+          response(422).json({ detail: "Nothing may be planned in the past" }),
+      ),
+    );
+
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+    await userEvent.click(within(sheet).getByRole("button", { name: "Copy" }));
+
+    expect(
+      await within(sheet).findByText("Nothing may be planned in the past"),
+    ).toBeInTheDocument();
   });
 
   it("renders a strength prescription as grouped lines, not a profile", async () => {
@@ -586,6 +809,181 @@ describe("CalendarWeek", () => {
     expect(
       await screen.findByRole("heading", { name: "Edit session" }),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The other axis. A lift has no TSS and never will, so the sheet reports
+   * kilograms — with the count of sets those kilograms came from, because a
+   * volume totalled over three of ten sets is not the session's volume.
+   */
+  it("reports a lifting session's volume in kilograms, with its coverage", async () => {
+    renderCalendar();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Strength — lower/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    expect(within(sheet).getByText("Predicted volume")).toBeInTheDocument();
+    // 3 × 8 × 80: only the kilogram sets count.
+    expect(within(sheet).getByText("1920")).toBeInTheDocument();
+    expect(
+      within(sheet).getByText(/30% of the sets are prescribed in kilograms/),
+    ).toBeInTheDocument();
+    // And never in the TSS slot.
+    expect(within(sheet).queryByText("Predicted load")).not.toBeInTheDocument();
+  });
+
+  it("says why a lifting session has no volume load rather than showing a zero", async () => {
+    renderCalendar();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Core/ }));
+    const sheet = await screen.findByRole("dialog");
+
+    expect(
+      within(sheet).getByLabelText(
+        "Not assessed: No set is prescribed in kilograms",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(sheet).getByText(/prescribes its loads as bodyweight/),
+    ).toBeInTheDocument();
+    expect(within(sheet).queryByText("0")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The sheet's date pickers are a draft. An outside press used to throw a
+   * typed date away without a word.
+   */
+  it("asks before an outside press discards a date typed into the sheet", async () => {
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    const sheet = await screen.findByRole("dialog");
+
+    fireEvent.change(within(sheet).getByLabelText("Move to"), {
+      target: { value: addDays(start, 4) },
+    });
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("alertdialog", { name: "Discard the date you typed?" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes the sheet at once when nothing was typed into it", async () => {
+    renderCalendar();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /VO₂ 5×4′/ }),
+    );
+    await screen.findByRole("dialog");
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  /**
+   * Paging must not blank the page: the week you were looking at stays put,
+   * visibly stale, until the next one arrives.
+   */
+  it("keeps the current week on screen while the next one loads", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get("/api/v1/plan/week", async ({ query, response }) => {
+        const requested = query.get("start") ?? start;
+        if (requested !== start) {
+          await held;
+        }
+        return response(200).json(planWeekFixture(requested));
+      }),
+    );
+
+    const view = renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    view.afterUrlChange();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("week-body")).toHaveAttribute(
+        "data-stale",
+        "true",
+      ),
+    );
+    // Still the week you were reading, not "Loading the week…".
+    expect(screen.getByText("Strength — lower")).toBeInTheDocument();
+    expect(screen.queryByText("Loading the week…")).not.toBeInTheDocument();
+
+    release();
+    await waitFor(() =>
+      expect(screen.getByTestId("week-body")).not.toHaveAttribute("data-stale"),
+    );
+  });
+
+  /**
+   * Planning from the toolbar of a week you paged to must not write the
+   * session into *this* week, where the athlete cannot see it.
+   */
+  it("pre-fills the toolbar's plan form with a day inside the week on screen", async () => {
+    const other = addDays(start, 21);
+    window.history.replaceState(null, "", `/calendar?week=${other}`);
+
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Plan a session" }),
+    );
+
+    expect(await screen.findByLabelText("Date")).toHaveValue(other);
+  });
+
+  it("still pre-fills today when today is the week on screen", async () => {
+    renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Plan a session" }),
+    );
+
+    expect(await screen.findByLabelText("Date")).toHaveValue(todayIsoDate());
+  });
+
+  /**
+   * The week is one facet of this page's address. Rebuilding the query string
+   * from it alone would silently drop whatever the next facet turns out to be.
+   */
+  it("keeps every other query parameter when it moves the week", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/calendar?week=2026-03-04&view=list",
+    );
+
+    const view = renderCalendar();
+    await screen.findByText("Strength — lower");
+
+    await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    expect(addressBar()).toBe("/calendar?week=2026-03-11&view=list");
+
+    view.afterUrlChange();
+    await userEvent.click(screen.getByRole("button", { name: "This week" }));
+    // Only the week is dropped on the way back to the bare address.
+    expect(addressBar()).toBe("/calendar?view=list");
   });
 
   it("reports a week it could not load instead of showing an empty one", async () => {

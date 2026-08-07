@@ -3,8 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
+import { ConfirmButton, InlineConfirm } from "@/components/design/confirm";
 import { Field } from "@/components/design/field";
 import { SectionLabel } from "@/components/design/section-label";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -43,6 +44,11 @@ export interface WorkoutEditorProps {
  * preview, validation, the 422 handling) is the same form, so it is the same
  * component; a "new" mode that is a copy of the "edit" mode is where the two
  * quietly stop agreeing.
+ *
+ * Unlike the plan dialog this is a *route*, so leaving it means navigating.
+ * Both exits are guarded when the draft is unsaved: "← Library" asks first,
+ * and `beforeunload` covers the browser's own back button, a typed URL and a
+ * closed tab — the three the app cannot intercept.
  */
 export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
   const router = useRouter();
@@ -62,6 +68,12 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
     editing ? null : blankForm("cycling"),
   );
   const [problems, setProblems] = useState<readonly string[]>([]);
+  // Set by the athlete's own edits and cleared by a successful save. A flag
+  // rather than a diff against the loaded workout: the draft round-trips
+  // through `draftFromStructure`, and comparing two of those would call a
+  // pristine form dirty over a normalised empty string.
+  const [dirty, setDirty] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   // The saved workout arrives once; adopting it during render (rather than in
   // an effect) means the form is never briefly blank after the data is there.
@@ -77,17 +89,36 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
     });
   }
 
+  /** Every athlete-driven change to the form goes through here. */
+  function edit(next: FormState) {
+    setForm(next);
+    setDirty(true);
+  }
+
+  // The one exit the application cannot render a prompt into. The browser
+  // shows its own, and only if `preventDefault` is called during the event.
+  useEffect(() => {
+    if (!dirty) {
+      return;
+    }
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: WORKOUTS_QUERY_PREFIX });
 
   const create = $api.useMutation("post", "/api/v1/workouts", {
     onSuccess: (workout) => {
+      setDirty(false);
       invalidate();
       router.push(`/workouts/${workout.id}`);
     },
   });
   const update = $api.useMutation("patch", "/api/v1/workouts/{workout_id}", {
     onSuccess: () => {
+      setDirty(false);
       invalidate();
       if (workoutId) {
         queryClient.invalidateQueries({
@@ -100,6 +131,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
   });
   const remove = $api.useMutation("delete", "/api/v1/workouts/{workout_id}", {
     onSuccess: () => {
+      setDirty(false);
       invalidate();
       router.push("/workouts");
     },
@@ -157,28 +189,45 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
   return (
     <form onSubmit={handleSubmit}>
       <Toolbar>
+        {/* An unsaved draft turns the link into a question. `router.push`
+            rather than the anchor's own navigation, because the guard has to
+            happen before the route changes, not after. */}
         <Button
           variant="ghost"
           size="sm"
           className="text-ink-muted"
-          render={<Link href="/workouts">← Library</Link>}
+          render={
+            <Link
+              href="/workouts"
+              onClick={(event) => {
+                if (!dirty) {
+                  return;
+                }
+                event.preventDefault();
+                setLeaving(true);
+              }}
+            >
+              ← Library
+            </Link>
+          }
         />
-        <span className="font-semibold text-lg tracking-[-0.01em]">
+        {/* The page's one `h1`; the builder's sections sit under it. */}
+        <h1 className="font-semibold text-lg tracking-[-0.01em]">
           {editing ? "Edit workout" : "New workout"}
-        </span>
+        </h1>
         <div className="ml-auto flex items-center gap-2">
           {editing && workoutId ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
+            // Deleting a workout is not undoable and cannot be told apart
+            // from a mis-click on a 7px-tall toolbar. Two clicks.
+            <ConfirmButton
+              label="Delete"
+              question="Delete this workout?"
+              confirmLabel="Delete"
               disabled={remove.isPending}
-              onClick={() =>
+              onConfirm={() =>
                 remove.mutate({ params: { path: { workout_id: workoutId } } })
               }
-            >
-              Delete
-            </Button>
+            />
           ) : null}
           <Button type="submit" size="sm" disabled={saving}>
             {saving ? "Saving…" : "Save workout"}
@@ -187,6 +236,20 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
       </Toolbar>
 
       <PageBody className="flex flex-col gap-5">
+        {leaving ? (
+          <InlineConfirm
+            question="Discard this draft and go back to the library?"
+            confirmLabel="Discard"
+            cancelLabel="Keep editing"
+            onConfirm={() => {
+              setDirty(false);
+              setLeaving(false);
+              router.push("/workouts");
+            }}
+            onCancel={() => setLeaving(false)}
+          />
+        ) : null}
+
         {update.isSuccess && !update.isPending ? (
           <p role="status" className="text-status-completed text-sm">
             Saved.
@@ -206,7 +269,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
                 value={form.name}
                 placeholder="VO₂ 5×4′"
                 onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
+                  edit({ ...form, name: event.target.value })
                 }
               />
             </Field>
@@ -222,7 +285,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
                 value={form.draft.discipline}
                 disabled={editing}
                 onChange={(event) =>
-                  setForm({
+                  edit({
                     ...form,
                     // Switching discipline replaces the prescription: a step
                     // tree has no meaning as a set of lifts. Disabled while
@@ -249,7 +312,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
                 list={`${base}-folders`}
                 value={form.folder}
                 onChange={(event) =>
-                  setForm({ ...form, folder: event.target.value })
+                  edit({ ...form, folder: event.target.value })
                 }
               />
               <datalist id={`${base}-folders`}>
@@ -269,7 +332,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
                 id={`${base}-tags`}
                 value={form.tags}
                 onChange={(event) =>
-                  setForm({ ...form, tags: event.target.value })
+                  edit({ ...form, tags: event.target.value })
                 }
               />
             </Field>
@@ -285,7 +348,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
               rows={2}
               value={form.description}
               onChange={(event) =>
-                setForm({ ...form, description: event.target.value })
+                edit({ ...form, description: event.target.value })
               }
             />
           </Field>
@@ -293,7 +356,7 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
 
         <WorkoutBuilder
           draft={form.draft}
-          onChange={(draft) => setForm({ ...form, draft })}
+          onChange={(draft) => edit({ ...form, draft })}
           problems={[...problems, ...apiProblems]}
         />
       </PageBody>

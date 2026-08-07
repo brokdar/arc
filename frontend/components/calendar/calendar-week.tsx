@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
@@ -17,6 +17,7 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
+import { apiErrorMessages } from "@/lib/api-errors";
 import {
   addDays,
   isIsoDate,
@@ -49,6 +50,12 @@ const WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
  * the same rule the endpoint follows (D55) — so a link to a Wednesday shows
  * the seven days from that Wednesday. Anything unreadable, and anything at
  * all missing, means this week (D77).
+ *
+ * **No mutation fails quietly.** A move that the server refuses rolls the grid
+ * back *and* says so in a strip on the page; a delete keeps the sheet open
+ * with the refusal in it. A card that silently reappeared where it started
+ * would read as a bug in the drag, and a session that silently survived being
+ * deleted is worse than one that could not be deleted at all.
  */
 export function CalendarWeek() {
   // Read once, on mount. `todayIsoDate()` is the *browser's* today, and
@@ -86,13 +93,25 @@ export function CalendarWeek() {
    * This week is the bare `/calendar`, never `?week=<this monday>`: a URL
    * whose meaning is "the week I am in" is still right tomorrow, so the
    * address someone bookmarks does not quietly become last week's.
+   *
+   * Every *other* param is carried through untouched. The week is one facet of
+   * this page's address and rebuilding the query string from it alone would
+   * silently drop whatever the next facet turns out to be.
    */
-  const showWeek = (next: string) =>
+  const showWeek = (next: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === thisWeek) {
+      params.delete("week");
+    } else {
+      params.set("week", next);
+    }
+    const query = params.toString();
     window.history.replaceState(
       null,
       "",
-      next === thisWeek ? pathname : `${pathname}?week=${next}`,
+      query ? `${pathname}?${query}` : pathname,
     );
+  };
 
   const [openSession, setOpenSession] = useState<WeekSession | null>(null);
   // The plan form is one component in two modes: `{ date }` plans a new
@@ -101,6 +120,12 @@ export function CalendarWeek() {
     date: string;
     sessionId?: string;
   } | null>(null);
+  /** A refused move, kept until the athlete dismisses it. */
+  const [moveFailure, setMoveFailure] = useState<readonly string[] | null>(
+    null,
+  );
+  /** The date a copy landed on, for the confirmation in the sheet. */
+  const [copiedTo, setCopiedTo] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const weekInit = { params: { query: { start } } };
@@ -110,7 +135,17 @@ export function CalendarWeek() {
     weekInit,
   ).queryKey;
 
-  const week = $api.useQuery("get", "/api/v1/plan/week", weekInit);
+  const week = $api.useQuery("get", "/api/v1/plan/week", weekInit, {
+    // Paging a week keeps the week you were looking at on screen until the
+    // next one arrives. Without this the grid unmounts to "Loading the week…"
+    // on every click of the arrows, which on a fast connection is a flash of
+    // nothing and on a slow one is the page disappearing under the cursor.
+    placeholderData: keepPreviousData,
+  });
+  // True while showing a week the server has not confirmed yet: the previous
+  // week's data, kept deliberately. Said with opacity rather than a spinner —
+  // the numbers are real, they are just not this week's yet.
+  const stale = week.isPlaceholderData;
 
   const invalidateWeeks = () =>
     queryClient.invalidateQueries({ queryKey: WEEK_QUERY_PREFIX });
@@ -121,6 +156,7 @@ export function CalendarWeek() {
     {
       // Dragging a card should land where it was dropped, not a request later.
       onMutate: async (variables) => {
+        setMoveFailure(null);
         await queryClient.cancelQueries({ queryKey: weekKey });
         const previous = queryClient.getQueryData<PlanWeek>(weekKey);
         if (previous) {
@@ -135,10 +171,13 @@ export function CalendarWeek() {
         }
         return { previous };
       },
-      onError: (_error, _variables, context) => {
+      onError: (error, _variables, context) => {
         if (context?.previous) {
           queryClient.setQueryData(weekKey, context.previous);
         }
+        // The rollback alone is indistinguishable from a drag that did not
+        // take: the card slides back and nothing says why.
+        setMoveFailure(apiErrorMessages(error));
       },
       // Both weeks are stale when a card leaves this one, so drop them all.
       onSettled: invalidateWeeks,
@@ -166,6 +205,18 @@ export function CalendarWeek() {
 
   const end = addDays(start, 6);
   const busy = move.isPending || copy.isPending || remove.isPending;
+  // Copy and delete are the two actions that keep the sheet open, so their
+  // refusals belong in it rather than behind it.
+  const sheetProblems = apiErrorMessages(remove.error ?? copy.error);
+
+  /**
+   * The day "Plan a session" opens on: today, when today is on screen.
+   *
+   * Paging to a week and planning into it should not silently write the
+   * session into *this* week — the athlete is looking at October and the card
+   * would appear nowhere they can see.
+   */
+  const planningDate = today >= start && today <= end ? today : start;
 
   return (
     <>
@@ -206,7 +257,7 @@ export function CalendarWeek() {
         </Button>
         <div className="ml-auto flex items-center gap-2">
           <PlanStateToggle />
-          <Button size="sm" onClick={() => setPlanning({ date: today })}>
+          <Button size="sm" onClick={() => setPlanning({ date: planningDate })}>
             Plan a session
           </Button>
         </div>
@@ -225,10 +276,32 @@ export function CalendarWeek() {
                 ? `${week.data.session_count} planned · ${formatDurationHm(
                     week.data.planned_duration_s,
                   )} prescribed`
-                : " "}
+                : " "}
             </p>
           </div>
         </div>
+
+        {moveFailure ? (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-3 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+          >
+            <ul className="flex flex-1 flex-col gap-1">
+              {moveFailure.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="text-destructive"
+              onClick={() => setMoveFailure(null)}
+            >
+              Dismiss
+            </Button>
+          </div>
+        ) : null}
 
         {week.isPending ? (
           <p className="text-ink-muted text-sm">Loading the week…</p>
@@ -241,7 +314,14 @@ export function CalendarWeek() {
           // narrow one: seven 134px columns already scroll horizontally, and
           // stealing 200px from them to keep the rail beside them would make
           // the days unreadable before it made the totals inconvenient.
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+          <div
+            data-testid="week-body"
+            data-stale={stale ? "true" : undefined}
+            aria-busy={stale || undefined}
+            className={`flex flex-col gap-3 transition-opacity xl:flex-row xl:items-start ${
+              stale ? "opacity-50" : ""
+            }`}
+          >
             <WeekRail week={week.data} className="xl:w-[212px] xl:shrink-0" />
             <div className="min-w-0 flex-1">
               <WeekGrid
@@ -259,23 +339,43 @@ export function CalendarWeek() {
       <SessionSheet
         session={openSession}
         busy={busy}
-        onClose={() => setOpenSession(null)}
+        problems={sheetProblems}
+        notice={copiedTo ? `Copied to ${formatDayMonthYear(copiedTo)}.` : null}
+        onClose={() => {
+          setOpenSession(null);
+          setCopiedTo(null);
+          remove.reset();
+          copy.reset();
+        }}
         onMove={(sessionId, toDate) => {
+          // The optimistic update lands the card immediately, so the sheet has
+          // nothing left to say; a refusal surfaces in the page's strip.
           moveSession(sessionId, toDate);
           setOpenSession(null);
         }}
         onCopy={(sessionId, toDate) => {
-          copy.mutate({
-            params: { path: { planned_session_id: sessionId } },
-            body: { date: toDate },
-          });
-          setOpenSession(null);
+          // One action's outcome at a time: the sheet has one status line and
+          // one error list, and a stale one beside a fresh one reads as both
+          // having just happened.
+          setCopiedTo(null);
+          remove.reset();
+          copy.mutate(
+            {
+              params: { path: { planned_session_id: sessionId } },
+              body: { date: toDate },
+            },
+            { onSuccess: () => setCopiedTo(toDate) },
+          );
         }}
         onDelete={(sessionId) => {
-          remove.mutate({
-            params: { path: { planned_session_id: sessionId } },
-          });
-          setOpenSession(null);
+          setCopiedTo(null);
+          copy.reset();
+          // Closed on success only: a sheet that vanished the instant Delete
+          // was pressed would take the server's refusal with it.
+          remove.mutate(
+            { params: { path: { planned_session_id: sessionId } } },
+            { onSuccess: () => setOpenSession(null) },
+          );
         }}
         onEdit={(session) => {
           setPlanning({ date: session.date, sessionId: session.id });

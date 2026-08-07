@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,11 +50,11 @@ function stepCards() {
   return screen.getAllByTestId("draft-step");
 }
 
-describe("the endurance builder", () => {
-  beforeEach(() => {
-    push.mockClear();
-  });
+beforeEach(() => {
+  push.mockClear();
+});
 
+describe("the endurance builder", () => {
   it("starts empty and says what to do about it", async () => {
     renderEditor();
 
@@ -352,7 +359,100 @@ describe("the strength builder", () => {
   });
 });
 
+describe("leaving an unsaved draft", () => {
+  it("goes straight back to the library when nothing has been typed", async () => {
+    renderEditor();
+    await screen.findByLabelText("Name");
+
+    // Whether the link's own navigation survives is the assertion; jsdom
+    // cannot follow it, so a document-level listener reads the verdict after
+    // the component's handler has had its say and then stops the navigation.
+    const prevented: boolean[] = [];
+    document.addEventListener(
+      "click",
+      (event) => {
+        prevented.push(event.defaultPrevented);
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    await userEvent.click(screen.getByRole("link", { name: /Library/ }));
+
+    expect(prevented).toEqual([false]);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The browser's own back button, a typed URL and a closed tab are the three
+   * exits the application cannot render a prompt into, so it asks the browser
+   * to. `preventDefault` during the event is the whole protocol.
+   */
+  it("asks the browser to warn before the tab is closed on a draft", async () => {
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Threshold");
+
+    const unload = createEvent(
+      "beforeunload",
+      window,
+      { bubbles: false, cancelable: true },
+      { EventType: "Event" },
+    );
+    fireEvent(window, unload);
+
+    expect(unload.defaultPrevented).toBe(true);
+  });
+
+  it("asks before the Library link throws a draft away", async () => {
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Threshold");
+
+    await userEvent.click(screen.getByRole("link", { name: /Library/ }));
+
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Discard this draft and go back to the library?",
+      }),
+    ).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+    // Still here, still typed in.
+    expect(screen.getByLabelText("Name")).toHaveValue("Threshold");
+
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("navigates once the athlete has said discard", async () => {
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Threshold");
+
+    await userEvent.click(screen.getByRole("link", { name: /Library/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(push).toHaveBeenCalledWith("/workouts");
+  });
+});
+
 describe("editing a saved workout", () => {
+  it("takes two clicks to delete, so a mis-click cannot", async () => {
+    const deleted = vi.fn();
+    server.use(
+      http.delete("/api/v1/workouts/{workout_id}", ({ params, response }) => {
+        deleted(params.workout_id);
+        return response(204).empty();
+      }),
+    );
+
+    renderEditor(WORKOUT_IDS.long);
+    await screen.findByDisplayValue("Long endurance");
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(deleted).not.toHaveBeenCalled();
+    expect(screen.getByText("Delete this workout?")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toHaveBeenCalledWith(WORKOUT_IDS.long));
+  });
+
   it("loads the prescription into the builder and PATCHes it back", async () => {
     const patched: unknown[] = [];
     server.use(

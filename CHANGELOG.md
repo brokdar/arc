@@ -264,6 +264,90 @@ D55–D81.
 - Today and Workouts are no longer dimmed in the sidebar, and a nested route
   (`/workouts/new`) marks the section it belongs to.
 
+**Web — fixed before the week UI shipped**
+
+- **Today resolved percentages against the anchor in force, not the session's
+  pins.** It fetched `/anchors/current` and multiplied; the page therefore
+  restated every planned watt the moment a new FTP was appended, and labelled a
+  guess with the current version's provenance. Targets, the zone legend and a
+  new flattened step list now render from the session's own `resolved_steps`,
+  and the provenance line (`ProvenanceMark` / `AnchorProvenance`, extracted to
+  `components/design/` and shared with the calendar sheet) says whose FTP they
+  came from. The `/anchors/current` resolution path is gone; there is no
+  function left in `lib/targets.ts` that can multiply a percentage by an
+  anchor.
+- **`widen()` unioned percentage bands across different anchors**, turning
+  `85 % LTHR` and `75 % max HR` into "75–85 % of LTHR" — a band the plan never
+  states. Bands now union only within one channel *and* one reference; two
+  anchors are two rows.
+- **The criteria editor could post a criterion of the wrong discipline.** The
+  selected kind was remembered across a purpose change, so a touched list moved
+  from a ride to a lift left `time_in_band` selected behind a strength menu.
+  The selection is derived from the discipline; a kind both disciplines offer
+  survives the change.
+- **Planning could freeze a session with no success criteria.** Submitting
+  before `GET /purposes/{purpose}` answered posted `success_criteria: []`,
+  which is indistinguishable afterwards from having chosen that. Save is
+  disabled with a visible "loading this purpose's criteria template…" while the
+  template is in flight and the list is still the template's; a template that
+  *fails* says so and lets the athlete proceed deliberately.
+- **Dirty dialogs no longer discard silently.** An outside press, Escape or the
+  close control on the plan form or the session sheet now raises an inline
+  "Discard?" prompt when there is unsaved work, and closes instantly when there
+  is not (`useDirtyClose`, reading Base UI's `onOpenChange` reason). The
+  workout editor guards its "← Library" link the same way and asks the browser
+  to warn on unload.
+- **Calendar mutations no longer fail invisibly.** A refused move rolls back
+  *and* raises a dismissible strip on the page; delete closes the sheet only on
+  success and shows the refusal in the sheet otherwise; copy reports where it
+  landed, or why it did not.
+- **Delete asks first**, in the session sheet and the workout editor — a
+  two-step button in the control's own slot, not a browser `confirm()`.
+- **The week rail tells the truth about missing numbers.** Planned time renders
+  not-assessed when it is null and carries its own coverage note whenever a
+  session contributed none, exactly as load does; discipline rows consume their
+  own four coverage fields; and the hard-coded "Strength volume is measured in
+  kilograms, not TSS" is derived per row, so a *cycling* row with no TSS says
+  "No prediction for 2 of 3 sessions" instead of a confident falsehood.
+- **A strength session's predicted volume renders** in the sheet — kilograms,
+  sets and the share of sets those kilograms came from — with the honest reason
+  in its place when the loads are prescribed as %e1RM, RPE or bodyweight.
+- **The optimistic move recomputes every aggregate**, not just the duration:
+  load, both coverage pairs and the whole `by_discipline` block follow the
+  cards that remain, so dragging a ride out of the week cannot leave a TSS on
+  the rail that no session in the grid contributes to.
+- Paging a week keeps the week you were reading on screen, dimmed, instead of
+  blanking the page (`keepPreviousData`); the toolbar's "Plan a session"
+  pre-fills a day inside the week on screen; a card dropped back on its own day
+  is a no-op rather than a request; the week param is written without
+  discarding the rest of the query string; the library's search waits 250 ms
+  for the typing to stop; and `ProvenanceMark` gained the `NotAssessed`
+  treatment so its note reaches a screen reader.
+- Each page renders exactly one `h1`: Today's belongs to the page and its
+  session headlines are `h2`s, and the library and workout editor gained one.
+- Collision-prone `JSON.stringify(criterion)` and
+  `` `${exercise_id}-${sets}-${reps}` `` keys are gone; these lists are
+  replaced wholesale, so the index is the identity and says so in a comment.
+
+**Web — testing**
+
+- `tests/mocks/fixtures.ts` was rewritten so that **every payload is one the
+  real API could produce**: a card's `title` is non-null exactly when its
+  `workout_id` is, strength cards carry no duration, and step counts, sets,
+  durations, predicted load, intensity factor, coverage and volume load are all
+  derived from the prescriptions — recomputed by running `app.domain.prediction`
+  over those documents at FTP 250 W (the VO₂ session is 3 420 s, 78.3 TSS,
+  IF 0.908, 82.5 % coverage; the long ride 11 400 s, 134.4 TSS, IF 0.652; the
+  lift 1 920 kg over 3 of 10 sets). An intent pins exactly the anchors its
+  prescription refers to, `artefact_id` is the session's own id, and no
+  `tested` anchor is left without a protocol. The pinned FTP (250 W, estimated)
+  and the one in force (265 W, tested) now differ in value *and* provenance, so
+  a page that resolves against the wrong one is visibly wrong.
+- The mutating MSW handlers **honour the request**: `move` applies the date it
+  is given, `copy` answers with a new id at version 1, and `POST` / `PATCH`
+  echo the submitted intent — so a form that drops a field fails its test
+  instead of passing against a canned reply.
+
 ### WP-2 — workout model, library, purpose templates, planned sessions
 
 The prescription half of the loop: what a session *is*, what it is *for*, and

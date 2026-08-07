@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
 
+import { DiscardPrompt, useDirtyClose } from "@/components/design/dirty-close";
 import { Field } from "@/components/design/field";
 import { PurposeBadge } from "@/components/design/purpose-badge";
 import { SectionLabel } from "@/components/design/section-label";
@@ -72,6 +73,13 @@ export interface SessionFormProps {
  * any intent field as a new intent version. Sending the whole form on every
  * save would version the intent for a date change and trip that rule for free,
  * so the edit path diffs against what it loaded.
+ *
+ * **Nothing here closes silently.** A stray click on the backdrop used to
+ * discard a half-written session without a word; now anything the athlete
+ * typed makes the dialog ask first (`useDirtyClose`). And the form does not
+ * offer to save while the purpose's template is still in flight: submitting
+ * then would post `success_criteria: []` and freeze a session judged by
+ * nothing, which is indistinguishable afterwards from having chosen that.
  */
 export function SessionForm({
   date,
@@ -98,11 +106,22 @@ export function SessionForm({
   // Bumped whenever the criteria list is replaced wholesale, so the editor's
   // uncontrolled number fields remount with the new values in them.
   const [criteriaKey, setCriteriaKey] = useState(0);
+  // Set by the athlete's own edits and by nothing else. A flag rather than a
+  // diff against an initial value, because the template fills the criteria on
+  // its own a moment after the dialog opens: a diff would call an untouched
+  // form dirty and prompt to discard a draft nobody wrote.
+  const [dirty, setDirty] = useState(false);
 
   if (form === null && existing.data) {
     const initial = formFromSession(existing.data);
     setForm(initial);
     setLoaded(initial);
+  }
+
+  /** Every athlete-driven change to the form goes through here. */
+  function edit(next: FormState) {
+    setForm(next);
+    setDirty(true);
   }
 
   const purpose = form?.purpose ?? "endurance";
@@ -164,20 +183,36 @@ export function SessionForm({
   const saving = create.isPending || update.isPending;
   const apiProblems = apiErrorMessages(create.error ?? update.error);
 
+  /**
+   * The criteria are still on their way, and posting now would post none.
+   *
+   * Only while the list is the template's: once the athlete has touched it,
+   * whatever it holds is their answer and no request is owed. The template's
+   * *failure* deliberately does not block — an empty list is then a choice
+   * made in front of a message saying so, rather than one made silently.
+   */
+  const awaitingTemplate =
+    form !== null && !form.criteriaTouched && template.isPending;
+  const templateProblems = template.isError
+    ? [
+        "Could not load this purpose's template, so no criteria were pre-filled. Add them yourself, or plan the session judged by completion alone.",
+      ]
+    : [];
+
   function setPurpose(next: Purpose) {
     if (!form) {
       return;
     }
     const nextDiscipline = disciplineOfPurpose(next);
     if (nextDiscipline === disciplineOfPurpose(form.purpose)) {
-      setForm({ ...form, purpose: next });
+      edit({ ...form, purpose: next });
       return;
     }
     // The discipline changed under the prescription: a step tree is not a set
     // of lifts, and a cycling workout cannot be planned for a strength
     // purpose. Start that half over rather than send something the domain
     // will refuse.
-    setForm({
+    edit({
       ...form,
       purpose: next,
       workoutId: null,
@@ -226,10 +261,11 @@ export function SessionForm({
     });
   }
 
-  const allProblems = [...problems, ...apiProblems];
+  const allProblems = [...problems, ...templateProblems, ...apiProblems];
+  const guard = useDirtyClose({ dirty, onClose });
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent
         className="max-h-[88vh] w-[min(52rem,calc(100vw-2rem))] max-w-none overflow-y-auto gap-0 rounded-shell border border-hairline bg-panel p-0 ring-0"
         aria-label={editing ? "Edit session" : "Plan a session"}
@@ -264,7 +300,7 @@ export function SessionForm({
                     className="font-mono"
                     value={form.date}
                     onChange={(event) =>
-                      setForm({ ...form, date: event.target.value })
+                      edit({ ...form, date: event.target.value })
                     }
                   />
                 </Field>
@@ -320,7 +356,7 @@ export function SessionForm({
                       }
                       aria-pressed={form.source === "library"}
                       className="text-ink-secondary"
-                      onClick={() => setForm({ ...form, source: "library" })}
+                      onClick={() => edit({ ...form, source: "library" })}
                     >
                       From the library
                     </Button>
@@ -330,7 +366,7 @@ export function SessionForm({
                       variant={form.source === "inline" ? "secondary" : "ghost"}
                       aria-pressed={form.source === "inline"}
                       className="text-ink-secondary"
-                      onClick={() => setForm({ ...form, source: "inline" })}
+                      onClick={() => edit({ ...form, source: "inline" })}
                     >
                       Describe it here
                     </Button>
@@ -342,13 +378,13 @@ export function SessionForm({
                     discipline={discipline}
                     value={form.workoutId}
                     onChange={(workout) =>
-                      setForm({ ...form, workoutId: workout?.id ?? null })
+                      edit({ ...form, workoutId: workout?.id ?? null })
                     }
                   />
                 ) : (
                   <WorkoutBuilder
                     draft={form.draft}
-                    onChange={(draft) => setForm({ ...form, draft })}
+                    onChange={(draft) => edit({ ...form, draft })}
                   />
                 )}
               </section>
@@ -360,7 +396,7 @@ export function SessionForm({
                   placeholder="Why this session exists, in one line."
                   value={form.intentText}
                   onChange={(event) =>
-                    setForm({ ...form, intentText: event.target.value })
+                    edit({ ...form, intentText: event.target.value })
                   }
                 />
               </Field>
@@ -375,7 +411,7 @@ export function SessionForm({
                   rows={2}
                   value={form.coachNotes}
                   onChange={(event) =>
-                    setForm({ ...form, coachNotes: event.target.value })
+                    edit({ ...form, coachNotes: event.target.value })
                   }
                 />
               </Field>
@@ -388,7 +424,7 @@ export function SessionForm({
                   criteria={form.criteria}
                   fromTemplate={!form.criteriaTouched}
                   onChange={(criteria) =>
-                    setForm({ ...form, criteria, criteriaTouched: true })
+                    edit({ ...form, criteria, criteriaTouched: true })
                   }
                   onResetToTemplate={() => {
                     setForm({
@@ -414,21 +450,35 @@ export function SessionForm({
             </div>
           )}
 
+          {guard.confirming ? (
+            <DiscardPrompt
+              what="this draft"
+              onDiscard={guard.discard}
+              onKeepEditing={guard.keepEditing}
+              className="mx-6 mb-4"
+            />
+          ) : null}
+
           <div className="sticky bottom-0 flex items-center gap-2 border-hairline border-t bg-panel px-6 py-3.5">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="text-ink-muted"
-              onClick={onClose}
+              onClick={guard.requestClose}
             >
               Cancel
             </Button>
+            {awaitingTemplate ? (
+              <span className="ml-auto mr-2 text-ink-muted text-xs">
+                Loading this purpose's criteria template…
+              </span>
+            ) : null}
             <Button
               type="submit"
               size="sm"
-              className="ml-auto"
-              disabled={saving || !form}
+              className={awaitingTemplate ? undefined : "ml-auto"}
+              disabled={saving || !form || awaitingTemplate}
             >
               {saving ? "Saving…" : editing ? "Save changes" : "Plan it"}
             </Button>

@@ -12,16 +12,28 @@ function rail() {
   return screen.getByRole("complementary", { name: "Week totals" });
 }
 
+/** The row for one discipline, found by the label beside its session count. */
+function disciplineRow(label: string): HTMLElement {
+  const heading = within(rail()).getByText(label);
+  const row = heading.closest("div")?.parentElement;
+  if (!row) {
+    throw new Error(`no ${label} row in the rail`);
+  }
+  return row;
+}
+
 describe("WeekRail", () => {
   it("never shows the planned load without the coverage it was computed from", () => {
     render(<WeekRail week={WEEK} />);
 
-    // Three of the five sessions carry a predictable power target; a week of
-    // five where two are unknown must not read as a light week.
+    // Two of the five sessions carry a predictable power target — the VO₂
+    // ride and the long one; the recovery spin is prescribed off heart rate
+    // and the two lifts are on the other axis entirely. A week of five where
+    // three are unknown must not read as a light week.
     // Twice: the week's total and the cycling row, which reconcile because
     // the only predictable sessions this week are rides.
-    expect(within(rail()).getAllByText("289")).toHaveLength(2);
-    expect(within(rail()).getByText("3 of 5 sessions")).toBeInTheDocument();
+    expect(within(rail()).getAllByText("213")).toHaveLength(2);
+    expect(within(rail()).getByText("2 of 5 sessions")).toBeInTheDocument();
   });
 
   it("says not assessed, never zero, when nothing in the week is predictable", () => {
@@ -42,6 +54,37 @@ describe("WeekRail", () => {
     expect(within(rail()).getByText("0 of 5 sessions")).toBeInTheDocument();
   });
 
+  /**
+   * Time is a total like any other. Two lifts prescribe no minutes, so the
+   * week's 4:52 is three sessions' worth of a five-session week — and it says
+   * so, exactly as the load beside it does.
+   */
+  it("qualifies the planned time whenever a session contributed none", () => {
+    render(<WeekRail week={WEEK} />);
+
+    // Twice: the week's own total and the cycling row, which reconcile
+    // because the two lifts contribute no minutes to either.
+    expect(within(rail()).getAllByText("4:52")).toHaveLength(2);
+    expect(within(rail()).getByText("3 of 5 sessions")).toBeInTheDocument();
+  });
+
+  it("says not assessed, never 0:00, when no session prescribes a duration", () => {
+    const untimed: PlanWeek = {
+      ...WEEK,
+      planned_duration_s: null,
+      duration_sessions_counted: 0,
+      duration_sessions_uncounted: 5,
+    };
+    render(<WeekRail week={untimed} />);
+
+    expect(within(rail()).queryByText("0:00")).not.toBeInTheDocument();
+    expect(
+      within(rail()).getByLabelText(
+        "Not assessed: No session this week prescribes a duration",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("gives each discipline its own row, with TSS and sets in their own columns", () => {
     render(<WeekRail week={WEEK} />);
 
@@ -50,9 +93,11 @@ describe("WeekRail", () => {
     expect(within(rail()).getByText("3 sessions")).toBeInTheDocument();
     expect(within(rail()).getByText("2 sessions")).toBeInTheDocument();
 
-    // 28 strength sets and 289 cycling TSS both render — and neither borrows
+    // 14 strength sets and 213 cycling TSS both render — and neither borrows
     // the other's column, because kilograms and TSS are different axes.
-    expect(within(rail()).getByText("28")).toBeInTheDocument();
+    expect(
+      within(disciplineRow("Strength")).getByText("14"),
+    ).toBeInTheDocument();
     expect(
       within(rail()).getByLabelText(
         "Not assessed: Strength volume is measured in kilograms, not TSS",
@@ -63,6 +108,55 @@ describe("WeekRail", () => {
         "Not assessed: A ride is prescribed in time, not in sets",
       ),
     ).toBeInTheDocument();
+    expect(
+      within(rail()).getByLabelText(
+        "Not assessed: A lift is prescribed in sets and reps, not in minutes",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("qualifies a discipline's own total from its own coverage pair", () => {
+    render(<WeekRail week={WEEK} />);
+
+    // Two of the three rides predicted; the recovery spin states no power
+    // target. The row says so without the week's total having to.
+    expect(
+      within(disciplineRow("Cycling")).getByText("2 of 3 sessions"),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The discriminating case. A cycling row with no TSS has *not* run into the
+   * kilograms/TSS split — every one of its rides failed to predict — and
+   * saying "measured in kilograms" there would be a confident falsehood about
+   * the sport rather than a fact about the week.
+   */
+  it("explains a missing cycling TSS by its coverage, not by the kilograms axis", () => {
+    const unpredictable: PlanWeek = {
+      ...WEEK,
+      by_discipline: WEEK.by_discipline.map((row) =>
+        row.discipline === "cycling"
+          ? {
+              ...row,
+              planned_load: null,
+              load_sessions_counted: 0,
+              load_sessions_uncounted: 3,
+            }
+          : row,
+      ),
+    };
+    render(<WeekRail week={unpredictable} />);
+
+    expect(
+      within(disciplineRow("Cycling")).getByLabelText(
+        "Not assessed: No prediction for 3 of 3 sessions",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(disciplineRow("Cycling")).queryByLabelText(
+        "Not assessed: Strength volume is measured in kilograms, not TSS",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("renders nothing at all for the slots later work packages will fill", () => {

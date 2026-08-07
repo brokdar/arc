@@ -158,6 +158,46 @@ describe("CriteriaEditor", () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * The selected kind is derived from the discipline, not remembered across
+   * it: a `time_in_band` left selected behind a strength menu would be added
+   * on the next click and refused by the domain.
+   */
+  it("drops a selected kind the discipline no longer offers", async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <Host initial={[]} discipline="cycling" onChange={onChange} />,
+    );
+
+    await userEvent.selectOptions(
+      screen.getByLabelText("Add a criterion"),
+      "time_in_band",
+    );
+    rerender(<Host initial={[]} discipline="strength" onChange={onChange} />);
+
+    expect(screen.getByLabelText("Add a criterion")).toHaveValue(
+      "sets_completed",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "sets_completed" }),
+    ]);
+  });
+
+  it("keeps a selected kind both disciplines offer", async () => {
+    const { rerender } = render(<Host initial={[]} discipline="cycling" />);
+
+    await userEvent.selectOptions(
+      screen.getByLabelText("Add a criterion"),
+      "duration_floor",
+    );
+    rerender(<Host initial={[]} discipline="strength" />);
+
+    expect(screen.getByLabelText("Add a criterion")).toHaveValue(
+      "duration_floor",
+    );
+  });
+
   it("says what to do when there are no criteria at all", () => {
     render(<Host initial={[]} />);
 

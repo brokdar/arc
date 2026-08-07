@@ -39,8 +39,8 @@ describe("WorkoutLibrary", () => {
     expect(screen.getByText("Long endurance")).toBeInTheDocument();
     expect(screen.getByText("Strength — lower")).toBeInTheDocument();
     // Minutes for a ride, sets for a lift.
-    expect(screen.getByText("1:09")).toBeInTheDocument();
-    expect(screen.getByText("16 sets")).toBeInTheDocument();
+    expect(screen.getByText("0:57")).toBeInTheDocument();
+    expect(screen.getByText("10 sets")).toBeInTheDocument();
   });
 
   it("draws a bar profile for a ride and none for a lift", async () => {
@@ -70,7 +70,36 @@ describe("WorkoutLibrary", () => {
     renderLibrary();
     await userEvent.type(screen.getByLabelText("Search"), "vo2");
 
-    await waitFor(() => expect(queries).toContain("vo2"));
+    await waitFor(() => expect(queries).toContain("vo2"), { timeout: 2000 });
+  });
+
+  /**
+   * Typing is not nine searches. Each keystroke used to be its own query key
+   * and therefore its own request, and the list re-rendered under the cursor
+   * with the results of a prefix nobody meant to search for.
+   */
+  it("waits for the typing to stop before it searches", async () => {
+    const queries: string[] = [];
+    server.use(
+      http.get("/api/v1/workouts", ({ query, response }) => {
+        queries.push(query.get("q") ?? "");
+        return response(200).json({
+          items: [],
+          total: 0,
+          offset: 0,
+          limit: 100,
+        });
+      }),
+    );
+
+    renderLibrary();
+    await userEvent.type(screen.getByLabelText("Search"), "endurance");
+
+    await waitFor(() => expect(queries).toContain("endurance"), {
+      timeout: 2000,
+    });
+    // The empty first load and the settled term — not one per keystroke.
+    expect(queries.filter((q) => q !== "" && q !== "endurance")).toEqual([]);
   });
 
   it("narrows by folder", async () => {

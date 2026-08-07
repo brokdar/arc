@@ -7,10 +7,14 @@
  * Both are folds over the same flattened step list, so a step that is drawn
  * cannot be missing from the table and vice versa.
  *
- * Percentages are resolved to absolute values **only when the anchor they name
- * is known**, and the resolved form always says which anchor it came from. A
- * band shown as `165–190 W` when nobody has entered an FTP would be a number
- * the application made up.
+ * **Nothing here resolves a percentage.** A band's absolute numbers come from
+ * the API's already-resolved steps (`PlannedSessionRead.resolved_steps`),
+ * which the backend computed against the anchor versions the session *pinned*
+ * (D49). There is deliberately no function that multiplies a prescribed
+ * percentage by an anchor value, because the only anchor value a client can
+ * easily reach is the one in force *now* — and a screen that resolves against
+ * "now" silently rewrites every planned session the next time the athlete
+ * tests. When nothing resolved, the band stays in the form the plan states it.
  */
 
 import type { components } from "@/generated/api/schema";
@@ -31,9 +35,8 @@ type WireTarget =
   | Schemas["AbsoluteRangeSchema"];
 export type Channel = Schemas["Channel"];
 export type AnchorType = Schemas["AnchorType"];
-
-/** The anchor values in force, as far as the caller managed to fetch them. */
-export type AnchorValues = Partial<Record<AnchorType, number>>;
+export type PinnedAnchor = Schemas["PinnedAnchorRead"];
+export type ResolvedStep = Schemas["ResolvedStepRead"];
 
 /** One channel's band across the whole prescription. */
 export interface ChannelBand {
@@ -87,12 +90,31 @@ export function anchorLabel(anchorType: AnchorType): string {
 const CHANNEL_ORDER: readonly Channel[] = ["power", "hr", "cadence"];
 
 /**
- * The widest band each channel is prescribed anywhere in the session.
+ * The identity a band is unioned within: one channel *and* one reference.
+ *
+ * The reference is the whole point. `85 % LTHR` and `75 % max HR` are both
+ * heart-rate targets and unioning them into `75–85 % of LTHR` would attribute
+ * one prescription's percentage to the other's anchor — a number the plan does
+ * not state. An absolute range shares no key with a percentage either: it is
+ * measured against nothing, and averaging the two forms would need the anchor
+ * that the absolute form deliberately does without.
+ */
+function bandKey(channel: Channel, target: WireTarget): string {
+  return target.kind === "percent_of_anchor"
+    ? `${channel}|pct|${target.anchor_type}`
+    : `${channel}|abs`;
+}
+
+/**
+ * The widest band each channel is prescribed anywhere in the session, one row
+ * per reference the channel is written against.
  *
  * The union rather than the mode: a ride whose warm-up starts at 50% and whose
  * work sits at 90% is honestly summarised as "50–90% of FTP", and the profile
- * beside it shows where each part falls. Channels prescribed in both forms in
- * one session (rare) report the absolute form, which needs no anchor to read.
+ * beside it shows where each part falls. A channel prescribed against two
+ * different anchors — or in both the percentage and the absolute form — yields
+ * a row each, in the order the prescription first states them, because there
+ * is no single band that says both.
  */
 export function channelBands(
   structure: WorkoutStructure | null | undefined,
@@ -100,15 +122,17 @@ export function channelBands(
   if (structure?.discipline !== "cycling") {
     return [];
   }
-  const bands = new Map<Channel, ChannelBand>();
+  // Insertion-ordered, so rows within a channel follow the prescription.
+  const bands = new Map<string, ChannelBand>();
   for (const step of flattenSteps(structure.steps)) {
     for (const [channel, target] of targetEntries(step)) {
-      bands.set(channel, widen(bands.get(channel), channel, target));
+      const key = bandKey(channel, target);
+      bands.set(key, widen(bands.get(key), channel, target));
     }
   }
-  return CHANNEL_ORDER.filter((channel) => bands.has(channel)).map(
-    // Non-null by the filter; narrowed so the map stays total.
-    (channel) => bands.get(channel) as ChannelBand,
+  const found = [...bands.values()];
+  return CHANNEL_ORDER.flatMap((channel) =>
+    found.filter((band) => band.channel === channel),
   );
 }
 
@@ -127,7 +151,7 @@ export function profileLegend(
   }
   const steps = flattenSteps(structure.steps);
   const bars = profileBars(structure);
-  const byZone = new Map<ZoneTone, ChannelBand>();
+  const byZone = new Map<string, LegendEntry>();
   steps.forEach((step, index) => {
     const bar = bars[index];
     if (!bar) {
@@ -143,18 +167,19 @@ export function profileLegend(
       return;
     }
     const [channel, target] = entry;
-    byZone.set(bar.zone, widen(byZone.get(bar.zone), channel, target));
+    // A zone drawn from two different references is two rows, for the reason
+    // `bandKey` exists — the colour is shared, the band is not.
+    const key = `${bar.zone}|${bandKey(channel, target)}`;
+    byZone.set(key, {
+      ...widen(byZone.get(key), channel, target),
+      zone: bar.zone,
+      zoneLabel: ZONE_LABELS[bar.zone],
+    });
   });
 
   const order = Object.keys(ZONE_LABELS) as ZoneTone[];
-  return order
-    .filter((zone) => byZone.has(zone))
-    .map((zone) => ({
-      // Non-null by the filter above.
-      ...(byZone.get(zone) as ChannelBand),
-      zone,
-      zoneLabel: ZONE_LABELS[zone],
-    }));
+  const found = [...byZone.values()];
+  return order.flatMap((zone) => found.filter((entry) => entry.zone === zone));
 }
 
 /** `Power`, `Heart rate`, `Cadence` — the Targets panel's left column. */
@@ -163,42 +188,77 @@ export function channelLabel(channel: Channel): string {
 }
 
 /**
- * A band as a person reads it: `165–190 W`, or `88–94% of FTP` when the anchor
- * is unknown. A single-valued band collapses to one number.
+ * The band exactly as the prescription writes it: `40–122% of FTP`,
+ * `120–148 bpm`. A single-valued band collapses to one number.
+ *
+ * The form that survives an FTP change, and therefore the one that belongs
+ * beside every resolved figure rather than instead of it (F2).
  */
-export function describeBand(band: ChannelBand, anchors: AnchorValues): string {
-  const unit = CHANNEL_UNITS[band.channel];
+export function describePrescribed(band: ChannelBand): string {
   if (band.mode === "absolute") {
-    return range(band.low, band.high, unit);
+    return range(band.low, band.high, CHANNEL_UNITS[band.channel]);
   }
-  const anchorValue = band.anchorType ? anchors[band.anchorType] : undefined;
-  if (anchorValue === undefined) {
-    const label = band.anchorType
-      ? ANCHOR_LABELS[band.anchorType]
-      : "the anchor";
-    return `${range(band.low * 100, band.high * 100, "%")} of ${label}`;
-  }
-  return range(
-    Math.round(band.low * anchorValue),
-    Math.round(band.high * anchorValue),
-    unit,
-  );
+  const label = band.anchorType ? ANCHOR_LABELS[band.anchorType] : "the anchor";
+  return `${range(band.low * 100, band.high * 100, "%")} of ${label}`;
 }
 
-/** The `% of FTP` a resolved band came from, for the line beneath it. */
-export function describeBandSource(
+/** One band's absolute span, as the API already resolved it. */
+export interface ResolvedSpan {
+  readonly low: number;
+  readonly high: number;
+  readonly unit: string;
+}
+
+/**
+ * The absolute numbers a band resolves to, taken from the session's own
+ * resolved steps — never computed here.
+ *
+ * A band is matched to its resolved targets by *anchor version*, not merely by
+ * channel: a session prescribing `85 % LTHR` on some steps and `75 % max HR`
+ * on others has two heart-rate bands, and each must report the watts-or-beats
+ * its own anchor produced. `null` when nothing on that band resolved — an
+ * anchor the session did not pin resolves to nothing, which is a legal answer
+ * (`app.domain.resolution`) and reads as the prescribed percentage.
+ */
+export function resolveBand(
   band: ChannelBand,
-  anchors: AnchorValues,
-): string | null {
-  if (band.mode !== "percent" || !band.anchorType) {
-    return null;
+  anchors: readonly PinnedAnchor[],
+  steps: readonly ResolvedStep[],
+): ResolvedSpan | null {
+  let versionId: string | null = null;
+  if (band.mode === "percent") {
+    const pinned = anchors.find(
+      (anchor) => anchor.anchor_type === band.anchorType,
+    );
+    if (!pinned) {
+      return null;
+    }
+    versionId = pinned.anchor_version_id;
   }
-  if (anchors[band.anchorType] === undefined) {
-    return null;
+  let low = Number.POSITIVE_INFINITY;
+  let high = Number.NEGATIVE_INFINITY;
+  let unit: string | null = null;
+  for (const step of steps) {
+    for (const target of [...step.start_targets, ...step.end_targets]) {
+      if (
+        target.channel !== band.channel ||
+        target.anchor_version_id !== versionId ||
+        target.resolved_low === null ||
+        target.resolved_high === null
+      ) {
+        continue;
+      }
+      low = Math.min(low, target.resolved_low);
+      high = Math.max(high, target.resolved_high);
+      unit = target.unit;
+    }
   }
-  return `${range(band.low * 100, band.high * 100, "%")} of ${
-    ANCHOR_LABELS[band.anchorType]
-  }`;
+  return unit === null ? null : { low, high, unit };
+}
+
+/** A resolved span as a person reads it: `100–305 W`, `200 W` for a point. */
+export function describeSpan(span: ResolvedSpan): string {
+  return range(span.low, span.high, span.unit);
 }
 
 function range(low: number, high: number, unit: string): string {
@@ -224,7 +284,13 @@ function targetEntries(step: SteadyStep | RampStep): [Channel, WireTarget][] {
   return entries;
 }
 
-/** Grow a band to admit one more target, or start one. */
+/**
+ * Grow a band to admit one more target, or start one.
+ *
+ * Only ever called with targets that share a `bandKey`, so the two ends being
+ * merged are the same channel measured against the same reference. Targets
+ * that do not share one are separate rows, never an average.
+ */
 function widen(
   current: ChannelBand | undefined,
   channel: Channel,
@@ -248,11 +314,6 @@ function widen(
         };
   if (!current) {
     return next;
-  }
-  // Two forms of the same channel cannot be unioned without the anchor, so
-  // the absolute one wins: it reads correctly with nothing else known.
-  if (current.mode !== next.mode) {
-    return current.mode === "absolute" ? current : next;
   }
   return {
     ...current,

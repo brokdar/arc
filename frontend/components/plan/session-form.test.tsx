@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionForm } from "@/components/plan/session-form";
-import { SESSION_IDS, WORKOUT_IDS } from "@/tests/mocks/fixtures";
+import {
+  purposeTemplateFixture,
+  SESSION_IDS,
+  WORKOUT_IDS,
+} from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -107,6 +112,103 @@ describe("planning a session", () => {
     expect(
       within(screen.getByLabelText("Add a criterion")).queryByText(
         "Time in band",
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * The race this closes: `POST /planned-sessions` fired before
+   * `GET /purposes/{purpose}` answered posted `success_criteria: []`, and a
+   * session frozen with no criteria is indistinguishable afterwards from one
+   * the athlete deliberately left unjudged.
+   */
+  it("refuses to save while the purpose's criteria template is still loading", async () => {
+    const posted = vi.fn();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get("/api/v1/purposes/{purpose}", async ({ params, response }) => {
+        await held;
+        return response(200).json(purposeTemplateFixture(params.purpose));
+      }),
+      http.post("/api/v1/planned-sessions", ({ response }) => {
+        posted();
+        return response(201).json(plannedSession());
+      }),
+    );
+
+    renderForm();
+
+    const submit = await screen.findByRole("button", { name: "Plan it" });
+    expect(submit).toBeDisabled();
+    expect(
+      screen.getByText(/Loading this purpose's criteria template/),
+    ).toBeInTheDocument();
+
+    await userEvent.click(submit);
+    expect(posted).not.toHaveBeenCalled();
+
+    release();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Plan it" })).toBeEnabled();
+  });
+
+  it("lets the athlete proceed deliberately when the template cannot be loaded", async () => {
+    server.use(
+      // Untyped: the endpoint declares no failure the athlete can cause, so
+      // the case being simulated is the network, not a refusal.
+      http.untyped.get("http://localhost:8000/api/v1/purposes/:purpose", () =>
+        HttpResponse.error(),
+      ),
+    );
+
+    renderForm();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Could not load this purpose's template/,
+    );
+    // Not blocked: an empty criteria list is now a choice made in front of a
+    // message saying it is one.
+    expect(screen.getByRole("button", { name: "Plan it" })).toBeEnabled();
+  });
+
+  /**
+   * The bug: the "add a criterion" menu re-derives its options from the
+   * discipline, but the *selected* kind was remembered. A touched list plus a
+   * purpose change across disciplines left `time_in_band` selected behind a
+   * strength menu, and Add posted a criterion the domain refuses.
+   */
+  it("adds a criterion the new discipline allows after the purpose crosses over", async () => {
+    renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+
+    // Touch the list, so it stops following the purpose and the editor stays
+    // mounted across the change.
+    await userEvent.click(
+      within(criteria()[1] as HTMLElement).getByRole("button", {
+        name: "Remove criterion",
+      }),
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText("Purpose"),
+      "max_strength",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    // The athlete's own criterion is still theirs; the *added* one is the
+    // strength menu's first kind, not the cycling one left over in state.
+    expect(criteria()).toHaveLength(2);
+    expect(
+      within(criteria()[1] as HTMLElement).getByText(
+        "90% of the prescribed sets completed",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(criteria()[1] as HTMLElement).queryByText(
+        /of the prescribed power/,
       ),
     ).toBeNull();
   });
@@ -227,6 +329,79 @@ describe("planning a session", () => {
   });
 });
 
+/** The backdrop Base UI closes the dialog on when it is pressed. */
+function backdrop(): HTMLElement {
+  const found = document.querySelector('[data-slot="dialog-overlay"]');
+  if (!found) {
+    throw new Error("the dialog rendered no backdrop");
+  }
+  return found as HTMLElement;
+}
+
+describe("discarding a draft", () => {
+  it("closes immediately when nothing has been typed", async () => {
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+
+    await userEvent.click(backdrop());
+
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByText("Discard this draft?")).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog and asks when an outside press would discard work", async () => {
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+    await userEvent.type(screen.getByLabelText("Intent"), "Hold threshold.");
+
+    await userEvent.click(backdrop());
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", { name: "Discard this draft?" }),
+    ).toBeInTheDocument();
+    // Still there, still typed in.
+    expect(screen.getByLabelText("Intent")).toHaveValue("Hold threshold.");
+  });
+
+  it("keeps the dialog on escape too, and lets the athlete carry on", async () => {
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+    await userEvent.type(screen.getByLabelText("Intent"), "Hold threshold.");
+
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Intent")).toHaveValue("Hold threshold.");
+  });
+
+  it("closes on Discard, once the athlete has said so", async () => {
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+    await userEvent.type(screen.getByLabelText("Intent"), "Hold threshold.");
+
+    await userEvent.click(backdrop());
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("guards the form's own Cancel button by the same rule", async () => {
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+    await userEvent.type(screen.getByLabelText("Intent"), "Hold threshold.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", { name: "Discard this draft?" }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("editing a planned session", () => {
   it("loads the session and PATCHes only what changed", async () => {
     const bodies: unknown[] = [];
@@ -249,7 +424,7 @@ describe("editing a planned session", () => {
     await waitFor(() => expect(criteria()).toHaveLength(3));
     expect(screen.getByLabelText("Purpose")).toHaveValue("vo2max");
     expect(screen.getByLabelText(/Notes to self/)).toHaveValue(
-      "Eat before you are hungry and the last hour looks after itself.",
+      "Two minutes in on the first one is where it is decided.",
     );
 
     await userEvent.type(screen.getByLabelText("Intent"), " Sharpen up.");

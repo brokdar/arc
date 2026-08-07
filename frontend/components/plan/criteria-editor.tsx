@@ -72,7 +72,20 @@ export function CriteriaEditor({
 }: CriteriaEditorProps) {
   const base = useId();
   const kinds = criterionKindsFor(discipline);
-  const [kind, setKind] = useState<CriterionKind>(kinds[0] ?? "duration_floor");
+  const [chosen, setChosen] = useState<CriterionKind>(
+    () => kinds[0] ?? "duration_floor",
+  );
+  // The offered kinds follow the discipline, and so must the selection.
+  // Changing the purpose from a ride to a lift while the athlete has *touched*
+  // the list leaves this component mounted, so a remembered `time_in_band`
+  // would sit invisibly behind a menu that no longer offers it and "Add" would
+  // post a criterion the domain refuses. Derived rather than stored, so there
+  // is no state that can disagree with the menu beside it — and a kind both
+  // disciplines offer (`duration_floor`) survives the change, which is what
+  // the athlete meant.
+  const kind: CriterionKind = kinds.includes(chosen)
+    ? chosen
+    : (kinds[0] ?? "duration_floor");
 
   const replace = (index: number, next: SuccessCriterion) =>
     onChange(criteria.map((criterion, i) => (i === index ? next : criterion)));
@@ -148,7 +161,7 @@ export function CriteriaEditor({
             size="sm"
             id={`${base}-kind`}
             value={kind}
-            onChange={(event) => setKind(event.target.value as CriterionKind)}
+            onChange={(event) => setChosen(event.target.value as CriterionKind)}
           >
             {kinds.map((available) => (
               <NativeSelectOption key={available} value={available}>

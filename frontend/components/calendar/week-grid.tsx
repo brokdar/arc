@@ -102,7 +102,14 @@ function DayColumn({
         setOver(false);
         onDragStateChange(false);
         const sessionId = readSessionId(event.dataTransfer);
-        if (sessionId) {
+        // A card dropped back on its own column has not moved. Firing the
+        // mutation anyway would spend a request, an optimistic update and an
+        // invalidation of every cached week on saying nothing — and would
+        // append an audit row claiming the athlete rescheduled something.
+        const sameDay = day.sessions.some(
+          (session) => session.id === sessionId,
+        );
+        if (sessionId && !sameDay) {
           onMove(sessionId, day.date);
         }
       }}

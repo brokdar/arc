@@ -4,10 +4,13 @@ import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
+import type { components } from "@/generated/api/schema";
 import { formatDurationHm } from "@/lib/format";
 import type { PlanWeek } from "@/lib/plan-week";
 import { disciplineLabel } from "@/lib/purpose";
 import { cn } from "@/lib/utils";
+
+type DisciplineRow = components["schemas"]["PlanWeekDisciplineRead"];
 
 /**
  * The week's totals, beside the seven days they summarise.
@@ -22,11 +25,19 @@ import { cn } from "@/lib/utils";
  * sessions that could be predicted, and a week of six sessions where two were
  * predictable is not a light week — it is a week two thirds of which is
  * unknown. So the count travels with the number, always, and a week with
- * nothing predictable renders `NotAssessed`, never `0`.
+ * nothing predictable renders `NotAssessed`, never `0`. **Time is no different
+ * from load**: a week of two strength sessions and a distance ride has no
+ * planned time, and the API says so with a null and its own coverage pair.
  *
  * **TSS and kilograms are different axes.** They get their own columns and are
  * never summed (spec v2 §5.4, §8.3); a discipline that has no figure for a
  * column gets the placeholder rather than the other discipline's number.
+ *
+ * **Every reason is derived, never assumed.** A missing TSS on a *strength*
+ * row is the axis split; a missing TSS on a *cycling* row is a prediction that
+ * could not be made, and saying "measured in kilograms" there would be a
+ * confident falsehood. The row carries both coverage pairs precisely so the
+ * placeholder can tell the truth about itself.
  */
 export interface WeekRailProps {
   readonly week: PlanWeek;
@@ -58,8 +69,10 @@ export function WeekRail({
   form,
   ramp,
 }: WeekRailProps) {
-  const counted = week.load_sessions_counted;
-  const total = counted + week.load_sessions_uncounted;
+  const loadCounted = week.load_sessions_counted;
+  const loadTotal = loadCounted + week.load_sessions_uncounted;
+  const timeCounted = week.duration_sessions_counted;
+  const timeTotal = timeCounted + week.duration_sessions_uncounted;
   const hasCompleted =
     completedDurationS !== undefined || completedLoad !== undefined;
   const hasForm = [fitness, fatigue, form, ramp].some(
@@ -79,7 +92,22 @@ export function WeekRail({
         <SectionLabel level={2}>Planned</SectionLabel>
         <Metric
           label="Time"
-          value={formatDurationHm(week.planned_duration_s)}
+          value={
+            week.planned_duration_s === null ? (
+              <NotAssessed reason="No session this week prescribes a duration" />
+            ) : (
+              formatDurationHm(week.planned_duration_s)
+            )
+          }
+          // Said only when something is missing from it. A week whose every
+          // session is timed has nothing to qualify, and a count under a
+          // complete total is noise; a week where two lifts contributed no
+          // minutes is a different figure and has to say so.
+          note={
+            week.duration_sessions_uncounted > 0
+              ? sessionCoverage(timeCounted, timeTotal)
+              : undefined
+          }
         />
         <Metric
           label="Load"
@@ -91,7 +119,7 @@ export function WeekRail({
               Math.round(week.planned_load)
             )
           }
-          note={`${counted} of ${total} ${total === 1 ? "session" : "sessions"}`}
+          note={sessionCoverage(loadCounted, loadTotal)}
         />
       </section>
 
@@ -145,16 +173,40 @@ export function WeekRail({
               <div className="grid grid-cols-3 gap-1.5">
                 <Cell
                   label="Time"
-                  value={formatDurationHm(row.planned_duration_s)}
+                  value={
+                    row.planned_duration_s === null ? (
+                      <NotAssessed reason={durationReason(row)} />
+                    ) : (
+                      formatDurationHm(row.planned_duration_s)
+                    )
+                  }
+                  note={
+                    row.duration_sessions_uncounted > 0
+                      ? sessionCoverage(
+                          row.duration_sessions_counted,
+                          row.duration_sessions_counted +
+                            row.duration_sessions_uncounted,
+                        )
+                      : undefined
+                  }
                 />
                 <Cell
                   label="TSS"
                   value={
                     row.planned_load === null ? (
-                      <NotAssessed reason="Strength volume is measured in kilograms, not TSS" />
+                      <NotAssessed reason={loadReason(row)} />
                     ) : (
                       Math.round(row.planned_load)
                     )
+                  }
+                  note={
+                    row.load_sessions_uncounted > 0 && row.planned_load !== null
+                      ? sessionCoverage(
+                          row.load_sessions_counted,
+                          row.load_sessions_counted +
+                            row.load_sessions_uncounted,
+                        )
+                      : undefined
                   }
                 />
                 <Cell
@@ -174,6 +226,41 @@ export function WeekRail({
       </section>
     </Panel>
   );
+}
+
+/** `3 of 5 sessions` — the denominator a total is only honest with. */
+function sessionCoverage(counted: number, total: number): string {
+  return `${counted} of ${total} ${total === 1 ? "session" : "sessions"}`;
+}
+
+/**
+ * Why a discipline row has no TSS. Two different facts, never interchangeable.
+ *
+ * A strength row has none because kilograms and TSS are different axes and
+ * nothing will ever put a lift in this column. A *cycling* row has none
+ * because every one of its rides failed to predict — an unpinned FTP, a
+ * distance-based step, no power target — which is a fact about this week and
+ * not about the sport, and the coverage pair is what says how many.
+ */
+function loadReason(row: DisciplineRow): string {
+  if (row.discipline === "strength") {
+    return "Strength volume is measured in kilograms, not TSS";
+  }
+  const total = row.load_sessions_counted + row.load_sessions_uncounted;
+  return `No prediction for ${row.load_sessions_uncounted} of ${total} ${
+    total === 1 ? "session" : "sessions"
+  }`;
+}
+
+/** Why a discipline row has no planned time — same rule, the other total. */
+function durationReason(row: DisciplineRow): string {
+  if (row.discipline === "strength") {
+    return "A lift is prescribed in sets and reps, not in minutes";
+  }
+  const total = row.duration_sessions_counted + row.duration_sessions_uncounted;
+  return `No prescribed duration for ${row.duration_sessions_uncounted} of ${total} ${
+    total === 1 ? "session" : "sessions"
+  }`;
 }
 
 /** A label, its figure, and — when the figure needs one — its coverage. */
@@ -211,7 +298,15 @@ function Metric({
 }
 
 /** One column of a discipline row. The three columns never merge. */
-function Cell({ label, value }: { label: string; value: React.ReactNode }) {
+function Cell({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: React.ReactNode;
+  note?: string;
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5 rounded-button border border-hairline bg-inset px-2 py-1.5">
       <span className="text-2xs text-ink-faint uppercase tracking-[0.08em]">
@@ -220,6 +315,11 @@ function Cell({ label, value }: { label: string; value: React.ReactNode }) {
       <span className="truncate font-mono text-ink-secondary text-xs">
         {value}
       </span>
+      {note ? (
+        <span className="truncate font-mono text-[10px] text-ink-faint">
+          {note}
+        </span>
+      ) : null}
     </div>
   );
 }

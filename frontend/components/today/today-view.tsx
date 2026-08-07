@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 
 import type { WeekSession } from "@/components/calendar/session-card";
+import { AnchorProvenance } from "@/components/design/anchor-provenance";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
+import { ResolvedStepList } from "@/components/design/resolved-steps";
 import { SectionLabel } from "@/components/design/section-label";
 import { StatusDot } from "@/components/design/status-dot";
 import { WorkoutProfileBars } from "@/components/design/workout-profile-bars";
@@ -20,12 +22,12 @@ import { formatDayMonthYear, formatDurationHm, formatSets } from "@/lib/format";
 import { purposeLabel } from "@/lib/purpose";
 import { sessionHeadline } from "@/lib/session-headline";
 import {
-  type AnchorValues,
   channelBands,
   channelLabel,
-  describeBand,
-  describeBandSource,
+  describePrescribed,
+  describeSpan,
   profileLegend,
+  resolveBand,
 } from "@/lib/targets";
 import { ZONE_COLORS } from "@/lib/workout-profile";
 
@@ -38,6 +40,12 @@ import { ZONE_COLORS } from "@/lib/workout-profile";
  * picture of an application rather than the application. What is here is
  * everything the *plan* knows: the frozen prescription, its targets, its
  * criteria, and where the day sits in the week.
+ *
+ * Every absolute number on this page comes from the session's own
+ * `resolved_steps` — resolved by the backend against the anchor versions the
+ * intent **pinned** (D49), never against whatever anchor is in force now. The
+ * page therefore says what the plan said on the day it was written, and the
+ * provenance line under the profile says whose FTP that was.
  */
 export function TodayView() {
   // Read once on mount: re-deriving "today" mid-render would let a page left
@@ -57,7 +65,10 @@ export function TodayView() {
   return (
     <>
       <Toolbar>
-        <span className="font-semibold text-lg tracking-[-0.01em]">Today</span>
+        {/* The page's one `h1`. Today can hold two sessions, and two `h1`s
+            would leave a screen reader with two documents on one screen —
+            so the session headlines below are `h2`s under this. */}
+        <h1 className="font-semibold text-lg tracking-[-0.01em]">Today</h1>
         <span className="font-mono text-ink-muted text-sm">
           {weekdayLabel(today)} {formatDayMonthYear(today)}
         </span>
@@ -127,11 +138,15 @@ function SessionPanel({
     "/api/v1/planned-sessions/{planned_session_id}",
     { params: { path: { planned_session_id: session.id } } },
   );
-  const anchors = useAnchorValues();
   const { nameOf } = useExercises();
 
   const intent = detail.data?.intent;
   const structure = intent?.structure ?? null;
+  // The session's own pins and the steps the backend resolved against them.
+  // Nothing on this panel reaches for `/anchors/current`: the prescription was
+  // frozen against these versions and must keep reading that way.
+  const pinned = detail.data?.pinned_anchors ?? [];
+  const resolvedSteps = detail.data?.resolved_steps ?? [];
   const headline = sessionHeadline({
     purpose: session.purpose,
     structure,
@@ -163,9 +178,9 @@ function SessionPanel({
               </span>
             </span>
           </div>
-          <h1 className="max-w-[760px] font-semibold text-4xl tracking-[-0.025em]">
+          <h2 className="max-w-[760px] font-semibold text-4xl tracking-[-0.025em]">
             {headline}
-          </h1>
+          </h2>
           {intent?.intent_text ? (
             <p className="max-w-[640px] text-ink-muted text-lg leading-relaxed">
               {intent.intent_text}
@@ -176,29 +191,42 @@ function SessionPanel({
         {structure?.discipline === "cycling" ? (
           <div className="flex flex-col gap-2.5 px-[22px] py-5">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <SectionLabel level={2}>Workout profile</SectionLabel>
+              <SectionLabel level={3}>Workout profile</SectionLabel>
               {legend.length > 0 ? (
                 <ul className="flex flex-wrap gap-3 font-mono text-ink-faint text-2xs">
-                  {legend.map((entry) => (
-                    <li key={entry.zone} className="flex items-center gap-1.5">
-                      <span
-                        aria-hidden
-                        className="size-2 rounded-[2px]"
-                        style={{ backgroundColor: ZONE_COLORS[entry.zone] }}
-                      />
-                      {entry.zoneLabel} {describeBand(entry, anchors)}
-                    </li>
-                  ))}
+                  {legend.map((entry, index) => {
+                    const span = resolveBand(entry, pinned, resolvedSteps);
+                    return (
+                      <li
+                        // A zone can carry more than one band once a session
+                        // prescribes two anchors on one channel; the list is
+                        // replaced wholesale, so position is the identity.
+                        // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+                        key={index}
+                        className="flex items-center gap-1.5"
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2 rounded-[2px]"
+                          style={{ backgroundColor: ZONE_COLORS[entry.zone] }}
+                        />
+                        {entry.zoneLabel}{" "}
+                        {span ? describeSpan(span) : describePrescribed(entry)}
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : null}
             </div>
             <WorkoutProfileBars structure={structure} size="detail" />
+            <ResolvedStepList steps={resolvedSteps} />
+            <AnchorProvenance anchors={pinned} />
           </div>
         ) : null}
 
         {strength ? (
           <div className="flex flex-col gap-2 px-[22px] py-5">
-            <SectionLabel level={2}>Prescription</SectionLabel>
+            <SectionLabel level={3}>Prescription</SectionLabel>
             {strength.groups.map((group, groupIndex) => (
               <div
                 // Groups are ordered positions in the prescription, not entities.
@@ -209,9 +237,13 @@ function SessionPanel({
                 {group.items.length > 1 || group.label ? (
                   <SectionLabel>{group.label ?? "Superset"}</SectionLabel>
                 ) : null}
-                {group.items.map((item) => (
+                {group.items.map((item, itemIndex) => (
                   <div
-                    key={`${item.exercise_id}-${item.sets}-${item.reps}`}
+                    // Lines are ordered positions in a group, not entities: the
+                    // same movement twice is a legal prescription and the group
+                    // is replaced wholesale.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+                    key={itemIndex}
                     className="flex items-baseline justify-between gap-3 text-sm"
                   >
                     <span className="text-ink-secondary">
@@ -230,7 +262,7 @@ function SessionPanel({
 
       <div className="flex flex-wrap items-start gap-3.5">
         <Panel className="flex min-w-0 flex-[1_1_260px] flex-col gap-3 px-4 py-3.5">
-          <SectionLabel level={2}>Targets</SectionLabel>
+          <SectionLabel level={3}>Targets</SectionLabel>
           {bands.length === 0 ? (
             <p className="text-ink-muted text-sm">
               {strength
@@ -239,11 +271,16 @@ function SessionPanel({
             </p>
           ) : (
             <ul className="flex flex-col">
-              {bands.map((band) => {
-                const source = describeBandSource(band, anchors);
+              {bands.map((band, index) => {
+                const span = resolveBand(band, pinned, resolvedSteps);
+                const prescribed = describePrescribed(band);
                 return (
                   <li
-                    key={band.channel}
+                    // One channel can hold several bands — `85 % LTHR` and
+                    // `75 % max HR` are two rows, never one average — so the
+                    // channel is not a key. The list is replaced wholesale.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+                    key={index}
                     className="flex items-center justify-between gap-3 border-hairline border-b py-2 last:border-b-0"
                   >
                     <span className="text-ink-secondary text-sm">
@@ -251,11 +288,13 @@ function SessionPanel({
                     </span>
                     <span className="flex flex-col items-end">
                       <span className="font-mono font-medium text-base">
-                        {describeBand(band, anchors)}
+                        {span ? describeSpan(span) : prescribed}
                       </span>
-                      {source ? (
+                      {/* Both forms, always, when there are two of them: the
+                          percentage is what survives the next FTP test. */}
+                      {span ? (
                         <span className="font-mono text-2xs text-ink-faint">
-                          {source}
+                          {prescribed}
                         </span>
                       ) : null}
                     </span>
@@ -269,9 +308,13 @@ function SessionPanel({
             <SectionLabel>Success criteria</SectionLabel>
             {intent && intent.success_criteria.length > 0 ? (
               <ul className="flex flex-col gap-1.5">
-                {intent.success_criteria.map((criterion) => (
+                {intent.success_criteria.map((criterion, index) => (
                   <li
-                    key={JSON.stringify(criterion)}
+                    // Criteria are ordered values, not entities: two identical
+                    // ones are the same rule twice, and the list is replaced
+                    // wholesale on every intent version.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+                    key={index}
                     className="flex items-start gap-2 text-ink-secondary text-sm"
                   >
                     <span
@@ -291,7 +334,7 @@ function SessionPanel({
         </Panel>
 
         <Panel className="flex min-w-0 flex-[1_1_300px] flex-col gap-2.5 px-4 py-3.5">
-          <SectionLabel level={2}>Watch for</SectionLabel>
+          <SectionLabel level={3}>Watch for</SectionLabel>
           {intent?.coach_notes ? (
             <p className="text-ink-secondary text-base leading-relaxed">
               {intent.coach_notes}
@@ -330,39 +373,6 @@ function SessionPanel({
   );
 }
 
-/**
- * The anchors in force, for resolving `% of FTP` into watts.
- *
- * Best-effort: an athlete who has entered no FTP gets the percentage form,
- * which is what the prescription actually says. Nothing here invents a value
- * to fill the panel with.
- */
-function useAnchorValues(): AnchorValues {
-  const ftp = $api.useQuery(
-    "get",
-    "/api/v1/anchors/current",
-    { params: { query: { anchor_type: "ftp" } } },
-    { retry: false },
-  );
-  const lthr = $api.useQuery(
-    "get",
-    "/api/v1/anchors/current",
-    { params: { query: { anchor_type: "lthr" } } },
-    { retry: false },
-  );
-  const maxHr = $api.useQuery(
-    "get",
-    "/api/v1/anchors/current",
-    { params: { query: { anchor_type: "max_hr" } } },
-    { retry: false },
-  );
-  return {
-    ftp: ftp.data?.value,
-    lthr: lthr.data?.value,
-    max_hr: maxHr.data?.value,
-  };
-}
-
 /** A day with nothing planned is a decision, not a gap — say so. */
 function RestDay({ onPlan }: { onPlan: () => void }) {
   return (
@@ -370,10 +380,10 @@ function RestDay({ onPlan }: { onPlan: () => void }) {
       tone="card"
       className="flex flex-col items-start gap-3 rounded-shell px-[22px] py-8"
     >
-      <SectionLabel level={2}>Rest day</SectionLabel>
-      <h1 className="font-semibold text-4xl tracking-[-0.025em]">
+      <SectionLabel>Rest day</SectionLabel>
+      <h2 className="font-semibold text-4xl tracking-[-0.025em]">
         Nothing planned today.
-      </h1>
+      </h2>
       <p className="max-w-[52ch] text-ink-muted text-lg leading-relaxed">
         Rest is prescribed as much as anything else is. If that is wrong, plan
         something — it will appear here and on the calendar.

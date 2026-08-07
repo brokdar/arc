@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
@@ -19,6 +19,19 @@ import { $api } from "@/lib/api/client";
 import { formatDurationHm, formatSets } from "@/lib/format";
 
 type Workout = components["schemas"]["WorkoutRead"];
+
+/** How long the search box waits for the typing to stop, in milliseconds. */
+const SEARCH_DEBOUNCE_MS = 250;
+
+/** A value that follows its input, `delay` ms behind. */
+function useDebounced<T>(value: T, delay: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
+}
 
 /**
  * The workout library: everything the athlete has written, ready to be planned.
@@ -38,11 +51,18 @@ export function WorkoutLibrary() {
   const [folder, setFolder] = useState("");
   const [tag, setTag] = useState("");
 
+  // The box is uncontrolled by the query: typing "endurance" would otherwise
+  // be nine requests and nine renders of a list that changes under the
+  // cursor, and react-query cannot coalesce them because each keystroke is a
+  // different key. A quarter of a second is below the threshold at which a
+  // search feels delayed and above the interval between keystrokes.
+  const query = useDebounced(search.trim(), SEARCH_DEBOUNCE_MS);
+
   const labels = $api.useQuery("get", "/api/v1/workout-labels");
   const workouts = $api.useQuery("get", "/api/v1/workouts", {
     params: {
       query: {
-        ...(search.trim() ? { q: search.trim() } : {}),
+        ...(query ? { q: query } : {}),
         ...(folder ? { folder } : {}),
         ...(tag ? { tag } : {}),
         limit: 100,
@@ -51,14 +71,14 @@ export function WorkoutLibrary() {
   });
 
   const items = workouts.data?.items ?? [];
-  const filtered = search.trim() !== "" || folder !== "" || tag !== "";
+  const filtered = query !== "" || folder !== "" || tag !== "";
 
   return (
     <>
       <Toolbar>
-        <span className="font-semibold text-lg tracking-[-0.01em]">
-          Workouts
-        </span>
+        {/* The page's one `h1`: every route owns exactly one, and the cards
+            below are links rather than headings. */}
+        <h1 className="font-semibold text-lg tracking-[-0.01em]">Workouts</h1>
         <span className="font-mono text-ink-muted text-sm">
           {workouts.data ? `${workouts.data.total} in the library` : ""}
         </span>

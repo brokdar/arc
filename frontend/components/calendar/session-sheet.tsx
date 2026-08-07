@@ -4,9 +4,13 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
 import type { WeekSession } from "@/components/calendar/session-card";
+import { AnchorProvenance } from "@/components/design/anchor-provenance";
+import { ConfirmButton } from "@/components/design/confirm";
+import { DiscardPrompt, useDirtyClose } from "@/components/design/dirty-close";
 import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
+import { ResolvedStepList } from "@/components/design/resolved-steps";
 import { SectionLabel } from "@/components/design/section-label";
 import { StatusDot } from "@/components/design/status-dot";
 import { WorkoutProfileBars } from "@/components/design/workout-profile-bars";
@@ -23,24 +27,20 @@ import {
 import { useExercises } from "@/components/workouts/exercise-catalogue";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
-import { describeCriterion, stepRoleLabel } from "@/lib/criteria";
+import { describeCriterion } from "@/lib/criteria";
 import { weekdayLabel } from "@/lib/dates";
 import {
   formatDayMonthYear,
-  formatDurationClock,
   formatDurationHm,
   formatPercent,
   formatSets,
 } from "@/lib/format";
 import { purposeLabel, STATUS_TONES } from "@/lib/purpose";
-import { anchorLabel } from "@/lib/targets";
 import type { StrengthStructure } from "@/lib/workout-profile";
 
 type Schemas = components["schemas"];
-type PinnedAnchor = Schemas["PinnedAnchorRead"];
-type ResolvedStep = Schemas["ResolvedStepRead"];
-type ResolvedTarget = Schemas["ResolvedTargetRead"];
 type PredictedLoad = Schemas["PredictedLoadRead"];
+type PredictedVolume = Schemas["PredictedVolumeRead"];
 type PlannedSession = Schemas["PlannedSessionRead"];
 
 export interface SessionSheetProps {
@@ -53,6 +53,15 @@ export interface SessionSheetProps {
   /** Opens the plan form on this session, pre-filled. */
   readonly onEdit: (session: WeekSession) => void;
   readonly busy?: boolean;
+  /**
+   * Why the last action from this sheet failed. Rendered here rather than on
+   * the page behind it, because the sheet is what stays open when a delete or
+   * a copy is refused — a message on a surface the athlete cannot see is the
+   * same as no message.
+   */
+  readonly problems?: readonly string[];
+  /** What the last action from this sheet achieved, when it achieved it. */
+  readonly notice?: string | null;
 }
 
 /**
@@ -63,6 +72,10 @@ export interface SessionSheetProps {
  * `GET /planned-sessions/{id}` and is fetched when the sheet opens. The card
  * we already have renders the header immediately, so the sheet is never blank
  * while that request is in flight.
+ *
+ * The move and copy pickers are a *draft*: a date typed into one and not acted
+ * on is work, and an outside press used to throw it away without a word. Now
+ * anything unapplied makes the sheet ask before it closes (`useDirtyClose`).
  */
 export function SessionSheet({
   session,
@@ -72,6 +85,8 @@ export function SessionSheet({
   onDelete,
   onEdit,
   busy = false,
+  problems = [],
+  notice = null,
 }: SessionSheetProps) {
   const { data: detail, isPending } = $api.useQuery(
     "get",
@@ -79,6 +94,23 @@ export function SessionSheet({
     { params: { path: { planned_session_id: session?.id ?? "" } } },
     { enabled: session !== null },
   );
+
+  const sessionDate = session?.date ?? "";
+  const [moveDate, setMoveDate] = useState(sessionDate);
+  const [copyDate, setCopyDate] = useState(sessionDate);
+
+  // Reopening the sheet on a different card must not keep the previous card's
+  // dates in the inputs.
+  useEffect(() => {
+    setMoveDate(sessionDate);
+    setCopyDate(sessionDate);
+  }, [sessionDate]);
+
+  // An unapplied date in either picker is the only draft this sheet holds.
+  const guard = useDirtyClose({
+    dirty: moveDate !== sessionDate || copyDate !== sessionDate,
+    onClose,
+  });
 
   if (session === null) {
     return null;
@@ -93,7 +125,7 @@ export function SessionSheet({
       : null;
 
   return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
+    <Sheet open onOpenChange={guard.onOpenChange}>
       <SheetContent>
         <header className="flex flex-col gap-2.5 border-hairline border-b px-6 py-5">
           <div className="flex items-center gap-2.5">
@@ -154,6 +186,13 @@ export function SessionSheet({
             </section>
           ) : null}
 
+          {strength && detail ? (
+            <PredictedVolumeSection
+              predicted={detail.predicted_volume}
+              structure={strength}
+            />
+          ) : null}
+
           {intent?.coach_notes ? (
             <section className="flex flex-col gap-2">
               <SectionLabel level={3}>Coach notes</SectionLabel>
@@ -167,9 +206,13 @@ export function SessionSheet({
             <SectionLabel level={3}>Success criteria</SectionLabel>
             {intent && intent.success_criteria.length > 0 ? (
               <ul className="flex flex-col gap-1.5">
-                {intent.success_criteria.map((criterion) => (
+                {intent.success_criteria.map((criterion, index) => (
                   <li
-                    key={JSON.stringify(criterion)}
+                    // Criteria are ordered values, not entities: two identical
+                    // ones are the same rule twice, and the list is replaced
+                    // wholesale on every intent version.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+                    key={index}
                     className="flex items-start gap-2 text-ink-secondary text-sm"
                   >
                     <span
@@ -190,11 +233,40 @@ export function SessionSheet({
           <SessionActions
             session={session}
             busy={busy}
+            moveDate={moveDate}
+            copyDate={copyDate}
+            onMoveDateChange={setMoveDate}
+            onCopyDateChange={setCopyDate}
             onMove={onMove}
             onCopy={onCopy}
             onDelete={onDelete}
             onEdit={onEdit}
           />
+
+          {notice ? (
+            <p role="status" className="text-sm text-status-completed">
+              {notice}
+            </p>
+          ) : null}
+
+          {problems.length > 0 ? (
+            <ul
+              role="alert"
+              className="flex flex-col gap-1 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+            >
+              {problems.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          ) : null}
+
+          {guard.confirming ? (
+            <DiscardPrompt
+              what="the date you typed"
+              onDiscard={guard.discard}
+              onKeepEditing={guard.keepEditing}
+            />
+          ) : null}
         </div>
       </SheetContent>
     </Sheet>
@@ -205,6 +277,10 @@ export function SessionSheet({
 function SessionActions({
   session,
   busy,
+  moveDate,
+  copyDate,
+  onMoveDateChange,
+  onCopyDateChange,
   onMove,
   onCopy,
   onDelete,
@@ -212,21 +288,15 @@ function SessionActions({
 }: {
   session: WeekSession;
   busy: boolean;
+  moveDate: string;
+  copyDate: string;
+  onMoveDateChange: (date: string) => void;
+  onCopyDateChange: (date: string) => void;
   onMove: (sessionId: string, toDate: string) => void;
   onCopy: (sessionId: string, toDate: string) => void;
   onDelete: (sessionId: string) => void;
   onEdit: (session: WeekSession) => void;
 }) {
-  const [moveDate, setMoveDate] = useState(session.date);
-  const [copyDate, setCopyDate] = useState(session.date);
-
-  // Reopening the sheet on a different card must not keep the previous card's
-  // dates in the inputs.
-  useEffect(() => {
-    setMoveDate(session.date);
-    setCopyDate(session.date);
-  }, [session.date]);
-
   return (
     <section className="flex flex-col gap-3 border-hairline border-t pt-5">
       <SectionLabel level={3}>Actions</SectionLabel>
@@ -240,7 +310,7 @@ function SessionActions({
             id="session-move-date"
             type="date"
             value={moveDate}
-            onChange={(event) => setMoveDate(event.target.value)}
+            onChange={(event) => onMoveDateChange(event.target.value)}
             className="font-mono"
           />
         </div>
@@ -262,7 +332,7 @@ function SessionActions({
             id="session-copy-date"
             type="date"
             value={copyDate}
-            onChange={(event) => setCopyDate(event.target.value)}
+            onChange={(event) => onCopyDateChange(event.target.value)}
             className="font-mono"
           />
         </div>
@@ -292,199 +362,18 @@ function SessionActions({
             }
           />
         ) : null}
-        <Button
-          variant="destructive"
+        {/* Deleting a planned session destroys its intent history with it, and
+            there is no undo. Two clicks, in the button's own slot. */}
+        <ConfirmButton
           className="ml-auto"
+          label="Delete"
+          question="Delete this session?"
+          confirmLabel="Delete"
           disabled={busy}
-          onClick={() => onDelete(session.id)}
-        >
-          Delete
-        </Button>
+          onConfirm={() => onDelete(session.id)}
+        />
       </div>
     </section>
-  );
-}
-
-/**
- * The flattened step list under the profile — what the bars actually are.
- *
- * Rendered from the API's `resolved_steps` rather than from the step tree,
- * for the reason F2 exists: each step's target is shown **both ways**, the
- * prescription (`88–93 % FTP`, which is what survives an FTP change) beside
- * the watts the athlete actually rides. Repeats are already expanded there, so
- * the list and the bars above it are the same eleven things in the same order.
- */
-function ResolvedStepList({ steps }: { steps: readonly ResolvedStep[] }) {
-  if (steps.length === 0) {
-    return null;
-  }
-  return (
-    <ul className="flex flex-col">
-      {steps.map((step) => (
-        <li
-          key={step.index}
-          className="flex items-baseline justify-between gap-3 border-hairline border-b py-1.5 text-sm last:border-b-0"
-        >
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-ink-secondary">
-              {step.name ?? capitalise(stepRoleLabel(step.role))}
-            </span>
-            <StepTargets step={step} />
-          </span>
-          <span className="shrink-0 font-mono text-ink-muted text-xs">
-            {step.duration_s !== null
-              ? formatDurationClock(step.duration_s)
-              : step.distance_m !== null
-                ? `${step.distance_m} m`
-                : "—"}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** The channel order a prescription is read in: power first, cadence last. */
-const CHANNEL_ORDER: readonly Schemas["Channel"][] = ["power", "hr", "cadence"];
-
-/** One step's targets, prescribed and resolved. A ramp says both of its ends. */
-function StepTargets({ step }: { step: ResolvedStep }) {
-  const channels = CHANNEL_ORDER.filter((channel) =>
-    step.start_targets.some((target) => target.channel === channel),
-  );
-  if (channels.length === 0) {
-    return null;
-  }
-  return (
-    <span className="flex flex-wrap gap-x-2.5 gap-y-0.5">
-      {channels.map((channel) => {
-        const start = step.start_targets.find((t) => t.channel === channel);
-        const end = step.end_targets.find((t) => t.channel === channel);
-        if (!start) {
-          return null;
-        }
-        const ramped =
-          step.is_ramp && end && end.prescribed !== start.prescribed;
-        const resolved = resolvedText(start);
-        const resolvedEnd = ramped && end ? resolvedText(end) : null;
-        return (
-          <span key={channel} className="font-mono text-2xs">
-            <span className="text-ink-muted">
-              {start.prescribed}
-              {ramped && end ? ` → ${end.prescribed}` : ""}
-            </span>
-            {resolved ? (
-              <span className="text-ink-faint">
-                {" · "}
-                {resolved}
-                {resolvedEnd ? ` → ${resolvedEnd}` : ""}
-              </span>
-            ) : null}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-/** `220–232 W`, or `null` when the target resolved against no anchor. */
-function resolvedText(target: ResolvedTarget): string | null {
-  if (target.resolved_low === null || target.resolved_high === null) {
-    return null;
-  }
-  const low = roundTenth(target.resolved_low);
-  const high = roundTenth(target.resolved_high);
-  return low === high
-    ? `${low} ${target.unit}`
-    : `${low}–${high} ${target.unit}`;
-}
-
-function roundTenth(value: number): number {
-  return Math.round(value * 10) / 10;
-}
-
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-/**
- * The one line that says what the numbers above were resolved against.
- *
- * `SessionIntent.pinned_anchor_versions` is the product's most distinctive
- * invariant (D49) and it is worth nothing invisible: an FTP of 250 W that was
- * *estimated* is a different claim from one that was *tested*, and every watt
- * on this sheet inherits whichever it is. So the provenance is rendered as its
- * own mark, and the three non-tested kinds are marked differently from
- * `tested` rather than merely being spelled differently.
- */
-function AnchorProvenance({ anchors }: { anchors: readonly PinnedAnchor[] }) {
-  if (anchors.length === 0) {
-    return null;
-  }
-  return (
-    <p className="flex flex-wrap items-baseline gap-x-1.5 text-2xs text-ink-faint">
-      <span>Resolved against</span>
-      {anchors.map((anchor, index) => (
-        <Fragment key={anchor.anchor_version_id}>
-          {index > 0 ? <span aria-hidden>·</span> : null}
-          <span className="font-mono text-ink-muted">
-            {anchorLabel(anchor.anchor_type)} {roundTenth(anchor.value)}{" "}
-            {anchor.unit}
-          </span>
-          <span aria-hidden>·</span>
-          <ProvenanceMark provenance={anchor.provenance} />
-          <span aria-hidden>·</span>
-          <span className="font-mono">
-            effective {formatDayMonthYear(anchor.effective_date)}
-          </span>
-        </Fragment>
-      ))}
-    </p>
-  );
-}
-
-/**
- * How each provenance reads. `tested` is the only one that is a measurement;
- * the other three are marked as claims, which is what makes an estimate read
- * as an estimate.
- */
-const PROVENANCE_MARKS: Readonly<
-  Record<Schemas["Provenance"], { label: string; note: string }>
-> = {
-  tested: {
-    label: "tested",
-    note: "Measured in a test protocol — the strongest anchor there is.",
-  },
-  estimated: {
-    label: "estimated",
-    note: "An estimate, not a test. Every number resolved from it is only as good as the estimate.",
-  },
-  athlete_reported: {
-    label: "athlete-reported",
-    note: "Reported by the athlete rather than measured here.",
-  },
-  assumed: {
-    label: "assumed",
-    note: "Assumed for want of anything better. Treat every number resolved from it as provisional.",
-  },
-};
-
-function ProvenanceMark({ provenance }: { provenance: Schemas["Provenance"] }) {
-  const mark = PROVENANCE_MARKS[provenance];
-  const tested = provenance === "tested";
-  return (
-    <span
-      data-provenance={provenance}
-      data-untested={tested ? undefined : "true"}
-      title={mark.note}
-      className={
-        tested
-          ? "text-status-completed"
-          : "cursor-help text-status-under underline decoration-dotted decoration-status-under/60 underline-offset-[3px]"
-      }
-    >
-      {mark.label}
-    </span>
   );
 }
 
@@ -582,6 +471,112 @@ function PredictedLoadFigure({ predicted }: { predicted: PredictedLoad }) {
 }
 
 /**
+ * The other axis: what a lifting session is expected to move, in kilograms.
+ *
+ * Never in the TSS slot and never added to one (spec v2 §5.4, §8.3) — the two
+ * quantities have their own sections for the same reason the week rail gives
+ * them their own columns. Volume load is `Σ sets × reps × kg`, so a session
+ * prescribed in %e1RM or RPE has none until it is performed; that is
+ * `NotAssessed` with the reason the prescription itself supplies, never a 0.
+ */
+function PredictedVolumeSection({
+  predicted,
+  structure,
+}: {
+  predicted: PredictedVolume | null;
+  structure: StrengthStructure;
+}) {
+  const reason = unmeasuredVolumeReason(structure);
+  return (
+    <section className="flex flex-col gap-2">
+      <SectionLabel level={3}>Predicted volume</SectionLabel>
+      {predicted && predicted.volume_load_kg !== null ? (
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="font-mono font-semibold text-2xl">
+            {Math.round(predicted.volume_load_kg)}
+          </span>
+          <span className="text-ink-muted text-xs">kg</span>
+          <span className="font-mono text-ink-muted text-xs">
+            {formatSets(predicted.total_sets)}
+          </span>
+          {/* Same rule as the ride's coverage: a volume computed from three of
+              ten sets is not the session's volume, and the count says so. */}
+          <span className="ml-auto font-mono text-2xs text-ink-faint">
+            {formatPercent(predicted.coverage)} of the sets are prescribed in
+            kilograms
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-baseline gap-2">
+            <NotAssessed
+              reason={reason.short}
+              className="font-semibold text-2xl"
+            />
+            <span className="text-ink-muted text-xs">kg</span>
+            {predicted ? (
+              <span className="font-mono text-ink-muted text-xs">
+                {formatSets(predicted.total_sets)}
+              </span>
+            ) : null}
+          </div>
+          <p className="text-ink-muted text-sm">{reason.sentence}</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** How a load is prescribed, in the words the sentence below uses. */
+const LOAD_KIND_WORDS: Readonly<Record<Schemas["LoadKind"], string>> = {
+  kg: "kilograms",
+  percent_e1rm: "%e1RM",
+  rpe: "RPE",
+  bodyweight: "bodyweight",
+};
+
+/**
+ * Why this session has no volume load, read off the prescription itself.
+ *
+ * Never "no data": volume load is kilograms, and a session that states none is
+ * saying something specific about how it is prescribed. Naming the forms it
+ * *did* use is what makes the missing number legible (UI convention 3).
+ */
+function unmeasuredVolumeReason(structure: StrengthStructure): {
+  short: string;
+  sentence: string;
+} {
+  const kinds = new Set<Schemas["LoadKind"]>();
+  for (const group of structure.groups) {
+    for (const item of group.items) {
+      kinds.add(item.load.kind);
+    }
+  }
+  const words = [...kinds].map((kind) => LOAD_KIND_WORDS[kind]);
+  if (words.length === 0) {
+    return {
+      short: "Nothing prescribed",
+      sentence:
+        "This session prescribes no movements yet, so there is no volume to total.",
+    };
+  }
+  return {
+    short: "No set is prescribed in kilograms",
+    sentence:
+      `Volume load is Σ sets × reps × kg, and this session prescribes its loads as ${listWords(words)}. ` +
+      "The kilograms exist once it is performed, not before.",
+  };
+}
+
+/** `a`, `a and b`, `a, b and c` — a list as a sentence says it. */
+function listWords(words: readonly string[]): string {
+  if (words.length <= 1) {
+    return words[0] ?? "";
+  }
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+/**
  * Why this session has no predicted load, derived from what is actually there.
  *
  * Never "no data": the honest answer is one of three specific things, and each
@@ -646,9 +641,13 @@ function StrengthGroups({ structure }: { structure: StrengthStructure }) {
           ) : group.items.length > 1 ? (
             <SectionLabel>Superset</SectionLabel>
           ) : null}
-          {group.items.map((item) => (
+          {group.items.map((item, itemIndex) => (
             <div
-              key={`${item.exercise_id}-${item.sets}-${item.reps}`}
+              // Lines are ordered positions in a group: the same movement
+              // twice is a legal prescription, and the group is replaced
+              // wholesale on every intent version.
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+              key={itemIndex}
               className="flex items-baseline justify-between gap-3 text-sm"
             >
               <span className="text-ink-secondary">

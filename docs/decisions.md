@@ -2007,3 +2007,77 @@ claim survived two files and a review because `native_enum=False` reads like
 "the constraint moved to a CHECK", which is what SQLAlchemy's own
 documentation once described and what `create_constraint` used to default to.
 `sa.Enum(...).create_constraint` answers the question in one line.
+
+## D82 — A dirty overlay refuses to close and asks inside itself, on every close reason alike
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+The plan dialog and the session sheet both closed on `onOpenChange(false)`
+without looking at why, so a click on the backdrop, an Escape and the ✕ all
+threw away a half-written session in silence. The pattern adopted in their
+place, as `components/design/dirty-close.tsx` (`useDirtyClose` +
+`DiscardPrompt`):
+
+* **The surface does not close; it asks.** On a close request with unsaved
+  work the hook calls `eventDetails.cancel()` — Base UI 1.6 hands
+  `onOpenChange` a `reason` (`outside-press`, `escape-key`, `close-press`) and
+  a canceller — and raises an inline `role="alertdialog"` strip *inside* the
+  surface, whose "Keep editing" control takes initial focus.
+* **Every reason is treated alike**, the explicit close control included. A
+  guard on the ✕ alone would leave the two paths a stray click actually takes
+  unguarded, and two different behaviours for "close this" is a rule nobody can
+  hold.
+* **A pristine surface closes instantly.** The prompt is furniture when there
+  is nothing to protect.
+* **Dirtiness is a flag set by the athlete's own edits**, not a diff against an
+  initial value. Both forms fill themselves in after opening — the plan dialog
+  from `GET /purposes/{purpose}`, the workout editor through
+  `draftFromStructure` — and a diff would call an untouched form dirty and
+  offer to discard a draft nobody wrote.
+
+This displaces the two alternatives that were live. A browser `confirm()` is
+one line and was rejected outright: it cannot be styled for a dark canvas
+(D59), it stacks a second modal on the first, and it is the one dialog in the
+application the design system does not own. A **nested** Base UI dialog was
+rejected for the same stacking reason plus a real cost — focus would leave the
+draft to enter a second popup, and the thing at stake would be hidden behind
+the question about it.
+
+The route case is different and is handled differently: `WorkoutEditor` is a
+page, so its "← Library" link is intercepted (`preventDefault`, then
+`router.push` once discarded) and `beforeunload` covers the three exits the
+application cannot render a prompt into — the browser's back button, a typed
+URL and a closed tab.
+
+## D83 — The frontend never resolves a percentage against an anchor; it renders the ones the API already resolved
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`lib/targets.ts` used to export `describeBand(band, anchors)`, which
+multiplied a prescribed fraction by an anchor value the caller supplied. The
+Today view supplied it from three `GET /anchors/current` requests, and so
+rendered every planned session against **now** rather than against the anchor
+versions the intent pinned. That is invariant 4 inverted: the numbers on the
+page changed the moment a new FTP was appended, and an estimate was labelled
+with a later version's `tested` provenance.
+
+The fix is not "pass the pinned values instead". It is that **no such function
+exists**. `describeBand` and `describeBandSource` are deleted; the absolute
+figures come from `PlannedSessionRead.resolved_steps`, which the backend
+computed against the pins (`app.domain.resolution`), and `resolveBand` matches
+a band to its resolved targets by **anchor version id** rather than by channel
+alone — so a session prescribing `85 % LTHR` on some steps and `75 % max HR`
+on others reports each against its own anchor. What remains client-side is
+`describePrescribed`, which formats the percentage the plan states and needs no
+anchor at all.
+
+The rule that stands: **a client may format a prescription, not resolve one.**
+The only anchor value a browser can cheaply reach is the current one, so any
+resolution helper in the frontend is a loaded gun pointed at the pin. Where a
+resolved number is wanted, the API is the one place that knows which version to
+use, and it already ships both forms side by side (D74) precisely so the client
+never has to choose.
+
+This displaces the narrower fix of keeping `describeBand` and feeding it
+`pinned_anchors`, which was written and then reverted: it works, and it leaves
+in place the exact call the next page would make wrongly.

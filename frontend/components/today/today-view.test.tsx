@@ -52,54 +52,40 @@ function weekWithToday(
   };
 }
 
-const VO2_CARD = {
-  id: SESSION_IDS.vo2,
-  date: today,
-  discipline: "cycling" as const,
-  purpose: "vo2max" as const,
-  status: "planned" as const,
-  title: "VO₂ 5×4′",
-  workout_id: null,
-  planned_duration_s: 4140,
-  total_sets: null,
-  step_count: 11,
-  intent_text: "Open the top end without digging a hole.",
-  intent_version: 2,
-  predicted_load: 92.4,
-  predicted_intensity_factor: 0.9,
-  predicted_volume_load_kg: null,
-};
+/** One of the fixture's own cards, moved onto today. */
+function cardFor(sessionId: string) {
+  const card = planWeekFixture(start)
+    .days.flatMap((day) => day.sessions)
+    .find((session) => session.id === sessionId);
+  if (!card) {
+    throw new Error(`no ${sessionId} in the week fixture`);
+  }
+  return { ...card, date: today };
+}
 
-const STRENGTH_CARD = {
-  ...VO2_CARD,
-  id: SESSION_IDS.strength,
-  discipline: "strength" as const,
-  purpose: "max_strength" as const,
-  status: "completed" as const,
-  title: "Strength — lower",
-  planned_duration_s: 2520,
-  total_sets: 16,
-  step_count: 4,
-  intent_text: "Keep the legs loaded through base.",
-  intent_version: 1,
-  predicted_load: null,
-  predicted_intensity_factor: null,
-  predicted_volume_load_kg: 4080,
-};
+const VO2_CARD = cardFor(SESSION_IDS.vo2);
+const STRENGTH_CARD = cardFor(SESSION_IDS.strength);
+
+/** Serve today's week from the fixture's own cards. */
+function serveWeek(
+  sessions: ReturnType<typeof planWeekFixture>["days"][number]["sessions"],
+) {
+  server.use(
+    http.get("/api/v1/plan/week", ({ response }) =>
+      response(200).json(weekWithToday(sessions)),
+    ),
+  );
+}
 
 describe("TodayView", () => {
   it("leads with the one-sentence headline composed from the plan", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
-    );
+    serveWeek([VO2_CARD]);
 
     renderToday();
 
     expect(
       await screen.findByRole("heading", {
-        name: "1h09 VO₂max ride — 5×4′ at Z5",
+        name: "57min VO₂max ride — 5×4′ at Z5",
       }),
     ).toBeInTheDocument();
     expect(
@@ -107,42 +93,97 @@ describe("TodayView", () => {
     ).toBeInTheDocument();
   });
 
-  it("resolves the prescription's percentages against the anchor in force", async () => {
+  /**
+   * The invariant this page exists to respect (D49).
+   *
+   * The session pinned an **estimated 250 W**; the anchor in force is a
+   * **tested 265 W**. Resolving against "now" would render 106–323 W and
+   * quietly restate every planned watt the next time the athlete tests — so
+   * the pinned numbers must be on screen, the current ones must not, and the
+   * provenance shown must be the pin's own.
+   */
+  it("resolves the prescription against the anchors the session pinned, not the ones in force", async () => {
+    const currentAnchorRequests: string[] = [];
+    serveWeek([VO2_CARD]);
     server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
+      http.get("/api/v1/anchors/current", ({ query, response }) => {
+        currentAnchorRequests.push(query.get("anchor_type") ?? "");
+        return response(404).json({ detail: "not consulted" });
+      }),
     );
 
     renderToday();
 
-    // The fixture's FTP is 250 W; the VO₂ tree spans 40%–122% of it.
+    // 40 % and 122 % of the *pinned* 250 W.
     expect(await screen.findByText("100–305 W")).toBeInTheDocument();
     expect(screen.getByText("40–122% of FTP")).toBeInTheDocument();
+    // The same percentages against the current 265 W. Nowhere on the page.
+    expect(screen.queryByText("106–323 W")).not.toBeInTheDocument();
+
+    // And the value is labelled with the pin's provenance, not the current
+    // version's: the plan was written against a guess.
+    const provenance = screen.getByText("estimated");
+    expect(provenance).toHaveAttribute("data-untested", "true");
+    expect(screen.getByText("FTP 250 W")).toBeInTheDocument();
+    expect(screen.queryByText("FTP 265 W")).not.toBeInTheDocument();
+    expect(screen.queryByText("tested")).not.toBeInTheDocument();
+
+    // Belt and braces: the endpoint that could only ever answer "now" is not
+    // consulted at all.
+    expect(currentAnchorRequests).toEqual([]);
   });
 
-  it("stays in percentages when no anchor has been entered", async () => {
+  it("says each step's target both ways, prescribed and resolved", async () => {
+    serveWeek([VO2_CARD]);
+
+    renderToday();
+
+    expect(await screen.findAllByText("114–122 % FTP")).toHaveLength(5);
+    expect(screen.getAllByText(/285–305 W/).length).toBeGreaterThan(0);
+  });
+
+  it("stays in percentages when the session pinned no anchor", async () => {
+    serveWeek([VO2_CARD]);
     server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
-      http.get("/api/v1/anchors/current", ({ response }) =>
-        response(404).json({ detail: "No version in force" }),
+      http.get(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        async ({ params, response }) => {
+          const { plannedSessionFixture } = await import(
+            "@/tests/mocks/fixtures"
+          );
+          const session = plannedSessionFixture(params.planned_session_id);
+          return response(200).json({
+            ...session,
+            pinned_anchors: [],
+            predicted_load: null,
+            resolved_steps: session.resolved_steps.map((step) => ({
+              ...step,
+              start_targets: step.start_targets.map((target) => ({
+                ...target,
+                resolved_low: null,
+                resolved_high: null,
+                anchor_version_id: null,
+              })),
+              end_targets: step.end_targets.map((target) => ({
+                ...target,
+                resolved_low: null,
+                resolved_high: null,
+                anchor_version_id: null,
+              })),
+            })),
+          });
+        },
       ),
     );
 
     renderToday();
 
     expect(await screen.findByText("40–122% of FTP")).toBeInTheDocument();
-    expect(screen.queryByText(/ W$/)).not.toBeInTheDocument();
+    expect(screen.queryByText("100–305 W")).not.toBeInTheDocument();
   });
 
   it("lists the success criteria as sentences", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
-    );
+    serveWeek([VO2_CARD]);
 
     renderToday();
 
@@ -154,41 +195,40 @@ describe("TodayView", () => {
   });
 
   it("shows the athlete's own notes in a neutral panel, not the coach's tint", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
-    );
+    serveWeek([VO2_CARD]);
 
     const { container } = renderToday();
 
     expect(
-      await screen.findByText(/Eat before you are hungry/),
+      await screen.findByText(/Two minutes in on the first one/),
     ).toBeInTheDocument();
     // The violet intent surface is reserved for agent-written text (WP-8).
     expect(container.querySelector(".bg-coach-surface")).toBeNull();
   });
 
-  it("renders both of today's sessions, the one still to do first", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([STRENGTH_CARD, VO2_CARD])),
-      ),
-    );
+  /**
+   * One document, one `h1`. Today can hold two sessions and used to render an
+   * `h1` for each, leaving a screen reader with two documents on one screen.
+   */
+  it("renders both of today's sessions under one page-owned h1", async () => {
+    serveWeek([STRENGTH_CARD, VO2_CARD]);
 
     renderToday();
 
-    const headings = await screen.findAllByRole("heading", { level: 1 });
-    expect(headings[0]).toHaveTextContent("1h09 VO₂max ride");
-    expect(headings[1]).toHaveTextContent("16 sets of max strength");
+    await screen.findByText("Open the top end without digging a hole.");
+    const [pageHeading, ...others] = screen.getAllByRole("heading", {
+      level: 1,
+    });
+    expect(pageHeading).toHaveTextContent("Today");
+    expect(others).toHaveLength(0);
+
+    const headlines = screen.getAllByRole("heading", { level: 2 });
+    expect(headlines[0]).toHaveTextContent("57min VO₂max ride");
+    expect(headlines[1]).toHaveTextContent("10 sets of max strength");
   });
 
   it("names the movements of a lifting session from the catalogue", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([STRENGTH_CARD])),
-      ),
-    );
+    serveWeek([STRENGTH_CARD]);
 
     renderToday();
 
@@ -198,11 +238,7 @@ describe("TodayView", () => {
   });
 
   it("treats an empty day as a rest day, with a way out of it", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([])),
-      ),
-    );
+    serveWeek([]);
 
     renderToday();
 
@@ -217,11 +253,7 @@ describe("TodayView", () => {
   });
 
   it("opens the plan form from the rest-day state", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([])),
-      ),
-    );
+    serveWeek([]);
 
     renderToday();
     await screen.findByText("Rest day");
@@ -269,11 +301,7 @@ describe("TodayView", () => {
   });
 
   it("opens the edit form on today's session", async () => {
-    server.use(
-      http.get("/api/v1/plan/week", ({ response }) =>
-        response(200).json(weekWithToday([VO2_CARD])),
-      ),
-    );
+    serveWeek([VO2_CARD]);
 
     renderToday();
     await userEvent.click(
