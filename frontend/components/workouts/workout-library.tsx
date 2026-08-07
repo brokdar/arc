@@ -181,7 +181,7 @@ function WorkoutCard({ workout }: { workout: Workout }) {
   return (
     <Link
       href={`/workouts/${workout.id}`}
-      className="flex h-full flex-col gap-2 rounded-card border border-hairline bg-card px-3.5 py-3 transition-colors hover:bg-card-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+      className="flex h-full flex-col gap-2 rounded-card border border-hairline-card bg-card px-3.5 py-3 transition-colors hover:bg-card-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
     >
       <span className="flex items-center gap-1.5 text-ink-muted">
         <DisciplineIcon discipline={workout.discipline} size={12} />

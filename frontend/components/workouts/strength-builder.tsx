@@ -80,7 +80,7 @@ function GroupCard({
     <div
       data-testid="draft-group"
       data-superset={superset ? "true" : undefined}
-      className="flex flex-col gap-2.5 rounded-card border border-hairline bg-card px-3.5 py-3"
+      className="flex flex-col gap-2.5 rounded-card border border-hairline-card bg-card px-3.5 py-3"
     >
       <div className="flex items-center gap-2">
         <SectionLabel className="mr-auto">
@@ -169,7 +169,7 @@ function ItemRow({
   return (
     <FieldRow
       data-testid="draft-set"
-      className="rounded-button border border-hairline bg-inset px-2.5 py-2"
+      className="rounded-button border border-hairline-faint bg-inset px-2.5 py-2"
     >
       <Field
         label="Movement"

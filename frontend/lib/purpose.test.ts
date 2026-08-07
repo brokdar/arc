@@ -10,6 +10,7 @@ import {
   purposesFor,
   STATUS_TONES,
 } from "@/lib/purpose";
+import { composite, contrastRatio, deltaE00 } from "@/tests/colour";
 
 /**
  * Read the vocabulary out of the committed contract rather than restating it.
@@ -57,6 +58,76 @@ describe("PURPOSE_TONES", () => {
     expect(purposeLabel("vo2max")).toBe("VO₂max");
     expect(purposeLabel("sweet_spot")).toBe("Sweet spot");
   });
+});
+
+/**
+ * Purple belongs to the coach and to the over-target verdict, and to nothing
+ * else (build-plan invariant 7, D84).
+ *
+ * `max_strength` was once byte-identical to both of them, which is exactly the
+ * failure a table of eighteen hand-picked hexes invites: nobody diffs a colour
+ * against a token in a different file. So the reservation is measured rather
+ * than remembered. ΔE00 ≥ 10 is roughly "no one would call these the same
+ * colour at a glance" and is met by every tone in the table with margin — the
+ * closest is `recovery`, a desaturated slate, at 11.9.
+ */
+const RESERVED_FOR_INTERPRETATION = {
+  "--color-coach": "#B49BFF",
+  "--color-coach-strong": "#C7B6FF",
+  "--color-status-over": "#A78BFA",
+} as const;
+
+/** Below this, two colours read as the same colour on a 10px badge. */
+const MIN_RESERVED_DISTANCE = 10;
+
+describe("the purple reservation", () => {
+  const tones = Object.entries(PURPOSE_TONES);
+
+  it.each(tones)(
+    "keeps %s clear of the coach and over-target tones",
+    (purpose, tone) => {
+      // Both the badge text and the card's left edge — the tint is the edge at
+      // 14 % alpha, so guarding the edge guards all three.
+      for (const swatch of [tone.edge, tone.fg]) {
+        for (const [token, reserved] of Object.entries(
+          RESERVED_FOR_INTERPRETATION,
+        )) {
+          const distance = deltaE00(swatch, reserved);
+          expect(
+            distance,
+            `${purpose} ${swatch} is ΔE00 ${distance.toFixed(2)} from ${token} (${reserved}) — purple is reserved for interpretive content`,
+          ).toBeGreaterThan(MIN_RESERVED_DISTANCE);
+        }
+      }
+    },
+  );
+
+  it("never re-uses a reserved hex outright", () => {
+    const reserved = new Set(
+      Object.values(RESERVED_FOR_INTERPRETATION).map((hex) =>
+        hex.toLowerCase(),
+      ),
+    );
+    for (const [, tone] of tones) {
+      expect(reserved.has(tone.edge.toLowerCase())).toBe(false);
+      expect(reserved.has(tone.fg.toLowerCase())).toBe(false);
+    }
+  });
+});
+
+describe("badge legibility", () => {
+  const CARD = "#131519"; // --color-card, the surface a badge sits on
+
+  it.each(Object.entries(PURPOSE_TONES))(
+    "renders %s legibly on a card at badge size",
+    (_purpose, tone) => {
+      // The badge is `fg` text over `tint` (the edge at 14 %) over the card.
+      const alpha = Number(/\/\s*([\d.]+)\s*\)/.exec(tone.tint)?.[1] ?? "0.14");
+      const badge = composite(tone.edge, alpha, CARD);
+      expect(contrastRatio(tone.fg, badge)).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(tone.fg, CARD)).toBeGreaterThanOrEqual(3);
+    },
+  );
 });
 
 describe("STATUS_TONES", () => {

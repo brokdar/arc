@@ -4,8 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import {
+  AnalysisIcon,
   CalendarIcon,
+  CoachIcon,
   type IconProps,
+  SessionsIcon,
+  SettingsIcon,
   TodayIcon,
   WorkoutsIcon,
 } from "@/components/icons";
@@ -21,13 +25,57 @@ interface NavItem {
    * Flip one flag when the page lands.
    */
   readonly ready: boolean;
+  /**
+   * What a section that is not ready is waiting for, named by work package.
+   *
+   * Shown on hover, so the sidebar answers "when?" instead of implying the
+   * feature is broken. Required for every unready item and forbidden on a
+   * ready one — a stale "arrives soon" on a page that shipped is worse than
+   * no tooltip at all (D61).
+   */
+  readonly arrives?: string;
 }
 
-/** The sections of the app, in the order the sidebar lists them. */
+/**
+ * The sections of the app, in the order the sidebar lists them.
+ *
+ * All seven the mockup previews, not just the three that exist: the shape of
+ * the application is part of what the shell communicates, and a nav that grows
+ * a row per release reads as a different product each time (D61). The four
+ * that have no page render dimmed and inert.
+ */
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/today", label: "Today", icon: TodayIcon, ready: true },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon, ready: true },
+  {
+    href: "/sessions",
+    label: "Sessions",
+    icon: SessionsIcon,
+    ready: false,
+    arrives: "Sessions arrive with WP-4, once activities are ingested",
+  },
   { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
+  {
+    href: "/analysis",
+    label: "Analysis",
+    icon: AnalysisIcon,
+    ready: false,
+    arrives: "Analysis arrives with WP-5, once sessions have streams to plot",
+  },
+  {
+    href: "/coach",
+    label: "Coach",
+    icon: CoachIcon,
+    ready: false,
+    arrives: "The coach arrives with WP-8",
+  },
+  {
+    href: "/settings",
+    label: "Settings",
+    icon: SettingsIcon,
+    ready: false,
+    arrives: "Settings arrive after the MVP work packages",
+  },
 ];
 
 export function SidebarNav() {
@@ -66,8 +114,11 @@ export function SidebarNav() {
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "flex items-center gap-2.5 rounded-button px-2.5 py-[7px] font-[450] text-base transition-colors",
+                    // The section you are on is a *state*, not a hover: the
+                    // mockup draws it one step lighter than the hover tint so
+                    // the two never read as the same thing.
                     active
-                      ? "bg-card-hover text-ink"
+                      ? "bg-chrome-active text-ink"
                       : "text-ink-secondary hover:bg-card-hover hover:text-ink",
                   )}
                 >
@@ -76,8 +127,9 @@ export function SidebarNav() {
                 </Link>
               ) : (
                 <span
+                  data-ready="false"
                   aria-disabled="true"
-                  title="Arrives with the next slice of WP-3"
+                  title={item.arrives}
                   className="flex cursor-default items-center gap-2.5 rounded-button px-2.5 py-[7px] font-[450] text-base text-ink-disabled"
                 >
                   <Icon />

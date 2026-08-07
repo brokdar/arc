@@ -110,7 +110,13 @@ describe("the endurance builder", () => {
 
     await userEvent.type(screen.getByLabelText(/Duration/), "10:00");
 
-    await waitFor(() => expect(screen.getByText("10:00")).toBeInTheDocument());
+    // The preview's total, not the profile's axis — which now ends on the
+    // same reading.
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-slot="workout-total"]'),
+      ).toHaveTextContent("10:00"),
+    );
     expect(screen.queryByText(/placeholders/)).not.toBeInTheDocument();
 
     // A 4× repeat of two steps adds eight more bars, expanded.

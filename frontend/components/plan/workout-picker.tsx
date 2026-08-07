@@ -72,7 +72,7 @@ export function WorkoutPicker({
       ) : null}
 
       {selected ? (
-        <div className="flex flex-col gap-1.5 rounded-button border border-hairline bg-inset px-3 py-2.5">
+        <div className="flex flex-col gap-1.5 rounded-button border border-hairline-faint bg-inset px-3 py-2.5">
           <span className="flex items-center justify-between gap-2 font-mono text-ink-muted text-xs">
             <span>
               {selected.discipline === "cycling"

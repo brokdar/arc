@@ -200,7 +200,7 @@ function StepNode({ step, index, siblings, steps, onChange }: StepNodeProps) {
   return (
     <div
       data-testid="draft-step"
-      className="flex flex-col gap-2.5 rounded-card border border-hairline bg-card px-3.5 py-3"
+      className="flex flex-col gap-2.5 rounded-card border border-hairline-card bg-card px-3.5 py-3"
     >
       {header}
       <ExtentFields step={step} onChange={replace} />

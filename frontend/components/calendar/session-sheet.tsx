@@ -252,7 +252,7 @@ export function SessionSheet({
           {problems.length > 0 ? (
             <ul
               role="alert"
-              className="flex flex-col gap-1 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+              className="flex flex-col gap-1 rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5 text-destructive text-sm"
             >
               {problems.map((problem) => (
                 <li key={problem}>{problem}</li>
@@ -428,7 +428,7 @@ function PredictedLoadFigure({ predicted }: { predicted: PredictedLoad }) {
           {formatPercent(predicted.coverage)} of the time carried a power target
         </span>
       </div>
-      <details className="rounded-button border border-hairline bg-inset px-3 py-2">
+      <details className="rounded-button border border-hairline-faint bg-inset px-3 py-2">
         <summary className="cursor-pointer text-ink-muted text-xs">
           How this was computed
         </summary>

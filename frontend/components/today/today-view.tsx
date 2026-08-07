@@ -175,6 +175,13 @@ function SessionPanel({
                 {session.discipline === "strength"
                   ? formatSets(session.total_sets)
                   : `planned ${formatDurationHm(session.planned_duration_s)}`}
+                {/* The prescription's own predicted load, when the backend
+                    could compute one. Absent rather than zero when it could
+                    not: a session with no power target has no TSS, and "0
+                    TSS" would be a claim the arithmetic never made. */}
+                {session.predicted_load !== null
+                  ? ` · ${Math.round(session.predicted_load)} TSS`
+                  : ""}
               </span>
             </span>
           </div>
@@ -232,7 +239,7 @@ function SessionPanel({
                 // Groups are ordered positions in the prescription, not entities.
                 // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
                 key={groupIndex}
-                className="flex flex-col gap-1 rounded-button border border-hairline bg-inset px-3 py-2.5"
+                className="flex flex-col gap-1 rounded-button border border-hairline-faint bg-inset px-3 py-2.5"
               >
                 {group.items.length > 1 || group.label ? (
                   <SectionLabel>{group.label ?? "Superset"}</SectionLabel>
@@ -429,7 +436,7 @@ function ThisWeek({
               key={day.date}
               className={
                 isToday
-                  ? "-mx-1.5 flex flex-col gap-1 rounded-button bg-[rgb(76_141_255/0.08)] px-1.5 py-1"
+                  ? "-mx-1.5 flex flex-col gap-1 rounded-button bg-accent-wash px-1.5 py-1"
                   : "flex flex-col gap-1"
               }
             >

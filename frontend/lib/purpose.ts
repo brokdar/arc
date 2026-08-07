@@ -30,8 +30,15 @@ export interface PurposeTone {
  * `Purpose` and fails the type-check here before it fails a test.
  *
  * The ramp follows intensity: slate → blue → green → lime → amber → orange →
- * rose for the endurance purposes, violet for the strength family, matching
- * the mockup's Endurance / Tempo / VO₂max / Recovery / Strength badges.
+ * rose → magenta for the cycling purposes, matching the mockup's Endurance /
+ * Tempo / VO₂max / Recovery badges.
+ *
+ * The five barbell purposes are a **steel** family — cyan through azure — and
+ * not the mockup's violet, because violet is `--color-coach` and
+ * `--color-status-over` and those are reserved for interpretive content (build
+ * plan invariant 7). D84 records the swap and its numbers; `purpose.test.ts`
+ * enforces the reservation mechanically, so the next purpose cannot spend
+ * purple again by accident.
  */
 export const PURPOSE_TONES: Readonly<Record<Purpose, PurposeTone>> = {
   recovery: {
@@ -102,33 +109,33 @@ export const PURPOSE_TONES: Readonly<Record<Purpose, PurposeTone>> = {
   },
   max_strength: {
     label: "Max strength",
-    edge: "#A78BFA",
-    fg: "#B49BFF",
-    tint: "rgb(167 139 250 / 0.14)",
+    edge: "#0090BB",
+    fg: "#1CA8CD",
+    tint: "rgb(0 144 187 / 0.14)",
   },
   strength_endurance: {
     label: "Strength endurance",
-    edge: "#8E86EE",
-    fg: "#A9A2FF",
-    tint: "rgb(142 134 238 / 0.14)",
+    edge: "#009095",
+    fg: "#55A8AC",
+    tint: "rgb(0 144 149 / 0.14)",
   },
   hypertrophy: {
     label: "Hypertrophy",
-    edge: "#B77BE8",
-    fg: "#CB9FF3",
-    tint: "rgb(183 123 232 / 0.14)",
+    edge: "#14AABF",
+    fg: "#69C3D3",
+    tint: "rgb(20 170 191 / 0.14)",
   },
   power: {
     label: "Power",
-    edge: "#C084FC",
-    fg: "#D3A5FF",
-    tint: "rgb(192 132 252 / 0.14)",
+    edge: "#3DAEDE",
+    fg: "#7BC8EF",
+    tint: "rgb(61 174 222 / 0.14)",
   },
   core: {
     label: "Core",
-    edge: "#7C8CE0",
-    fg: "#9BA8EF",
-    tint: "rgb(124 140 224 / 0.14)",
+    edge: "#71A3B1",
+    fg: "#9EBBC4",
+    tint: "rgb(113 163 177 / 0.14)",
   },
   mobility: {
     label: "Mobility",

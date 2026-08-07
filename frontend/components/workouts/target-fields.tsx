@@ -3,6 +3,7 @@
 import { useId } from "react";
 
 import { Field, FieldRow } from "@/components/design/field";
+import { SectionLabel } from "@/components/design/section-label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -53,9 +54,7 @@ export function TargetFields({ label, targets, onChange }: TargetFieldsProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <span className="text-ink-faint text-2xs uppercase tracking-[0.09em]">
-          {label}
-        </span>
+        <SectionLabel>{label}</SectionLabel>
         {available.length > 0 ? (
           <div className="flex gap-1">
             {available.map((channel) => (
@@ -104,7 +103,7 @@ function TargetRow({
   const channelName = CHANNEL_LABELS[target.channel];
 
   return (
-    <FieldRow className="rounded-button border border-hairline bg-inset px-2.5 py-2">
+    <FieldRow className="rounded-button border border-hairline-faint bg-inset px-2.5 py-2">
       <span className="w-[68px] shrink-0 pb-1.5 text-ink-secondary text-sm">
         {channelName}
       </span>

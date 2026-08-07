@@ -266,25 +266,23 @@ export function CalendarWeek() {
       <PageBody>
         <PlanStateBanner />
 
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <div>
-            <h1 className="font-semibold text-2xl tracking-[-0.02em]">
-              Calendar
-            </h1>
-            <p className="mt-1 text-ink-muted text-base">
-              {week.data
-                ? `${week.data.session_count} planned · ${formatDurationHm(
-                    week.data.planned_duration_s,
-                  )} prescribed`
-                : " "}
-            </p>
-          </div>
+        <div className="mb-4">
+          <h1 className="font-semibold text-2xl tracking-[-0.02em]">
+            Calendar
+          </h1>
+          <p className="mt-1 text-ink-muted text-base">
+            {week.data
+              ? `${week.data.session_count} planned · ${formatDurationHm(
+                  week.data.planned_duration_s,
+                )} prescribed`
+              : " "}
+          </p>
         </div>
 
         {moveFailure ? (
           <div
             role="alert"
-            className="mb-4 flex items-start gap-3 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+            className="mb-4 flex items-start gap-3 rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5 text-destructive text-sm"
           >
             <ul className="flex flex-1 flex-col gap-1">
               {moveFailure.map((problem) => (

@@ -267,7 +267,7 @@ export function SessionForm({
   return (
     <Dialog open onOpenChange={guard.onOpenChange}>
       <DialogContent
-        className="max-h-[88vh] w-[min(52rem,calc(100vw-2rem))] max-w-none overflow-y-auto gap-0 rounded-shell border border-hairline bg-panel p-0 ring-0"
+        className="max-h-[88vh] w-[min(52rem,calc(100vw-2rem))] max-w-none overflow-y-auto gap-0 rounded-shell border border-hairline-card bg-panel p-0 ring-0"
         aria-label={editing ? "Edit session" : "Plan a session"}
       >
         <form onSubmit={handleSubmit} className="flex flex-col">
@@ -440,7 +440,7 @@ export function SessionForm({
               {allProblems.length > 0 ? (
                 <ul
                   role="alert"
-                  className="flex flex-col gap-1 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+                  className="flex flex-col gap-1 rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5 text-destructive text-sm"
                 >
                   {allProblems.map((problem) => (
                     <li key={problem}>{problem}</li>

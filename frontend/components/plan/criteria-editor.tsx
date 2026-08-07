@@ -126,7 +126,7 @@ export function CriteriaEditor({
           // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
           key={index}
           data-testid="criterion"
-          className="flex flex-col gap-2 rounded-button border border-hairline bg-inset px-3 py-2.5"
+          className="flex flex-col gap-2 rounded-button border border-hairline-faint bg-inset px-3 py-2.5"
         >
           <div className="flex items-start gap-2">
             <span className="flex-1 text-ink-secondary text-sm">

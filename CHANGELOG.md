@@ -329,6 +329,52 @@ D55–D81.
   `` `${exercise_id}-${sets}-${reps}` `` keys are gone; these lists are
   replaced wholesale, so the index is the identity and says so in a comment.
 
+**Web — design-system corrections (D84–D87)**
+
+- **The strength purposes leave purple.** `max_strength` was byte-identical to
+  `--color-status-over` and `--color-coach`, and four neighbours were the same
+  violet family; all five move to a cyan-through-azure "steel" family (D84).
+  Distance from the reserved coach/verdict tones goes from ΔE00 0.00 to 11.92
+  across the whole eighteen-tone palette, and the strength family's own floor
+  from 2.16 to 8.72. `lib/purpose.test.ts` now *measures* the reservation, so
+  the next purpose cannot re-spend purple; a companion test checks every tone's
+  badge contrast. Figures are CIEDE2000 — D75's are CIE76, which flatters
+  saturated colours by roughly a factor of two.
+- **Every ink is WCAG AA on every surface it lands on** (D85).
+  `--color-ink-faint` was 3.01:1 on a card while carrying every uppercase
+  label, the provenance line and the coverage notes; it is now `#7d848f`,
+  4.54:1 at its worst. `--color-ink-disabled` stays below AA and is narrowed to
+  inactive controls, which WCAG 1.4.3 exempts — a missed session's struck-out
+  duration is content and moves to `ink-muted`, which is what the mockup uses
+  for it. `tests/ink-contrast.test.ts` parses the palette and enforces both.
+- **D59's "no colour outside `globals.css`" is now a test.** Ten inline hex and
+  `rgb()` literals are gone, replaced by the tokens they were re-encoding —
+  missed surface and border, danger surface and border, warn surface and
+  border, accent wash, accent surface hover, chrome active (D86).
+  `tests/no-literal-colours.test.ts` fails any colour literal under
+  `components/` or `app/`, with one documented allowlist entry.
+- Added the two stops the mockup uses and the palette had skipped:
+  `--color-hairline-card` (.07, the mockup's most common border — cards,
+  panels, the week shell) and `--color-hairline-faint` (.05, chart wells),
+  repointed occurrence by occurrence rather than wholesale; and `--text-label`
+  (10px), which is the size every uppercase micro-heading is drawn at.
+  `SectionLabel` was rendering at 9.5px, the metric-caption size.
+- **The sidebar shows all seven sections the mockup previews**, not the three
+  that exist: Sessions, Analysis, Coach and Settings render dimmed and inert
+  with a tooltip naming the work package each waits for (WP-4, WP-5, WP-8,
+  after the MVP) instead of the stale "arrives with the next slice of WP-3".
+  The active nav item gets its own `--color-chrome-active` token so it no
+  longer shares a colour with hover.
+- **D75's cross-language guard is real.** `lib/workout-profile.test.ts` reads
+  `backend/app/domain/zones.py` off disk and compares the extracted `coggan_7`
+  boundaries against `COGGAN_7_LOWER`; it used to assert the frontend table
+  had seven entries against itself.
+- Today's header carries the planned load (`planned 1:15 · 78 TSS`) when the
+  session has one, and the detail workout profile gained the mockup's time axis
+  beneath the bars — both absent rather than invented when the prescription
+  does not support them. The mockup modules WP-3 deliberately does not build
+  are listed in D87.
+
 **Web — testing**
 
 - `tests/mocks/fixtures.ts` was rewritten so that **every payload is one the

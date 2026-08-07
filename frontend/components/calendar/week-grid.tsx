@@ -116,7 +116,7 @@ function DayColumn({
       className={cn(
         "group/day flex min-w-0 flex-col gap-2 rounded-card p-1 transition-colors",
         over
-          ? "bg-[rgb(76_141_255/0.07)] outline-2 outline-accent-border outline-dashed"
+          ? "bg-accent-wash outline-2 outline-accent-border outline-dashed"
           : dragInProgress
             ? "outline-1 outline-hairline outline-dashed"
             : null,

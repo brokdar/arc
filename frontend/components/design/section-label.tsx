@@ -10,6 +10,10 @@ import { cn } from "@/lib/utils";
  * section of the page contributes to the heading outline instead of being a
  * styled `<div>`; the default is a plain span for the many places where the
  * label is a caption rather than a heading.
+ *
+ * 10px (`text-label`) at .09em, which is the size and tracking the mockup uses
+ * for every one of these; `text-2xs` (9.5px) is the *metric caption* beside a
+ * figure, a different thing that happens to look similar.
  */
 export interface SectionLabelProps extends React.HTMLAttributes<HTMLElement> {
   readonly level?: 2 | 3 | 4;
@@ -25,7 +29,7 @@ export function SectionLabel({
     <Tag
       data-slot="section-label"
       className={cn(
-        "font-semibold text-2xs text-ink-faint uppercase tracking-[0.09em]",
+        "font-semibold text-ink-faint text-label uppercase tracking-[0.09em]",
         className,
       )}
       {...props}

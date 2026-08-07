@@ -45,7 +45,7 @@ export function PlanStateBanner() {
   return (
     <div
       role="status"
-      className="mb-4 flex flex-wrap items-center gap-3 rounded-card border border-[rgb(217_164_65/0.3)] bg-[rgb(217_164_65/0.08)] px-3.5 py-2.5"
+      className="mb-4 flex flex-wrap items-center gap-3 rounded-card border border-warn-border bg-warn-surface px-3.5 py-2.5"
     >
       <span
         aria-hidden

@@ -50,7 +50,13 @@ export function WorkoutBuilder({
       <section className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
           <SectionLabel level={3}>Preview</SectionLabel>
-          <span className="font-mono text-ink-muted text-xs">
+          {/* Named, because the profile's own time axis below now renders the
+              same total as its last tick and a test looking for the text
+              alone would find two of them. */}
+          <span
+            data-slot="workout-total"
+            className="font-mono text-ink-muted text-xs"
+          >
             {draft.discipline === "cycling"
               ? seconds
                 ? formatDurationClock(seconds)
@@ -73,7 +79,7 @@ export function WorkoutBuilder({
       {problems.length > 0 ? (
         <ul
           role="alert"
-          className="flex flex-col gap-1 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5 text-destructive text-sm"
+          className="flex flex-col gap-1 rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5 text-destructive text-sm"
         >
           {problems.map((problem) => (
             <li key={problem}>{problem}</li>

@@ -93,6 +93,52 @@ export function WorkoutsIcon(props: IconProps) {
   );
 }
 
+/** Sessions — a list of rules, the last one short. */
+export function SessionsIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M3 4.5h10M3 8h10M3 11.5h6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </Glyph>
+  );
+}
+
+/** Analysis — a trend line with two turns. */
+export function AnalysisIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M2.5 11.5L6 7.5l3 2.6 4.5-6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Glyph>
+  );
+}
+
+/** Settings — a dial inside a dashed ring. */
+export function SettingsIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <circle cx="8" cy="8" r="2.4" stroke="currentColor" strokeWidth="1.3" />
+      <circle
+        cx="8"
+        cy="8"
+        r="5.6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeDasharray="2.2 2.4"
+      />
+    </Glyph>
+  );
+}
+
 /** Cycling — two wheels and a frame. */
 export function BikeIcon(props: IconProps) {
   return (

@@ -1,5 +1,7 @@
+import { formatDurationClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
+  type ProfileBar,
   profileBars,
   type WorkoutStructure,
   ZONE_COLORS,
@@ -16,6 +18,12 @@ import {
  *
  * Renders nothing at all for a strength prescription or an empty tree: a card
  * with no profile should lose the row, not gain an empty box.
+ *
+ * The `detail` plot carries the mockup's time axis beneath it, so the athlete
+ * can read *when* the third interval starts rather than only that there is a
+ * third interval. It appears only when every flattened step states a duration
+ * — a tree with an open-ended step has no total, and an axis running to a
+ * total the prescription never gave would be an invention.
  */
 export interface WorkoutProfileBarsProps {
   readonly structure: WorkoutStructure | null | undefined;
@@ -34,14 +42,16 @@ export function WorkoutProfileBars({
   }
 
   const detail = size === "detail";
-  return (
+  const ticks = detail ? timeAxis(bars) : [];
+
+  const plot = (
     <div
       data-slot="workout-profile"
       aria-hidden
       className={cn(
         "flex items-end",
         detail
-          ? "h-24 gap-[2px] rounded-button border border-hairline bg-inset p-2.5"
+          ? "h-24 gap-[2px] rounded-button border border-hairline-faint bg-inset p-2.5"
           : "h-6 gap-px",
         className,
       )}
@@ -63,5 +73,56 @@ export function WorkoutProfileBars({
         />
       ))}
     </div>
+  );
+
+  if (ticks.length === 0) {
+    return plot;
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      {plot}
+      <div
+        data-slot="workout-profile-axis"
+        aria-hidden
+        className="flex justify-between px-1 font-mono text-2xs text-ink-faint"
+      >
+        {ticks.map((seconds, index) => (
+          // Ticks are positions on an axis, and a very short workout can round
+          // two of them to the same second.
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional by nature
+          <span key={index}>{formatDurationClock(seconds)}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** How many labels the axis carries, `0:00` and the total included. */
+const AXIS_TICKS = 5;
+
+/**
+ * Evenly spaced elapsed times across the plot: `0:00 … 17:11 … 1:08:42`.
+ *
+ * Even *fractions* of the total rather than round clock intervals, because the
+ * row is laid out with `justify-between` and nothing else positions the labels
+ * — quarters land where they say they land, whereas ten-minute marks would sit
+ * wherever flex put them and quietly lie about the third interval's start.
+ *
+ * Empty when any step is open-ended, so the caller renders no axis at all.
+ */
+function timeAxis(bars: readonly ProfileBar[]): number[] {
+  let total = 0;
+  for (const bar of bars) {
+    if (bar.durationS === null) {
+      return [];
+    }
+    total += bar.durationS;
+  }
+  if (total <= 0) {
+    return [];
+  }
+  return Array.from({ length: AXIS_TICKS }, (_, index) =>
+    Math.round((total * index) / (AXIS_TICKS - 1)),
   );
 }

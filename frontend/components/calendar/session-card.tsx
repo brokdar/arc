@@ -54,10 +54,10 @@ export function SessionCard({
         "flex w-full cursor-pointer flex-col gap-2 rounded-card border px-[11px] py-2.5 text-left transition-colors",
         "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
         isToday
-          ? "border-accent-border bg-accent-surface shadow-[0_0_0_3px_rgb(76_141_255/0.07)] hover:bg-[#171C24]"
+          ? "border-accent-border bg-accent-surface shadow-[0_0_0_3px_var(--color-accent-wash)] hover:bg-accent-surface-hover"
           : missed
-            ? "border-[rgb(224_92_92/0.35)] border-dashed bg-[#101215] opacity-85 hover:opacity-100"
-            : "border-hairline bg-card hover:bg-card-hover",
+            ? "border-missed-border border-dashed bg-missed-surface opacity-85 hover:opacity-100"
+            : "border-hairline-card bg-card hover:bg-card-hover",
       )}
       style={{
         borderLeft: `2px solid ${isToday ? "var(--color-accent)" : tone.edge}`,
@@ -74,7 +74,10 @@ export function SessionCard({
           <span
             className={cn(
               "font-mono text-xs",
-              missed && "text-ink-disabled line-through",
+              // Struck through, not dimmed out of readability: a missed
+              // session's duration is what was *not* done, which is
+              // information. `ink-disabled` is for inactive controls (D85).
+              missed && "text-ink-muted line-through decoration-ink-muted/50",
             )}
           >
             {measure}

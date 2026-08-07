@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { components } from "@/generated/api/schema";
@@ -97,12 +100,9 @@ describe("zoneToneFor", () => {
     }
   });
 
-  it("has seven stops, the same seven the backend's coggan_7 has", () => {
-    // Adding a zone backend-side has to fail here loudly rather than paint
-    // the new one in the previous zone's colour.
-    expect(COGGAN_7_LOWER).toHaveLength(7);
-    expect(Object.keys(ZONE_LABELS)).toHaveLength(7);
-    expect(Object.keys(ZONE_COLORS)).toHaveLength(7);
+  it("gives every stop a label and a colour", () => {
+    expect(Object.keys(ZONE_LABELS)).toHaveLength(COGGAN_7_LOWER.length);
+    expect(Object.keys(ZONE_COLORS)).toHaveLength(COGGAN_7_LOWER.length);
   });
 
   it("is monotonic across the boundaries", () => {
@@ -112,6 +112,70 @@ describe("zoneToneFor", () => {
       const index = order.indexOf(zoneToneFor(f));
       expect(index).toBeGreaterThanOrEqual(previous);
       previous = index;
+    }
+  });
+});
+
+/**
+ * The one boundary table that exists twice, checked against the original.
+ *
+ * `COGGAN_7_LOWER` is a copy of `_ZONE_SCHEMES[ZoneModel.COGGAN_7]` in
+ * `backend/app/domain/zones.py`, and it has to be: a calendar card paints a
+ * zone from a prescribed percentage without an anchor and therefore without a
+ * request. A comment saying "if you change one, change both" is not a guard,
+ * so this reads the Python and compares — an eighth backend zone, or a moved
+ * boundary, fails here rather than being painted in the wrong colour.
+ *
+ * Node reads the file directly; there is nothing to build and nothing to run.
+ */
+describe("COGGAN_7_LOWER against backend/app/domain/zones.py", () => {
+  const ZONES_PY = resolve(
+    import.meta.dirname,
+    "..",
+    "..",
+    "backend",
+    "app",
+    "domain",
+    "zones.py",
+  );
+
+  /**
+   * The `COGGAN_7` arm of `_ZONE_SCHEMES`, as lower bounds.
+   *
+   * Anchored on the dict key so a second scheme cannot be read by mistake, and
+   * tolerant inside it: whitespace, the zone names and the float spelling
+   * (`0.55`, `.55`, `0.00`) are all free to change, the numbers are not.
+   */
+  function backendLowerBounds(): number[] {
+    const source = readFileSync(ZONES_PY, "utf8");
+    const scheme = /ZoneModel\.COGGAN_7:\s*\(([\s\S]*?)\n\s*\),/.exec(source);
+    if (!scheme?.[1]) {
+      throw new Error(
+        `could not find the COGGAN_7 arm of _ZONE_SCHEMES in ${ZONES_PY}`,
+      );
+    }
+    const rows = [
+      ...scheme[1].matchAll(/\(\s*"[^"]+"\s*,\s*(\d*\.?\d+)\s*\)/g),
+    ];
+    if (rows.length === 0) {
+      throw new Error(`found the COGGAN_7 arm but no (name, bound) rows`);
+    }
+    return rows.map((row) => Number(row[1]));
+  }
+
+  it("reads the same number of zones the backend defines", () => {
+    expect(COGGAN_7_LOWER).toHaveLength(backendLowerBounds().length);
+  });
+
+  it("reads the same boundaries, in the same order", () => {
+    expect([...COGGAN_7_LOWER]).toEqual(backendLowerBounds());
+  });
+
+  it("still starts at zero and rises", () => {
+    const bounds = backendLowerBounds();
+    expect(bounds[0]).toBe(0);
+    for (let i = 1; i < bounds.length; i += 1) {
+      expect(bounds[i]).toBeGreaterThan(bounds[i - 1] as number);
     }
   });
 });

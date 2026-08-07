@@ -47,7 +47,7 @@ export function InlineConfirm({
       aria-label={question}
       data-slot="inline-confirm"
       className={cn(
-        "flex flex-wrap items-center gap-2 rounded-card border border-[rgb(224_92_92/0.3)] bg-[rgb(224_92_92/0.07)] px-3.5 py-2.5",
+        "flex flex-wrap items-center gap-2 rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5",
         className,
       )}
     >

@@ -308,7 +308,7 @@ function Cell({
   note?: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-button border border-hairline bg-inset px-2 py-1.5">
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-button border border-hairline-faint bg-inset px-2 py-1.5">
       <span className="text-2xs text-ink-faint uppercase tracking-[0.08em]">
         {label}
       </span>

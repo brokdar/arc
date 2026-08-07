@@ -2081,3 +2081,215 @@ never has to choose.
 This displaces the narrower fix of keeping `describeBand` and feeding it
 `pinned_anchors`, which was written and then reverted: it works, and it leaves
 in place the exact call the next page would make wrongly.
+
+## D84 — The strength purposes leave purple; the reservation is now measured, not remembered
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PURPOSE_TONES.max_strength` was `#A78BFA` / `#B49BFF` — **byte-identical** to
+`--color-status-over` and `--color-coach`. Four of its neighbours were the same
+violet family: `strength_endurance` `#8E86EE`, `hypertrophy` `#B77BE8`, `power`
+`#C084FC` (Tailwind violet-400), `core` `#7C8CE0`. D75 and the palette's own
+comment both say purple is spent on interpretive content (build-plan invariant
+7) and both were written *beside* a table that had already spent it.
+
+All five move to a **steel family** — cyan through azure, Lab hue 196–248, the
+only contiguous region of the wheel this eighteen-tone palette had not already
+claimed. `mobility` (teal) and `conditioning` (amber) were never violet and do
+not move; the strength family was never one hue family to begin with.
+
+| purpose | edge → | fg → | fg on card | fg on its own badge tint | ΔE00 to nearest reservation |
+| --- | --- | --- | --- | --- | --- |
+| `max_strength` | `#0090BB` | `#1CA8CD` | 6.56:1 | 5.61:1 | 27.31 |
+| `strength_endurance` | `#009095` | `#55A8AC` | 6.60:1 | 5.69:1 | 30.07 |
+| `hypertrophy` | `#14AABF` | `#69C3D3` | 9.01:1 | 7.38:1 | 27.30 |
+| `power` | `#3DAEDE` | `#7BC8EF` | 9.88:1 | 7.97:1 | 22.54 |
+| `core` | `#71A3B1` | `#9EBBC4` | 9.02:1 | 7.31:1 | 15.85 |
+
+**Every ΔE figure in this entry and every entry after it is CIEDE2000**
+(kL = kC = kH = 1), computed by `frontend/tests/colour.ts`. This is worth
+stating because D75's figures are **CIE76**, plain Euclidean distance in
+L\*a\*b\*, which flatters saturated colours: the zone-6 swap D75 reports as
+ΔE 74 is ΔE00 37, and zone-7's ΔE 51 is ΔE00 33. Both still clear any bar worth
+setting, but a threshold calibrated on CIE76 numbers would be roughly half as
+strict as it reads.
+
+What the move buys, in numbers:
+
+* **Distance from the reservations** (`--color-coach`, `--color-coach-strong`,
+  `--color-status-over`), minimum over all eighteen tones counting edge *and*
+  badge text: **0.00 → 11.92**. The floor is now `recovery`, a desaturated
+  slate that was never purple and is nowhere near it perceptually; the closest
+  tone that moved is `core` at 15.85.
+* **Distance within the strength family**: floor **2.16 → 8.72**.
+  `hypertrophy` and `power` used to be ΔE00 2.16 apart — two purposes an
+  athlete could not tell apart on adjacent cards.
+* **Distance across the whole palette** is unchanged at 1.33
+  (`threshold` / `conditioning`), a pre-existing pair this entry does not
+  touch. The tightest *new* neighbours are `endurance` / `power` at 8.44 and
+  `mobility` / `core` at 8.55 — both better separated than four pairs that
+  already shipped.
+* Every new tone clears **3:1 on `--color-card` for the badge text**, the bar
+  this palette sets for a 10px badge, with the worst at 5.61:1.
+
+The mockup drew its Strength badge in violet, so this is a **recorded departure
+from the mockup**: invariant 7 owns the hue and a badge does not get to
+countermand it. That is the whole of the cost — one badge family reads cooler
+than the picture.
+
+The part that matters more than the hexes: `lib/purpose.test.ts` now **measures
+the reservation** rather than restating it. Every tone's edge and text must be
+ΔE00 > 10 from each reserved colour, and a hex may not equal one outright. Ten
+is "nobody would call these the same colour at a glance", it is met by the
+whole table with margin, and it means the nineteenth purpose cannot re-spend
+purple by being typed in a different file from the token it collides with —
+which is exactly how this happened. A companion test checks every tone's badge
+contrast, so the next hex cannot be chosen for hue alone.
+
+This displaces the narrower fix of recolouring only the three tones a review
+named. It was tried and abandoned within the hour: with `power` at ΔE00 6.68
+and `core` at 8.27 from `--color-coach`, the only guard those three could pass
+was a threshold so low it would have admitted lavender.
+
+## D85 — Ink is WCAG AA on every surface it lands on; `ink-disabled` is narrowed to inactive controls
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`--color-ink-faint` was the mockup's `#5c636d`: **3.01:1** on `--color-card`,
+2.93:1 on `--color-accent-surface`. It carried 38 pieces of text at 9.5–10.5px
+— every `SectionLabel`, the anchor provenance line, the coverage notes under
+the load figures, the "N steps" on a calendar card. Small, grey, and below the
+AA floor for body text is not a style, it is text some people cannot read.
+
+`--color-ink-faint` becomes **`#7d848f`**, same hue and chroma, lifted in
+lightness only: 4.85:1 on `card`, 4.93:1 on `panel`, 4.72:1 on
+`accent-surface`, and **4.54:1 at its worst**, on `accent-surface-hover` — the
+lightest surface faint ink actually lands on. It stays visibly below
+`--color-ink-muted` `#8a9099` (5.68:1 on a card): ΔL\* 4.66, ΔE00 4.38. That
+gap is narrower than the mockup's, and deliberately so — the band between the
+AA floor and the next rung up is only 0.83 of a contrast ratio wide, and the
+hierarchy is carried by size, weight and case as much as by tone.
+
+`--color-ink-disabled` `#6b727c` (3.76:1) **stays below AA and is narrowed
+instead**. It was doing two jobs: dimming an unbuilt nav item, and striking
+through a missed session's duration. The second is content — what was *not*
+done is information — so missed text moves to `--color-ink-muted`, which is
+what the mockup itself uses for it (`color:#8A9099`, with the decoration at
+50 % alpha). What remains for `ink-disabled` is inactive user interface
+components, which WCAG 1.4.3 explicitly exempts, and the token now says so in
+the palette.
+
+Raising `ink-disabled` past 4.5:1 was the alternative and was rejected: it
+would have to pass `ink-muted` to stay distinguishable from `ink-faint`, at
+which point a disabled nav item reads as an enabled one and the dimming means
+nothing. A token that is *allowed* to be quiet is more useful than a fourth
+rung of readable grey.
+
+`frontend/tests/ink-contrast.test.ts` parses the palette and asserts the ratios
+— including that the rungs stay in order, and that `ink-disabled` stays *below*
+AA, so the exemption cannot quietly become a fifth content ink.
+
+## D86 — "No colour outside globals.css" is a test, and the palette gains the stops the mockup actually uses
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+D59 claimed the palette lives in `app/globals.css` and `lib/purpose.ts` and
+nowhere else. Ten inline literals had been added since, one arbitrary-value
+class at a time: `bg-[#101215]`, `hover:bg-[#171C24]`,
+`border-[rgb(224_92_92/0.3)]` five times over, `bg-[rgb(76_141_255/0.07)]` and
+its 0.08 twin. Every one of them re-encoded a colour that had, or should have
+had, a name. None of them was wrong in review, because a review reads a diff
+and the token it collides with is in another file.
+
+Three changes, in the order they have to happen.
+
+**The palette gains what was missing.** The literals existed because the tokens
+did not: `--color-missed-surface` / `--color-missed-border`,
+`--color-danger-surface` / `--color-danger-border`, `--color-warn-surface` /
+`--color-warn-border`, `--color-accent-wash`, `--color-accent-surface-hover`,
+`--color-chrome-active`. The two accent washes (.07 and .08) become one — a
+0.01 difference in alpha is not a design intent, it is a typo with a history.
+
+**Two stops the mockup uses and the palette had skipped.**
+`--color-hairline-card` (`rgb(255 255 255 / .07)`) is the mockup's single most
+common border, 28 of them, and the app was drawing every card and panel at .06;
+`--color-hairline-faint` (.05) is the well a chart sits in. Checked
+occurrence-by-occurrence rather than replaced wholesale: .06 stays where the
+mockup divides *inside* a surface and draws the chrome's outer edges, .09 stays
+on pressable controls. Likewise `--text-label` (10px) — the mockup's uppercase
+micro-heading is 10px at .09em tracking in all fourteen places, and
+`SectionLabel` was rendering it at `text-2xs` (9.5px), which is the *metric
+caption* beside a figure. The two sizes look alike and mean different things,
+so the scale now holds both.
+
+**The claim becomes a test.** `frontend/tests/no-literal-colours.test.ts` walks
+`components/` and `app/` and fails any file containing `#rgb`, `#rrggbb`,
+`#rrggbbaa`, `rgb(`, `rgba(`, `hsl(` or `hsla(`. One entry in the allowlist,
+`app/globals.css`, and it is checked to still be the palette; `lib/purpose.ts`
+is outside the scanned tree by construction, because a runtime lookup keyed by
+a value Tailwind cannot see has to be data. Adding an allowlist entry needs an
+entry here, not just a line in the set — an allowlist that grows silently is
+the thing the test exists to prevent. A Biome rule was considered and rejected:
+`noRestrictedSyntax` sees the class string but not the CSS file it should be
+compared against, and it would have to be repeated for `.ts`, `.tsx` and `.css`
+separately.
+
+The same reasoning produced the other guard in this change:
+`lib/workout-profile.test.ts` now **reads `backend/app/domain/zones.py` off
+disk** and compares the extracted `coggan_7` lower bounds against
+`COGGAN_7_LOWER`, count included. D75 says an eighth backend zone fails a
+frontend test; until now the test compared the frontend table against itself
+and asserted it had seven entries, which is true of any table with seven
+entries. The regex is anchored on the `ZoneModel.COGGAN_7:` key so a second
+scheme cannot be read by mistake and tolerant inside it — whitespace, zone
+names and float spelling are all free to change, the numbers are not.
+
+## D87 — The mockup modules WP-3 does not build, and the two small ones it does
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`docs/ui_mockups/Training App.dc.html` draws more than this work package ships,
+and until now the difference was undocumented — which makes every omission
+look like an oversight and every reviewer re-derive the same list. What follows
+is the list, with why each one waits. None of them is being built now.
+
+* **Grid / Agenda toggle and the agenda view.** A second layout for data the
+  grid already shows. WP-3-optional polish, deferred deliberately: the week
+  grid is the primary and a second view of the same seven days earns its
+  maintenance only once there is something the grid cannot show — a day with
+  four sessions, which the plan does not yet produce.
+* **The seven-tile day-summary strip.** Same reason, plus half its tiles
+  (adherence, actual load, time in zone) are *executed* numbers. Those arrive
+  with activity ingest.
+* **The sidebar FTP / athlete tile.** Wants the current FTP with its estimate
+  band and date, and a "Base · wk 4/6" block position. The anchor half is
+  reachable today; the block half is WP-6's periodisation and would be
+  fabricated. A tile that is half real reads as wholly real.
+* **Today's "Tomorrow" panel.** Needs tomorrow's session *and* a reason to
+  preview it — the mockup's version leads with readiness, which is WP-4 data.
+* **The toolbar's block/goal context line.** Same dependency as the athlete
+  tile's second half: there are no blocks or goals in the model yet.
+* **The missed card's reason chip** ("reason: sleep 5h 20m"). A reason for a
+  missed session is a WP-4 artefact — it comes from what the athlete or the
+  ingest says happened instead, and there is nothing to read.
+* **Weather glyphs.** No weather source, no plan to add one before WP-5.
+
+Two exceptions are built now, because the data already ships and withholding it
+was the arbitrary choice, not showing it:
+
+* **Today's header carries the planned load** — `planned 1:15 · 78 TSS`, from
+  the session's own `predicted_load`, in mono numerals. Nothing renders when it
+  is null: a session with no power target has no TSS, and `0 TSS` would be a
+  claim the arithmetic never made.
+* **The workout profile carries a time axis** — `0:00 … 1:00:00` under the
+  bars, from the flattened step durations, on the detail plot only. The labels
+  sit at even *fractions* of the total rather than at round clock intervals,
+  because the row is laid out with `justify-between` and nothing else positions
+  them: quarters land where they claim to, whereas ten-minute marks would sit
+  wherever flex put them and quietly misplace the third interval. Absent
+  entirely when any step is open-ended, for the same reason the TSS is.
+
+The rule this entry sets, for the work packages that inherit the mockup: **a
+module the data cannot support is not built and is listed here.** The mockup is
+a picture of the finished application, and the difference between a plan and a
+gap is whether someone wrote it down.
