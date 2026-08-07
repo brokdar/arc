@@ -412,6 +412,23 @@ class RecordingRepository:
         self._session.add_all(rows)
         await flush(self._session)
 
+    async def anomalies(self, recording_id: uuid.UUID) -> Sequence[StreamAnomalyRow]:
+        """Every repaired region of one recording, in row order.
+
+        Includes the `resampled_only` certificates: a reader that wants only
+        the repairs filters them out, and a reader that wants to know the
+        cleaner ran at all needs them. The chart marks the repairs (A4.2's
+        done-when), so it filters.
+        """
+        result = await self._session.execute(
+            select(StreamAnomalyRow)
+            .where(StreamAnomalyRow.recording_id == recording_id)
+            .order_by(
+                StreamAnomalyRow.start_index.asc(), StreamAnomalyRow.end_index.asc()
+            )
+        )
+        return list(result.scalars())
+
     async def anomaly_count(self, recording_id: uuid.UUID) -> int:
         """How many anomaly rows this recording has, of every kind.
 

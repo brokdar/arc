@@ -46,6 +46,7 @@ from app.persistence.activity import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.services.exercises import ExerciseService
+from app.services.metrics import SessionMetricsService
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "session"
@@ -113,12 +114,14 @@ class SessionService:
         recordings: RecordingRepository,
         audit: AuditRepository,
         exercises: ExerciseService,
+        metrics: SessionMetricsService,
     ) -> None:
         self._session = session
         self._repository = repository
         self._recordings = recordings
         self._audit = audit
         self._exercises = exercises
+        self._metrics = metrics
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -129,6 +132,7 @@ class SessionService:
             RecordingRepository(session),
             AuditRepository(session),
             ExerciseService.from_session(session),
+            SessionMetricsService.from_session(session),
         )
 
     # --- reads ---------------------------------------------------------------
@@ -219,7 +223,29 @@ class SessionService:
         )
         await commit(self._session)
         await self._session.refresh(row)
+        # A discipline correction changes which load model is preferred
+        # (A5.2), so the artefact is stale the moment it is applied. Only the
+        # stream-free path can be re-run from here: reading a parquet file is
+        # `app.ingest`'s job and a service may not reach it, so a device
+        # session's correction is recovered through the recompute endpoint,
+        # which can.
+        if not row.recordings:
+            await self._recompute_strength(row, actor=actor, reason="session corrected")
         return row
+
+    async def _recompute_strength(
+        self, row: SessionRow, *, actor: Actor, reason: str | None
+    ) -> None:
+        """Append a metric version for a session that has no stream.
+
+        Isolated from the write that preceded it: the session is already
+        committed, and a metric failure must leave the athlete with a stored
+        session and no numbers rather than losing what they typed in.
+        """
+        reloaded = await self._repository.get(row.id)
+        if reloaded is None:  # pragma: no cover — it was committed a line ago
+            return
+        await self._metrics.record_strength(reloaded, actor=actor, reason=reason)
 
     async def create_manual(
         self,
@@ -281,6 +307,7 @@ class SessionService:
         )
         await commit(self._session)
         await self._session.refresh(row)
+        await self._recompute_strength(row, actor=actor, reason=None)
         return row
 
     async def _logged_set(self, entry: LoggedSetInput, index: int) -> LoggedSetRow:

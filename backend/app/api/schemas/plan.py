@@ -68,12 +68,19 @@ class WeekSessionRead(BaseModel):
 
 
 class PlanWeekDayRead(BaseModel):
-    """One day of the week, with the sessions planned for it."""
+    """One day of the week: what was planned for it, and what was recorded."""
 
     model_config = ConfigDict(from_attributes=True)
 
     date: dt.date
     sessions: list[WeekSessionRead]
+    #: Recorded sessions dated on this day.
+    completed_session_count: int
+    #: Their total duration — recording time for a device session, wall clock
+    #: for one typed in. Null — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their total training load; null when none of them has one yet.
+    completed_load: float | None
 
 
 class PlanWeekDisciplineRead(BaseModel):
@@ -107,6 +114,16 @@ class PlanWeekDisciplineRead(BaseModel):
     load_sessions_uncounted: int
     #: Prescribed working sets; null for a discipline that has none.
     total_sets: int | None
+    #: Recorded sessions of this discipline in the window.
+    completed_session_count: int
+    #: Their duration; null — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their training load, with its own coverage pair. **Never render the
+    #: total without them**, and never add it to ``planned_load``: planned and
+    #: completed are two columns, and their sum is not a quantity.
+    completed_load: float | None
+    completed_load_sessions_counted: int
+    completed_load_sessions_uncounted: int
 
 
 class PlanWeekRead(BaseModel):
@@ -137,6 +154,28 @@ class PlanWeekRead(BaseModel):
     #: where only two are predictable must not read as a light week.
     load_sessions_counted: int
     load_sessions_uncounted: int
-    #: One row per discipline that has a session this week, in vocabulary
-    #: order. These totals reconcile with the flat ones above.
+    #: Recorded sessions dated inside the window, whatever was planned.
+    completed_session_count: int
+    #: Their total duration. Null — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their total training load, with its own coverage pair.
+    completed_load: float | None
+    completed_load_sessions_counted: int
+    completed_load_sessions_uncounted: int
+    #: Treff's polarization index across the week's recorded sessions. Null
+    #: until computable: it needs time in all three bands, so an all-easy week
+    #: has none, and the reason below says which band was empty.
+    completed_polarization_index: float | None
+    completed_polarization_not_assessed: str | None
+    #: The channel rule the index counted by — **one channel per session**
+    #: (A5.4). Always present: summing a session's power zones and its
+    #: heart-rate zones counts its duration twice, so the number is
+    #: meaningless without the rule beside it.
+    completed_polarization_rule: str
+    completed_polarization_sessions_counted: int
+    completed_polarization_sessions_uncounted: int
+    #: One row per discipline that has a planned or a recorded session this
+    #: week, in vocabulary order. These totals reconcile with the flat ones
+    #: above, except that a recorded sport nothing is planned as (a walk, a
+    #: swim) counts in the week's totals and in no discipline row.
     by_discipline: list[PlanWeekDisciplineRead]

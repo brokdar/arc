@@ -1,0 +1,345 @@
+"""Writing and reading the metric artefact. The versioning doctrine, in code.
+
+This service is the **only** writer of `session_metrics`, and it does exactly
+one thing to the chain: appends. A recomputation writes version *n+1* and sets
+``superseded_by`` on version *n*; there is no update path and no delete path,
+which is what makes "the numbers a verdict was confirmed against" a question
+with an answer (invariant 1).
+
+It takes **prepared domain values** — a `SessionAnalysis` and the anchor
+version ids it was computed against — and never reads a stream. Parquet lives
+a layer out, in `app.ingest.analysis`, because a service may not import the
+ingest layer. That split is what lets the strength path live wholly here: a
+manual session's metrics come from its logged sets, and there is no file to
+read.
+"""
+
+import datetime as dt
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Self
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFoundError
+from app.domain.actor import Actor
+from app.domain.anchors import AnchorType
+from app.domain.metrics import LoadBasis, PerformedSet, zone_channel_for_aggregation
+from app.domain.session_analysis import (
+    SessionAnalysis,
+    SessionInputs,
+    analyse_session,
+    analysis_to_json,
+    zone_model_of,
+)
+from app.domain.versioning import FIRST_VERSION, next_version
+from app.persistence.activity import SessionRepository, SessionRow
+from app.persistence.anchors import AnchorVersionRow
+from app.persistence.audit import AuditRepository
+from app.persistence.db import commit
+from app.persistence.metrics import (
+    MAX_REASON_LENGTH,
+    SessionMetricsRepository,
+    SessionMetricsRow,
+)
+from app.services.anchors import AnchorService
+
+#: `entity_type` written on this use-case's audit rows.
+ENTITY_TYPE = "session_metrics"
+
+#: The two actions the audit trail distinguishes: a first computation and
+#: every one after it.
+COMPUTED = "session.metrics_computed"
+RECOMPUTED = "session.metrics_recomputed"
+
+#: The column each anchor type is pinned in. Written out rather than derived
+#: from the type's name so that adding an anchor is a deliberate edit here and
+#: not a silent no-op — a pin that lands nowhere is a metric that cannot say
+#: what it was computed against.
+PIN_COLUMNS: Mapping[AnchorType, str] = {
+    AnchorType.FTP: "ftp_anchor_version_id",
+    AnchorType.LTHR: "lthr_anchor_version_id",
+    AnchorType.MAX_HR: "max_hr_anchor_version_id",
+    AnchorType.RESTING_HR: "resting_hr_anchor_version_id",
+}
+
+
+class SessionMetricsService:
+    """Use-cases for the metric artefact. Raises AppError subclasses."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        repository: SessionMetricsRepository,
+        sessions: SessionRepository,
+        anchors: AnchorService,
+        audit: AuditRepository,
+    ) -> None:
+        self._session = session
+        self._repository = repository
+        self._sessions = sessions
+        self._anchors = anchors
+        self._audit = audit
+
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> Self:
+        """Wire the service and its repositories to one session."""
+        return cls(
+            session,
+            SessionMetricsRepository(session),
+            SessionRepository(session),
+            AnchorService.from_session(session),
+            AuditRepository(session),
+        )
+
+    # --- reads ---------------------------------------------------------------
+
+    async def get_current(self, session_id: uuid.UUID) -> SessionMetricsRow | None:
+        """The metric version in force for one session, or ``None``."""
+        return await self._repository.get_current(session_id)
+
+    async def history(self, session_id: uuid.UUID) -> Sequence[SessionMetricsRow]:
+        """Every version of one session's metrics, oldest first."""
+        return await self._repository.history(session_id)
+
+    async def current_for_sessions(
+        self, session_ids: Iterable[uuid.UUID]
+    ) -> dict[uuid.UUID, SessionMetricsRow]:
+        """The version in force for each of several sessions, in one query."""
+        return await self._repository.current_for_sessions(session_ids)
+
+    async def pins(
+        self, rows: Iterable[SessionMetricsRow]
+    ) -> dict[uuid.UUID, list[tuple[AnchorType, AnchorVersionRow]]]:
+        """Resolve every artefact's pinned anchor ids to their versions.
+
+        One query for all of them, keyed by metric-row id. A pin whose version
+        cannot be found is left out rather than raising: the artefact is still
+        readable, and a read path must not 500 over a dangling reference it
+        can simply not render.
+        """
+        held = list(rows)
+        versions = await self._anchors.by_ids(
+            version_id
+            for row in held
+            for version_id in _pin_ids(row).values()
+            if version_id is not None
+        )
+        return {
+            row.id: [
+                (anchor_type, versions[version_id])
+                for anchor_type, version_id in _pin_ids(row).items()
+                if version_id is not None and version_id in versions
+            ]
+            for row in held
+        }
+
+    # --- writes --------------------------------------------------------------
+
+    async def record(
+        self,
+        session_id: uuid.UUID,
+        analysis: SessionAnalysis,
+        *,
+        actor: Actor,
+        pins: Mapping[AnchorType, uuid.UUID] | None = None,
+        reason: str | None = None,
+    ) -> SessionMetricsRow:
+        """Append a metric version for one session.
+
+        Version 1 when there is nothing yet; otherwise *n+1*, with version *n*
+        marked superseded in the same transaction. ``reason`` is required from
+        version 2 onward — the versioning vocabulary says a recomputation
+        states why — and ignored on version 1, which has no predecessor to
+        explain itself against.
+
+        Args:
+            session_id: The session the metrics describe.
+            analysis: The whole metric set, already computed.
+            actor: Who is credited on the audit row.
+            pins: Anchor type -> the version id the metrics were computed
+                against. Types absent here are stored as NULL pins, which is
+                the honest record of "no anchor was in force".
+            reason: Why this recomputation happened.
+
+        Raises:
+            NotFoundError: When no session has that id.
+        """
+        session_row = await self._sessions.get(session_id)
+        if session_row is None:
+            raise NotFoundError(f"Session {session_id} not found")
+
+        chain = await self._repository.history(session_id)
+        # pyrefly: ignore[bad-specialization]
+        # `SessionMetricsRow` satisfies `VersionRecord` at runtime; pyrefly
+        # does not see through SQLAlchemy's `Mapped[X]` descriptors when
+        # structurally matching a protocol. Same suppression, same reason, as
+        # the intent chain's `current_intent`.
+        version = next_version(chain)
+        previous = await self._repository.get_current(session_id)
+
+        row = SessionMetricsRow(
+            session_id=session_id,
+            version=version,
+            as_of=dt.datetime.now(dt.UTC),
+            recompute_reason=(
+                None
+                if version == FIRST_VERSION
+                else (reason or "recomputed")[:MAX_REASON_LENGTH]
+            ),
+            power_zone_model=zone_model_of(analysis.power_time_in_zone),
+            hr_zone_model=zone_model_of(analysis.hr_time_in_zone),
+            payload=analysis_to_json(analysis),
+            **{
+                column: (pins or {}).get(anchor_type)
+                for anchor_type, column in PIN_COLUMNS.items()
+            },
+        )
+        row = await self._repository.add(row)
+        if previous is not None:
+            # The old version is closed off in the same transaction as the new
+            # one: a reader holding the old id has to be able to walk forward,
+            # and a chain with two unsuperseded tips is a broken chain.
+            previous.superseded_by = row.id
+            await self._repository.add(previous)
+
+        await self._audit.record(
+            actor=actor,
+            action=COMPUTED if version == FIRST_VERSION else RECOMPUTED,
+            entity_type=ENTITY_TYPE,
+            entity_id=row.id,
+            payload={
+                "session_id": str(session_id),
+                "version": version,
+                "superseded": str(previous.id) if previous is not None else None,
+                "recompute_reason": row.recompute_reason,
+                "pins": {
+                    anchor_type.value: str(version_id)
+                    for anchor_type, version_id in (pins or {}).items()
+                },
+            },
+        )
+        await commit(self._session)
+        await self._session.refresh(row)
+        return row
+
+    async def record_strength(
+        self, session_row: SessionRow, *, actor: Actor, reason: str | None = None
+    ) -> SessionMetricsRow:
+        """Compute and store the metrics of a session with no stream.
+
+        A manual strength session's whole metric set comes from its logged
+        sets, so it needs no parquet file and no anchors — which is why this
+        path lives in the service rather than in `app.ingest.analysis`. Every
+        stream-derived slot on the artefact carries its reason, exactly as it
+        would for a ride whose power meter was flat.
+        """
+        analysis = analyse_session(_strength_inputs(session_row))
+        return await self.record(session_row.id, analysis, actor=actor, reason=reason)
+
+
+def _strength_inputs(session_row: SessionRow) -> SessionInputs:
+    """The domain inputs of a session that has logged sets and no stream."""
+    return SessionInputs(
+        discipline=session_row.discipline,
+        recording_time_s=0.0,
+        elapsed_time_s=session_row.duration_s,
+        moving_time_s=0.0,
+        columns={},
+        sets=[
+            PerformedSet(reps=logged.reps, load_kg=logged.load_kg)
+            for logged in session_row.logged_sets
+        ],
+    )
+
+
+def _pin_ids(row: SessionMetricsRow) -> dict[AnchorType, uuid.UUID | None]:
+    """The anchor version id pinned in each of the artefact's pin columns."""
+    return {
+        anchor_type: getattr(row, column) for anchor_type, column in PIN_COLUMNS.items()
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class MetricSummary:
+    """The handful of numbers an aggregate reads off one metric artefact.
+
+    The stored payload is JSON, and reading it by key at three call sites is
+    three places to mis-spell ``training_load``. Everything that totals
+    sessions — the week rail, the session list, WP-7's trends — goes through
+    this instead.
+
+    Args:
+        session_id: Which session these came from.
+        version: Which version of its metrics.
+        recording_time_s: The duration the load was computed over (A5.1).
+        training_load: The selected load, or ``None`` when neither model
+            could be computed.
+        load_basis: Which model produced it.
+        easy_s: Seconds in the easy bands of the **one** channel A5.4's rule
+            selects, or ``None`` when neither channel produced a distribution.
+        moderate_s: The same, moderate.
+        hard_s: The same, hard.
+        zone_channel: Which channel those three came from.
+    """
+
+    session_id: uuid.UUID
+    version: int
+    recording_time_s: float | None
+    training_load: float | None
+    load_basis: LoadBasis | None
+    easy_s: float | None
+    moderate_s: float | None
+    hard_s: float | None
+    zone_channel: LoadBasis | None
+
+
+def _number(document: Mapping[str, Any] | None, key: str) -> float | None:
+    """One numeric field of a stored block, or ``None`` when it is absent."""
+    value = (document or {}).get(key)
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _block(payload: Mapping[str, Any], *keys: str) -> Mapping[str, Any] | None:
+    """Walk into a nested block of the stored payload, tolerating absence."""
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current if isinstance(current, Mapping) else None
+
+
+def summarise(row: SessionMetricsRow) -> MetricSummary:
+    """Read one artefact's aggregate-facing numbers out of its payload.
+
+    Tolerant by construction: a payload written by an earlier version of the
+    metric set is missing keys this reads, and the honest answer to "what was
+    the load" is then ``None`` — which every total already knows how to count
+    as uncounted. Raising would make one old artefact fail a whole week.
+    """
+    payload: Mapping[str, Any] = row.payload if isinstance(row.payload, Mapping) else {}
+    load = _block(payload, "load")
+    basis_value = (load or {}).get("load_basis")
+    basis = LoadBasis(basis_value) if basis_value in set(LoadBasis) else None
+
+    power_zones = _block(payload, "time_in_zone", "power")
+    hr_zones = _block(payload, "time_in_zone", "hr")
+    channel = zone_channel_for_aggregation(
+        basis,
+        power_available=_number(power_zones, "total_s") is not None,
+        hr_available=_number(hr_zones, "total_s") is not None,
+    )
+    chosen = power_zones if channel is LoadBasis.POWER else hr_zones
+    return MetricSummary(
+        session_id=row.session_id,
+        version=row.version,
+        recording_time_s=_number(payload, "recording_time_s"),
+        training_load=_number(load, "training_load"),
+        load_basis=basis,
+        easy_s=_number(chosen, "easy_s") if channel is not None else None,
+        moderate_s=_number(chosen, "moderate_s") if channel is not None else None,
+        hard_s=_number(chosen, "hard_s") if channel is not None else None,
+        zone_channel=channel,
+    )

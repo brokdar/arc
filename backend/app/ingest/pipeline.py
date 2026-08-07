@@ -85,7 +85,8 @@ from app.domain.streams import (
     resample,
     validate,
 )
-from app.ingest.parquet import stream_path, write_streams
+from app.ingest.analysis import SessionAnalyser
+from app.ingest.parquet import STREAMS_DIRNAME, stream_path, write_streams
 from app.ingest.parsers import UnreadableFileError, extension_of, parse
 from app.persistence.activity import (
     RecordingRepository,
@@ -170,7 +171,7 @@ class IngestPaths:
             inbox=root / "inbox",
             originals=root / "originals",
             quarantine=root / "quarantine",
-            streams=root / "streams",
+            streams=root / STREAMS_DIRNAME,
         )
 
     def original_for(self, file_hash: str, ext: str, when: dt.datetime) -> Path:
@@ -461,7 +462,30 @@ class IngestPipeline:
             session_id=report.session_ids[0] if report.session_ids else None,
         )
         await commit(self._session)
+        await self._compute_metrics(placement.created, actor=actor)
         return report
+
+    async def _compute_metrics(
+        self, session_ids: Sequence[uuid.UUID], *, actor: Actor
+    ) -> None:
+        """Compute the metric artefact of each session this run created.
+
+        **After** the commit, and per session inside its own ``try``. Both
+        deliberately: the session, the recording, the parquet file and the
+        anomaly rows are already durable, so a metric failure leaves an
+        ingested ride with no numbers rather than un-ingesting the file — and
+        the file is the irreplaceable half (invariant 8). The artefact is
+        recoverable by hand from `POST /sessions/{id}/metrics/recompute`; the
+        original, once refused, is a re-import the athlete has to notice.
+        """
+        for session_id in session_ids:
+            try:
+                await SessionAnalyser.from_session(self._session).compute(
+                    session_id, actor=actor
+                )
+            except Exception:  # noqa: BLE001 — see the docstring
+                logger.exception("metrics_failed", session_id=str(session_id))
+                await self._session.rollback()
 
     async def _known_file(
         self, path: Path, *, name: str, file_hash: str

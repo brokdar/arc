@@ -956,3 +956,44 @@ def strength_volume(sets: Sequence[PerformedSet]) -> StrengthVolume | NotAssesse
             ),
         ),
     )
+
+
+# --- aggregating zone time across sessions (A5.4's one rule) ------------------
+
+#: The stated priority A5.4 requires. Summing a session's power zones **and**
+#: its heart-rate zones counts its duration twice, which is the one mistake
+#: that makes a weekly distribution meaningless — so exactly one channel is
+#: counted per session, and this sentence travels with the total that results.
+ONE_CHANNEL_PER_SESSION_RULE = (
+    "one channel per session — the same one the session's training load came "
+    "from (power where it was recorded, otherwise heart rate) — so no "
+    "session's duration is counted twice"
+)
+
+
+def zone_channel_for_aggregation(
+    basis: LoadBasis | None, *, power_available: bool, hr_available: bool
+) -> LoadBasis | None:
+    """Which channel's zone times to count for one session, or ``None``.
+
+    The session's own load basis leads, because that is the channel the
+    session is already denominated in everywhere else; where it produced no
+    distribution — a strength session's HR load with no zones, a ride whose
+    FTP anchor was missing — the other channel is used, and a session with
+    neither contributes nothing rather than a zero.
+
+    See :data:`ONE_CHANNEL_PER_SESSION_RULE` for the sentence that has to be
+    rendered beside any total this feeds.
+    """
+    preferred = (
+        (LoadBasis.POWER, power_available)
+        if basis is not LoadBasis.HR
+        else (LoadBasis.HR, hr_available)
+    )
+    if preferred[1]:
+        return preferred[0]
+    if power_available:
+        return LoadBasis.POWER
+    if hr_available:
+        return LoadBasis.HR
+    return None

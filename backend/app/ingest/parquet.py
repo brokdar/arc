@@ -55,6 +55,11 @@ TIME_TYPE = pa.timestamp("ms", tz="UTC")
 #: Parquet extension used for stream files.
 STREAM_SUFFIX = ".parquet"
 
+#: Directory under the data root that holds them. Named here rather than at
+#: each caller so the ingest pipeline (which writes) and the analysis module
+#: (which reads) cannot drift apart by a spelling.
+STREAMS_DIRNAME = "streams"
+
 #: Appended while a stream file is being written; renamed away on success and
 #: removed on failure, so nothing at the real path is ever half a file.
 STAGING_SUFFIX = ".tmp"

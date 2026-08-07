@@ -58,6 +58,31 @@ export function moveSessionInWeek(
   return withTotals(week, days);
 }
 
+/**
+ * The completed columns of one discipline's row, as the server last sent them.
+ *
+ * An optimistic edit to the plan may not invent, drop or recompute what was
+ * recorded — the two sides of the rail are independent, and the refetch a
+ * moment later is what updates the completed one.
+ */
+function completedOf(
+  week: PlanWeek,
+  discipline: PlanWeekDiscipline["discipline"],
+) {
+  const existing = week.by_discipline.find(
+    (row) => row.discipline === discipline,
+  );
+  return {
+    completed_session_count: existing?.completed_session_count ?? 0,
+    completed_duration_s: existing?.completed_duration_s ?? null,
+    completed_load: existing?.completed_load ?? null,
+    completed_load_sessions_counted:
+      existing?.completed_load_sessions_counted ?? 0,
+    completed_load_sessions_uncounted:
+      existing?.completed_load_sessions_uncounted ?? 0,
+  };
+}
+
 /** Find a session anywhere in the week, or `undefined`. */
 export function findSession(
   week: PlanWeek,
@@ -100,6 +125,11 @@ function withTotals(week: PlanWeek, days: readonly PlanWeekDay[]): PlanWeek {
         discipline,
         session_count: group.length,
         ...totals(group),
+        // Moving a *planned* session between days changes nothing about what
+        // was recorded, so the completed columns are carried over rather than
+        // recomputed. A discipline that had no row before the move has
+        // nothing recorded either, which is what the fallback says.
+        ...completedOf(week, discipline),
         total_sets: sets.length
           ? sets.reduce((sum, session) => sum + (session.total_sets ?? 0), 0)
           : null,

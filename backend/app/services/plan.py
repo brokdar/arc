@@ -15,6 +15,18 @@ Two shape decisions the adapters inherit (D55):
   detail — the step tree, the criteria, the pins, the intent history — stays
   behind `GET /api/v1/planned-sessions/{id}`, which is what the day sheet
   opens.
+
+**Planned and completed are separate columns and never a single number.** The
+week also carries what actually happened — the recorded sessions dated inside
+the window, with the training load off their current metric artefacts — and
+every completed total carries its own coverage pair for the same reason the
+planned ones do. A week where two of five rides have no load must not read as
+a light week, and a week that added planned and completed would be a number
+with no meaning at all.
+
+The weekly polarization index counts **one channel per session** (A5.4), and
+the rule that chose it travels in the payload: summing a session's power zones
+and its heart-rate zones counts its duration twice.
 """
 
 import datetime as dt
@@ -25,8 +37,14 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.activity import as_planned_discipline
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
+from app.domain.metrics import (
+    ONE_CHANNEL_PER_SESSION_RULE,
+    Measured,
+    polarization_index,
+)
 from app.domain.plan import WEEK_DAYS, week_dates, week_start
 from app.domain.prediction import (
     PinnedAnchor,
@@ -37,12 +55,14 @@ from app.domain.purpose import Purpose
 from app.domain.sessions import SessionStatus
 from app.domain.strength import StrengthWorkout
 from app.domain.workout import WorkoutBody, workout_body_from_json
+from app.persistence.activity import SessionRepository, SessionRow
 from app.persistence.planned_sessions import (
     PlannedSessionRepository,
     PlannedSessionRow,
 )
 from app.persistence.workouts import WorkoutRepository
 from app.services.anchors import AnchorService, parse_pins, resolve_pins
+from app.services.metrics import SessionMetricsService, summarise
 from app.services.workouts import WorkoutSummary
 
 #: Most sessions one week's projection will read. Not pagination — a week is
@@ -50,6 +70,10 @@ from app.services.workouts import WorkoutSummary
 #: cannot make one request load the entire table. Two hundred is roughly
 #: thirty sessions a day; a plan that dense is not a plan.
 MAX_WEEK_SESSIONS = 200
+
+#: The same bound on the *completed* side. A week cannot hold more recorded
+#: sessions than planned ones for any honest reason either.
+MAX_WEEK_COMPLETED = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,11 +123,53 @@ class WeekSession:
 
 
 @dataclass(frozen=True, slots=True)
+class CompletedSession:
+    """One recorded session, reduced to what a week total needs.
+
+    Not a card: the session list and the session page render recorded
+    sessions, and this exists only so the week rail can put what happened
+    beside what was planned.
+
+    Args:
+        id: The completed session.
+        date: Its athlete-local date — the day it is totalled into.
+        discipline: The planning discipline it corresponds to, or ``None``
+            for a recorded sport nothing is ever planned as (a walk, a swim).
+            Those count in the week's flat totals and in no discipline row.
+        duration_s: Recording time for a device session (pauses removed) and
+            wall-clock duration for a typed-in one — the same number the
+            session list shows, so the two cannot disagree.
+        load: The selected training load from the session's current metric
+            artefact; ``None`` when nothing has been computed yet or neither
+            load model could be.
+        easy_s: Seconds in the easy bands of the **one** channel A5.4's rule
+            picked, or ``None`` when neither channel produced a distribution.
+        moderate_s: The same, moderate.
+        hard_s: The same, hard.
+    """
+
+    id: uuid.UUID
+    date: dt.date
+    discipline: Discipline | None
+    duration_s: float
+    load: float | None
+    easy_s: float | None
+    moderate_s: float | None
+    hard_s: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class WeekDay:
-    """One day of the week, with the sessions planned for it."""
+    """One day of the week, with the sessions planned for it and what was done."""
 
     date: dt.date
     sessions: tuple[WeekSession, ...]
+    #: How many recorded sessions fell on this day.
+    completed_session_count: int
+    #: Their total duration; ``None`` — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their total training load; ``None`` when none of them has one.
+    completed_load: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +204,16 @@ class PlanWeekDiscipline:
     load_sessions_uncounted: int
     #: Prescribed working sets; ``None`` for a discipline that has none.
     total_sets: int | None
+    #: Recorded sessions of this discipline in the window.
+    completed_session_count: int
+    #: Their duration; ``None`` — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their training load, and how many sessions could and could not
+    #: contribute one. The pair is not decoration: a discipline whose only
+    #: ride has no artefact yet must not read as a rest week.
+    completed_load: float | None
+    completed_load_sessions_counted: int
+    completed_load_sessions_uncounted: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +245,29 @@ class PlanWeek:
     #: only two are predictable must not read as a light week.
     load_sessions_counted: int
     load_sessions_uncounted: int
+    #: Recorded sessions dated inside the window, whatever was planned.
+    completed_session_count: int
+    #: Their total duration; ``None`` — never 0 — when there were none.
+    completed_duration_s: float | None
+    #: Their total training load, with its own coverage pair. Never added to
+    #: `planned_load`: what was planned and what was done are two columns, and
+    #: their sum is not a quantity.
+    completed_load: float | None
+    completed_load_sessions_counted: int
+    completed_load_sessions_uncounted: int
+    #: Treff's polarization index across the week's recorded sessions, over
+    #: **one channel per session** (A5.4). ``None`` until it is computable —
+    #: which needs time in all three bands, so an easy week has none.
+    completed_polarization_index: float | None
+    #: Why the index is missing, when it is; ``None`` when it is present.
+    completed_polarization_not_assessed: str | None
+    #: The channel rule the index counted by. Always present, because the
+    #: number is meaningless without it.
+    completed_polarization_rule: str
+    #: How many recorded sessions contributed zone time, and how many could
+    #: not.
+    completed_polarization_sessions_counted: int
+    completed_polarization_sessions_uncounted: int
     #: One row per discipline that has a session this week, in vocabulary
     #: order.
     by_discipline: tuple[PlanWeekDiscipline, ...]
@@ -183,11 +282,15 @@ class PlanService:
         sessions: PlannedSessionRepository,
         workouts: WorkoutRepository,
         anchors: AnchorService,
+        completed: SessionRepository,
+        metrics: SessionMetricsService,
     ) -> None:
         self._session = session
         self._sessions = sessions
         self._workouts = workouts
         self._anchors = anchors
+        self._completed = completed
+        self._metrics = metrics
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -197,6 +300,8 @@ class PlanService:
             PlannedSessionRepository(session),
             WorkoutRepository(session),
             AnchorService.from_session(session),
+            SessionRepository(session),
+            SessionMetricsService.from_session(session),
         )
 
     async def week(self, start: dt.date | None = None) -> PlanWeek:
@@ -265,6 +370,7 @@ class PlanService:
         cards = [
             _card(row, titles, resolve_pins(pins[row.id], versions)) for row in rows
         ]
+        done = await self._completed_sessions(first, dates[-1])
         loads = [
             card.predicted_load for card in cards if card.predicted_load is not None
         ]
@@ -273,14 +379,18 @@ class PlanService:
             for card in cards
             if card.planned_duration_s is not None
         ]
+        done_loads = [entry.load for entry in done if entry.load is not None]
+        banded = [entry for entry in done if entry.easy_s is not None]
+        index = polarization_index(
+            sum(entry.easy_s or 0.0 for entry in banded),
+            sum(entry.moderate_s or 0.0 for entry in banded),
+            sum(entry.hard_s or 0.0 for entry in banded),
+        )
         return PlanWeek(
             start=first,
             end=dates[-1],
             days=tuple(
-                WeekDay(
-                    date=day,
-                    sessions=tuple(card for card in cards if card.date == day),
-                )
+                _day(day, cards, [entry for entry in done if entry.date == day])
                 for day in dates
             ),
             session_count=total,
@@ -290,8 +400,88 @@ class PlanService:
             planned_load=sum(loads) if loads else None,
             load_sessions_counted=len(loads),
             load_sessions_uncounted=len(cards) - len(loads) + overflow,
-            by_discipline=_by_discipline(cards),
+            completed_session_count=len(done),
+            completed_duration_s=(
+                sum(entry.duration_s for entry in done) if done else None
+            ),
+            completed_load=sum(done_loads) if done_loads else None,
+            completed_load_sessions_counted=len(done_loads),
+            completed_load_sessions_uncounted=len(done) - len(done_loads),
+            completed_polarization_index=(
+                index.value if isinstance(index, Measured) else None
+            ),
+            completed_polarization_not_assessed=(
+                None if isinstance(index, Measured) else index.reason
+            ),
+            completed_polarization_rule=ONE_CHANNEL_PER_SESSION_RULE,
+            completed_polarization_sessions_counted=len(banded),
+            completed_polarization_sessions_uncounted=len(done) - len(banded),
+            by_discipline=_by_discipline(cards, done),
         )
+
+    async def _completed_sessions(
+        self, start: dt.date, end: dt.date
+    ) -> list[CompletedSession]:
+        """The recorded sessions dated in the window, with their metrics.
+
+        One query for the sessions and one for every current artefact behind
+        them, so a busy week costs the same round trips as an empty one. A
+        session with no artefact is **kept** — it happened, it has a duration,
+        and it counts as uncounted against the load total rather than
+        vanishing from the week.
+        """
+        rows, _ = await self._completed.list(
+            start=start, end=end, limit=MAX_WEEK_COMPLETED
+        )
+        current = await self._metrics.current_for_sessions(row.id for row in rows)
+        completed: list[CompletedSession] = []
+        for row in rows:
+            artefact = current.get(row.id)
+            summary = summarise(artefact) if artefact is not None else None
+            completed.append(
+                CompletedSession(
+                    id=row.id,
+                    date=row.local_date,
+                    discipline=as_planned_discipline(row.discipline),
+                    duration_s=_completed_duration(row),
+                    load=summary.training_load if summary is not None else None,
+                    easy_s=summary.easy_s if summary is not None else None,
+                    moderate_s=summary.moderate_s if summary is not None else None,
+                    hard_s=summary.hard_s if summary is not None else None,
+                )
+            )
+        return completed
+
+
+def _completed_duration(row: SessionRow) -> float:
+    """How long a recorded session lasted, the way the session list says.
+
+    Recording time for a device session — elapsed with the pauses removed
+    (A4.4), which is also the duration its load was computed over — and the
+    wall-clock duration for one typed in, which has no pauses to remove. The
+    week and the log must not answer this differently.
+    """
+    if not row.recordings:
+        return row.duration_s
+    return sum(recording.recording_time_s for recording in row.recordings)
+
+
+def _day(
+    day: dt.date,
+    cards: Sequence[WeekSession],
+    done: Sequence[CompletedSession],
+) -> WeekDay:
+    """One day of the grid: what was planned for it and what was recorded."""
+    loads = [entry.load for entry in done if entry.load is not None]
+    return WeekDay(
+        date=day,
+        sessions=tuple(card for card in cards if card.date == day),
+        completed_session_count=len(done),
+        completed_duration_s=(
+            sum(entry.duration_s for entry in done) if done else None
+        ),
+        completed_load=sum(loads) if loads else None,
+    )
 
 
 def _today() -> dt.date:
@@ -362,7 +552,9 @@ def _predict(
     return predicted.load, predicted.intensity_factor, predicted.coverage, None
 
 
-def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ...]:
+def _by_discipline(
+    cards: Sequence[WeekSession], done: Sequence[CompletedSession]
+) -> tuple[PlanWeekDiscipline, ...]:
     """Total the week per discipline, skipping disciplines with no session.
 
     Every total here is the same fold as its flat counterpart on
@@ -375,7 +567,8 @@ def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ..
     rows: list[PlanWeekDiscipline] = []
     for discipline in Discipline:
         group = [card for card in cards if card.discipline is discipline]
-        if not group:
+        recorded = [entry for entry in done if entry.discipline is discipline]
+        if not group and not recorded:
             continue
         loads = [
             card.predicted_load for card in group if card.predicted_load is not None
@@ -397,6 +590,25 @@ def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ..
                 load_sessions_counted=len(loads),
                 load_sessions_uncounted=len(group) - len(loads),
                 total_sets=sum(sets) if sets else None,
+                completed_session_count=len(recorded),
+                completed_duration_s=(
+                    sum(entry.duration_s for entry in recorded) if recorded else None
+                ),
+                completed_load=(
+                    sum(done_loads)
+                    if (
+                        done_loads := [
+                            entry.load for entry in recorded if entry.load is not None
+                        ]
+                    )
+                    else None
+                ),
+                completed_load_sessions_counted=len(
+                    [entry for entry in recorded if entry.load is not None]
+                ),
+                completed_load_sessions_uncounted=len(
+                    [entry for entry in recorded if entry.load is None]
+                ),
             )
         )
     return tuple(rows)
@@ -405,8 +617,10 @@ def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ..
 #: Re-exported so an adapter can state the window it renders without reaching
 #: into the domain for the constant.
 __all__ = [
+    "MAX_WEEK_COMPLETED",
     "MAX_WEEK_SESSIONS",
     "WEEK_DAYS",
+    "CompletedSession",
     "PlanService",
     "PlanWeek",
     "PlanWeekDiscipline",

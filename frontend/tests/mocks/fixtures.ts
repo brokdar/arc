@@ -657,6 +657,13 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
           date,
         }),
       ),
+      // Nothing recorded in this fixture's week: the completed columns are
+      // exercised by the session fixtures, and a planned-week fixture that
+      // invented recordings would assert against a week no ingest could
+      // produce.
+      completed_session_count: 0,
+      completed_duration_s: null,
+      completed_load: null,
     };
   });
   const sessions = days.flatMap((day) => day.sessions);
@@ -668,6 +675,7 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
         discipline,
         session_count: group.length,
         ...totals(group),
+        ...NOTHING_COMPLETED,
         total_sets: sets.length
           ? sets.reduce((total, s) => total + (s.total_sets ?? 0), 0)
           : null,
@@ -680,9 +688,41 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
     days,
     session_count: sessions.length,
     ...totals(sessions),
+    ...NOTHING_COMPLETED,
+    completed_polarization_index: null,
+    completed_polarization_not_assessed:
+      "the polarization index needs time in all three bands; there was none " +
+      "in the easy or moderate or hard band",
+    completed_polarization_rule: ONE_CHANNEL_PER_SESSION_RULE,
+    completed_polarization_sessions_counted: 0,
+    completed_polarization_sessions_uncounted: 0,
     by_discipline: byDiscipline,
   };
 }
+
+/**
+ * The A5.4 rule the weekly polarization index counts by, verbatim from
+ * `app.domain.metrics.ONE_CHANNEL_PER_SESSION_RULE`. Copied rather than
+ * paraphrased: the number is meaningless without the rule beside it, so a
+ * fixture that softened the wording would assert against a payload the API
+ * cannot produce.
+ */
+export const ONE_CHANNEL_PER_SESSION_RULE =
+  "one channel per session — the same one the session's training load came " +
+  "from (power where it was recorded, otherwise heart rate) — so no " +
+  "session's duration is counted twice";
+
+/**
+ * A week in which nothing was recorded. Null, never 0: a zero completed load
+ * reads as a rest week, and "nothing happened" is a different fact.
+ */
+const NOTHING_COMPLETED = {
+  completed_session_count: 0,
+  completed_duration_s: null,
+  completed_load: null,
+  completed_load_sessions_counted: 0,
+  completed_load_sessions_uncounted: 0,
+} as const;
 
 /** The two totals and their coverage pairs. Null, never 0. */
 function totals(of: readonly Schemas["WeekSessionRead"][]) {
@@ -1136,6 +1176,11 @@ function seedSessions(): Schemas["SessionRead"][] {
       recording_time_s: null,
       rpe: 7,
       notes: "Felt strong; added a set of pull-ups at the end.",
+      // WP-5: nothing computed yet — a real state the page has an
+      // action for, not a placeholder.
+      load: null,
+      load_basis: null,
+      metrics: null,
       recordings: [],
       logged_sets: GYM_SETS,
       created_at: "2026-08-06T17:34:00Z",
@@ -1156,6 +1201,11 @@ function seedSessions(): Schemas["SessionRead"][] {
       recording_time_s: OUTDOOR_RECORDING_S,
       rpe: null,
       notes: null,
+      // WP-5: nothing computed yet — a real state the page has an
+      // action for, not a placeholder.
+      load: null,
+      load_basis: null,
+      metrics: null,
       recordings: [OUTDOOR_RECORDING],
       logged_sets: [],
       created_at: "2026-08-05T07:55:12Z",
@@ -1177,6 +1227,11 @@ function seedSessions(): Schemas["SessionRead"][] {
       recording_time_s: 3600,
       rpe: null,
       notes: null,
+      // WP-5: nothing computed yet — a real state the page has an
+      // action for, not a placeholder.
+      load: null,
+      load_basis: null,
+      metrics: null,
       recordings: [TRAINER_RECORDING],
       logged_sets: [],
       created_at: "2026-08-03T17:10:00Z",
@@ -1190,6 +1245,9 @@ export function toListItem(
   session: Schemas["SessionRead"],
 ): Schemas["SessionListItem"] {
   const {
+    // `metrics` is detail-only; `load` and `load_basis` are on both shapes
+    // and stay, so a row and the page it opens cannot disagree about them.
+    metrics: _metrics,
     recordings: _recordings,
     logged_sets: _sets,
     notes: _notes,
@@ -1456,6 +1514,11 @@ export function ingestedSessionFixture(
     recording_time_s: recording,
     rpe: null,
     notes: null,
+    // WP-5: nothing computed yet — a real state the page has an action for,
+    // not a placeholder.
+    load: null,
+    load_basis: null,
+    metrics: null,
     recordings: [
       {
         id: mintId(),
@@ -1578,6 +1641,11 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
       recording_time_s: recording,
       rpe: null,
       notes: null,
+      // WP-5: nothing computed yet — a real state the page has an action
+      // for, not a placeholder.
+      load: null,
+      load_basis: null,
+      metrics: null,
       recordings: [
         {
           id: `0199a000-0000-7000-8000-00000000${(0x9000 + index).toString(16)}`,

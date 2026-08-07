@@ -6,10 +6,12 @@ page, while the **detail** carries the recording metadata behind it — the
 sources that produced each channel, the stops that were subtracted, and how
 many repairs the cleaner made.
 
-**Streams are not here.** ``GET /sessions/{id}`` answers with metadata; the
-samples live in ``data/streams/`` and WP-5 owns the endpoints that read them.
-A detail response that carried 14 400 rows per channel would be the wrong
-resource for every page that exists today.
+**Streams are not here.** ``GET /sessions/{id}`` answers with metadata and the
+current metric artefact; the samples live in ``data/streams/`` and
+``GET /sessions/{id}/streams`` serves them. A detail response that carried
+14 400 rows per channel would be the wrong resource for every page that exists
+today — and the metrics, which are a few dozen numbers, would then be
+unreachable without paying for them.
 """
 
 import datetime as dt
@@ -20,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from app.api.pagination import Page
+from app.api.schemas.metrics import SessionMetricsRead
 from app.api.validation import PostgresText
 from app.domain.activity import (
     ClassificationSource,
@@ -27,6 +30,7 @@ from app.domain.activity import (
     SessionDiscipline,
     SessionMatchStatus,
 )
+from app.domain.metrics import LoadBasis
 from app.persistence.activity import MAX_NOTES_LENGTH, MAX_TIMEZONE_LENGTH
 from app.persistence.exercises import MAX_SLUG_LENGTH
 from app.services.activity import (
@@ -151,6 +155,13 @@ class SessionListItem(BaseModel):
     recording_time_s: float | None
     #: Session RPE, when there is one.
     rpe: float | None
+    #: The session's training load, from its current metric artefact. Null
+    #: when nothing has been computed yet **and** when neither load model
+    #: could be — the row keeps the slot either way and the detail endpoint
+    #: carries the reason (A5.2).
+    load: float | None
+    #: Which model produced ``load``. Null exactly when ``load`` is.
+    load_basis: LoadBasis | None
 
 
 class SessionRead(SessionListItem):
@@ -163,6 +174,9 @@ class SessionRead(SessionListItem):
     recordings: list[RecordingRead]
     #: Sets logged by hand, in order. Empty for a device session.
     logged_sets: list[LoggedSetRead]
+    #: The metric version in force, or null when nothing has been computed —
+    #: which is a state the page has an action for, not an error.
+    metrics: SessionMetricsRead | None
     created_at: dt.datetime
     updated_at: dt.datetime
 

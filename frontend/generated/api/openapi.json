@@ -49,6 +49,69 @@
         "title": "AbsoluteRangeSchema",
         "type": "object"
       },
+      "AnchorPinRead": {
+        "description": "An anchor version a metric artefact was computed against.\n\nResolved rather than left as an id: the header renders `FTP 262 \u00b1 15 \u00b7\nestimated`, and a client that had to fetch four anchor versions to draw\none line would fetch them on every session it showed.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci Low"
+          },
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "anchor_type",
+          "version_id",
+          "value",
+          "unit",
+          "provenance",
+          "effective_date",
+          "ci_low",
+          "ci_high"
+        ],
+        "title": "AnchorPinRead",
+        "type": "object"
+      },
       "AnchorSource": {
         "description": "Who appended the version. Distinct from :class:`Provenance`.\n\nProvenance is about the *value*; source is about the *writer*, and the\nagent may never disguise itself as the athlete (build plan \u00a70.7).",
         "enum": ["athlete", "agent"],
@@ -72,7 +135,7 @@
         "description": "Payload for appending a version to an anchor's history.",
         "properties": {
           "anchor_type": {
-            "enum": ["ftp", "lthr", "max_hr"],
+            "enum": ["ftp", "lthr", "max_hr", "resting_hr"],
             "title": "Anchor Type",
             "type": "string"
           },
@@ -239,6 +302,18 @@
         ],
         "title": "AnchorVersionRead",
         "type": "object"
+      },
+      "AnomalyKind": {
+        "description": "What was done to a region of a channel, and therefore what it now is.\n\n``SPIKE_CLIPPED`` \u2014 a short out-of-range excursion replaced by the last\ngood reading. ``DROPOUT_HELD`` \u2014 a longer missing or out-of-range run\ncarried forward at the last good reading. ``GAP_INTERPOLATED`` \u2014 the same\nrun on a positional channel, filled with a straight line.\n\n``DROPPED`` \u2014 an implausible **value** the repair rules declined to repair,\nset to null: one in a run too long to repair honestly, one in a run that\ntouches a recording stop, or one outside the channel's own believable\nreadings (before its first, after its last). It is a repair like the others\nprecisely because a null is a claim (\"there is no data here\") replacing a\nvalue the file did contain, and A4.2's rule is that every such claim is\nrecorded. A row that was **already** null is not dropped and never appears\nhere: nothing was substituted for it, and a channel the device samples once\na minute would otherwise arrive as an hour of anomalies about rows no\ndevice ever wrote.\n\n``RESAMPLED_ONLY`` \u2014 nothing was repaired. One row per untouched channel,\nspanning the whole frame, so \"this channel needed no cleaning\" can be told\napart from \"the cleaner never ran\". The grid's own filling of sub-threshold\ngaps is *not* an anomaly: it is the storage contract (A4.1), it is visible\nper row through :attr:`StreamFrame.device_t`, and one row per four-second\nsample would put tens of thousands of anomalies on an ordinary ride.",
+        "enum": [
+          "gap_interpolated",
+          "spike_clipped",
+          "dropout_held",
+          "dropped",
+          "resampled_only"
+        ],
+        "title": "AnomalyKind",
+        "type": "string"
       },
       "AthleteRead": {
         "description": "The athlete profile as returned by the API.\n\nEvery field is nullable: the profile is bootstrapped empty on first access\nand filled in from the UI.",
@@ -427,6 +502,20 @@
         },
         "required": ["file"],
         "title": "Body_ingest-upload_activity_file",
+        "type": "object"
+      },
+      "CadenceMetricsRead": {
+        "description": "Everything derived from the cadence channel.",
+        "properties": {
+          "average_cadence": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "max_cadence": {
+            "$ref": "#/components/schemas/MetricRead"
+          }
+        },
+        "required": ["average_cadence", "max_cadence"],
+        "title": "CadenceMetricsRead",
         "type": "object"
       },
       "CeilingSchema": {
@@ -665,6 +754,43 @@
         "title": "ExerciseRead",
         "type": "object"
       },
+      "ExplanationRead": {
+        "description": "Why a number is the number \u2014 data attached to the number, not page copy.",
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "required": ["formula", "inputs", "assumptions", "citation"],
+        "title": "ExplanationRead",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -688,6 +814,26 @@
         },
         "required": ["status"],
         "title": "HealthStatus",
+        "type": "object"
+      },
+      "HeartRateMetricsRead": {
+        "description": "Everything derived from the heart-rate channel.",
+        "properties": {
+          "average_hr": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "efficiency_factor": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "hrss": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "max_hr": {
+            "$ref": "#/components/schemas/MetricRead"
+          }
+        },
+        "required": ["average_hr", "max_hr", "hrss", "efficiency_factor"],
+        "title": "HeartRateMetricsRead",
         "type": "object"
       },
       "IngestEventRead": {
@@ -823,11 +969,159 @@
         "title": "IngestReportRead",
         "type": "object"
       },
+      "IntervalRead": {
+        "description": "One detected work interval, addressed by row on the 1 Hz grid.",
+        "properties": {
+          "average_hr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Hr"
+          },
+          "average_power": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Power"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "integer"
+          },
+          "end_index": {
+            "title": "End Index",
+            "type": "integer"
+          },
+          "max_power": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Power"
+          },
+          "start_index": {
+            "title": "Start Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_index",
+          "end_index",
+          "duration_s",
+          "average_power",
+          "max_power",
+          "average_hr"
+        ],
+        "title": "IntervalRead",
+        "type": "object"
+      },
+      "LoadBasis": {
+        "description": "Which model produced the training load that was selected (A5.2).",
+        "enum": ["power", "hr"],
+        "title": "LoadBasis",
+        "type": "string"
+      },
       "LoadKind": {
         "description": "How the load of a prescribed set is expressed.\n\nFour kinds because four are genuinely different questions: an absolute\nweight, a fraction of a one-rep max, a target effort, and \"your own body\".\nScoring treats them differently \u2014 `load_within` tolerance is meaningless\nfor bodyweight \u2014 so the kind is part of the value, not a formatting hint.",
         "enum": ["kg", "percent_e1rm", "rpe", "bodyweight"],
         "title": "LoadKind",
         "type": "string"
+      },
+      "LoadRead": {
+        "description": "Both load models, the selected one, and the rule that chose it (A5.2).\n\nBoth values are here whichever was selected \u2014 that is the whole point.\nThe counterfactual sentence (\"had power been unavailable, the HR model\nwould have given 75\") is composed by the client from these two fields.",
+        "properties": {
+          "explanation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hr_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hr Load"
+          },
+          "load_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LoadBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "load_basis_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Basis Rule"
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "power_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power Load"
+          },
+          "training_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Training Load"
+          }
+        },
+        "title": "LoadRead",
+        "type": "object"
       },
       "LoadSchema": {
         "additionalProperties": false,
@@ -1144,6 +1438,67 @@
         "title": "MetricExplanationRead",
         "type": "object"
       },
+      "MetricRead": {
+        "description": "One metric slot: answered, or refused with a reason.\n\nExactly one of ``value`` and ``not_assessed`` is non-null.\n``explanation`` is present exactly when ``value`` is.",
+        "properties": {
+          "explanation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "MetricRead",
+        "type": "object"
+      },
+      "MetricsRecompute": {
+        "additionalProperties": false,
+        "description": "Why a recomputation was asked for. The body is optional.\n\nThe reason lands on the **new** version (`recompute_reason`) and is what a\nlater reader sees when two versions of one session's numbers disagree \u2014\n\"anchor changed\" and \"stream re-ingested\" are different stories, and\nneither is reconstructible from the numbers themselves.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the metrics are being recomputed.",
+            "title": "Reason"
+          }
+        },
+        "title": "MetricsRecompute",
+        "type": "object"
+      },
       "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
@@ -1419,8 +1774,34 @@
         "type": "string"
       },
       "PlanWeekDayRead": {
-        "description": "One day of the week, with the sessions planned for it.",
+        "description": "One day of the week: what was planned for it, and what was recorded.",
         "properties": {
+          "completed_duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Duration S"
+          },
+          "completed_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Load"
+          },
+          "completed_session_count": {
+            "title": "Completed Session Count",
+            "type": "integer"
+          },
           "date": {
             "format": "date",
             "title": "Date",
@@ -1434,13 +1815,53 @@
             "type": "array"
           }
         },
-        "required": ["date", "sessions"],
+        "required": [
+          "date",
+          "sessions",
+          "completed_session_count",
+          "completed_duration_s",
+          "completed_load"
+        ],
         "title": "PlanWeekDayRead",
         "type": "object"
       },
       "PlanWeekDisciplineRead": {
         "description": "One week's totals for one discipline.\n\nThe two axes keep their own columns. ``planned_load`` is TSS and\n``total_sets`` counts strength sets; there is deliberately no field that\ncould hold their sum, because they measure different things (spec v2\n\u00a75.4, \u00a78.3).\n\nBoth totals carry their own coverage pair, so a row explains its own\nmissing number instead of leaving a client to invent a reason for it.",
         "properties": {
+          "completed_duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Duration S"
+          },
+          "completed_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Load"
+          },
+          "completed_load_sessions_counted": {
+            "title": "Completed Load Sessions Counted",
+            "type": "integer"
+          },
+          "completed_load_sessions_uncounted": {
+            "title": "Completed Load Sessions Uncounted",
+            "type": "integer"
+          },
+          "completed_session_count": {
+            "title": "Completed Session Count",
+            "type": "integer"
+          },
           "discipline": {
             "$ref": "#/components/schemas/Discipline"
           },
@@ -1507,7 +1928,12 @@
           "planned_load",
           "load_sessions_counted",
           "load_sessions_uncounted",
-          "total_sets"
+          "total_sets",
+          "completed_session_count",
+          "completed_duration_s",
+          "completed_load",
+          "completed_load_sessions_counted",
+          "completed_load_sessions_uncounted"
         ],
         "title": "PlanWeekDisciplineRead",
         "type": "object"
@@ -1521,6 +1947,74 @@
             },
             "title": "By Discipline",
             "type": "array"
+          },
+          "completed_duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Duration S"
+          },
+          "completed_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Load"
+          },
+          "completed_load_sessions_counted": {
+            "title": "Completed Load Sessions Counted",
+            "type": "integer"
+          },
+          "completed_load_sessions_uncounted": {
+            "title": "Completed Load Sessions Uncounted",
+            "type": "integer"
+          },
+          "completed_polarization_index": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Polarization Index"
+          },
+          "completed_polarization_not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Polarization Not Assessed"
+          },
+          "completed_polarization_rule": {
+            "title": "Completed Polarization Rule",
+            "type": "string"
+          },
+          "completed_polarization_sessions_counted": {
+            "title": "Completed Polarization Sessions Counted",
+            "type": "integer"
+          },
+          "completed_polarization_sessions_uncounted": {
+            "title": "Completed Polarization Sessions Uncounted",
+            "type": "integer"
+          },
+          "completed_session_count": {
+            "title": "Completed Session Count",
+            "type": "integer"
           },
           "days": {
             "items": {
@@ -1593,6 +2087,16 @@
           "planned_load",
           "load_sessions_counted",
           "load_sessions_uncounted",
+          "completed_session_count",
+          "completed_duration_s",
+          "completed_load",
+          "completed_load_sessions_counted",
+          "completed_load_sessions_uncounted",
+          "completed_polarization_index",
+          "completed_polarization_not_assessed",
+          "completed_polarization_rule",
+          "completed_polarization_sessions_counted",
+          "completed_polarization_sessions_uncounted",
           "by_discipline"
         ],
         "title": "PlanWeekRead",
@@ -2037,6 +2541,47 @@
           }
         },
         "title": "PlannedSessionUpdate",
+        "type": "object"
+      },
+      "PowerMetricsRead": {
+        "description": "Everything derived from the power channel.",
+        "properties": {
+          "average_power": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "coasting_time_s": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "intensity_factor": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "max_power": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "normalized_power": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "variability_index": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "work_above_ftp_kj": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "work_kj": {
+            "$ref": "#/components/schemas/MetricRead"
+          }
+        },
+        "required": [
+          "normalized_power",
+          "average_power",
+          "max_power",
+          "intensity_factor",
+          "variability_index",
+          "work_kj",
+          "work_above_ftp_kj",
+          "coasting_time_s"
+        ],
+        "title": "PowerMetricsRead",
         "type": "object"
       },
       "PredictedLoadRead": {
@@ -3062,6 +3607,27 @@
             "title": "Id",
             "type": "string"
           },
+          "load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load"
+          },
+          "load_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LoadBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "local_date": {
             "format": "date",
             "title": "Local Date",
@@ -3117,7 +3683,9 @@
           "status",
           "duration_s",
           "recording_time_s",
-          "rpe"
+          "rpe",
+          "load",
+          "load_basis"
         ],
         "title": "SessionListItem",
         "type": "object"
@@ -3127,6 +3695,119 @@
         "enum": ["unmatched"],
         "title": "SessionMatchStatus",
         "type": "string"
+      },
+      "SessionMetricsRead": {
+        "description": "One version of one session's metrics, with what it was computed from.",
+        "properties": {
+          "cadence": {
+            "$ref": "#/components/schemas/CadenceMetricsRead"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "elapsed_time_s": {
+            "title": "Elapsed Time S",
+            "type": "number"
+          },
+          "elevation_gain_m": {
+            "$ref": "#/components/schemas/MetricRead"
+          },
+          "heart_rate": {
+            "$ref": "#/components/schemas/HeartRateMetricsRead"
+          },
+          "hr_zone_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ZoneModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/IntervalRead"
+            },
+            "title": "Intervals",
+            "type": "array"
+          },
+          "load": {
+            "$ref": "#/components/schemas/LoadRead"
+          },
+          "moving_time_s": {
+            "title": "Moving Time S",
+            "type": "number"
+          },
+          "pins": {
+            "items": {
+              "$ref": "#/components/schemas/AnchorPinRead"
+            },
+            "title": "Pins",
+            "type": "array"
+          },
+          "power": {
+            "$ref": "#/components/schemas/PowerMetricsRead"
+          },
+          "power_zone_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ZoneModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recompute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recompute Reason"
+          },
+          "recording_time_s": {
+            "title": "Recording Time S",
+            "type": "number"
+          },
+          "strength": {
+            "$ref": "#/components/schemas/StrengthRead"
+          },
+          "time_in_zone": {
+            "$ref": "#/components/schemas/TimeInZoneBlockRead"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "computed_at",
+          "recompute_reason",
+          "pins",
+          "power_zone_model",
+          "hr_zone_model",
+          "recording_time_s",
+          "elapsed_time_s",
+          "moving_time_s",
+          "power",
+          "heart_rate",
+          "cadence",
+          "elevation_gain_m",
+          "load",
+          "time_in_zone",
+          "intervals",
+          "strength"
+        ],
+        "title": "SessionMetricsRead",
+        "type": "object"
       },
       "SessionRead": {
         "description": "One completed session with the recordings behind it.",
@@ -3160,6 +3841,27 @@
             "title": "Id",
             "type": "string"
           },
+          "load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load"
+          },
+          "load_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LoadBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "local_date": {
             "format": "date",
             "title": "Local Date",
@@ -3171,6 +3873,16 @@
             },
             "title": "Logged Sets",
             "type": "array"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionMetricsRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "notes": {
             "anyOf": [
@@ -3246,10 +3958,13 @@
           "duration_s",
           "recording_time_s",
           "rpe",
+          "load",
+          "load_basis",
           "notes",
           "end_time",
           "recordings",
           "logged_sets",
+          "metrics",
           "created_at",
           "updated_at"
         ],
@@ -3261,6 +3976,56 @@
         "enum": ["planned", "completed", "missed", "displaced"],
         "title": "SessionStatus",
         "type": "string"
+      },
+      "SessionStreamsRead": {
+        "description": "The chart payload: every channel on one index-aligned grid.\n\nSeparate from `SessionRead` because it is 1-2 MB for a long ride. Every\ncolumn has exactly ``length`` entries by construction (A4.1), which is\nwhat lets a client index them together without checking.",
+        "properties": {
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/StreamAnomalyRead"
+            },
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/StreamChannelRead"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "recording_id": {
+            "format": "uuid",
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "recording_stops": {
+            "items": {
+              "$ref": "#/components/schemas/StreamStopRead"
+            },
+            "title": "Recording Stops",
+            "type": "array"
+          },
+          "t0": {
+            "format": "date-time",
+            "title": "T0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "t0",
+          "length",
+          "channels",
+          "recording_stops",
+          "anomalies"
+        ],
+        "title": "SessionStreamsRead",
+        "type": "object"
       },
       "SessionUpdate": {
         "additionalProperties": false,
@@ -3435,6 +4200,112 @@
         "title": "StepSelectorSchema",
         "type": "object"
       },
+      "StreamAnomalyRead": {
+        "description": "One region of one channel the cleaner repaired (A4.2).",
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/StreamChannel"
+          },
+          "end_index": {
+            "title": "End Index",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AnomalyKind"
+          },
+          "start_index": {
+            "title": "Start Index",
+            "type": "integer"
+          },
+          "substituted_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substituted Value"
+          }
+        },
+        "required": [
+          "channel",
+          "start_index",
+          "end_index",
+          "kind",
+          "substituted_value"
+        ],
+        "title": "StreamAnomalyRead",
+        "type": "object"
+      },
+      "StreamChannel": {
+        "description": "A per-sample measurement a recording may carry.\n\nValues are the parquet column names and the ``*_fixed`` columns are these\nplus that suffix, so this enum is the storage vocabulary as well as the\ndomain's.",
+        "enum": [
+          "power",
+          "hr",
+          "cadence",
+          "speed",
+          "elevation",
+          "temp",
+          "lat",
+          "lon"
+        ],
+        "title": "StreamChannel",
+        "type": "string"
+      },
+      "StreamChannelRead": {
+        "description": "One channel's cleaned column, on the 1 Hz grid.",
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/StreamChannel"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "values": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": ["channel", "source", "values"],
+        "title": "StreamChannelRead",
+        "type": "object"
+      },
+      "StreamStopRead": {
+        "description": "One recording pause, as a half-open row range.",
+        "properties": {
+          "end_index": {
+            "title": "End Index",
+            "type": "integer"
+          },
+          "start_index": {
+            "title": "Start Index",
+            "type": "integer"
+          }
+        },
+        "required": ["start_index", "end_index"],
+        "title": "StreamStopRead",
+        "type": "object"
+      },
       "StrengthGroupSchema": {
         "additionalProperties": false,
         "description": "One or more lines performed together; more than one is a superset.",
@@ -3463,6 +4334,67 @@
         },
         "required": ["items"],
         "title": "StrengthGroupSchema",
+        "type": "object"
+      },
+      "StrengthRead": {
+        "description": "What a strength session moved. Kilograms, **never** a training load.",
+        "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "sets_completed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sets Completed"
+          },
+          "volume_load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Load Kg"
+          }
+        },
+        "title": "StrengthRead",
         "type": "object"
       },
       "StrengthSetSchema": {
@@ -3587,6 +4519,120 @@
         },
         "required": ["selector", "band", "min_fraction"],
         "title": "TimeInBandSchema",
+        "type": "object"
+      },
+      "TimeInZoneBlockRead": {
+        "description": "The zone distributions, one per channel that has one.",
+        "properties": {
+          "hr": {
+            "$ref": "#/components/schemas/TimeInZoneRead"
+          },
+          "power": {
+            "$ref": "#/components/schemas/TimeInZoneRead"
+          }
+        },
+        "required": ["power", "hr"],
+        "title": "TimeInZoneBlockRead",
+        "type": "object"
+      },
+      "TimeInZoneRead": {
+        "description": "One channel's zone distribution, or the reason it has none.",
+        "properties": {
+          "easy_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Easy S"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hard_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard S"
+          },
+          "moderate_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moderate S"
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "polarization_index": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MetricRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total S"
+          },
+          "zone_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ZoneModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "zones": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ZoneTimeRead"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "title": "TimeInZoneRead",
         "type": "object"
       },
       "ValidationError": {
@@ -4169,6 +5215,26 @@
           "unit"
         ],
         "title": "ZoneRead",
+        "type": "object"
+      },
+      "ZoneTimeRead": {
+        "description": "Seconds spent in one band of one zone model.",
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "seconds": {
+            "title": "Seconds",
+            "type": "number"
+          }
+        },
+        "required": ["index", "name", "seconds"],
+        "title": "ZoneTimeRead",
         "type": "object"
       },
       "ZonesRead": {
@@ -6483,7 +7549,7 @@
     },
     "/api/v1/sessions/{session_id}": {
       "get": {
-        "description": "Get one completed session with its recordings' metadata.\n\nNot the samples: those are in `data/streams/` and WP-5 serves them.",
+        "description": "Get one completed session, its recordings' metadata and its metrics.\n\nNot the samples: those are 1-2 MB and live at\n`GET /sessions/{id}/streams`.",
         "operationId": "sessions-get_session",
         "parameters": [
           {
@@ -6630,6 +7696,157 @@
           }
         ],
         "summary": "Update Session",
+        "tags": ["sessions"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/metrics/recompute": {
+      "post": {
+        "description": "Recompute one session's metrics against the anchors in force now.\n\nAppends version *n+1* and supersedes *n*; the old version stays readable\nwith the pins it was computed against (invariant 1). Appending a new FTP\nand recomputing therefore changes the **new** version's pin and leaves\nevery earlier one exactly as it was.",
+        "operationId": "sessions-recompute_session_metrics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MetricsRecompute"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMetricsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Recompute Session Metrics",
+        "tags": ["sessions"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/streams": {
+      "get": {
+        "description": "The per-second samples behind one session, for the charts.\n\nIts own resource because it is 1-2 MB for a long ride (A4.1: 14 400 rows\nper channel for four hours). Every channel is the **cleaned** column with\nits nulls intact \u2014 a recording stop is a break in the trace, not a run of\nzeros \u2014 and the anomaly regions come with it so the chart can mark what\nwas repaired (A4.2).\n\n404 for a session that has no recording: a gym session typed in by hand\nnever had samples, and the detail says so because that sentence is the\nempty state the page renders.",
+        "operationId": "sessions-get_session_streams",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionStreamsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Streams",
         "tags": ["sessions"]
       }
     },

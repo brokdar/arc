@@ -10,9 +10,16 @@ Manual entry lives at `/api/v1/manual-sessions` rather than
 shadows `GET /sessions/{id}`, which then answers 422 about uuid syntax where
 405 is the truth (`.claude/rules/api-collection-facets.md`, D50).
 
-Streams are not served here. `GET /sessions/{id}` answers with the session and
-the metadata of the recordings behind it — sources, stops, repairs — and WP-5
-adds the endpoints that read `data/streams/`.
+`GET /sessions/{id}` answers with the session, the metadata of the recordings
+behind it — sources, stops, repairs — and the **current metric version**. The
+per-second samples are a separate resource (`/sessions/{id}/streams`): they are
+1-2 MB for a long ride, and every page that merely lists sessions would pay for
+them otherwise.
+
+Recompute is `POST /sessions/{id}/metrics/recompute` — a sub-resource of one
+member, which has one more path segment than the id route and therefore
+collides with nothing (`.claude/rules/api-collection-facets.md`). It appends a
+version; it never overwrites one.
 """
 
 import datetime as dt
@@ -35,11 +42,30 @@ from app.api.schemas.activity import (
     SessionsPage,
     SessionUpdate,
 )
+from app.api.schemas.metrics import (
+    AnchorPinRead,
+    MetricsRecompute,
+    SessionMetricsRead,
+    SessionStreamsRead,
+    StreamAnomalyRead,
+    StreamChannelRead,
+    StreamStopRead,
+)
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.domain.activity import SessionDiscipline
-from app.persistence.activity import RecordingRow, SessionRow
+from app.domain.anchors import AnchorType
+from app.domain.streams import AnomalyKind
+from app.ingest.analysis import SessionAnalyser, SessionStreams, load_streams
+from app.persistence.activity import (
+    RecordingRepository,
+    RecordingRow,
+    SessionRow,
+)
+from app.persistence.anchors import AnchorVersionRow
 from app.persistence.db import SessionDep
+from app.persistence.metrics import SessionMetricsRow
 from app.services.activity import LoggedSetInput, SessionService
+from app.services.metrics import SessionMetricsService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 #: Manual entry, outside the id namespace — see the module docstring.
@@ -61,7 +87,24 @@ def get_service(session: SessionDep) -> SessionService:
     return SessionService.from_session(session)
 
 
+def get_metrics(session: SessionDep) -> SessionMetricsService:
+    """Bind the metric-artefact service to a request-scoped session."""
+    return SessionMetricsService.from_session(session)
+
+
+def get_analyser(session: SessionDep) -> SessionAnalyser:
+    """Bind the stream-reading analyser to a request-scoped session.
+
+    In `app.ingest` rather than in a service because it reads parquet, which
+    the service layer may not (import-linter enforces the direction). A route
+    is allowed to reach the ingest layer, and `routes/ingest.py` already does.
+    """
+    return SessionAnalyser.from_session(session)
+
+
 ServiceDep = Annotated[SessionService, Depends(get_service)]
+MetricsDep = Annotated[SessionMetricsService, Depends(get_metrics)]
+AnalyserDep = Annotated[SessionAnalyser, Depends(get_analyser)]
 
 # `SkipJsonSchema[None]`: optional by omission, never `null` — see
 # `.claude/rules/api-optional-query-params.md`.
@@ -94,9 +137,30 @@ def _duration(row: SessionRow) -> tuple[float, float | None]:
     return recording_time, recording_time
 
 
-def to_list_item(row: SessionRow) -> SessionListItem:
+def _load(metrics: SessionMetricsRow | None) -> tuple[float | None, Any]:
+    """The selected load and its basis, from an artefact that may not exist.
+
+    Three states collapse to ``(None, None)`` on a list row and they are not
+    the same thing: no artefact yet, an artefact whose load block is
+    `not_assessed`, and a load of zero (which cannot happen). The row keeps
+    its slot for all of them and the detail endpoint carries the reason —
+    a list is not where an explanation fits.
+    """
+    if metrics is None:
+        return None, None
+    load = metrics.payload.get("load")
+    if not isinstance(load, dict):
+        return None, None
+    value = load.get("training_load")
+    return (value if isinstance(value, float | int) else None), load.get("load_basis")
+
+
+def to_list_item(
+    row: SessionRow, metrics: SessionMetricsRow | None = None
+) -> SessionListItem:
     """Project a stored session onto its list-row shape."""
     duration_s, recording_time_s = _duration(row)
+    load, basis = _load(metrics)
     return SessionListItem(
         id=row.id,
         local_date=row.local_date,
@@ -110,6 +174,8 @@ def to_list_item(row: SessionRow) -> SessionListItem:
         duration_s=duration_s,
         recording_time_s=recording_time_s,
         rpe=row.rpe,
+        load=load,
+        load_basis=basis,
     )
 
 
@@ -141,7 +207,87 @@ def to_recording(row: RecordingRow, *, anomaly_count: int) -> RecordingRead:
     )
 
 
-def to_read(row: SessionRow, repairs: Mapping[uuid.UUID, int]) -> SessionRead:
+def to_pin(anchor_type: AnchorType, version: AnchorVersionRow) -> AnchorPinRead:
+    """Render one pinned anchor version, resolved rather than as an id."""
+    return AnchorPinRead(
+        anchor_type=anchor_type,
+        version_id=version.id,
+        value=version.value,
+        unit=version.unit.value,
+        provenance=version.provenance,
+        effective_date=version.effective_date,
+        ci_low=version.ci_low,
+        ci_high=version.ci_high,
+    )
+
+
+def to_metrics(
+    row: SessionMetricsRow,
+    pins: Sequence[tuple[AnchorType, AnchorVersionRow]],
+) -> SessionMetricsRead:
+    """Project one metric version, payload and pins together.
+
+    The stored payload's keys are exactly this schema's field names — both
+    come from `app.domain.session_analysis` — so it validates straight
+    through. Extra keys are ignored, which is what lets an artefact written by
+    an earlier version of the metric set still be read.
+    """
+    return SessionMetricsRead.model_validate(
+        dict(row.payload)
+        | {
+            "version": row.version,
+            "computed_at": row.as_of,
+            "recompute_reason": row.recompute_reason,
+            "pins": [to_pin(anchor_type, version) for anchor_type, version in pins],
+            "power_zone_model": row.power_zone_model,
+            "hr_zone_model": row.hr_zone_model,
+        }
+    )
+
+
+def to_streams(streams: SessionStreams) -> SessionStreamsRead:
+    """Project one session's stored samples onto the chart payload.
+
+    `resampled_only` anomalies are dropped: they certify that a channel needed
+    no repair, which is worth storing and is not something to mark on a chart.
+    """
+    return SessionStreamsRead(
+        recording_id=streams.recording_id,
+        t0=streams.t0,
+        length=streams.length,
+        channels=[
+            StreamChannelRead(
+                channel=channel,
+                source=streams.sources.get(channel),
+                values=list(values),
+            )
+            for channel, values in sorted(
+                streams.channels.items(), key=lambda item: item[0].value
+            )
+        ],
+        recording_stops=[
+            StreamStopRead(start_index=start, end_index=end)
+            for start, end in streams.recording_stops
+        ],
+        anomalies=[
+            StreamAnomalyRead(
+                channel=anomaly.channel,
+                start_index=anomaly.start_index,
+                end_index=anomaly.end_index,
+                kind=anomaly.kind,
+                substituted_value=anomaly.substituted_value,
+            )
+            for anomaly in streams.anomalies
+            if anomaly.kind is not AnomalyKind.RESAMPLED_ONLY
+        ],
+    )
+
+
+def to_read(
+    row: SessionRow,
+    repairs: Mapping[uuid.UUID, int],
+    metrics: SessionMetricsRead | None = None,
+) -> SessionRead:
     """Project a stored session with the recordings behind it."""
     duration_s, recording_time_s = _duration(row)
     return SessionRead(
@@ -158,6 +304,10 @@ def to_read(row: SessionRow, repairs: Mapping[uuid.UUID, int]) -> SessionRead:
         duration_s=duration_s,
         recording_time_s=recording_time_s,
         rpe=row.rpe,
+        # The list row's two columns, taken off the artefact the detail
+        # already carries — so a row and the page it opens cannot disagree.
+        load=metrics.load.training_load if metrics is not None else None,
+        load_basis=metrics.load.load_basis if metrics is not None else None,
         notes=row.notes,
         recordings=[
             to_recording(recording, anomaly_count=repairs.get(recording.id, 0))
@@ -168,12 +318,27 @@ def to_read(row: SessionRow, repairs: Mapping[uuid.UUID, int]) -> SessionRead:
         ],
         created_at=row.created_at,
         updated_at=row.updated_at,
+        metrics=metrics,
     )
 
 
-async def one_to_read(service: SessionService, row: SessionRow) -> SessionRead:
-    """Resolve one session's repair counts and project it."""
-    return to_read(row, await service.repair_counts([row]))
+async def one_to_read(
+    service: SessionService, metrics: SessionMetricsService, row: SessionRow
+) -> SessionRead:
+    """Resolve one session's repair counts and metric artefact, and project it."""
+    return to_read(
+        row, await service.repair_counts([row]), await current_metrics(metrics, row.id)
+    )
+
+
+async def current_metrics(
+    metrics: SessionMetricsService, session_id: uuid.UUID
+) -> SessionMetricsRead | None:
+    """The metric version in force for one session, rendered, or ``None``."""
+    row = await metrics.get_current(session_id)
+    if row is None:
+        return None
+    return to_metrics(row, (await metrics.pins([row])).get(row.id, []))
 
 
 def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
@@ -194,6 +359,7 @@ def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
 @router.get("")
 async def list_sessions(
     service: ServiceDep,
+    metrics: MetricsDep,
     page: PageParamsDep,
     start: StartFilter = None,
     end: EndFilter = None,
@@ -212,8 +378,11 @@ async def list_sessions(
         offset=page.offset,
         limit=page.limit,
     )
+    # One query for the whole page's artefacts, not one per row: the load
+    # column is on every line, and a per-row lookup would scale with the page.
+    current = await metrics.current_for_sessions(row.id for row in sessions)
     return SessionsPage(
-        items=[to_list_item(session) for session in sessions],
+        items=[to_list_item(session, current.get(session.id)) for session in sessions],
         total=total,
         offset=page.offset,
         limit=page.limit,
@@ -221,17 +390,21 @@ async def list_sessions(
 
 
 @router.get("/{session_id}", responses=NOT_FOUND)
-async def get_session(service: ServiceDep, session_id: uuid.UUID) -> SessionRead:
-    """Get one completed session with its recordings' metadata.
+async def get_session(
+    service: ServiceDep, metrics: MetricsDep, session_id: uuid.UUID
+) -> SessionRead:
+    """Get one completed session, its recordings' metadata and its metrics.
 
-    Not the samples: those are in `data/streams/` and WP-5 serves them.
+    Not the samples: those are 1-2 MB and live at
+    `GET /sessions/{id}/streams`.
     """
-    return await one_to_read(service, await service.get(session_id))
+    return await one_to_read(service, metrics, await service.get(session_id))
 
 
 @router.patch("/{session_id}", responses=NOT_FOUND | BAD_BODY | INVALID)
 async def update_session(
     service: ServiceDep,
+    metrics: MetricsDep,
     actor: ActorDep,
     session_id: uuid.UUID,
     payload: SessionUpdate,
@@ -246,14 +419,17 @@ async def update_session(
     row = await service.update(
         session_id, payload.model_dump(exclude_unset=True), actor=actor
     )
-    return await one_to_read(service, row)
+    return await one_to_read(service, metrics, row)
 
 
 @manual_router.post(
     "", status_code=status.HTTP_201_CREATED, responses=BAD_BODY | INVALID | NOT_FOUND
 )
 async def create_manual_session(
-    service: ServiceDep, actor: ActorDep, payload: ManualSessionCreate
+    service: ServiceDep,
+    metrics: MetricsDep,
+    actor: ActorDep,
+    payload: ManualSessionCreate,
 ) -> SessionRead:
     """Record a session performed without a device file — a gym session (B-6).
 
@@ -272,4 +448,44 @@ async def create_manual_session(
         notes=payload.notes,
         sets=_sets(payload),
     )
-    return await one_to_read(service, row)
+    return await one_to_read(service, metrics, row)
+
+
+@router.get("/{session_id}/streams", responses=NOT_FOUND)
+async def get_session_streams(
+    service: ServiceDep, session: SessionDep, session_id: uuid.UUID
+) -> SessionStreamsRead:
+    """The per-second samples behind one session, for the charts.
+
+    Its own resource because it is 1-2 MB for a long ride (A4.1: 14 400 rows
+    per channel for four hours). Every channel is the **cleaned** column with
+    its nulls intact — a recording stop is a break in the trace, not a run of
+    zeros — and the anomaly regions come with it so the chart can mark what
+    was repaired (A4.2).
+
+    404 for a session that has no recording: a gym session typed in by hand
+    never had samples, and the detail says so because that sentence is the
+    empty state the page renders.
+    """
+    row = await service.get(session_id)
+    return to_streams(await load_streams(row, RecordingRepository(session)))
+
+
+@router.post("/{session_id}/metrics/recompute", responses=NOT_FOUND)
+async def recompute_session_metrics(
+    analyser: AnalyserDep,
+    metrics: MetricsDep,
+    actor: ActorDep,
+    session_id: uuid.UUID,
+    payload: MetricsRecompute | None = None,
+) -> SessionMetricsRead:
+    """Recompute one session's metrics against the anchors in force now.
+
+    Appends version *n+1* and supersedes *n*; the old version stays readable
+    with the pins it was computed against (invariant 1). Appending a new FTP
+    and recomputing therefore changes the **new** version's pin and leaves
+    every earlier one exactly as it was.
+    """
+    reason = (payload.reason if payload else None) or "recomputed on request"
+    row = await analyser.compute(session_id, actor=actor, reason=reason)
+    return to_metrics(row, (await metrics.pins([row])).get(row.id, []))
