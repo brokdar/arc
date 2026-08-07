@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import {
@@ -16,7 +17,13 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
-import { addDays, isoWeekNumber, mondayOf, todayIsoDate } from "@/lib/dates";
+import {
+  addDays,
+  isIsoDate,
+  isoWeekNumber,
+  mondayOf,
+  todayIsoDate,
+} from "@/lib/dates";
 import {
   formatDayMonth,
   formatDayMonthYear,
@@ -34,13 +41,59 @@ const WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
  * `start=` — because the endpoint takes whatever date it is given literally
  * (D55). Everything else is the server's: this component holds no copy of the
  * plan beyond react-query's cache.
+ *
+ * **Which week is shown lives in the URL** (`/calendar?week=2026-08-03`), not
+ * in component state: it is the one thing on this page a person would bookmark
+ * or send to someone, and state that survives a reload has to be addressable
+ * (UI convention 1). The param is taken literally, not snapped to a Monday —
+ * the same rule the endpoint follows (D55) — so a link to a Wednesday shows
+ * the seven days from that Wednesday. Anything unreadable, and anything at
+ * all missing, means this week (D77).
  */
 export function CalendarWeek() {
-  // Both are read once, on mount. `todayIsoDate()` is the *browser's* today,
-  // and re-reading it mid-render would let a page left open overnight
-  // disagree with itself.
+  // Read once, on mount. `todayIsoDate()` is the *browser's* today, and
+  // re-reading it mid-render would let a page left open overnight disagree
+  // with itself.
   const [today] = useState(todayIsoDate);
-  const [start, setStart] = useState(() => mondayOf(today));
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const thisWeek = mondayOf(today);
+  const requested = searchParams.get("week");
+  const start = isIsoDate(requested) ? requested : thisWeek;
+
+  /**
+   * Show `next`, by moving the address bar.
+   *
+   * `window.history.replaceState` rather than `router.replace`, for two
+   * reasons that happen to agree.
+   *
+   * The choice: **replace, not push**. Stepping a week adjusts the view of one
+   * page; pushing would make the back button mean "undo one of my last eleven
+   * clicks" instead of "leave the calendar", eleven entries deep after a
+   * minute of paging. The URL is a real address either way — a bookmark and a
+   * shared link both work — so only the history stack is at stake, and that is
+   * what replacing protects.
+   *
+   * The constraint: `router.replace` and `router.push` **cannot drop a search
+   * param** in this Next major. Navigating from `/calendar?week=…` to
+   * `/calendar` is a silent no-op (verified against a production build), which
+   * would strand "This week" on whatever week was last shown. The native
+   * History API is Next's own documented escape hatch for updating the URL
+   * without navigating, and it syncs `usePathname` / `useSearchParams`, so the
+   * component still re-renders off the address bar.
+   *
+   * This week is the bare `/calendar`, never `?week=<this monday>`: a URL
+   * whose meaning is "the week I am in" is still right tomorrow, so the
+   * address someone bookmarks does not quietly become last week's.
+   */
+  const showWeek = (next: string) =>
+    window.history.replaceState(
+      null,
+      "",
+      next === thisWeek ? pathname : `${pathname}?week=${next}`,
+    );
+
   const [openSession, setOpenSession] = useState<WeekSession | null>(null);
   // The plan form is one component in two modes: `{ date }` plans a new
   // session on that day, `{ date, sessionId }` revises an existing one.
@@ -122,7 +175,7 @@ export function CalendarWeek() {
             variant="ghost"
             size="icon-sm"
             aria-label="Previous week"
-            onClick={() => setStart(addDays(start, -7))}
+            onClick={() => showWeek(addDays(start, -7))}
           >
             <ChevronLeftIcon />
           </Button>
@@ -130,7 +183,7 @@ export function CalendarWeek() {
             variant="ghost"
             size="icon-sm"
             aria-label="Next week"
-            onClick={() => setStart(addDays(start, 7))}
+            onClick={() => showWeek(addDays(start, 7))}
           >
             <ChevronRightIcon />
           </Button>
@@ -147,7 +200,7 @@ export function CalendarWeek() {
           variant="ghost"
           size="sm"
           className="text-ink-muted"
-          onClick={() => setStart(mondayOf(today))}
+          onClick={() => showWeek(thisWeek)}
         >
           This week
         </Button>

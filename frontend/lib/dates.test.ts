@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addDays,
+  isIsoDate,
   isoWeekNumber,
   mondayOf,
   todayIsoDate,
@@ -82,5 +83,27 @@ describe("todayIsoDate", () => {
     // 23:30 local on the 15th is the 15th, whatever UTC thinks.
     const localLateEvening = new Date(2026, 7, 15, 23, 30);
     expect(todayIsoDate(localLateEvening)).toBe("2026-08-15");
+  });
+});
+
+describe("isIsoDate", () => {
+  it("accepts a real calendar day written the one way the API writes it", () => {
+    expect(isIsoDate("2026-08-03")).toBe(true);
+    expect(isIsoDate("2024-02-29")).toBe(true);
+  });
+
+  it("refuses anything a query string could otherwise smuggle through", () => {
+    // Wrong shape …
+    expect(isIsoDate("next-week")).toBe(false);
+    expect(isIsoDate("2026-8-1")).toBe(false);
+    expect(isIsoDate("2026-08-03T00:00:00Z")).toBe(false);
+    expect(isIsoDate("")).toBe(false);
+    expect(isIsoDate(null)).toBe(false);
+    expect(isIsoDate(undefined)).toBe(false);
+    // … and the right shape naming no day, which `Date.UTC` would happily
+    // roll over into the following month.
+    expect(isIsoDate("2026-02-31")).toBe(false);
+    expect(isIsoDate("2026-13-01")).toBe(false);
+    expect(isIsoDate("2025-02-29")).toBe(false);
   });
 });

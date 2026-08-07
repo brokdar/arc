@@ -1818,3 +1818,54 @@ is a different claim from one that was *tested*, and every watt on the sheet
 inherits whichever it is. The three non-tested provenances are marked
 differently from `tested` rather than merely spelled differently, because a
 word alone is not a distinction a reader scanning numbers will pick up.
+
+## D77 — The calendar's week lives in `?week=`, replaced rather than pushed
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Which week `/calendar` shows is read from the `week` query param, not held in
+component state. The param is an ISO date **taken literally** — the same rule
+the endpoint follows (D55), so `?week=2026-08-05` shows the seven days from
+that Wednesday rather than being snapped back to its Monday. Anything that is
+not a real `YYYY-MM-DD` day (`isIsoDate` in `lib/dates.ts` refuses `next-week`,
+`2026-8-1` and `2026-02-31` alike) and anything absent both mean **this week**,
+so a bare `/calendar` is the evergreen address and is what the "This week"
+control returns to — never `?week=<this monday>`, which would be a bookmark
+that quietly becomes last week's.
+
+Stepping a week **replaces** the history entry rather than pushing one, and
+does it through `window.history.replaceState` rather than `router.replace`.
+`app/(app)/calendar/page.tsx` gained a `<Suspense>` boundary around
+`CalendarWeek`, which is what keeps the route prerendered as static now that it
+reads `useSearchParams`.
+
+This displaces `useState(() => mondayOf(today))` — a calendar whose position
+did not survive a reload, could not be bookmarked, and could not be sent to
+anyone.
+
+*Rationale, in three parts.*
+
+**Why the URL:** UI convention 1 — state that survives a reload has to be
+addressable. Which week you are looking at is the one thing on this page a
+person would bookmark or paste into a message, and it was the only WP-3 page
+still failing that rule.
+
+**Why replace, not push:** stepping a week adjusts the view of one page. With
+`push`, a minute of paging leaves eleven history entries and the back button
+comes to mean "undo one of my last eleven clicks" rather than "leave the
+calendar"; the athlete who arrived from Today has to press it twelve times to
+get back. The address is real either way — bookmarking and sharing are
+unaffected by which history verb wrote it — so the only thing at stake is the
+history stack, and replacing is what protects it.
+
+**Why the History API rather than the router:** `router.replace` and
+`router.push` **cannot drop a search param** in this Next major. Navigating
+from `/calendar?week=2026-08-10` to `/calendar` is a silent no-op — verified
+against a production build with a throwaway probe route, in both verbs and with
+a trailing `?` — which would have stranded "This week" on whatever week was
+last shown. `window.history.replaceState` is Next's own documented escape
+hatch for updating the URL without navigating, it syncs `usePathname` and
+`useSearchParams`, and it happens to express the intent more exactly than the
+router call did: this is not a navigation, it is the same page saying where it
+is. Recorded here because the no-op is silent, and the next person to reach for
+`router.replace(pathname)` will lose the same afternoon to it.

@@ -33,6 +33,22 @@ export function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+/**
+ * Whether `value` is a `YYYY-MM-DD` string naming a real calendar day.
+ *
+ * The guard on anything that arrives from outside the application — a query
+ * string, a pasted link — before it is handed to the arithmetic above or sent
+ * to the API as a `start`. Both checks are needed: the shape rejects `next`
+ * and `2026-8-1`, and the round-trip rejects `2026-02-31`, which `Date.UTC`
+ * would otherwise roll over into March without complaint.
+ */
+export function isIsoDate(value: string | null | undefined): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  return toIsoDate(parseIsoDate(value)) === value;
+}
+
 /** The athlete's *local* today, as an ISO date. */
 export function todayIsoDate(now: Date = new Date()): string {
   const year = now.getFullYear();

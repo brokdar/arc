@@ -34,7 +34,24 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+/**
+ * `next/navigation`, reading jsdom's own address bar.
+ *
+ * The component writes its position with `window.history.replaceState`, so
+ * pointing the mock at `window.location` means the tests assert the real
+ * observable — where the browser ends up — instead of a spy's call list.
+ */
+vi.mock("next/navigation", () => ({
+  usePathname: () => window.location.pathname,
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+
 const start = mondayOf(todayIsoDate());
+
+/** Where the address bar is, in the form the app writes it. */
+function addressBar(): string {
+  return `${window.location.pathname}${window.location.search}`;
+}
 
 function renderCalendar() {
   const queryClient = new QueryClient({
@@ -43,11 +60,25 @@ function renderCalendar() {
       mutations: { retry: false },
     },
   });
-  return render(
+  // A fresh element each time: React bails out of a re-render given the same
+  // element by reference, and the URL this component reads is outside it.
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <CalendarWeek />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(tree());
+  return {
+    ...result,
+    /**
+     * Re-render the way Next's router does after a `history.replaceState`.
+     * Nothing in a test environment tells React the address bar moved, so
+     * without this the component would never notice its own navigation.
+     */
+    afterUrlChange() {
+      result.rerender(tree());
+    },
+  };
 }
 
 /** The seven columns are `<section>`s; a section with a name is a region. */
@@ -55,9 +86,24 @@ function dayColumns() {
   return screen.getAllByRole("region");
 }
 
+/** Every `start` the component asks the week endpoint for, in order. */
+function recordWeekRequests(): string[] {
+  const requested: string[] = [];
+  server.use(
+    http.get("/api/v1/plan/week", ({ query, response }) => {
+      const requestedStart = query.get("start") ?? start;
+      requested.push(requestedStart);
+      return response(200).json(planWeekFixture(requestedStart));
+    }),
+  );
+  return requested;
+}
+
 describe("CalendarWeek", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Every test starts at the bare `/calendar`, which means "this week".
+    window.history.replaceState(null, "", "/calendar");
   });
 
   it("renders seven days with the week's planned sessions", async () => {
@@ -179,25 +225,71 @@ describe("CalendarWeek", () => {
     expect(moved).not.toHaveBeenCalled();
   });
 
-  it("steps a week at a time and comes back to this one", async () => {
-    const requested: string[] = [];
-    server.use(
-      http.get("/api/v1/plan/week", ({ query, response }) => {
-        const requestedStart = query.get("start") ?? start;
-        requested.push(requestedStart);
-        return response(200).json(planWeekFixture(requestedStart));
-      }),
-    );
+  it("shows the week the query string names, taken literally", async () => {
+    // A Wednesday, deliberately: the endpoint takes `start` literally (D55),
+    // so a link to a Wednesday shows the seven days from that Wednesday
+    // rather than being quietly snapped back to its Monday.
+    window.history.replaceState(null, "", "/calendar?week=2026-03-04");
+    const requested = recordWeekRequests();
 
     renderCalendar();
     await screen.findByText("Strength — lower");
 
+    await waitFor(() => expect(requested).toContain("2026-03-04"));
+    expect(screen.getByText("04.03 – 10.03.2026")).toBeInTheDocument();
+  });
+
+  it("falls back to this week when the param is missing or unreadable", async () => {
+    const requested = recordWeekRequests();
+
+    // `2026-02-31` has the right shape and names no day; `next-week` is not
+    // even a date. Neither may reach the API as a `start`.
+    for (const search of ["", "?week=next-week", "?week=2026-02-31"]) {
+      window.history.replaceState(null, "", `/calendar${search}`);
+      const view = renderCalendar();
+      await screen.findAllByText("Strength — lower");
+      view.unmount();
+    }
+
+    expect(new Set(requested)).toEqual(new Set([start]));
+  });
+
+  it("steps a week at a time by writing the position into the URL", async () => {
+    const requested = recordWeekRequests();
+
+    const view = renderCalendar();
+    await screen.findByText("Strength — lower");
+
     await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    expect(addressBar()).toBe(`/calendar?week=${addDays(start, 7)}`);
+
+    view.afterUrlChange();
     await waitFor(() => expect(requested).toContain(addDays(start, 7)));
 
     await userEvent.click(
       screen.getByRole("button", { name: "Previous week" }),
     );
+    // Back on this week the param is dropped rather than written out: a URL
+    // that means "the week I am in" is still right tomorrow.
+    expect(addressBar()).toBe("/calendar");
+  });
+
+  it("sends `This week` back to the bare address, not to a dated one", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      `/calendar?week=${addDays(start, 21)}`,
+    );
+    const requested = recordWeekRequests();
+
+    const view = renderCalendar();
+    await screen.findByText("Strength — lower");
+    expect(requested).toContain(addDays(start, 21));
+
+    await userEvent.click(screen.getByRole("button", { name: "This week" }));
+    expect(addressBar()).toBe("/calendar");
+
+    view.afterUrlChange();
     await waitFor(() => expect(requested).toContain(start));
   });
 

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D76.
+D55–D77.
 
 **API (`backend/app/`)**
 
@@ -94,6 +94,14 @@ D55–D76.
   next navigation, today's column and card in the accent treatment, and a
   purpose-coloured left edge on every card. `/` now redirects there — there is
   no separate home page (D60).
+- **The week you are looking at is part of the address**: `/calendar?week=2026-08-03`
+  (D77). The param is an ISO date taken literally, the way the endpoint takes
+  `start` (D55); an unreadable one and an absent one both mean this week, so a
+  bare `/calendar` is the evergreen bookmark and is where "This week" returns
+  to. Stepping replaces the history entry rather than pushing one, so the back
+  button still means "leave the calendar" after a minute of paging. The page
+  gained a `<Suspense>` boundary, which is what keeps it prerendered as static
+  now that it reads `useSearchParams`.
 - **Drag to move**: native HTML5 drag-and-drop from card to day column, with an
   optimistic cache update, rollback on failure and invalidation on settle. The
   session sheet offers the same move as a date picker for anyone not using a

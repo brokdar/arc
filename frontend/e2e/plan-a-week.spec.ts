@@ -293,4 +293,22 @@ test("write a workout, plan it, and see it on the week", async ({ page }) => {
     intent_text: "Hold threshold without fading.",
     success_criteria: [{ kind: "time_in_band" }],
   });
+
+  // --- the week you are looking at is part of the address --------------------
+  // The only place the real router runs: a mocked `useRouter` can be asserted
+  // against but cannot prove a reload lands back on the same week.
+  await page.getByRole("button", { name: "Next week" }).click();
+  await expect(page).toHaveURL(/\/calendar\?week=\d{4}-\d{2}-\d{2}$/);
+
+  const bookmarked = page.url();
+  await page.reload();
+  await expect(page).toHaveURL(bookmarked);
+  await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible();
+
+  // "This week" goes back to the bare address, so the bookmark stays evergreen.
+  await page.getByRole("button", { name: "This week" }).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await expect(
+    page.getByRole("button", { name: /Threshold 2×20/ }),
+  ).toBeVisible();
 });
