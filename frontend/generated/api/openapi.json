@@ -5397,7 +5397,7 @@
     },
     "/api/v1/ingest/upload": {
       "post": {
-        "description": "Upload one activity file and ingest it now.\n\nThe same pipeline the watched folder runs, so the outcomes are the same:\na new session, a file already known by its hash, or a quarantine record\nwith the reason it was refused.",
+        "description": "Upload one activity file and ingest it now.\n\nThe same pipeline the watched folder runs, so the outcomes are the same:\na new session, a file already known by its hash, or a quarantine record\nwith the reason it was refused. An upload above the size limit is refused\nwith a 422.",
         "operationId": "ingest-upload_activity_file",
         "requestBody": {
           "content": {

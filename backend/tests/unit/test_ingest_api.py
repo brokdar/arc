@@ -8,6 +8,7 @@ is asserted here is the shape of the answers and the statuses.
 from pathlib import Path
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 
 from tests.unit.activity_files import gpx_document, tcx_document
@@ -82,6 +83,22 @@ async def test_an_empty_upload_is_refused(data_root: Path, client: AsyncClient) 
 
     assert response.status_code == 422
     assert "empty" in response.json()["detail"]
+
+
+async def test_an_oversized_upload_is_refused_before_it_is_read(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bound is checked from the declared part size, so a file too large to
+    # accept is never materialised in memory in order to be rejected.
+    monkeypatch.setattr("app.api.routes.ingest.MAX_UPLOAD_BYTES", 16)
+
+    response = await client.post(
+        UPLOAD, files={"file": ("big.fit", b"x" * 64, "application/octet-stream")}
+    )
+
+    assert response.status_code == 422
+    assert "larger than" in response.json()["detail"]
+    assert not list((data_root / "inbox").iterdir())
 
 
 async def test_a_filename_cannot_escape_the_inbox(

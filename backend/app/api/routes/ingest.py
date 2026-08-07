@@ -27,9 +27,9 @@ from app.api.schemas.ingest import (
     QuarantineRecordRead,
     QuarantineRejectRead,
 )
-from app.core.exceptions import ErrorDetail, ValidationErrorDetail
+from app.core.exceptions import ErrorDetail, ValidationError, ValidationErrorDetail
 from app.ingest.pipeline import IngestReport
-from app.ingest.service import IngestService
+from app.ingest.service import MAX_UPLOAD_BYTES, IngestService
 from app.persistence.db import SessionDep
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
@@ -80,8 +80,17 @@ async def upload_activity_file(
 
     The same pipeline the watched folder runs, so the outcomes are the same:
     a new session, a file already known by its hash, or a quarantine record
-    with the reason it was refused.
+    with the reason it was refused. An upload above the size limit is refused
+    with a 422.
     """
+    # The one piece of judgement this route carries, and it belongs here: the
+    # service refuses an oversized upload too, but by then it is already a
+    # `bytes` in memory. The part's declared size is known before the body is
+    # read, so the bound is applied where it costs nothing.
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise ValidationError(
+            f"The uploaded file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
+        )
     return to_report(
         await service.upload(
             filename=file.filename or "", content=await file.read(), actor=actor

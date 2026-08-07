@@ -352,7 +352,8 @@ export interface paths {
      *
      *     The same pipeline the watched folder runs, so the outcomes are the same:
      *     a new session, a file already known by its hash, or a quarantine record
-     *     with the reason it was refused.
+     *     with the reason it was refused. An upload above the size limit is refused
+     *     with a 422.
      */
     post: operations["ingest-upload_activity_file"];
     delete?: never;
