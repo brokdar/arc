@@ -405,6 +405,11 @@
           "low": {
             "title": "Low",
             "type": "number"
+          },
+          "smoothing_s": {
+            "default": 30,
+            "title": "Smoothing S",
+            "type": "integer"
           }
         },
         "required": ["channel", "low", "high"],
@@ -444,6 +449,11 @@
           },
           "max_seconds_above": {
             "title": "Max Seconds Above",
+            "type": "integer"
+          },
+          "smoothing_s": {
+            "default": 0,
+            "title": "Smoothing S",
             "type": "integer"
           }
         },
@@ -721,6 +731,43 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MetricExplanationRead": {
+        "description": "Why a computed number is the number. Travels with it; not page copy.",
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "required": ["formula", "inputs", "assumptions", "citation"],
+        "title": "MetricExplanationRead",
+        "type": "object"
+      },
       "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
@@ -873,6 +920,44 @@
         "title": "PercentOfAnchorSchema",
         "type": "object"
       },
+      "PinnedAnchorRead": {
+        "description": "One anchor version this session's percentages resolve against.\n\nThe pin is the product's most distinctive invariant (build-plan invariant\n4, D49) and it is worth nothing invisible: showing the provenance is what\nmakes an `estimated` FTP read as an estimate rather than a fact.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "anchor_version_id": {
+            "format": "uuid",
+            "title": "Anchor Version Id",
+            "type": "string"
+          },
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/AnchorUnit"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "anchor_type",
+          "anchor_version_id",
+          "value",
+          "unit",
+          "provenance",
+          "effective_date"
+        ],
+        "title": "PinnedAnchorRead",
+        "type": "object"
+      },
       "PlanState": {
         "description": "Whether the plan is being enforced.\n\n``PAUSED`` does not pause the application: see the module docstring for\nwhat it does and does not stop.",
         "enum": ["active", "paused"],
@@ -899,9 +984,63 @@
         "title": "PlanWeekDayRead",
         "type": "object"
       },
+      "PlanWeekDisciplineRead": {
+        "description": "One week's totals for one discipline.\n\nThe two axes keep their own columns. ``planned_load`` is TSS and\n``total_sets`` counts strength sets; there is deliberately no field that\ncould hold their sum, because they measure different things (spec v2\n\u00a75.4, \u00a78.3).",
+        "properties": {
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "planned_duration_s": {
+            "title": "Planned Duration S",
+            "type": "integer"
+          },
+          "planned_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Load"
+          },
+          "session_count": {
+            "title": "Session Count",
+            "type": "integer"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          }
+        },
+        "required": [
+          "discipline",
+          "session_count",
+          "planned_duration_s",
+          "planned_load",
+          "total_sets"
+        ],
+        "title": "PlanWeekDisciplineRead",
+        "type": "object"
+      },
       "PlanWeekRead": {
         "description": "Seven consecutive days of the plan, empty days included.",
         "properties": {
+          "by_discipline": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekDisciplineRead"
+            },
+            "title": "By Discipline",
+            "type": "array"
+          },
           "days": {
             "items": {
               "$ref": "#/components/schemas/PlanWeekDayRead"
@@ -914,9 +1053,28 @@
             "title": "End",
             "type": "string"
           },
+          "load_sessions_counted": {
+            "title": "Load Sessions Counted",
+            "type": "integer"
+          },
+          "load_sessions_uncounted": {
+            "title": "Load Sessions Uncounted",
+            "type": "integer"
+          },
           "planned_duration_s": {
             "title": "Planned Duration S",
             "type": "integer"
+          },
+          "planned_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Load"
           },
           "session_count": {
             "title": "Session Count",
@@ -933,7 +1091,11 @@
           "end",
           "days",
           "session_count",
-          "planned_duration_s"
+          "planned_duration_s",
+          "planned_load",
+          "load_sessions_counted",
+          "load_sessions_uncounted",
+          "by_discipline"
         ],
         "title": "PlanWeekRead",
         "type": "object"
@@ -1089,7 +1251,7 @@
         "type": "object"
       },
       "PlannedSessionRead": {
-        "description": "One planned session, with the intent version in force.",
+        "description": "One planned session, with the intent version in force.\n\nThe three resolved fields are computed on every read from the intent's\nfrozen prescription and the anchor versions it pinned \u2014 never stored, so\nappending a new anchor cannot change what an existing session says.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -1116,6 +1278,30 @@
             "title": "Intent Versions",
             "type": "integer"
           },
+          "pinned_anchors": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedAnchorRead"
+            },
+            "title": "Pinned Anchors",
+            "type": "array"
+          },
+          "predicted_load": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictedLoadRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_steps": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedStepRead"
+            },
+            "title": "Resolved Steps",
+            "type": "array"
+          },
           "status": {
             "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
           },
@@ -1133,7 +1319,10 @@
           "intent",
           "intent_versions",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "pinned_anchors",
+          "resolved_steps",
+          "predicted_load"
         ],
         "title": "PlannedSessionRead",
         "type": "object"
@@ -1281,6 +1470,40 @@
           }
         },
         "title": "PlannedSessionUpdate",
+        "type": "object"
+      },
+      "PredictedLoadRead": {
+        "description": "What this prescription is expected to cost, and how that was arrived at.",
+        "properties": {
+          "anchor_version_id": {
+            "format": "uuid",
+            "title": "Anchor Version Id",
+            "type": "string"
+          },
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "explanation": {
+            "$ref": "#/components/schemas/MetricExplanationRead"
+          },
+          "intensity_factor": {
+            "title": "Intensity Factor",
+            "type": "number"
+          },
+          "load": {
+            "title": "Load",
+            "type": "number"
+          }
+        },
+        "required": [
+          "load",
+          "intensity_factor",
+          "coverage",
+          "anchor_version_id",
+          "explanation"
+        ],
+        "title": "PredictedLoadRead",
         "type": "object"
       },
       "Provenance": {
@@ -1583,6 +1806,140 @@
         },
         "required": ["times", "children"],
         "title": "RepeatBlockSchema",
+        "type": "object"
+      },
+      "ResolvedStepRead": {
+        "description": "One flattened step of the prescription, with its targets resolved.",
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "end_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedTargetRead"
+            },
+            "title": "End Targets",
+            "type": "array"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "is_ramp": {
+            "title": "Is Ramp",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/StepRole"
+          },
+          "start_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedTargetRead"
+            },
+            "title": "Start Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index",
+          "role",
+          "name",
+          "duration_s",
+          "distance_m",
+          "is_ramp",
+          "start_targets",
+          "end_targets"
+        ],
+        "title": "ResolvedStepRead",
+        "type": "object"
+      },
+      "ResolvedTargetRead": {
+        "description": "One channel's target, said both ways.\n\nThe prescription and the numbers are both returned because they are both\nthe truth: ``88\u201393 % FTP`` is what survives an FTP change and what a\npurpose template can express, ``220\u2013232 W`` is what the athlete rides.",
+        "properties": {
+          "anchor_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Version Id"
+          },
+          "channel": {
+            "$ref": "#/components/schemas/Channel"
+          },
+          "prescribed": {
+            "title": "Prescribed",
+            "type": "string"
+          },
+          "resolved_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved High"
+          },
+          "resolved_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Low"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/ChannelUnit"
+          }
+        },
+        "required": [
+          "channel",
+          "prescribed",
+          "resolved_low",
+          "resolved_high",
+          "unit",
+          "anchor_version_id"
+        ],
+        "title": "ResolvedTargetRead",
         "type": "object"
       },
       "ScoringAxis": {
@@ -2198,6 +2555,39 @@
             ],
             "title": "Planned Duration S"
           },
+          "predicted_intensity_factor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Intensity Factor"
+          },
+          "predicted_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Load"
+          },
+          "predicted_volume_load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Volume Load Kg"
+          },
           "purpose": {
             "$ref": "#/components/schemas/Purpose"
           },
@@ -2255,7 +2645,10 @@
           "total_sets",
           "step_count",
           "intent_text",
-          "intent_version"
+          "intent_version",
+          "predicted_load",
+          "predicted_intensity_factor",
+          "predicted_volume_load_kg"
         ],
         "title": "WeekSessionRead",
         "type": "object"

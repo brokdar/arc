@@ -114,7 +114,9 @@ export function blankCriterion(kind: CriterionKind): SuccessCriterion {
     case "time_in_band":
       return {
         kind: "time_in_band",
-        band: { channel: "power", low: 0.95, high: 1.05 },
+        // 30 s is the conventional window for steady work, and the
+        // default the backend applies when a band does not state one.
+        band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
         min_fraction: 0.8,
         selector: { kind: "role", role: "work", index: null },
       };
@@ -126,6 +128,8 @@ export function blankCriterion(kind: CriterionKind): SuccessCriterion {
         channel: "hr",
         limit: { kind: "percent_of_anchor", anchor_type: "lthr", pct: 1.0 },
         max_seconds_above: 300,
+        // Raw: a ceiling is about excursions, and smoothing hides them.
+        smoothing_s: 0,
       };
     case "sets_completed":
       return { kind: "sets_completed", min_fraction: 0.9 };

@@ -310,5 +310,10 @@ function plannedSession() {
       success_criteria: [],
       summary: { step_count: 0, total_duration_s: null, total_sets: null },
     },
+    // Nothing prescribed, so nothing to resolve; the form only reads the
+    // intent back.
+    pinned_anchors: [],
+    resolved_steps: [],
+    predicted_load: null,
   };
 }

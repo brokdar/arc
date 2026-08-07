@@ -46,6 +46,18 @@ class WeekSessionRead(BaseModel):
     intent_text: str | None
     #: Which intent version this card is showing.
     intent_version: int
+    #: TSS-equivalent this prescription is expected to cost, computed on read
+    #: from the frozen intent and the anchor versions it pinned. Null when
+    #: there is nothing honest to say: a strength session, a distance-based
+    #: ride, a ride with no power target, or an FTP that was never pinned.
+    predicted_load: float | None
+    #: Planned normalized power over the pinned FTP; null alongside
+    #: ``predicted_load``.
+    predicted_intensity_factor: float | None
+    #: Σ ``sets × reps × kg`` for a strength session whose loads are in
+    #: kilograms. **Kilograms, not a load** — never add it to
+    #: ``predicted_load``, and never render the two in one column.
+    predicted_volume_load_kg: float | None
 
 
 class PlanWeekDayRead(BaseModel):
@@ -55,6 +67,26 @@ class PlanWeekDayRead(BaseModel):
 
     date: dt.date
     sessions: list[WeekSessionRead]
+
+
+class PlanWeekDisciplineRead(BaseModel):
+    """One week's totals for one discipline.
+
+    The two axes keep their own columns. ``planned_load`` is TSS and
+    ``total_sets`` counts strength sets; there is deliberately no field that
+    could hold their sum, because they measure different things (spec v2
+    §5.4, §8.3).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    discipline: Discipline
+    session_count: int
+    planned_duration_s: int
+    #: TSS across this discipline's predictable sessions; null when none is.
+    planned_load: float | None
+    #: Prescribed working sets; null for a discipline that has none.
+    total_sets: int | None
 
 
 class PlanWeekRead(BaseModel):
@@ -71,3 +103,14 @@ class PlanWeekRead(BaseModel):
     #: Prescribed seconds across the week, counting the sessions that have a
     #: duration to count.
     planned_duration_s: int
+    #: TSS across the sessions that could be predicted. Null — never 0 — when
+    #: none of them could.
+    planned_load: float | None
+    #: How many sessions contributed to ``planned_load``, and how many could
+    #: not. **Never render the total without them**: a week of six sessions
+    #: where only two are predictable must not read as a light week.
+    load_sessions_counted: int
+    load_sessions_uncounted: int
+    #: One row per discipline that has a session this week, in vocabulary
+    #: order. These totals reconcile with the flat ones above.
+    by_discipline: list[PlanWeekDisciplineRead]

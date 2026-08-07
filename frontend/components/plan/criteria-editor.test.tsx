@@ -32,7 +32,7 @@ function Host({
 
 const TIME_IN_BAND: SuccessCriterion = {
   kind: "time_in_band",
-  band: { channel: "power", low: 0.95, high: 1.05 },
+  band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
   min_fraction: 0.75,
   selector: { kind: "role", role: "work", index: null },
 };
@@ -102,6 +102,7 @@ describe("CriteriaEditor", () => {
             channel: "hr",
             limit: { kind: "absolute", unit: "bpm", value: 178 },
             max_seconds_above: 300,
+            smoothing_s: 0,
           },
         ]}
       />,

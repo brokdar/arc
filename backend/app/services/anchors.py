@@ -7,7 +7,7 @@ handlers state the rule; these two absences are what enforce it.
 
 import datetime as dt
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ from app.domain.anchors import (
     Provenance,
     anchor_as_of,
 )
+from app.domain.prediction import PinnedAnchor
 from app.persistence.anchors import AnchorRepository, AnchorVersionRow
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
@@ -73,6 +74,20 @@ class AnchorService:
         if row is None:
             raise NotFoundError(f"Anchor version {anchor_version_id} not found")
         return row
+
+    async def by_ids(
+        self, anchor_version_ids: Iterable[uuid.UUID]
+    ) -> dict[uuid.UUID, AnchorVersionRow]:
+        """Return the named versions keyed by id, in one query.
+
+        For resolving *pins*, which are ids a planned session froze — never
+        "what is in force now". A caller reading a week of sessions collects
+        every pinned id first and asks once, so nothing scales with the number
+        of sessions on screen. Missing ids are absent rather than an error:
+        see :meth:`AnchorRepository.get_many`.
+        """
+        rows = await self._repository.get_many(anchor_version_ids)
+        return {row.id: row for row in rows}
 
     async def current(
         self, anchor_type: AnchorType, *, moment: dt.datetime | None = None
@@ -184,6 +199,40 @@ class AnchorService:
         )
         await commit(self._session)
         return row
+
+
+def parse_pins(stored: Mapping[str, Any] | None) -> dict[AnchorType, uuid.UUID]:
+    """Read a stored intent's ``pinned_anchor_versions`` back into domain types.
+
+    The column holds JSON, so both halves arrive as strings; every caller that
+    wants the pins as types wants exactly this, which is why it is a function
+    rather than three copies of a dict comprehension.
+    """
+    return {
+        AnchorType(anchor): uuid.UUID(version_id)
+        for anchor, version_id in (stored or {}).items()
+    }
+
+
+def resolve_pins(
+    pins: Mapping[AnchorType, uuid.UUID],
+    versions: Mapping[uuid.UUID, AnchorVersionRow],
+) -> dict[AnchorType, PinnedAnchor]:
+    """Pair each pin with the version it names, dropping pins nothing answers.
+
+    ``versions`` is normally the result of :meth:`AnchorService.by_ids` over
+    every pin on the screen. A pin with no row is left out rather than raising:
+    the derived value it feeds then reports itself as unresolvable, which is
+    the honest answer and not a 500 on a read path.
+    """
+    resolved: dict[AnchorType, PinnedAnchor] = {}
+    for anchor_type, version_id in pins.items():
+        row = versions.get(version_id)
+        if row is not None:
+            resolved[anchor_type] = PinnedAnchor(
+                version_id=row.id, version=row.to_domain()
+            )
+    return resolved
 
 
 def _payload(row: AnchorVersionRow) -> dict[str, Any]:

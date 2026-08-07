@@ -65,6 +65,9 @@ const VO2_CARD = {
   step_count: 11,
   intent_text: "Open the top end without digging a hole.",
   intent_version: 2,
+  predicted_load: 92.4,
+  predicted_intensity_factor: 0.9,
+  predicted_volume_load_kg: null,
 };
 
 const STRENGTH_CARD = {
@@ -79,6 +82,9 @@ const STRENGTH_CARD = {
   step_count: 4,
   intent_text: "Keep the legs loaded through base.",
   intent_version: 1,
+  predicted_load: null,
+  predicted_intensity_factor: null,
+  predicted_volume_load_kg: 4080,
 };
 
 describe("TodayView", () => {

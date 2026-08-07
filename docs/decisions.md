@@ -1652,3 +1652,80 @@ The field this panel reads, `SessionIntent.coach_notes`, is written by the
 violet on athlete-authored text now would either have to be taken back when
 WP-8 lands, or would leave the one visual signal that means "a model wrote
 this" already meaning something else.
+
+## D72 — Predicted load is computed on read, never stored
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+A planned session's predicted load, intensity factor and strength volume are
+derived every time they are read, from the intent version in force and the
+anchor versions it pinned (`app.domain.prediction`, called by
+`app.services.plan` and `app.services.planned_sessions`). There is no column,
+no migration and no cache.
+
+This displaces a stored `predicted_load` column maintained by a service hook
+on write.
+
+*Rationale:* the same reasoning as `app.domain.zones` ("zones are always
+computed, never stored"). Predicted load is a pure function of two things that
+are already immutable — the frozen prescription and the pins — so a stored
+copy can only ever agree with the function or be wrong, and the write hook
+that keeps them agreeing has to fire on session creation, on every intent
+revision, on copy, and on any future change to the prediction algorithm. The
+cost of computing it is a 1 Hz expansion of a prescription bounded at
+`MAX_PREDICTABLE_DURATION_S`, done once per card; the cost of storing it is a
+class of staleness bugs that only show up as a number nobody can explain. The
+one thing that *would* argue for storing it — reproducing a number computed by
+an older algorithm — is already answered better by the pins, which is what
+makes the recomputation reproducible in the first place.
+
+The week's pins are loaded in a single batched query
+(`AnchorRepository.get_many`), so "computed on read" costs a constant number
+of round-trips rather than one per session.
+
+## D73 — A success criterion declares its own smoothing window
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`Band` and `Ceiling` (`app.domain.criteria`) each carry `smoothing_s`: the
+seconds of trailing rolling mean applied to the channel before it is compared.
+A band defaults to 30 s, a ceiling to 0 — raw. Every band and ceiling in
+`app/resources/purpose_templates.json` states its window explicitly, and a
+test refuses a template that relies on the default. The decoder tolerates the
+key being absent, so criteria written before WP-3 still parse; criteria are
+tagged-union JSON, so no migration was needed.
+
+This displaces a smoothing constant inside WP-7's scoring engine.
+
+*Rationale:* two reasons, and the second is the binding one. First, power is
+spiky at 1 Hz: comparing raw samples to a band scores a perfectly-executed
+threshold interval far below a smart trainer doing identical physiological
+work, so an undeclared window measures the equipment rather than the
+execution. Second, the window is part of what was promised at planning time
+and has to freeze with the rest of the intent — if it lived in the scoring
+engine, a scoring-engine change would silently rewrite what already-scored
+sessions were judged against, which invariant 1 forbids. The defaults are
+opposite on purpose: a band judges sustained work, a ceiling judges
+excursions, and smoothing is exactly what hides an excursion.
+
+## D74 — Resolved targets and pins are part of the planned-session resource, not a detail-only view
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`PlannedSessionRead` carries `pinned_anchors`, `resolved_steps` and
+`predicted_load` on **every** endpoint that answers with a whole session —
+list, get, create, update, move, copy — rather than only on
+`GET /planned-sessions/{id}`.
+
+This displaces a separate `PlannedSessionDetailRead` that only the get route
+returns.
+
+*Rationale:* the WP-3 work order says "extend the detail response", and a
+detail-only subtype would have been the smaller change. It was rejected
+because one resource with two shapes is a trap for a react-query cache: the
+week's optimistic mutation and the session sheet write into the same keys, and
+a list item that is structurally *almost* a session is exactly the thing that
+type-checks and then renders undefined. The cost that motivated the split —
+one anchor-version query per session — does not exist: `resolutions()` batches
+the whole page into one query, so a page of fifty sessions costs the same
+round-trips as one.

@@ -11,6 +11,7 @@ sheet, which fetches the session itself.
 import datetime as dt
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 
 WEEK = "/api/v1/plan/week"
@@ -229,6 +230,9 @@ async def test_a_card_carries_what_a_calendar_renders(client: AsyncClient) -> No
         "step_count": 7,
         "intent_text": "Steady sweet spot, hold the last rep.",
         "intent_version": 1,
+        "predicted_load": pytest.approx(44.5, abs=0.5),
+        "predicted_intensity_factor": pytest.approx(0.762, abs=0.005),
+        "predicted_volume_load_kg": None,
     }
 
 
@@ -343,6 +347,164 @@ async def test_a_cards_status_follows_the_session(client: AsyncClient) -> None:
     (card,) = cards(await week(client, MONDAY))
 
     assert card["status"] == "completed"
+
+
+# --- the week's aggregates ----------------------------------------------------
+
+#: A ride with a cadence target and no power target: there is a duration to
+#: add up and nothing to integrate a load over.
+CADENCE_RIDE: dict[str, Any] = {
+    "discipline": "cycling",
+    "steps": [
+        {
+            "kind": "steady",
+            "duration_s": 1_800,
+            "role": "work",
+            "targets": {
+                "cadence": {"kind": "absolute", "low": 95, "high": 105, "unit": "rpm"}
+            },
+        }
+    ],
+}
+
+#: A strength session prescribed in kilograms, so it has a volume load.
+KG_LIFT: dict[str, Any] = {
+    "discipline": "strength",
+    "groups": [
+        {
+            "items": [
+                {
+                    "exercise_id": "back_squat",
+                    "sets": 5,
+                    "reps": 3,
+                    "load": {"kind": "kg", "value": 100},
+                }
+            ]
+        }
+    ],
+}
+
+
+async def test_a_week_reports_its_load_with_the_count_it_came_from(
+    client: AsyncClient,
+) -> None:
+    # Three sessions, one predictable: the total is honest only next to the
+    # coverage, so both travel together.
+    await append_ftp(client)
+    await plan(client, MONDAY)
+    await plan(
+        client, MONDAY + dt.timedelta(days=1), purpose="max_strength", structure=LIFT
+    )
+    await plan(
+        client,
+        MONDAY + dt.timedelta(days=2),
+        purpose="technique",
+        structure=CADENCE_RIDE,
+    )
+
+    payload = await week(client, MONDAY)
+
+    assert payload["session_count"] == 3
+    assert payload["planned_load"] == pytest.approx(44.5, abs=0.5)
+    assert payload["load_sessions_counted"] == 1
+    assert payload["load_sessions_uncounted"] == 2
+
+
+async def test_a_week_with_nothing_predictable_has_no_load_rather_than_zero(
+    client: AsyncClient,
+) -> None:
+    # Zero would read as a rest week. Missing data means "not assessed".
+    await plan(client, MONDAY, purpose="max_strength", structure=LIFT)
+    await plan(
+        client,
+        MONDAY + dt.timedelta(days=1),
+        purpose="technique",
+        structure=DISTANCE_RIDE,
+    )
+
+    payload = await week(client, MONDAY)
+
+    assert payload["planned_load"] is None
+    assert payload["load_sessions_counted"] == 0
+    assert payload["load_sessions_uncounted"] == 2
+
+
+async def test_a_strength_card_carries_kilograms_and_no_load(
+    client: AsyncClient,
+) -> None:
+    # Volume load and TSS are different axes: neither card field holds both,
+    # and no total adds them.
+    await plan(client, MONDAY, purpose="max_strength", structure=KG_LIFT)
+
+    (card,) = cards(await week(client, MONDAY))
+
+    assert card["predicted_load"] is None
+    assert card["predicted_intensity_factor"] is None
+    assert card["predicted_volume_load_kg"] == 5 * 3 * 100
+
+
+async def test_the_per_discipline_rows_reconcile_with_the_flat_totals(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    await plan(client, MONDAY)
+    await plan(client, MONDAY + dt.timedelta(days=2))
+    await plan(
+        client, MONDAY + dt.timedelta(days=4), purpose="max_strength", structure=KG_LIFT
+    )
+
+    payload = await week(client, MONDAY)
+    rows = {row["discipline"]: row for row in payload["by_discipline"]}
+
+    assert list(rows) == ["cycling", "strength"]
+    assert (
+        sum(row["session_count"] for row in rows.values()) == (payload["session_count"])
+    )
+    assert (
+        sum(row["planned_duration_s"] for row in rows.values())
+        == (payload["planned_duration_s"])
+    )
+    assert rows["cycling"]["planned_load"] == pytest.approx(
+        payload["planned_load"], abs=1e-9
+    )
+    assert rows["cycling"]["total_sets"] is None
+    # Strength contributes sets and no load, and is not in the load total.
+    assert rows["strength"]["planned_load"] is None
+    assert rows["strength"]["total_sets"] == 5
+
+
+async def test_a_discipline_with_no_session_gets_no_row(client: AsyncClient) -> None:
+    await append_ftp(client)
+    await plan(client, MONDAY)
+
+    payload = await week(client, MONDAY)
+
+    assert [row["discipline"] for row in payload["by_discipline"]] == ["cycling"]
+
+
+async def test_an_empty_week_has_no_load_and_no_discipline_rows(
+    client: AsyncClient,
+) -> None:
+    payload = await week(client, MONDAY)
+
+    assert payload["planned_load"] is None
+    assert payload["load_sessions_counted"] == 0
+    assert payload["load_sessions_uncounted"] == 0
+    assert payload["by_discipline"] == []
+
+
+async def test_the_load_follows_the_pinned_version_not_the_current_anchor(
+    client: AsyncClient,
+) -> None:
+    # Predicted load is computed on read, but from the *frozen* pins: a new
+    # FTP moves nothing that was already planned.
+    await append_ftp(client, 250)
+    await plan(client, MONDAY)
+    before = (await week(client, MONDAY))["planned_load"]
+
+    await append_ftp(client, 300)
+
+    assert (await week(client, MONDAY))["planned_load"] == pytest.approx(before)
 
 
 # --- the guard ----------------------------------------------------------------

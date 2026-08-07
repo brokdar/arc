@@ -19,22 +19,30 @@ Two shape decisions the adapters inherit (D55):
 
 import datetime as dt
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
 from app.domain.plan import WEEK_DAYS, week_dates, week_start
+from app.domain.prediction import (
+    PinnedAnchor,
+    predict_endurance_load,
+    predict_strength_volume,
+)
 from app.domain.purpose import Purpose
 from app.domain.sessions import SessionStatus
-from app.domain.workout import workout_body_from_json
+from app.domain.strength import StrengthWorkout
+from app.domain.workout import WorkoutBody, workout_body_from_json
 from app.persistence.planned_sessions import (
-    PlannedSessionIntentRow,
     PlannedSessionRepository,
     PlannedSessionRow,
 )
 from app.persistence.workouts import WorkoutRepository
+from app.services.anchors import AnchorService, parse_pins, resolve_pins
 from app.services.workouts import WorkoutSummary
 
 #: Most sessions one week's projection will read. Not pagination — a week is
@@ -71,6 +79,17 @@ class WeekSession:
     intent_text: str | None
     #: Which intent version the card is showing.
     intent_version: int
+    #: TSS-equivalent this prescription is expected to cost, predicted from
+    #: the frozen intent and the anchor versions it pinned. ``None`` whenever
+    #: there is nothing honest to say — a strength session, a distance-based
+    #: ride, a ride with no power target, an unpinned FTP.
+    predicted_load: float | None
+    #: Planned NP over the pinned FTP. ``None`` alongside `predicted_load`.
+    predicted_intensity_factor: float | None
+    #: Σ ``sets × reps × kg`` for a strength session, when its loads are in
+    #: kilograms. Kilograms, **not** a load: never add this to
+    #: `predicted_load` (spec v2 §5.4).
+    predicted_volume_load_kg: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +98,25 @@ class WeekDay:
 
     date: dt.date
     sessions: tuple[WeekSession, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PlanWeekDiscipline:
+    """One week's totals for one discipline.
+
+    The two axes stay in their own columns: `planned_load` is TSS and
+    `total_sets` counts strength sets, and there is deliberately no field that
+    could hold their sum.
+    """
+
+    discipline: Discipline
+    session_count: int
+    planned_duration_s: int
+    #: TSS across this discipline's predictable sessions; ``None`` when none
+    #: of them is.
+    planned_load: float | None
+    #: Prescribed working sets; ``None`` for a discipline that has none.
+    total_sets: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +131,18 @@ class PlanWeek:
     #: Prescribed seconds across the week, counting only the sessions that
     #: have a duration to count.
     planned_duration_s: int
+    #: TSS across the sessions that could be predicted. ``None`` — never 0 —
+    #: when none of them could: an unpredictable week has no load, and a zero
+    #: would read as a rest week.
+    planned_load: float | None
+    #: How many sessions contributed to `planned_load`, and how many could
+    #: not. Never render the total without them: a week of six sessions where
+    #: only two are predictable must not read as a light week.
+    load_sessions_counted: int
+    load_sessions_uncounted: int
+    #: One row per discipline that has a session this week, in vocabulary
+    #: order.
+    by_discipline: tuple[PlanWeekDiscipline, ...]
 
 
 class PlanService:
@@ -103,16 +153,21 @@ class PlanService:
         session: AsyncSession,
         sessions: PlannedSessionRepository,
         workouts: WorkoutRepository,
+        anchors: AnchorService,
     ) -> None:
         self._session = session
         self._sessions = sessions
         self._workouts = workouts
+        self._anchors = anchors
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and its repositories to one session."""
         return cls(
-            session, PlannedSessionRepository(session), WorkoutRepository(session)
+            session,
+            PlannedSessionRepository(session),
+            WorkoutRepository(session),
+            AnchorService.from_session(session),
         )
 
     async def week(self, start: dt.date | None = None) -> PlanWeek:
@@ -122,6 +177,12 @@ class PlanService:
         from Wednesday — so a client can page the calendar by a day if it
         wants to. Omitted, it defaults to the Monday of the current week
         (D55).
+
+        Predicted load is computed here, on read, from each intent's frozen
+        prescription and the anchor versions it pinned — never stored, exactly
+        like the durations beside it. The pins for the whole week are loaded
+        in **one** query, so a busy week costs the same round-trips as an
+        empty one.
         """
         first = start if start is not None else week_start(_today())
         dates = week_dates(first)
@@ -135,7 +196,21 @@ class PlanService:
                 if (workout_id := row.current_intent.workout_id) is not None
             ]
         )
-        cards = [_card(row, titles) for row in rows]
+        pins = {
+            row.id: parse_pins(row.current_intent.pinned_anchor_versions)
+            for row in rows
+        }
+        versions = await self._anchors.by_ids(
+            version_id
+            for session_pins in pins.values()
+            for version_id in session_pins.values()
+        )
+        cards = [
+            _card(row, titles, resolve_pins(pins[row.id], versions)) for row in rows
+        ]
+        loads = [
+            card.predicted_load for card in cards if card.predicted_load is not None
+        ]
         return PlanWeek(
             start=first,
             end=dates[-1],
@@ -148,6 +223,10 @@ class PlanService:
             ),
             session_count=len(cards),
             planned_duration_s=sum(card.planned_duration_s or 0 for card in cards),
+            planned_load=sum(loads) if loads else None,
+            load_sessions_counted=len(loads),
+            load_sessions_uncounted=len(cards) - len(loads),
+            by_discipline=_by_discipline(cards),
         )
 
 
@@ -162,10 +241,21 @@ def _today() -> dt.date:
     return dt.datetime.now(dt.UTC).date()
 
 
-def _card(row: PlannedSessionRow, titles: dict[uuid.UUID, str]) -> WeekSession:
-    """Project one stored session onto its calendar card."""
+def _card(
+    row: PlannedSessionRow,
+    titles: dict[uuid.UUID, str],
+    anchors: Mapping[AnchorType, PinnedAnchor],
+) -> WeekSession:
+    """Project one stored session onto its calendar card.
+
+    Raises:
+        ValueError: When the stored prescription no longer parses — loud on
+            purpose, exactly as when one is read back individually.
+    """
     intent = row.current_intent
-    summary = _summary(intent)
+    body = workout_body_from_json(intent.structure)
+    summary = WorkoutSummary(body)
+    load, factor, volume = _predict(body, anchors)
     return WeekSession(
         id=row.id,
         date=row.date,
@@ -179,22 +269,55 @@ def _card(row: PlannedSessionRow, titles: dict[uuid.UUID, str]) -> WeekSession:
         step_count=summary.step_count,
         intent_text=intent.intent_text,
         intent_version=intent.version,
+        predicted_load=load,
+        predicted_intensity_factor=factor,
+        predicted_volume_load_kg=volume,
     )
 
 
-def _summary(intent: PlannedSessionIntentRow) -> WorkoutSummary:
-    """Derive the card's numbers from the prescription frozen in ``intent``.
+def _predict(
+    body: WorkoutBody, anchors: Mapping[AnchorType, PinnedAnchor]
+) -> tuple[float | None, float | None, float | None]:
+    """Return ``(load, intensity_factor, volume_load_kg)`` for one prescription.
 
-    Derived on read rather than stored, like every other summary of a
-    structure document (`app.services.workouts.WorkoutSummary`): the intent
-    version *is* the source, and a cached duration beside it is a second
-    answer waiting to disagree.
-
-    Raises:
-        ValueError: When the stored prescription no longer parses — loud on
-            purpose, exactly as when one is read back individually.
+    Exactly one of the two axes is ever populated: a strength prescription has
+    kilograms and no TSS, an endurance one has TSS and no kilograms. The
+    split is the point — see `app.domain.prediction`.
     """
-    return WorkoutSummary(workout_body_from_json(intent.structure))
+    if isinstance(body, StrengthWorkout):
+        return None, None, predict_strength_volume(body).volume_load_kg
+    predicted = predict_endurance_load(body, anchors)
+    if predicted is None:
+        return None, None, None
+    return predicted.load, predicted.intensity_factor, None
+
+
+def _by_discipline(cards: Sequence[WeekSession]) -> tuple[PlanWeekDiscipline, ...]:
+    """Total the week per discipline, skipping disciplines with no session.
+
+    Every total here is the same fold as its flat counterpart on
+    :class:`PlanWeek`, over a subset of the same cards, so the rows reconcile
+    with the week's own numbers by construction rather than by agreement.
+    """
+    rows: list[PlanWeekDiscipline] = []
+    for discipline in Discipline:
+        group = [card for card in cards if card.discipline is discipline]
+        if not group:
+            continue
+        loads = [
+            card.predicted_load for card in group if card.predicted_load is not None
+        ]
+        sets = [card.total_sets for card in group if card.total_sets is not None]
+        rows.append(
+            PlanWeekDiscipline(
+                discipline=discipline,
+                session_count=len(group),
+                planned_duration_s=sum(card.planned_duration_s or 0 for card in group),
+                planned_load=sum(loads) if loads else None,
+                total_sets=sum(sets) if sets else None,
+            )
+        )
+    return tuple(rows)
 
 
 #: Re-exported so an adapter can state the window it renders without reaching
@@ -204,6 +327,7 @@ __all__ = [
     "WEEK_DAYS",
     "PlanService",
     "PlanWeek",
+    "PlanWeekDiscipline",
     "WeekDay",
     "WeekSession",
 ]

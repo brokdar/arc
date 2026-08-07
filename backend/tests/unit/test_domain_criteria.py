@@ -22,6 +22,8 @@ from app.domain.criteria import (
     StepSelectorKind,
     SuccessCriterion,
     TimeInBand,
+    band_from_json,
+    band_to_json,
     criteria_from_json,
     criteria_to_json,
     criterion_from_json,
@@ -155,6 +157,73 @@ def test_fractions_stay_between_zero_and_one(fraction: float) -> None:
 def test_an_inverted_band_is_rejected() -> None:
     with pytest.raises(ValueError, match="below low"):
         Band(channel=Channel.POWER, low=1.05, high=0.95)
+
+
+# --- the smoothing window -----------------------------------------------------
+
+
+def test_a_band_smooths_for_thirty_seconds_and_a_ceiling_not_at_all() -> None:
+    # The defaults are opposite on purpose: a band judges sustained work, a
+    # ceiling judges excursions and smoothing is what hides them.
+    assert Band(channel=Channel.POWER, low=0.95, high=1.05).smoothing_s == 30
+    assert (
+        Ceiling(
+            channel=Channel.POWER,
+            limit=PercentLimit(anchor_type=AnchorType.FTP, pct=0.6),
+            max_seconds_above=120,
+        ).smoothing_s
+        == 0
+    )
+
+
+def test_the_smoothing_window_round_trips_through_json() -> None:
+    band = Band(channel=Channel.POWER, low=0.95, high=1.05, smoothing_s=3)
+    ceiling = Ceiling(
+        channel=Channel.POWER,
+        limit=PercentLimit(anchor_type=AnchorType.FTP, pct=0.6),
+        max_seconds_above=120,
+        smoothing_s=10,
+    )
+    criterion = TimeInBand(
+        selector=StepSelector.all_steps(), band=band, min_fraction=0.8
+    )
+
+    assert band_to_json(band)["smoothing_s"] == 3
+    assert band_from_json(band_to_json(band), "band") == band
+    assert criterion_to_json(ceiling)["smoothing_s"] == 10
+    assert criterion_from_json(criterion_to_json(ceiling)) == ceiling
+    assert criterion_from_json(criterion_to_json(criterion)) == criterion
+
+
+def test_a_stored_criterion_written_before_the_window_existed_still_parses() -> None:
+    # Criteria are tagged-union JSON, not columns, so there is no migration:
+    # tolerance in the decoder is what keeps rows written by WP-2 readable.
+    band = band_from_json({"channel": "power", "low": 0.95, "high": 1.05}, "band")
+    ceiling = criterion_from_json(
+        {
+            "kind": "ceiling",
+            "channel": "power",
+            "limit": {"kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 0.6},
+            "max_seconds_above": 120,
+        }
+    )
+
+    assert band.smoothing_s == 30
+    assert isinstance(ceiling, Ceiling)
+    assert ceiling.smoothing_s == 0
+
+
+@pytest.mark.parametrize("window", [-1, -30])
+def test_a_negative_smoothing_window_is_rejected(window: int) -> None:
+    with pytest.raises(ValueError, match="smoothing_s must not be negative"):
+        Band(channel=Channel.POWER, low=0.95, high=1.05, smoothing_s=window)
+    with pytest.raises(ValueError, match="smoothing_s must not be negative"):
+        Ceiling(
+            channel=Channel.POWER,
+            limit=PercentLimit(anchor_type=AnchorType.FTP, pct=0.6),
+            max_seconds_above=120,
+            smoothing_s=window,
+        )
 
 
 def test_a_selector_carries_only_its_own_argument() -> None:

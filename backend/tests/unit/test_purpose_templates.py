@@ -17,6 +17,8 @@ from app.domain.athlete import Discipline
 from app.domain.criteria import (
     ENDURANCE_ONLY_KINDS,
     STRENGTH_ONLY_KINDS,
+    Ceiling,
+    TimeInBand,
     kind_of,
 )
 from app.domain.purpose import (
@@ -183,6 +185,48 @@ async def test_the_purposes_endpoint_serves_the_descriptions(
 
     assert all(item["description"] for item in page["items"])
     assert one["description"] == purpose_templates()[Purpose.RECOVERY].description
+
+
+def test_no_template_relies_on_the_default_smoothing_window() -> None:
+    # The window is part of what the athlete was promised, so a template
+    # states it rather than inheriting it: changing a default must never
+    # rewrite what an already-planned session is judged against.
+    document = complete_document()
+    silent: list[str] = []
+    for purpose, template in document["templates"].items():
+        for index, criterion in enumerate(template["default_criteria"]):
+            where = f"{purpose}.default_criteria[{index}]"
+            if criterion["kind"] == "time_in_band":
+                if "smoothing_s" not in criterion["band"]:
+                    silent.append(f"{where}.band")
+            elif criterion["kind"] == "ceiling" and "smoothing_s" not in criterion:
+                silent.append(where)
+
+    assert not silent, f"criteria with no declared smoothing window: {silent}"
+
+
+def test_the_declared_windows_survive_being_parsed(
+    templates: dict[Purpose, PurposeTemplate],
+) -> None:
+    windows = {
+        purpose.value: [
+            criterion.band.smoothing_s
+            for criterion in template.default_criteria
+            if isinstance(criterion, TimeInBand)
+        ]
+        for purpose, template in templates.items()
+    }
+
+    # Short efforts get short windows: 30 s eats a VO2max on-ramp whole, and a
+    # 30 s sprint is shorter than the conventional window itself.
+    assert windows["threshold"] == [30]
+    assert windows["vo2max"] == [10]
+    assert windows["anaerobic"] == [3]
+    assert [
+        criterion.smoothing_s
+        for criterion in templates[Purpose.RECOVERY].default_criteria
+        if isinstance(criterion, Ceiling)
+    ] == [0]
 
 
 def test_the_file_on_disk_is_what_is_loaded() -> None:

@@ -757,6 +757,11 @@ export interface components {
       high: number;
       /** Low */
       low: number;
+      /**
+       * Smoothing S
+       * @default 30
+       */
+      smoothing_s: number;
     };
     /**
      * CeilingSchema
@@ -775,6 +780,11 @@ export interface components {
         | components["schemas"]["AbsoluteLimitSchema"];
       /** Max Seconds Above */
       max_seconds_above: number;
+      /**
+       * Smoothing S
+       * @default 0
+       */
+      smoothing_s: number;
     };
     /**
      * Channel
@@ -949,6 +959,22 @@ export interface components {
       /** Password */
       password: string;
     };
+    /**
+     * MetricExplanationRead
+     * @description Why a computed number is the number. Travels with it; not page copy.
+     */
+    MetricExplanationRead: {
+      /** Assumptions */
+      assumptions: string[];
+      /** Citation */
+      citation: string | null;
+      /** Formula */
+      formula: string;
+      /** Inputs */
+      inputs: {
+        [key: string]: string;
+      };
+    };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -1024,6 +1050,31 @@ export interface components {
       pct_low: number;
     };
     /**
+     * PinnedAnchorRead
+     * @description One anchor version this session's percentages resolve against.
+     *
+     *     The pin is the product's most distinctive invariant (build-plan invariant
+     *     4, D49) and it is worth nothing invisible: showing the provenance is what
+     *     makes an `estimated` FTP read as an estimate rather than a fact.
+     */
+    PinnedAnchorRead: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /**
+       * Anchor Version Id
+       * Format: uuid
+       */
+      anchor_version_id: string;
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      provenance: components["schemas"]["Provenance"];
+      unit: components["schemas"]["AnchorUnit"];
+      /** Value */
+      value: number;
+    };
+    /**
      * PlanState
      * @description Whether the plan is being enforced.
      *
@@ -1046,10 +1097,32 @@ export interface components {
       sessions: components["schemas"]["WeekSessionRead"][];
     };
     /**
+     * PlanWeekDisciplineRead
+     * @description One week's totals for one discipline.
+     *
+     *     The two axes keep their own columns. ``planned_load`` is TSS and
+     *     ``total_sets`` counts strength sets; there is deliberately no field that
+     *     could hold their sum, because they measure different things (spec v2
+     *     §5.4, §8.3).
+     */
+    PlanWeekDisciplineRead: {
+      discipline: components["schemas"]["Discipline"];
+      /** Planned Duration S */
+      planned_duration_s: number;
+      /** Planned Load */
+      planned_load: number | null;
+      /** Session Count */
+      session_count: number;
+      /** Total Sets */
+      total_sets: number | null;
+    };
+    /**
      * PlanWeekRead
      * @description Seven consecutive days of the plan, empty days included.
      */
     PlanWeekRead: {
+      /** By Discipline */
+      by_discipline: components["schemas"]["PlanWeekDisciplineRead"][];
       /** Days */
       days: components["schemas"]["PlanWeekDayRead"][];
       /**
@@ -1057,8 +1130,14 @@ export interface components {
        * Format: date
        */
       end: string;
+      /** Load Sessions Counted */
+      load_sessions_counted: number;
+      /** Load Sessions Uncounted */
+      load_sessions_uncounted: number;
       /** Planned Duration S */
       planned_duration_s: number;
+      /** Planned Load */
+      planned_load: number | null;
       /** Session Count */
       session_count: number;
       /**
@@ -1127,6 +1206,10 @@ export interface components {
     /**
      * PlannedSessionRead
      * @description One planned session, with the intent version in force.
+     *
+     *     The three resolved fields are computed on every read from the intent's
+     *     frozen prescription and the anchor versions it pinned — never stored, so
+     *     appending a new anchor cannot change what an existing session says.
      */
     PlannedSessionRead: {
       /**
@@ -1148,6 +1231,11 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      /** Pinned Anchors */
+      pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      predicted_load: components["schemas"]["PredictedLoadRead"] | null;
+      /** Resolved Steps */
+      resolved_steps: components["schemas"]["ResolvedStepRead"][];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
       /**
        * Updated At
@@ -1191,6 +1279,24 @@ export interface components {
         | null;
       /** Workout Id */
       workout_id?: string | null;
+    };
+    /**
+     * PredictedLoadRead
+     * @description What this prescription is expected to cost, and how that was arrived at.
+     */
+    PredictedLoadRead: {
+      /**
+       * Anchor Version Id
+       * Format: uuid
+       */
+      anchor_version_id: string;
+      /** Coverage */
+      coverage: number;
+      explanation: components["schemas"]["MetricExplanationRead"];
+      /** Intensity Factor */
+      intensity_factor: number;
+      /** Load */
+      load: number;
     };
     /**
      * Provenance
@@ -1321,6 +1427,47 @@ export interface components {
       kind: "repeat";
       /** Times */
       times: number;
+    };
+    /**
+     * ResolvedStepRead
+     * @description One flattened step of the prescription, with its targets resolved.
+     */
+    ResolvedStepRead: {
+      /** Distance M */
+      distance_m: number | null;
+      /** Duration S */
+      duration_s: number | null;
+      /** End Targets */
+      end_targets: components["schemas"]["ResolvedTargetRead"][];
+      /** Index */
+      index: number;
+      /** Is Ramp */
+      is_ramp: boolean;
+      /** Name */
+      name: string | null;
+      role: components["schemas"]["StepRole"];
+      /** Start Targets */
+      start_targets: components["schemas"]["ResolvedTargetRead"][];
+    };
+    /**
+     * ResolvedTargetRead
+     * @description One channel's target, said both ways.
+     *
+     *     The prescription and the numbers are both returned because they are both
+     *     the truth: ``88–93 % FTP`` is what survives an FTP change and what a
+     *     purpose template can express, ``220–232 W`` is what the athlete rides.
+     */
+    ResolvedTargetRead: {
+      /** Anchor Version Id */
+      anchor_version_id: string | null;
+      channel: components["schemas"]["Channel"];
+      /** Prescribed */
+      prescribed: string;
+      /** Resolved High */
+      resolved_high: number | null;
+      /** Resolved Low */
+      resolved_low: number | null;
+      unit: components["schemas"]["ChannelUnit"];
     };
     /**
      * ScoringAxis
@@ -1605,6 +1752,12 @@ export interface components {
       intent_version: number;
       /** Planned Duration S */
       planned_duration_s: number | null;
+      /** Predicted Intensity Factor */
+      predicted_intensity_factor: number | null;
+      /** Predicted Load */
+      predicted_load: number | null;
+      /** Predicted Volume Load Kg */
+      predicted_volume_load_kg: number | null;
       purpose: components["schemas"]["Purpose"];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
       /** Step Count */

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### WP-3 — calendar & plan API, design system, week UI
 
 The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D71.
+D55–D74.
 
 **API (`backend/app/`)**
 
@@ -28,6 +28,32 @@ D55–D71.
 - Added `athlete.plan_state` (`active | paused`), read and written through the
   existing athlete endpoints rather than a plan table and two verbs (D58).
   Paused means missed-session marking stops; ingestion and scoring carry on.
+- Success criteria declare their own **smoothing window**: `Band.smoothing_s`
+  (default 30 s) and `Ceiling.smoothing_s` (default 0 — raw) say how long a
+  trailing rolling mean is applied before the channel is compared (D73). The
+  window freezes with the intent instead of living in WP-7's scorer, so a
+  scoring change cannot rewrite what an already-scored session was judged
+  against. Every band and ceiling in `purpose_templates.json` states its own
+  (30 s for steady work, 10 s for VO₂max, 3 s for anaerobic; ceilings raw),
+  and a test refuses a template that relies on the default. Criteria are
+  tagged-union JSON and the decoder tolerates the key being absent, so no
+  migration was needed.
+- `GET /plan/week` now carries **predicted load and its coverage**: per card
+  `predicted_load`, `predicted_intensity_factor` and `predicted_volume_load_kg`;
+  per week `planned_load` (null, never 0, when nothing is predictable),
+  `load_sessions_counted` / `load_sessions_uncounted`, and a `by_discipline`
+  row (sessions, duration, load, sets). TSS and kilograms stay in separate
+  columns and are never summed. Everything is computed on read from the frozen
+  intent and its pins — no column, no migration, no cache (D72) — with the
+  week's pins loaded in one query.
+- A planned session now **resolves its own pins**. Every response carrying a
+  whole session adds `resolved_steps` (each flattened step's targets said both
+  ways: `88–93 % FTP` *and* 220–232.5 W, with the anchor version that resolved
+  them), `pinned_anchors` (type, version id, value, unit, provenance,
+  effective date) and `predicted_load` with a `MetricExplanation` — formula,
+  inputs naming the *version's* value and provenance, assumptions, citation
+  (D74). Appending a new FTP anchor changes nothing on a session already
+  planned, which is invariant 4 finally made visible.
 
 **Web — design system (`frontend/`)**
 

@@ -37,6 +37,9 @@ const SEEDS: readonly SessionSeed[] = [
       step_count: 4,
       intent_text: "Keep the legs loaded through base.",
       intent_version: 1,
+      predicted_load: null,
+      predicted_intensity_factor: null,
+      predicted_volume_load_kg: 4080,
     },
   },
   {
@@ -53,6 +56,9 @@ const SEEDS: readonly SessionSeed[] = [
       step_count: 11,
       intent_text: "Open the top end without digging a hole.",
       intent_version: 2,
+      predicted_load: 92.4,
+      predicted_intensity_factor: 0.9,
+      predicted_volume_load_kg: null,
     },
   },
   {
@@ -70,6 +76,9 @@ const SEEDS: readonly SessionSeed[] = [
       step_count: 3,
       intent_text: null,
       intent_version: 1,
+      predicted_load: 28.1,
+      predicted_intensity_factor: 0.55,
+      predicted_volume_load_kg: null,
     },
   },
   {
@@ -86,6 +95,9 @@ const SEEDS: readonly SessionSeed[] = [
       step_count: 3,
       intent_text: "Not attempted.",
       intent_version: 1,
+      predicted_load: null,
+      predicted_intensity_factor: null,
+      predicted_volume_load_kg: null,
     },
   },
   {
@@ -102,6 +114,9 @@ const SEEDS: readonly SessionSeed[] = [
       step_count: 6,
       intent_text: "Build durability before the Ötztal.",
       intent_version: 1,
+      predicted_load: 168.3,
+      predicted_intensity_factor: 0.73,
+      predicted_volume_load_kg: null,
     },
   },
 ];
@@ -121,15 +136,41 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
     };
   });
   const sessions = days.flatMap((day) => day.sessions);
+  const duration = (of: readonly Schemas["WeekSessionRead"][]) =>
+    of.reduce((total, session) => total + (session.planned_duration_s ?? 0), 0);
+  const load = (of: readonly Schemas["WeekSessionRead"][]) => {
+    const counted = of.filter((session) => session.predicted_load !== null);
+    // Null, never 0: a week with nothing predictable has no load.
+    return counted.length
+      ? counted.reduce((total, s) => total + (s.predicted_load ?? 0), 0)
+      : null;
+  };
+  const counted = sessions.filter((session) => session.predicted_load !== null);
+  const byDiscipline = (["cycling", "strength"] as const)
+    .map((discipline) => {
+      const group = sessions.filter((s) => s.discipline === discipline);
+      const sets = group.filter((s) => s.total_sets !== null);
+      return {
+        discipline,
+        session_count: group.length,
+        planned_duration_s: duration(group),
+        planned_load: load(group),
+        total_sets: sets.length
+          ? sets.reduce((total, s) => total + (s.total_sets ?? 0), 0)
+          : null,
+      };
+    })
+    .filter((row) => row.session_count > 0);
   return {
     start,
     end: addDays(start, 6),
     days,
     session_count: sessions.length,
-    planned_duration_s: sessions.reduce(
-      (total, session) => total + (session.planned_duration_s ?? 0),
-      0,
-    ),
+    planned_duration_s: duration(sessions),
+    planned_load: load(sessions),
+    load_sessions_counted: counted.length,
+    load_sessions_uncounted: sessions.length - counted.length,
+    by_discipline: byDiscipline,
   };
 }
 
@@ -247,7 +288,7 @@ const STRENGTH_STRUCTURE: Schemas["StrengthStructureSchema"] = {
 const CYCLING_CRITERIA: Schemas["SessionIntentRead"]["success_criteria"] = [
   {
     kind: "time_in_band",
-    band: { channel: "power", low: 0.95, high: 1.05 },
+    band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
     min_fraction: 0.75,
     selector: { kind: "role", role: "work", index: null },
   },
@@ -256,6 +297,7 @@ const CYCLING_CRITERIA: Schemas["SessionIntentRead"]["success_criteria"] = [
     channel: "hr",
     limit: { kind: "absolute", unit: "bpm", value: 178 },
     max_seconds_above: 360,
+    smoothing_s: 0,
   },
   { kind: "duration_floor", min_seconds: 3600 },
 ];
@@ -264,6 +306,89 @@ const STRENGTH_CRITERIA: Schemas["SessionIntentRead"]["success_criteria"] = [
   { kind: "sets_completed", min_fraction: 0.9 },
   { kind: "load_within", pct_tolerance: 0.05 },
 ];
+
+/** The FTP version every cycling fixture's percentages resolve against. */
+const FTP_VERSION_ID = "0199a000-0000-7000-8000-0000000000f1";
+const FTP_WATTS = 250;
+
+const PINNED_FTP: Schemas["PinnedAnchorRead"] = {
+  anchor_type: "ftp",
+  anchor_version_id: FTP_VERSION_ID,
+  value: FTP_WATTS,
+  unit: "W",
+  provenance: "estimated",
+  effective_date: "2026-06-01",
+};
+
+/** A power target said both ways, the way the backend resolves it. */
+function powerTarget(
+  pctLow: number,
+  pctHigh: number,
+): Schemas["ResolvedTargetRead"] {
+  return {
+    channel: "power",
+    prescribed: `${pctLow * 100}\u2013${pctHigh * 100} % FTP`,
+    resolved_low: Math.round(pctLow * FTP_WATTS * 10) / 10,
+    resolved_high: Math.round(pctHigh * FTP_WATTS * 10) / 10,
+    unit: "W",
+    anchor_version_id: FTP_VERSION_ID,
+  };
+}
+
+function resolvedStep(
+  index: number,
+  role: Schemas["StepRole"],
+  name: string,
+  durationS: number,
+  targets: Schemas["ResolvedTargetRead"][],
+): Schemas["ResolvedStepRead"] {
+  return {
+    index,
+    role,
+    name,
+    duration_s: durationS,
+    distance_m: null,
+    is_ramp: false,
+    start_targets: targets,
+    end_targets: targets,
+  };
+}
+
+/** `VO2_STRUCTURE` flattened and resolved: repeat blocks expand. */
+const VO2_RESOLVED_STEPS: Schemas["ResolvedStepRead"][] = [
+  resolvedStep(0, "warmup", "Warm-up", 720, [powerTarget(0.5, 0.6)]),
+  ...Array.from({ length: 5 }, (_, rep) => [
+    resolvedStep(1 + rep * 2, "work", "VO\u2082 block", 240, [
+      powerTarget(1.14, 1.22),
+    ]),
+    resolvedStep(2 + rep * 2, "rest", "Spin", 180, [powerTarget(0.4, 0.5)]),
+  ]).flat(),
+  // No target prescribed: nothing is claimed, not a zero-watt target.
+  resolvedStep(11, "cooldown", "Cool-down", 600, []),
+];
+
+const VO2_PREDICTED_LOAD: Schemas["PredictedLoadRead"] = {
+  load: 92.4,
+  intensity_factor: 0.9,
+  coverage: 0.855,
+  anchor_version_id: FTP_VERSION_ID,
+  explanation: {
+    formula:
+      "NP = mean(rolling_mean_30s(P)^4)^(1/4); IF = NP / FTP; " +
+      "TSS = duration_s \u00d7 IF\u00b2 / 36",
+    inputs: {
+      FTP: "250 W (estimated, effective 2026-06-01)",
+      "planned NP": "225 W over the prescribed watts",
+      duration: "4140 s prescribed",
+      coverage: "86% of the duration carried a power target",
+    },
+    assumptions: [
+      "target ranges reduced to their midpoint",
+      "steps with no power target counted as 0 W and left out of coverage",
+    ],
+    citation: "Allen & Coggan, Training and Racing with a Power Meter",
+  },
+};
 
 /** The detail behind one card. Keyed by id so a test can open any of them. */
 export function plannedSessionFixture(
@@ -294,7 +419,7 @@ export function plannedSessionFixture(
       coach_notes:
         "Eat before you are hungry and the last hour looks after itself.",
       workout_id: seed.session.workout_id,
-      pinned_anchor_versions: { ftp: "0199a000-0000-7000-8000-0000000000f1" },
+      pinned_anchor_versions: { ftp: FTP_VERSION_ID },
       structure: cycling ? VO2_STRUCTURE : STRENGTH_STRUCTURE,
       success_criteria: cycling ? CYCLING_CRITERIA : STRENGTH_CRITERIA,
       summary: {
@@ -303,6 +428,11 @@ export function plannedSessionFixture(
         total_sets: seed.session.total_sets,
       },
     },
+    // Resolved on read against the pins above — a strength prescription has
+    // no anchor percentages, so it resolves to nothing.
+    pinned_anchors: cycling ? [PINNED_FTP] : [],
+    resolved_steps: cycling ? VO2_RESOLVED_STEPS : [],
+    predicted_load: cycling ? VO2_PREDICTED_LOAD : null,
   };
 }
 
@@ -442,7 +572,7 @@ export const EXERCISES: Schemas["ExerciseRead"][] = [
 const ENDURANCE_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
   {
     kind: "time_in_band",
-    band: { channel: "power", low: 0.92, high: 1.08 },
+    band: { channel: "power", low: 0.92, high: 1.08, smoothing_s: 30 },
     min_fraction: 0.7,
     selector: { kind: "all", role: null, index: null },
   },
@@ -452,7 +582,7 @@ const ENDURANCE_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
 const VO2_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] = [
   {
     kind: "time_in_band",
-    band: { channel: "power", low: 0.95, high: 1.05 },
+    band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
     min_fraction: 0.85,
     selector: { kind: "role", role: "work", index: null },
   },

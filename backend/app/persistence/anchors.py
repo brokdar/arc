@@ -9,7 +9,7 @@ cannot be bypassed by a new caller.
 
 import datetime as dt
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from sqlalchemy import Date, Float, String, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +90,25 @@ class AnchorRepository:
     async def get(self, anchor_version_id: uuid.UUID) -> AnchorVersionRow | None:
         """Return one anchor version by id, or None."""
         return await self._session.get(AnchorVersionRow, anchor_version_id)
+
+    async def get_many(
+        self, anchor_version_ids: Iterable[uuid.UUID]
+    ) -> Sequence[AnchorVersionRow]:
+        """Return the versions with these ids, in one query, order unspecified.
+
+        The batched half of :meth:`get`, and the reason a week of planned
+        sessions resolves its pins without a round-trip per session. Ids with
+        no row are simply absent from the result — a caller that pinned a
+        version since deleted (which nothing can do: anchor history is
+        append-only) gets fewer rows, not an exception.
+        """
+        ids = list(dict.fromkeys(anchor_version_ids))
+        if not ids:
+            return []
+        result = await self._session.execute(
+            select(AnchorVersionRow).where(AnchorVersionRow.id.in_(ids))
+        )
+        return list(result.scalars())
 
     async def list(
         self,

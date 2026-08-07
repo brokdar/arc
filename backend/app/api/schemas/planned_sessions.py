@@ -22,10 +22,11 @@ from app.api.pagination import Page
 from app.api.schemas.criteria import SuccessCriterionSchema
 from app.api.schemas.workouts import WorkoutStructureSchema, WorkoutSummarySchema
 from app.api.validation import PostgresText
-from app.domain.anchors import AnchorType
+from app.domain.anchors import AnchorType, AnchorUnit, Provenance
 from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.sessions import MAX_INTENT_CHARS, SessionStatus
+from app.domain.workout import Channel, ChannelUnit, StepRole
 
 IntentText = Annotated[PostgresText, Field(min_length=1, max_length=MAX_INTENT_CHARS)]
 
@@ -119,8 +120,100 @@ class SessionIntentRead(BaseModel):
     summary: WorkoutSummarySchema
 
 
+class ResolvedTargetRead(BaseModel):
+    """One channel's target, said both ways.
+
+    The prescription and the numbers are both returned because they are both
+    the truth: ``88–93 % FTP`` is what survives an FTP change and what a
+    purpose template can express, ``220–232 W`` is what the athlete rides.
+    """
+
+    channel: Channel
+    #: The target as written, render-ready: ``"88–93 % FTP"``, ``"250 W"``.
+    prescribed: str
+    #: Lower bound in ``unit``, or null when nothing resolves it — an
+    #: absolute target passes through, a percentage of an anchor this session
+    #: did not pin resolves to null on both bounds. Null means "not
+    #: resolved", never zero.
+    resolved_low: float | None
+    #: Upper bound; equal to ``resolved_low`` for a point target.
+    resolved_high: float | None
+    unit: ChannelUnit
+    #: The anchor version the percentage resolved against; null for an
+    #: absolute target.
+    anchor_version_id: uuid.UUID | None
+
+
+class ResolvedStepRead(BaseModel):
+    """One flattened step of the prescription, with its targets resolved."""
+
+    #: 0-based position in the flattened sequence — the same index the step
+    #: tree flattens to, so a client can join this onto what it already drew.
+    index: int
+    role: StepRole
+    name: str | None
+    duration_s: int | None
+    distance_m: float | None
+    #: When false, ``end_targets`` repeats ``start_targets``.
+    is_ramp: bool
+    start_targets: list[ResolvedTargetRead]
+    end_targets: list[ResolvedTargetRead]
+
+
+class PinnedAnchorRead(BaseModel):
+    """One anchor version this session's percentages resolve against.
+
+    The pin is the product's most distinctive invariant (build-plan invariant
+    4, D49) and it is worth nothing invisible: showing the provenance is what
+    makes an `estimated` FTP read as an estimate rather than a fact.
+    """
+
+    anchor_type: AnchorType
+    anchor_version_id: uuid.UUID
+    value: float
+    unit: AnchorUnit
+    provenance: Provenance
+    #: The date the value describes the athlete from — not when it was entered.
+    effective_date: dt.date
+
+
+class MetricExplanationRead(BaseModel):
+    """Why a computed number is the number. Travels with it; not page copy."""
+
+    #: The arithmetic, written the way a human reads it.
+    formula: str
+    #: Named quantities that went in, already rendered. An anchor input names
+    #: the **version's** value, provenance and effective date, never the
+    #: athlete's current one.
+    inputs: dict[str, str]
+    #: What the computation had to assume. Empty when there were none.
+    assumptions: list[str]
+    #: Where the method comes from, when it comes from somewhere.
+    citation: str | None
+
+
+class PredictedLoadRead(BaseModel):
+    """What this prescription is expected to cost, and how that was arrived at."""
+
+    #: TSS-equivalent. Never add this to a strength session's kilograms.
+    load: float
+    #: Planned normalized power over the pinned FTP.
+    intensity_factor: float
+    #: Fraction of the prescribed duration that carried a power target. Below
+    #: 1.0 the load is an **under**-estimate: the rest counted as 0 W.
+    coverage: float
+    #: The FTP version the prediction resolved against.
+    anchor_version_id: uuid.UUID
+    explanation: MetricExplanationRead
+
+
 class PlannedSessionRead(BaseModel):
-    """One planned session, with the intent version in force."""
+    """One planned session, with the intent version in force.
+
+    The three resolved fields are computed on every read from the intent's
+    frozen prescription and the anchor versions it pinned — never stored, so
+    appending a new anchor cannot change what an existing session says.
+    """
 
     id: uuid.UUID
     date: dt.date
@@ -131,6 +224,15 @@ class PlannedSessionRead(BaseModel):
     intent_versions: int
     created_at: dt.datetime
     updated_at: dt.datetime
+    #: The anchor versions this session pinned, in anchor-type order. Empty
+    #: for a prescription that refers to none.
+    pinned_anchors: list[PinnedAnchorRead]
+    #: Every flattened step with its targets resolved against those pins.
+    #: Empty for a strength session, which prescribes no anchor percentages.
+    resolved_steps: list[ResolvedStepRead]
+    #: Null when the cost cannot honestly be predicted: a strength session, a
+    #: distance-based ride, a ride with no power target, an unpinned FTP.
+    predicted_load: PredictedLoadRead | None
 
 
 PlannedSessionsPage = Page[PlannedSessionRead]

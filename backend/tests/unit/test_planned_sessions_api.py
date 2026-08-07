@@ -1039,6 +1039,168 @@ async def test_moving_and_copying_need_a_session_cookie(
     assert (move.status_code, copy.status_code) == (401, 401)
 
 
+# --- resolved targets, pins and predicted load --------------------------------
+
+
+def work_targets(session: dict[str, Any]) -> list[dict[str, Any]]:
+    """The start targets of the first step that has any."""
+    for step in session["resolved_steps"]:
+        if step["start_targets"]:
+            return step["start_targets"]
+    raise AssertionError("no step carries a target")
+
+
+async def test_a_percentage_target_is_returned_both_ways(client: AsyncClient) -> None:
+    # The prescription is what survives an FTP change; the watts are what the
+    # athlete rides. Both are the truth, so both are returned.
+    version_id = await append_ftp(client, 250)
+    session = await plan(client)
+
+    (target,) = work_targets(session)
+
+    assert target == {
+        "channel": "power",
+        "prescribed": "88–93 % FTP",
+        "resolved_low": 220.0,
+        "resolved_high": 232.5,
+        "unit": "W",
+        "anchor_version_id": version_id,
+    }
+
+
+async def test_an_absolute_target_passes_through_with_no_anchor(
+    client: AsyncClient,
+) -> None:
+    session = await plan(client, purpose="threshold", structure=ABSOLUTE_RIDE)
+
+    (target,) = work_targets(session)
+
+    assert target["prescribed"] == "180–200 W"
+    assert (target["resolved_low"], target["resolved_high"]) == (180.0, 200.0)
+    assert target["anchor_version_id"] is None
+
+
+async def test_a_step_with_no_target_resolves_to_no_targets(
+    client: AsyncClient,
+) -> None:
+    # Not a zero-watt target: nothing was prescribed, so nothing is claimed.
+    await append_ftp(client)
+    session = await plan(client)
+
+    warmup = session["resolved_steps"][0]
+
+    assert warmup["role"] == "warmup"
+    assert warmup["start_targets"] == []
+    assert warmup["end_targets"] == []
+
+
+async def test_the_flattened_steps_are_the_ones_the_athlete_performs(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+
+    steps = session["resolved_steps"]
+
+    # 1 warm-up + 3 × (work + recovery); repeat blocks expand.
+    assert [step["index"] for step in steps] == list(range(7))
+    assert [step["role"] for step in steps] == [
+        "warmup",
+        "work",
+        "recovery",
+        "work",
+        "recovery",
+        "work",
+        "recovery",
+    ]
+    assert all(step["is_ramp"] is False for step in steps)
+
+
+async def test_a_session_names_the_anchor_versions_it_pinned(
+    client: AsyncClient,
+) -> None:
+    # The pin is the product's most distinctive invariant, and provenance is
+    # what makes an estimate read as an estimate.
+    version_id = await append_ftp(client, 250)
+    session = await plan(client)
+
+    (pin,) = session["pinned_anchors"]
+
+    assert pin["anchor_type"] == "ftp"
+    assert pin["anchor_version_id"] == version_id
+    assert pin["value"] == 250
+    assert pin["unit"] == "W"
+    assert pin["provenance"] == "estimated"
+    assert pin["effective_date"]
+
+
+async def test_a_predicted_load_carries_its_explanation(client: AsyncClient) -> None:
+    version_id = await append_ftp(client, 250)
+    session = await plan(client)
+
+    predicted = session["predicted_load"]
+
+    assert predicted["load"] == pytest.approx(44.5, abs=0.5)
+    assert predicted["intensity_factor"] == pytest.approx(0.762, abs=0.005)
+    assert 0 < predicted["coverage"] < 1
+    assert predicted["anchor_version_id"] == version_id
+    explanation = predicted["explanation"]
+    assert "TSS = duration_s" in explanation["formula"]
+    # The explanation names the *version's* value, not "the current FTP".
+    assert "250 W (estimated" in explanation["inputs"]["FTP"]
+    assert "midpoint" in " ".join(explanation["assumptions"])
+    assert "Coggan" in (explanation["citation"] or "")
+
+
+async def test_a_strength_session_resolves_nothing_and_predicts_no_load(
+    client: AsyncClient,
+) -> None:
+    session = await plan(client, purpose="max_strength", structure=LIFT)
+
+    assert session["pinned_anchors"] == []
+    assert session["resolved_steps"] == []
+    assert session["predicted_load"] is None
+
+
+async def test_appending_a_new_ftp_does_not_move_an_existing_session(
+    client: AsyncClient,
+) -> None:
+    # The definition-of-done line. A session resolves against the version it
+    # pinned, for as long as it exists; a new anchor is a new fact about the
+    # athlete, not a rewrite of what was already prescribed (invariant 4).
+    old_version = await append_ftp(client, 250)
+    session = await plan(client)
+    before = await client.get(f"{SESSIONS}/{session['id']}")
+
+    new_version = await append_ftp(client, 300)
+    after = await client.get(f"{SESSIONS}/{session['id']}")
+
+    assert new_version != old_version
+    assert after.json()["pinned_anchors"] == before.json()["pinned_anchors"]
+    assert work_targets(after.json()) == work_targets(before.json())
+    assert work_targets(after.json())[0]["resolved_low"] == 220.0
+    assert after.json()["predicted_load"] == before.json()["predicted_load"]
+
+
+async def test_re_planning_after_a_new_ftp_resolves_against_the_new_one(
+    client: AsyncClient,
+) -> None:
+    # The other half of the rule: an intent edit before the session is matched
+    # re-pins, so the ride the athlete is about to do uses today's FTP.
+    await append_ftp(client, 250)
+    session = await plan(client)
+    new_version = await append_ftp(client, 300)
+
+    revised = await client.patch(
+        f"{SESSIONS}/{session['id']}", json={"intent_text": "Re-planned."}
+    )
+
+    assert revised.status_code == 200, revised.text
+    (pin,) = revised.json()["pinned_anchors"]
+    assert pin["anchor_version_id"] == new_version
+    assert work_targets(revised.json())[0]["resolved_low"] == 264.0
+
+
 # --- listing, deleting, guards ------------------------------------------------
 
 

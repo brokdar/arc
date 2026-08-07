@@ -12,7 +12,7 @@ describe("describeCriterion", () => {
   it("phrases a time-in-band criterion in terms of the steps it selects", () => {
     const criterion: SuccessCriterion = {
       kind: "time_in_band",
-      band: { channel: "power", low: 0.95, high: 1.05 },
+      band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
       min_fraction: 0.75,
       selector: { kind: "role", role: "work", index: null },
     };
@@ -25,7 +25,7 @@ describe("describeCriterion", () => {
     expect(
       describeCriterion({
         kind: "time_in_band",
-        band: { channel: "hr", low: 0.9, high: 1.1 },
+        band: { channel: "hr", low: 0.9, high: 1.1, smoothing_s: 30 },
         min_fraction: 0.8,
         selector: { kind: "all", role: null, index: null },
       }),
@@ -36,7 +36,7 @@ describe("describeCriterion", () => {
     expect(
       describeCriterion({
         kind: "time_in_band",
-        band: { channel: "power", low: 0.98, high: 1.02 },
+        band: { channel: "power", low: 0.98, high: 1.02, smoothing_s: 30 },
         min_fraction: 0.9,
         selector: { kind: "index", role: null, index: 0 },
       }),
@@ -56,6 +56,7 @@ describe("describeCriterion", () => {
         channel: "power",
         limit: { kind: "percent_of_anchor", anchor_type: "ftp", pct: 1.05 },
         max_seconds_above: 360,
+        smoothing_s: 0,
       }),
     ).toBe("No more than 6:00 with power above 105% of FTP");
 
@@ -65,6 +66,7 @@ describe("describeCriterion", () => {
         channel: "hr",
         limit: { kind: "absolute", unit: "bpm", value: 178 },
         max_seconds_above: 300,
+        smoothing_s: 0,
       }),
     ).toBe("No more than 5:00 with heart rate above 178 bpm");
   });

@@ -9,7 +9,8 @@
           "kind": "ceiling",
           "channel": "power",
           "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 0.6 },
-          "max_seconds_above": 120
+          "max_seconds_above": 120,
+          "smoothing_s": 0
         }
       ]
     },
@@ -21,14 +22,20 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.9, "high": 1.1 },
+          "band": {
+            "channel": "power",
+            "low": 0.9,
+            "high": 1.1,
+            "smoothing_s": 30
+          },
           "min_fraction": 0.7
         },
         {
           "kind": "ceiling",
           "channel": "power",
           "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 1.0 },
-          "max_seconds_above": 300
+          "max_seconds_above": 300,
+          "smoothing_s": 0
         }
       ]
     },
@@ -40,7 +47,12 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.93, "high": 1.07 },
+          "band": {
+            "channel": "power",
+            "low": 0.93,
+            "high": 1.07,
+            "smoothing_s": 30
+          },
           "min_fraction": 0.75
         }
       ]
@@ -53,7 +65,12 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.95, "high": 1.05 },
+          "band": {
+            "channel": "power",
+            "low": 0.95,
+            "high": 1.05,
+            "smoothing_s": 30
+          },
           "min_fraction": 0.8
         }
       ]
@@ -66,7 +83,12 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.95, "high": 1.05 },
+          "band": {
+            "channel": "power",
+            "low": 0.95,
+            "high": 1.05,
+            "smoothing_s": 30
+          },
           "min_fraction": 0.8
         }
       ]
@@ -79,7 +101,12 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.92, "high": 1.12 },
+          "band": {
+            "channel": "power",
+            "low": 0.92,
+            "high": 1.12,
+            "smoothing_s": 10
+          },
           "min_fraction": 0.7
         }
       ]
@@ -92,7 +119,12 @@
         {
           "kind": "time_in_band",
           "selector": { "kind": "role", "role": "work" },
-          "band": { "channel": "power", "low": 0.9, "high": 1.2 },
+          "band": {
+            "channel": "power",
+            "low": 0.9,
+            "high": 1.2,
+            "smoothing_s": 3
+          },
           "min_fraction": 0.6
         }
       ]

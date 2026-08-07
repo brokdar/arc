@@ -38,6 +38,7 @@ instead of rewriting this module.
 import datetime as dt
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,9 +52,16 @@ from app.domain.criteria import (
     criteria_to_json,
 )
 from app.domain.criteria import referenced_anchor_types as criteria_anchors
+from app.domain.prediction import (
+    PinnedAnchor,
+    PredictedLoad,
+    predict_endurance_load,
+)
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
+from app.domain.resolution import ResolvedStep, resolve_steps
 from app.domain.sessions import SessionIntent, SessionStatus, check_prescription
+from app.domain.strength import StrengthWorkout
 from app.domain.versioning import FIRST_VERSION, next_version
 from app.domain.workout import (
     WorkoutBody,
@@ -68,7 +76,7 @@ from app.persistence.planned_sessions import (
     PlannedSessionRepository,
     PlannedSessionRow,
 )
-from app.services.anchors import AnchorService
+from app.services.anchors import AnchorService, parse_pins, resolve_pins
 from app.services.templates import purpose_templates
 from app.services.workouts import WorkoutService
 
@@ -134,6 +142,29 @@ async def _no_scores_yet(
     :func:`set_rescore_trigger`. The call site is already correct: it fires
     exactly when a post-hoc intent edit lands, inside the same transaction.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class SessionResolution:
+    """One session's prescription said in numbers, against its own pins.
+
+    Everything here is derived on read from the intent version in force. It
+    is a separate value rather than fields on the row because it costs a
+    query the write paths have no use for, and because it is *not* stored:
+    invariant 4 says the pins freeze, so resolving against them is always
+    correct and never needs invalidating.
+
+    Args:
+        anchors: The anchor versions this session pinned, by type.
+        steps: Every flattened step with its targets resolved. Empty for a
+            strength prescription, which has no anchor percentages.
+        predicted_load: What the prescription is expected to cost, or ``None``
+            when it cannot honestly be predicted.
+    """
+
+    anchors: Mapping[AnchorType, PinnedAnchor]
+    steps: tuple[ResolvedStep, ...]
+    predicted_load: PredictedLoad | None
 
 
 _match_probe: MatchProbe = _no_matches_yet
@@ -228,6 +259,45 @@ class PlannedSessionService:
                 f"Planned session {planned_session_id} has no intent version {version}"
             )
         return row
+
+    async def resolutions(
+        self, rows: Sequence[PlannedSessionRow]
+    ) -> dict[uuid.UUID, SessionResolution]:
+        """Resolve each session's prescription against the versions it pinned.
+
+        Batched: every pin on the screen is loaded in one query, so a page of
+        fifty sessions costs the same round-trips as one. Everything returned
+        is derived on read — the resolved watts and the predicted load are
+        pure functions of the frozen intent and its pins, so there is no
+        column and nothing to invalidate.
+
+        A pin the anchor table cannot answer is dropped rather than raising:
+        the targets that needed it then report themselves unresolved, which is
+        the honest answer on a read path.
+        """
+        pins = {
+            row.id: parse_pins(row.current_intent.pinned_anchor_versions)
+            for row in rows
+        }
+        versions = await self._anchors.by_ids(
+            version_id
+            for session_pins in pins.values()
+            for version_id in session_pins.values()
+        )
+        resolved: dict[uuid.UUID, SessionResolution] = {}
+        for row in rows:
+            anchors = resolve_pins(pins[row.id], versions)
+            body = _body_of(row.current_intent)
+            resolved[row.id] = SessionResolution(
+                anchors=anchors,
+                steps=resolve_steps(body, anchors),
+                predicted_load=(
+                    None
+                    if isinstance(body, StrengthWorkout)
+                    else predict_endurance_load(body, anchors)
+                ),
+            )
+        return resolved
 
     def default_criteria(self, purpose: Purpose) -> Sequence[dict[str, Any]]:
         """Return the success criteria a session of ``purpose`` starts with.
@@ -560,7 +630,9 @@ class PlannedSessionService:
             # was never part of what the athlete executed against (D54).
             pins = {
                 anchor: version
-                for anchor, version in _pins_of(current).items()
+                for anchor, version in parse_pins(
+                    current.pinned_anchor_versions
+                ).items()
                 if anchor in required
             }
             missing = required - set(pins)
@@ -802,14 +874,6 @@ def _body_of(intent: PlannedSessionIntentRow) -> WorkoutBody:
 def _parse_stored(structure: Mapping[str, Any]) -> WorkoutBody:
     """Parse a stored structure document, raising the domain's own error."""
     return workout_body_from_json(structure)
-
-
-def _pins_of(intent: PlannedSessionIntentRow) -> dict[AnchorType, uuid.UUID]:
-    """Read a stored intent's pins back into domain types."""
-    return {
-        AnchorType(anchor): uuid.UUID(version_id)
-        for anchor, version_id in (intent.pinned_anchor_versions or {}).items()
-    }
 
 
 def _payload(
