@@ -20,7 +20,9 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.schemas.planned_sessions import (
+    PlannedSessionCopy,
     PlannedSessionCreate,
+    PlannedSessionMove,
     PlannedSessionRead,
     PlannedSessionsPage,
     PlannedSessionUpdate,
@@ -209,6 +211,48 @@ async def update_planned_session(
         ]
     row = await service.update(planned_session_id, updates, actor=actor)
     return to_read(row)
+
+
+@router.post("/{planned_session_id}/move", responses=NOT_FOUND | BAD_BODY | INVALID)
+async def move_planned_session(
+    service: ServiceDep,
+    actor: ActorDep,
+    planned_session_id: uuid.UUID,
+    payload: PlannedSessionMove,
+) -> PlannedSessionRead:
+    """Move a planned session to another date.
+
+    Its own verb rather than `PATCH ... {"date": ...}`, which does the same
+    thing: dragging a card across the calendar is one intention, and the audit
+    trail should be able to say so (D56). Nothing about the prescription
+    changes — no intent version, no re-pinning.
+    """
+    return to_read(
+        await service.move(planned_session_id, date=payload.date, actor=actor)
+    )
+
+
+@router.post(
+    "/{planned_session_id}/copy",
+    status_code=status.HTTP_201_CREATED,
+    responses=NOT_FOUND | BAD_BODY | INVALID,
+)
+async def copy_planned_session(
+    service: ServiceDep,
+    actor: ActorDep,
+    planned_session_id: uuid.UUID,
+    payload: PlannedSessionCopy,
+) -> PlannedSessionRead:
+    """Copy a planned session onto another date.
+
+    The copy is a **new** planned session: status `planned`, its own intent
+    chain starting at version 1, and its anchors pinned at the versions in
+    force now — a prescription freezes when it is planned, and this one is
+    being planned now (invariant 4, D57).
+    """
+    return to_read(
+        await service.copy(planned_session_id, date=payload.date, actor=actor)
+    )
 
 
 @router.delete(

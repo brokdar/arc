@@ -119,6 +119,86 @@ async def test_the_profile_needs_a_session(anon_client: AsyncClient) -> None:
     assert (await anon_client.patch(ATHLETE, json={"name": "x"})).status_code == 401
 
 
+# --- plan state ---------------------------------------------------------------
+#
+# `paused` suppresses missed-session marking (WP-6) and nothing else. Nothing
+# reads it yet, so what is pinned here is the field, its default and its audit
+# trail — the things a later work package cannot add retroactively (D58).
+
+
+async def test_a_new_profile_is_on_an_active_plan(client: AsyncClient) -> None:
+    assert (await client.get(ATHLETE)).json()["plan_state"] == "active"
+
+
+async def test_the_plan_can_be_paused_and_resumed(client: AsyncClient) -> None:
+    paused = await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    assert paused.status_code == 200
+    assert paused.json()["plan_state"] == "paused"
+    assert (await client.get(ATHLETE)).json()["plan_state"] == "paused"
+
+    resumed = await client.patch(ATHLETE, json={"plan_state": "active"})
+
+    assert resumed.json()["plan_state"] == "active"
+
+
+async def test_pausing_the_plan_leaves_an_audit_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    rows = await db_session.execute(
+        select(AuditLogEntry)
+        .where(AuditLogEntry.action == "athlete.updated")
+        .order_by(AuditLogEntry.id)
+    )
+    entry = list(rows.scalars())[-1]
+    assert entry.payload_json["changed"] == {
+        "plan_state": {"from": "active", "to": "paused"}
+    }
+
+
+async def test_pausing_a_paused_plan_records_no_change(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    rows = await db_session.execute(
+        select(AuditLogEntry)
+        .where(AuditLogEntry.action == "athlete.updated")
+        .order_by(AuditLogEntry.id)
+    )
+    assert list(rows.scalars())[-1].payload_json["changed"] == {}
+
+
+async def test_clearing_the_plan_state_resumes_the_plan(client: AsyncClient) -> None:
+    # Like `sex` and `capabilities`, this one has an empty value rather than
+    # an absent one: a plan with no state is a plan that is running.
+    await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    response = await client.patch(ATHLETE, json={"plan_state": None})
+
+    assert response.json()["plan_state"] == "active"
+
+
+async def test_an_unknown_plan_state_is_rejected(client: AsyncClient) -> None:
+    response = await client.patch(ATHLETE, json={"plan_state": "suspended"})
+
+    assert response.status_code == 422
+
+
+async def test_updating_another_field_leaves_the_plan_state_alone(
+    client: AsyncClient,
+) -> None:
+    await client.patch(ATHLETE, json={"plan_state": "paused"})
+
+    response = await client.patch(ATHLETE, json={"name": "Alex"})
+
+    assert response.json()["plan_state"] == "paused"
+
+
 # The next three pin edge cases found by Schemathesis fuzzing — keep them:
 # they guard 500s at the validation boundary.
 

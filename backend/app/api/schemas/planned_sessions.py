@@ -68,6 +68,24 @@ class PlannedSessionUpdate(BaseModel):
     success_criteria: list[SuccessCriterionSchema] | None = None
 
 
+class PlannedSessionMove(BaseModel):
+    """Payload for moving a planned session to another date."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The athlete-local date to move the session to.
+    date: dt.date
+
+
+class PlannedSessionCopy(BaseModel):
+    """Payload for copying a planned session onto another date."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The athlete-local date the copy is planned for.
+    date: dt.date
+
+
 class SessionIntentRead(BaseModel):
     """One version of a planned session's intent.
 

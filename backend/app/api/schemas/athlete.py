@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.validation import PostgresJsonObject, PostgresText
 from app.domain.athlete import MAX_HEIGHT_CM, MIN_HEIGHT_CM, Sex
+from app.domain.plan import PlanState
 
 #: Constraints live INSIDE the union member: applied to the union itself,
 #: pydantic would try `min_length` against None and 500 with a TypeError.
@@ -29,6 +30,9 @@ class AthleteRead(BaseModel):
     height_cm: float | None
     #: Free-form per-discipline capability stub; opaque to the MVP.
     capabilities: dict[str, Any]
+    #: Whether the plan is being enforced. `paused` stops missed-session
+    #: marking and nothing else (`app.domain.plan`).
+    plan_state: PlanState
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -37,8 +41,9 @@ class AthleteUpdate(BaseModel):
     """Payload for partially updating the profile.
 
     Omitted fields are left unchanged; an explicit ``null`` clears a field
-    (for ``sex`` and ``capabilities``, "clear" means back to ``unspecified``
-    and ``{}`` — those two have an empty value rather than an absent one).
+    (for ``sex``, ``capabilities`` and ``plan_state``, "clear" means back to
+    ``unspecified``, ``{}`` and ``active`` — those three have an empty value
+    rather than an absent one).
     """
 
     # `extra="forbid"` so a typo'd field name is a 422 rather than a silent
@@ -50,6 +55,8 @@ class AthleteUpdate(BaseModel):
     sex: Sex | None = None
     height_cm: HeightCm | None = None
     capabilities: PostgresJsonObject | None = None
+    #: Pause the plan (no missed-session marking) or resume it.
+    plan_state: PlanState | None = None
 
     @field_validator("date_of_birth")
     @classmethod

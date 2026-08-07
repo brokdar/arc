@@ -782,6 +782,263 @@ async def test_an_empty_edit_is_refused_rather_than_audited(
     ]
 
 
+# --- moving and copying -------------------------------------------------------
+#
+# Both are calendar operations with their own verbs (D56): a move changes the
+# date and nothing else, and a copy is a *new* session planned now — which is
+# why it re-pins (invariant 4, D57) rather than inheriting the original's pins.
+
+
+async def test_moving_a_session_changes_its_date_and_nothing_else(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+
+    moved = await client.post(
+        f"{SESSIONS}/{session['id']}/move", json={"date": "2026-08-13"}
+    )
+
+    assert moved.status_code == 200, moved.text
+    body = moved.json()
+    assert body["id"] == session["id"]
+    assert body["date"] == "2026-08-13"
+    assert body["intent"] == session["intent"]
+    assert body["intent_versions"] == 1
+
+
+async def test_a_move_is_audited_with_where_it_came_from(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+
+    await client.post(f"{SESSIONS}/{session['id']}/move", json={"date": "2026-08-13"})
+
+    assert await audit_actions(db_session) == [
+        "anchor.appended",
+        "planned_session.created",
+        "planned_session.moved",
+    ]
+    result = await db_session.execute(
+        select(AuditLogEntry).where(AuditLogEntry.action == "planned_session.moved")
+    )
+    entry = result.scalar_one()
+    assert entry.entity_id == uuid.UUID(session["id"])
+    assert entry.payload_json["from"] == "2026-08-10"
+    assert entry.payload_json["to"] == "2026-08-13"
+
+
+async def test_moving_a_session_to_the_day_it_is_already_on_is_allowed(
+    client: AsyncClient,
+) -> None:
+    # Dragging a card back where it came from is a legitimate gesture, and
+    # refusing it would make the client track what the server already knows.
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+
+    response = await client.post(
+        f"{SESSIONS}/{session['id']}/move", json={"date": "2026-08-10"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["date"] == "2026-08-10"
+
+
+async def test_moving_a_session_that_does_not_exist_is_a_404(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        f"{SESSIONS}/{uuid.uuid4()}/move", json={"date": "2026-08-13"}
+    )
+
+    assert response.status_code == 404
+
+
+async def test_copying_a_session_creates_a_new_one_on_the_target_date(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    session = await plan(
+        client, date="2026-08-10", intent_text="Hold the last rep together."
+    )
+
+    response = await client.post(
+        f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+    )
+
+    assert response.status_code == 201, response.text
+    copy = response.json()
+    assert copy["id"] != session["id"]
+    assert copy["date"] == "2026-08-17"
+    assert copy["status"] == "planned"
+    assert copy["discipline"] == session["discipline"]
+    assert copy["intent"]["purpose"] == session["intent"]["purpose"]
+    assert copy["intent"]["structure"] == session["intent"]["structure"]
+    assert copy["intent"]["intent_text"] == "Hold the last rep together."
+    assert copy["intent"]["success_criteria"] == session["intent"]["success_criteria"]
+    # The original is untouched.
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).json() == session
+
+
+async def test_a_copy_pins_the_anchor_version_in_force_now(
+    client: AsyncClient,
+) -> None:
+    # Invariant 4: a prescription freezes when it is planned, and the copy is
+    # being planned now. Repeating last week's ride after an FTP test
+    # prescribes against the new FTP, which is what "repeat this" means.
+    old = await append_ftp(client, 240)
+    session = await plan(client, date="2026-08-10")
+    assert session["intent"]["pinned_anchor_versions"] == {"ftp": old}
+    new = await append_ftp(client, 265)
+
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    assert copy["intent"]["pinned_anchor_versions"] == {"ftp": new}
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).json()["intent"][
+        "pinned_anchor_versions"
+    ] == {"ftp": old}
+
+
+async def test_a_copy_starts_its_own_intent_chain(client: AsyncClient) -> None:
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+    await client.patch(
+        f"{SESSIONS}/{session['id']}", json={"coach_notes": "second version"}
+    )
+
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    assert copy["intent"]["version"] == 1
+    assert copy["intent"]["superseded_by"] is None
+    assert copy["intent"]["recompute_reason"] is None
+    assert copy["intent"]["edited_post_hoc"] is False
+    assert copy["intent"]["artefact_id"] == copy["id"]
+    assert copy["intent_versions"] == 1
+    # The copy carries the version in force, not the one it was planned from.
+    assert copy["intent"]["coach_notes"] == "second version"
+    intents = (await client.get(f"{SESSIONS}/{copy['id']}/intents")).json()
+    assert [intent["version"] for intent in intents["items"]] == [1]
+
+
+async def test_editing_a_copy_leaves_the_original_alone(client: AsyncClient) -> None:
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    await client.patch(
+        f"{SESSIONS}/{copy['id']}", json={"coach_notes": "only on the copy"}
+    )
+
+    original = (await client.get(f"{SESSIONS}/{session['id']}")).json()
+    assert original["intent"]["coach_notes"] is None
+    assert original["intent_versions"] == 1
+    assert (await client.get(f"{SESSIONS}/{copy['id']}")).json()["intent_versions"] == 2
+
+
+async def test_a_copy_keeps_the_criteria_as_they_stand(client: AsyncClient) -> None:
+    # Edited criteria are part of what is being repeated; re-deriving them
+    # from the purpose template would quietly undo the athlete's edit.
+    await append_ftp(client)
+    session = await plan(
+        client,
+        date="2026-08-10",
+        success_criteria=[{"kind": "duration_floor", "min_seconds": 900}],
+    )
+
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    assert copy["intent"]["success_criteria"] == [
+        {"kind": "duration_floor", "min_seconds": 900}
+    ]
+
+
+async def test_a_copy_keeps_the_provenance_link_to_the_library(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    created = await client.post(WORKOUTS, json={"name": "3 × 8", "structure": RIDE})
+    workout_id = created.json()["id"]
+    session = await plan(
+        client, date="2026-08-10", structure=None, workout_id=workout_id
+    )
+
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    assert copy["intent"]["workout_id"] == workout_id
+
+
+async def test_a_copy_is_audited_with_where_it_came_from(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-10")
+
+    copy = (
+        await client.post(
+            f"{SESSIONS}/{session['id']}/copy", json={"date": "2026-08-17"}
+        )
+    ).json()
+
+    assert await audit_actions(db_session) == [
+        "anchor.appended",
+        "planned_session.created",
+        "planned_session.copied",
+    ]
+    result = await db_session.execute(
+        select(AuditLogEntry).where(AuditLogEntry.action == "planned_session.copied")
+    )
+    entry = result.scalar_one()
+    assert entry.entity_id == uuid.UUID(copy["id"])
+    assert entry.payload_json["copied_from"] == session["id"]
+    assert entry.payload_json["date"] == "2026-08-17"
+    assert entry.payload_json["intent_version"] == 1
+
+
+async def test_copying_a_session_that_does_not_exist_is_a_404(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        f"{SESSIONS}/{uuid.uuid4()}/copy", json={"date": "2026-08-17"}
+    )
+
+    assert response.status_code == 404
+
+
+async def test_moving_and_copying_need_a_session_cookie(
+    anon_client: AsyncClient,
+) -> None:
+    session_id = uuid.uuid4()
+    move = await anon_client.post(
+        f"{SESSIONS}/{session_id}/move", json={"date": "2026-08-17"}
+    )
+    copy = await anon_client.post(
+        f"{SESSIONS}/{session_id}/copy", json={"date": "2026-08-17"}
+    )
+
+    assert (move.status_code, copy.status_code) == (401, 401)
+
+
 # --- listing, deleting, guards ------------------------------------------------
 
 

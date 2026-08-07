@@ -287,6 +287,9 @@
             ],
             "title": "Name"
           },
+          "plan_state": {
+            "$ref": "#/components/schemas/PlanState"
+          },
           "sex": {
             "$ref": "#/components/schemas/Sex"
           },
@@ -302,6 +305,7 @@
           "sex",
           "height_cm",
           "capabilities",
+          "plan_state",
           "created_at",
           "updated_at"
         ],
@@ -310,7 +314,7 @@
       },
       "AthleteUpdate": {
         "additionalProperties": false,
-        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex`` and ``capabilities``, \"clear\" means back to ``unspecified``\nand ``{}`` \u2014 those two have an empty value rather than an absent one).",
+        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex``, ``capabilities`` and ``plan_state``, \"clear\" means back to\n``unspecified``, ``{}`` and ``active`` \u2014 those three have an empty value\nrather than an absent one).",
         "properties": {
           "capabilities": {
             "anyOf": [
@@ -362,6 +366,16 @@
               }
             ],
             "title": "Name"
+          },
+          "plan_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sex": {
             "anyOf": [
@@ -859,6 +873,85 @@
         "title": "PercentOfAnchorSchema",
         "type": "object"
       },
+      "PlanState": {
+        "description": "Whether the plan is being enforced.\n\n``PAUSED`` does not pause the application: see the module docstring for\nwhat it does and does not stop.",
+        "enum": ["active", "paused"],
+        "title": "PlanState",
+        "type": "string"
+      },
+      "PlanWeekDayRead": {
+        "description": "One day of the week, with the sessions planned for it.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/WeekSessionRead"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": ["date", "sessions"],
+        "title": "PlanWeekDayRead",
+        "type": "object"
+      },
+      "PlanWeekRead": {
+        "description": "Seven consecutive days of the plan, empty days included.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekDayRead"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "planned_duration_s": {
+            "title": "Planned Duration S",
+            "type": "integer"
+          },
+          "session_count": {
+            "title": "Session Count",
+            "type": "integer"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "days",
+          "session_count",
+          "planned_duration_s"
+        ],
+        "title": "PlanWeekRead",
+        "type": "object"
+      },
+      "PlannedSessionCopy": {
+        "additionalProperties": false,
+        "description": "Payload for copying a planned session onto another date.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": ["date"],
+        "title": "PlannedSessionCopy",
+        "type": "object"
+      },
       "PlannedSessionCreate": {
         "additionalProperties": false,
         "description": "Payload for planning a session.",
@@ -979,6 +1072,20 @@
         },
         "required": ["date", "purpose"],
         "title": "PlannedSessionCreate",
+        "type": "object"
+      },
+      "PlannedSessionMove": {
+        "additionalProperties": false,
+        "description": "Payload for moving a planned session to another date.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": ["date"],
+        "title": "PlannedSessionMove",
         "type": "object"
       },
       "PlannedSessionRead": {
@@ -2047,6 +2154,110 @@
         },
         "required": ["detail"],
         "title": "ValidationErrorDetail",
+        "type": "object"
+      },
+      "WeekSessionRead": {
+        "description": "One planned session, as a calendar card shows it.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "intent_version": {
+            "title": "Intent Version",
+            "type": "integer"
+          },
+          "planned_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Duration S"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "step_count": {
+            "title": "Step Count",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "purpose",
+          "status",
+          "title",
+          "workout_id",
+          "planned_duration_s",
+          "total_sets",
+          "step_count",
+          "intent_text",
+          "intent_version"
+        ],
+        "title": "WeekSessionRead",
         "type": "object"
       },
       "WorkoutCreate": {
@@ -3338,6 +3549,65 @@
         "tags": ["exercises"]
       }
     },
+    "/api/v1/plan/week": {
+      "get": {
+        "description": "Get seven consecutive days of the plan, empty days included.\n\nEach session is summarized for a calendar card; its full detail \u2014 step\ntree, criteria, pins, intent history \u2014 stays at\n`GET /api/v1/planned-sessions/{id}`.",
+        "operationId": "plan-get_plan_week",
+        "parameters": [
+          {
+            "description": "First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "description": "First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week.",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanWeekRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Plan Week",
+        "tags": ["plan"]
+      }
+    },
     "/api/v1/planned-sessions": {
       "get": {
         "description": "List planned sessions in date order, optionally within a date range.",
@@ -3726,6 +3996,93 @@
         "tags": ["planned-sessions"]
       }
     },
+    "/api/v1/planned-sessions/{planned_session_id}/copy": {
+      "post": {
+        "description": "Copy a planned session onto another date.\n\nThe copy is a **new** planned session: status `planned`, its own intent\nchain starting at version 1, and its anchors pinned at the versions in\nforce now \u2014 a prescription freezes when it is planned, and this one is\nbeing planned now (invariant 4, D57).",
+        "operationId": "planned-sessions-copy_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionCopy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Copy Planned Session",
+        "tags": ["planned-sessions"]
+      }
+    },
     "/api/v1/planned-sessions/{planned_session_id}/intents": {
       "get": {
         "description": "List every intent version of one session, oldest first.\n\nUnpaged: intent versions are the history of one session's prescription,\nand there are a handful even for a much-edited one.",
@@ -3866,6 +4223,93 @@
           }
         ],
         "summary": "Get Planned Session Intent",
+        "tags": ["planned-sessions"]
+      }
+    },
+    "/api/v1/planned-sessions/{planned_session_id}/move": {
+      "post": {
+        "description": "Move a planned session to another date.\n\nIts own verb rather than `PATCH ... {\"date\": ...}`, which does the same\nthing: dragging a card across the calendar is one intention, and the audit\ntrail should be able to say so (D56). Nothing about the prescription\nchanges \u2014 no intent version, no re-pinning.",
+        "operationId": "planned-sessions-move_planned_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlannedSessionMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlannedSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Move Planned Session",
         "tags": ["planned-sessions"]
       }
     },

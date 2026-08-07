@@ -15,6 +15,7 @@ from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.exercises import router as exercises_router
 from app.api.routes.health import router as health_router
+from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
 from app.api.routes.purposes import router as purposes_router
 from app.api.routes.workouts import labels_router as workout_labels_router
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
     api.include_router(workouts_router)
     api.include_router(workout_labels_router)
     api.include_router(planned_sessions_router)
+    api.include_router(plan_router)
     app.include_router(api)
 
     return app

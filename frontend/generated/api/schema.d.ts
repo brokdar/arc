@@ -241,6 +241,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/plan/week": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Plan Week
+     * @description Get seven consecutive days of the plan, empty days included.
+     *
+     *     Each session is summarized for a calendar card; its full detail — step
+     *     tree, criteria, pins, intent history — stays at
+     *     `GET /api/v1/planned-sessions/{id}`.
+     */
+    get: operations["plan-get_plan_week"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/planned-sessions": {
     parameters: {
       query?: never;
@@ -297,6 +321,31 @@ export interface paths {
     patch: operations["planned-sessions-update_planned_session"];
     trace?: never;
   };
+  "/api/v1/planned-sessions/{planned_session_id}/copy": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Copy Planned Session
+     * @description Copy a planned session onto another date.
+     *
+     *     The copy is a **new** planned session: status `planned`, its own intent
+     *     chain starting at version 1, and its anchors pinned at the versions in
+     *     force now — a prescription freezes when it is planned, and this one is
+     *     being planned now (invariant 4, D57).
+     */
+    post: operations["planned-sessions-copy_planned_session"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/planned-sessions/{planned_session_id}/intents": {
     parameters: {
       query?: never;
@@ -334,6 +383,31 @@ export interface paths {
     get: operations["planned-sessions-get_planned_session_intent"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/planned-sessions/{planned_session_id}/move": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Move Planned Session
+     * @description Move a planned session to another date.
+     *
+     *     Its own verb rather than `PATCH ... {"date": ...}`, which does the same
+     *     thing: dragging a card across the calendar is one intention, and the audit
+     *     trail should be able to say so (D56). Nothing about the prescription
+     *     changes — no intent version, no re-pinning.
+     */
+    post: operations["planned-sessions-move_planned_session"];
     delete?: never;
     options?: never;
     head?: never;
@@ -642,6 +716,7 @@ export interface components {
       height_cm: number | null;
       /** Name */
       name: string | null;
+      plan_state: components["schemas"]["PlanState"];
       sex: components["schemas"]["Sex"];
       /**
        * Updated At
@@ -654,8 +729,9 @@ export interface components {
      * @description Payload for partially updating the profile.
      *
      *     Omitted fields are left unchanged; an explicit ``null`` clears a field
-     *     (for ``sex`` and ``capabilities``, "clear" means back to ``unspecified``
-     *     and ``{}`` — those two have an empty value rather than an absent one).
+     *     (for ``sex``, ``capabilities`` and ``plan_state``, "clear" means back to
+     *     ``unspecified``, ``{}`` and ``active`` — those three have an empty value
+     *     rather than an absent one).
      */
     AthleteUpdate: {
       /** Capabilities */
@@ -668,6 +744,7 @@ export interface components {
       height_cm?: number | null;
       /** Name */
       name?: string | null;
+      plan_state?: components["schemas"]["PlanState"] | null;
       sex?: components["schemas"]["Sex"] | null;
     };
     /**
@@ -947,6 +1024,61 @@ export interface components {
       pct_low: number;
     };
     /**
+     * PlanState
+     * @description Whether the plan is being enforced.
+     *
+     *     ``PAUSED`` does not pause the application: see the module docstring for
+     *     what it does and does not stop.
+     * @enum {string}
+     */
+    PlanState: "active" | "paused";
+    /**
+     * PlanWeekDayRead
+     * @description One day of the week, with the sessions planned for it.
+     */
+    PlanWeekDayRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Sessions */
+      sessions: components["schemas"]["WeekSessionRead"][];
+    };
+    /**
+     * PlanWeekRead
+     * @description Seven consecutive days of the plan, empty days included.
+     */
+    PlanWeekRead: {
+      /** Days */
+      days: components["schemas"]["PlanWeekDayRead"][];
+      /**
+       * End
+       * Format: date
+       */
+      end: string;
+      /** Planned Duration S */
+      planned_duration_s: number;
+      /** Session Count */
+      session_count: number;
+      /**
+       * Start
+       * Format: date
+       */
+      start: string;
+    };
+    /**
+     * PlannedSessionCopy
+     * @description Payload for copying a planned session onto another date.
+     */
+    PlannedSessionCopy: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+    };
+    /**
      * PlannedSessionCreate
      * @description Payload for planning a session.
      */
@@ -980,6 +1112,17 @@ export interface components {
         | null;
       /** Workout Id */
       workout_id?: string | null;
+    };
+    /**
+     * PlannedSessionMove
+     * @description Payload for moving a planned session to another date.
+     */
+    PlannedSessionMove: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
     };
     /**
      * PlannedSessionRead
@@ -1439,6 +1582,39 @@ export interface components {
     ValidationErrorDetail: {
       /** Detail */
       detail: string | unknown[];
+    };
+    /**
+     * WeekSessionRead
+     * @description One planned session, as a calendar card shows it.
+     */
+    WeekSessionRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Intent Text */
+      intent_text: string | null;
+      /** Intent Version */
+      intent_version: number;
+      /** Planned Duration S */
+      planned_duration_s: number | null;
+      purpose: components["schemas"]["Purpose"];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Step Count */
+      step_count: number;
+      /** Title */
+      title: string | null;
+      /** Total Sets */
+      total_sets: number | null;
+      /** Workout Id */
+      workout_id: string | null;
     };
     /**
      * WorkoutCreate
@@ -2235,6 +2411,47 @@ export interface operations {
       };
     };
   };
+  "plan-get_plan_week": {
+    parameters: {
+      query?: {
+        /** @description First athlete-local date of the seven-day window. Taken literally, not snapped to a Monday. Defaults to the Monday of the current week. */
+        start?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanWeekRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "planned-sessions-list_planned_sessions": {
     parameters: {
       query?: {
@@ -2500,6 +2717,68 @@ export interface operations {
       };
     };
   };
+  "planned-sessions-copy_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionCopy"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "planned-sessions-list_planned_session_intents": {
     parameters: {
       query?: never;
@@ -2595,6 +2874,68 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "planned-sessions-move_planned_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlannedSessionMove"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlannedSessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

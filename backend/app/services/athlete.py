@@ -9,6 +9,7 @@ creates the profile.
 
 import datetime as dt
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.athlete import AthleteProfile, Sex
+from app.domain.plan import PlanState
 from app.persistence.athlete import SINGLETON_ATHLETE_ID, Athlete, AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
@@ -23,7 +25,22 @@ from app.persistence.db import commit
 #: Fields `update` accepts. Anything else in the payload is a programming
 #: error in the adapter, not user input — the API schema rejects unknown
 #: fields long before a client gets here.
-UPDATABLE_FIELDS = ("name", "date_of_birth", "sex", "height_cm", "capabilities")
+UPDATABLE_FIELDS = (
+    "name",
+    "date_of_birth",
+    "sex",
+    "height_cm",
+    "capabilities",
+    "plan_state",
+)
+
+#: Fields whose "cleared" value is an empty state rather than an absence, so
+#: an explicit ``null`` resets them instead of nulling a column.
+EMPTY_VALUES: Mapping[str, Any] = {
+    "sex": Sex.UNSPECIFIED,
+    "capabilities": {},
+    "plan_state": PlanState.ACTIVE,
+}
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "athlete"
@@ -97,8 +114,9 @@ class AthleteService:
         athlete = await self._repository.get()
         before = _values(athlete) if athlete is not None else _empty_profile()
         candidate = {**before, **dict(updates)}
-        candidate["sex"] = candidate["sex"] or Sex.UNSPECIFIED
-        candidate["capabilities"] = candidate["capabilities"] or {}
+        for field, empty in EMPTY_VALUES.items():
+            if candidate[field] is None:
+                candidate[field] = empty
 
         # Validate through the domain value object rather than field by field:
         # the rules live there, so the API and a future MCP tool cannot drift
@@ -151,6 +169,7 @@ def _empty_profile() -> dict[str, Any]:
         "sex": Sex.UNSPECIFIED,
         "height_cm": None,
         "capabilities": {},
+        "plan_state": PlanState.ACTIVE,
     }
 
 
@@ -162,6 +181,7 @@ def _values(athlete: Athlete) -> dict[str, Any]:
         "sex": athlete.sex,
         "height_cm": athlete.height_cm,
         "capabilities": dict(athlete.capabilities or {}),
+        "plan_state": athlete.plan_state,
     }
 
 
@@ -169,6 +189,9 @@ def _jsonable(value: Any) -> Any:
     """Make a profile value storable in the audit payload column."""
     if isinstance(value, dt.date):
         return value.isoformat()
-    if isinstance(value, Sex):
+    # Every enum on the profile is a `StrEnum`, and the trail records the
+    # member's value for the same reason the columns do: one spelling of the
+    # vocabulary, whichever side of the ORM the reader is on.
+    if isinstance(value, StrEnum):
         return value.value
     return value

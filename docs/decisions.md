@@ -1239,3 +1239,129 @@ answer to preserve: it was never part of what the athlete executed against, so
 "the version in force when it entered the prescription" is the only version it
 was ever judged by. The pins that carry the athlete's actual execution — the
 ones still required — are untouched, which is what the invariant is protecting.
+
+## D55 — The week view is a seven-day projection, defaulting to this UTC Monday
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`GET /api/v1/plan/week?start=` returns **seven day objects**, empty ones
+included, each holding the sessions planned for it. `start` is inclusive and
+taken literally — a Wednesday start gives the seven days from Wednesday — and
+when omitted defaults to the **Monday of the current week**, with "today"
+computed in **UTC**. Each session is a flat card (id, date, discipline,
+purpose, status, title, workout_id, planned_duration_s, total_sets,
+step_count, intent_text, intent_version) and nothing else; the step tree,
+criteria, pins and intent history stay behind
+`GET /api/v1/planned-sessions/{id}`.
+
+This displaces the two obvious alternatives: returning the sessions as a flat
+list and letting the client group them, and returning whole
+`PlannedSessionRead` objects for the week.
+
+*Rationale:* a calendar renders a grid, so the empty Thursday is part of the
+answer; a projection that omits it makes every client — the web UI and WP-8's
+agent alike — rebuild the window from the query it just sent. Keeping the card
+flat is what makes the projection worth having: `planned_duration_s` is
+derived from the frozen step tree by the same domain helper the workout
+library uses (`total_duration_s`, never stored — a cached duration beside the
+intent version is a second answer waiting to disagree), and shipping the whole
+step tree per card would send a week's worth of prescriptions to draw seven
+tiles.
+
+`start` is not snapped to a Monday because snapping makes "the week from
+Wednesday" unaskable and costs the client nothing to do itself; the default
+*is* snapped, because "this week" has one obvious meaning. UTC is the honest
+default for "today" only because the athlete has no timezone yet: WP-4 puts a
+timezone on each recorded session (build plan §WP-4.4), and the athlete-level
+one belongs with it. The clock is isolated in a single `_today()` in
+`app.services.plan` so that work package has one line to change, and the
+domain helpers (`app.domain.plan.week_start`, `week_dates`) take the day they
+are asked about, keeping `app.domain` clock-free.
+
+The week deliberately does **not** carry the athlete's `plan_state` (D58): the
+athlete profile is bootstrapped lazily on first access, so folding it in would
+make a read projection a write path.
+
+## D56 — Move and copy are their own endpoints, not a PATCH of `date`
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`POST /api/v1/planned-sessions/{id}/move` and
+`POST /api/v1/planned-sessions/{id}/copy`, both taking `{"date": "..."}`. Move
+answers 200 with the moved session; copy answers 201 with the new one. Each
+writes its own audit action — `planned_session.moved`,
+`planned_session.copied` — beside the existing `planned_session.updated`.
+Moving a session to the date it already sits on is accepted, not refused.
+
+This displaces expressing both through the existing
+`PATCH /planned-sessions/{id}`, which can already change a date and would need
+only a "copy" flag or a `POST` to the collection with a source id.
+
+*Rationale:* the audit trail is the reason. A drag across the calendar and a
+form edit that happens to include a new date are different intentions, and
+with one verb the trail cannot tell them apart — the same argument that gives
+a copy its own action rather than a `planned_session.created` that hides where
+the prescription came from. The sub-resource path also keeps the payload
+honest: `move` takes a date and nothing else, so a client cannot smuggle an
+intent edit into a drag. Both paths have one more segment than
+`/{planned_session_id}`, so nothing collides with the id route
+(`.claude/rules/api-collection-facets.md`). A same-day move is accepted
+because dragging a card back where it came from is a real gesture, and
+refusing it would make the client track a fact the server already has.
+
+## D57 — A copy is a new session planned now: it re-pins and starts a fresh chain
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+Copying a planned session creates a new one with status `planned`, intent
+version 1, its own version chain, and **anchor versions pinned at whatever is
+in force at the moment of the copy** — not inherited from the original. What
+is carried over is everything the athlete authored: the purpose, the frozen
+structure (the snapshot, not a fresh read of the library workout), the intent
+text, the coach notes, the success criteria as they stand (edited or not) and
+the provenance link to the library workout. Where the copy came from is
+recorded in the `planned_session.copied` audit payload (`copied_from`), not in
+a column.
+
+This displaces copying the pins along with the prescription, which is what
+"duplicate the row" would have done.
+
+*Rationale:* invariant 4 says a prescription freezes at *planning* time, and
+the copy is being planned now — so repeating last week's ride after an FTP
+test prescribes against the new FTP, which is what an athlete means by "do
+that again". Inheriting the pins would produce a session frozen against a
+number that was current for a plan entry it has no other relationship to, and
+the athlete would have no way to see that from the calendar. The criteria are
+copied as they stand rather than re-derived from the purpose template for the
+mirror-image reason: an edited criterion is part of what is being repeated,
+and re-deriving would quietly undo the edit. Provenance goes on the audit row
+rather than a `copied_from` column because a copy is an independent plan entry
+from the moment it exists; a column pointing at the original would invite
+readers — and WP-6's matcher — to treat one artefact as living in two places.
+
+## D58 — Plan state is a field on the athlete profile
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`active | paused` lives as `athlete.plan_state` (default `active`) and is read
+and written through the existing `GET`/`PATCH /api/v1/athlete`, audited by the
+`athlete.updated` row that already records changed fields. `null` clears it
+back to `active`, the way `sex` and `capabilities` clear to their empty
+values. The column carries a `server_default` — the only one on that table
+that is not a timestamp — because it was added to a table already holding its
+one row.
+
+This displaces a `plan` table (or a `plan_states` history table) with
+`POST /plan/pause` and `/plan/resume` endpoints.
+
+*Rationale:* there is one athlete and one plan (D6), so a table whose row
+count is fixed at one, joined to another table whose row count is fixed at
+one, buys nothing but a join. Two verbs would need their own service method,
+their own schemas and their own audit actions to express a boolean the profile
+endpoint already knows how to update, and the athlete's own history is the
+audit log — which records the transition with its actor, so an agent pausing
+the plan is distinguishable from the athlete doing it without a second table.
+The semantics stay as the build plan states them: paused means ingestion,
+matching and scoring carry on and **missed-session marking stops** (WP-6.7).
+Nothing consumes the field yet; it lands now so WP-6 reads state instead of
+writing a migration.

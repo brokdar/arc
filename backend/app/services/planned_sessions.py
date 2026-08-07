@@ -19,7 +19,12 @@ Build-plan invariant 4, in one place:
   anchor the new version introduces is pinned at today's version (D54).
 * Editing a session's *date* or *status* is not an intent edit and writes no
   version. Those are facts about the calendar, not about what the session is
-  for.
+  for — which is also why **moving** a session (`move`) touches nothing but
+  the date and its audit row.
+* **Copying** a session (`copy`) creates a *new* planned session, so the rule
+  above applies from the top: the copy gets intent version 1 and pins whatever
+  anchors are in force now. It is a session planned today that happens to say
+  what another one said, not a second view of the original.
 
 Two things this work package cannot yet do are represented as **explicit
 seams**, not as silence: whether a session has been matched (WP-6) and how a
@@ -373,6 +378,115 @@ class PlannedSessionService:
                     "intent_version": row.current_intent.version,
                 },
             )
+        await commit(self._session)
+        await self._session.refresh(row)
+        return row
+
+    async def move(
+        self, planned_session_id: uuid.UUID, *, date: dt.date, actor: Actor
+    ) -> PlannedSessionRow:
+        """Move a planned session to another date.
+
+        The calendar's drag-and-drop, and nothing more: the prescription, the
+        intent chain and the pins are untouched, because *when* a session is
+        planned for is not part of what it is for. A move to the day the
+        session already sits on is accepted and audited — dragging a card back
+        where it came from is a legitimate thing to do, and refusing it would
+        make the client track a fact the server already knows.
+
+        Raises:
+            NotFoundError: When no session has that id.
+        """
+        row = await self.get(planned_session_id)
+        moved_from = row.date
+        row.date = date
+        row = await self._repository.add(row)
+        await self._audit.record(
+            actor=actor,
+            action="planned_session.moved",
+            entity_type=ENTITY_TYPE,
+            entity_id=row.id,
+            payload={
+                "from": moved_from.isoformat(),
+                "to": row.date.isoformat(),
+                "intent_version": row.current_intent.version,
+            },
+        )
+        await commit(self._session)
+        await self._session.refresh(row)
+        return row
+
+    async def copy(
+        self, planned_session_id: uuid.UUID, *, date: dt.date, actor: Actor
+    ) -> PlannedSessionRow:
+        """Duplicate a planned session onto another date.
+
+        The copy is a new session planned *now*: status `planned`, intent
+        version 1, its own version chain, and its anchors pinned at the
+        versions in force today rather than inherited from the original
+        (invariant 4 — a prescription freezes when it is planned, and this
+        prescription is being planned now). Repeating last week's ride after
+        an FTP test therefore prescribes against the new FTP, which is what
+        "repeat this" means.
+
+        What *is* inherited is everything the athlete wrote: the purpose, the
+        frozen structure (the snapshot, not a fresh read of the library
+        workout, so a library edit since cannot change what is being
+        repeated), the intent text, the coach notes, the success criteria as
+        they stand — edited or not — and the provenance link to the library
+        workout.
+
+        Raises:
+            NotFoundError: When no session has that id.
+            ValidationError: When the copy cannot be pinned, i.e. an anchor
+                the prescription refers to has no version in force. Anchors
+                are append-only, so this means the original was planned
+                against an anchor type nobody has entered since.
+        """
+        source = await self.get(planned_session_id)
+        current = source.current_intent
+        with domain_rules():
+            body = _body_of(current)
+            criteria = criteria_from_json(current.success_criteria)
+        pins = await self._pin_anchors(_anchor_sources(body, criteria))
+        intent = self._build_intent(
+            purpose=current.purpose,
+            body=body,
+            criteria=criteria,
+            pins=pins,
+            intent_text=current.intent_text,
+            coach_notes=current.coach_notes,
+        )
+
+        row = await self._repository.add(
+            PlannedSessionRow(
+                date=date,
+                discipline=intent.discipline,
+                status=SessionStatus.PLANNED,
+            )
+        )
+        await self._repository.append_intent(
+            _intent_row(
+                planned_session_id=row.id,
+                version=FIRST_VERSION,
+                intent=intent,
+                workout_id=current.workout_id,
+                edited_post_hoc=False,
+                recompute_reason=None,
+            )
+        )
+        # Where the copy came from is recorded on the audit row rather than on
+        # the session: a copy is an independent plan entry from the moment it
+        # exists, and a column pointing at the original would invite readers
+        # to treat it as one artefact in two places.
+        await self._audit.record(
+            actor=actor,
+            action="planned_session.copied",
+            entity_type=ENTITY_TYPE,
+            entity_id=row.id,
+            payload=_payload(row, intent, version=FIRST_VERSION)
+            | {"copied_from": str(source.id)},
+        )
         await commit(self._session)
         await self._session.refresh(row)
         return row

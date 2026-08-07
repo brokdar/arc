@@ -147,6 +147,24 @@ class WorkoutRepository:
         )
         return list(result.scalars()), total or 0
 
+    async def names(self, workout_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Return the names of the given workouts, keyed by id.
+
+        Ids with no row are simply absent — a planned session's provenance
+        link is nulled when the library entry goes (`ondelete="SET NULL"`),
+        but a caller holding an id from elsewhere should not have to care.
+
+        Exists so a calendar can label a week's sessions in one query instead
+        of one per card; loading whole rows for a name would carry every
+        structure document along with it.
+        """
+        if not workout_ids:
+            return {}
+        result = await self._session.execute(
+            select(WorkoutRow.id, WorkoutRow.name).where(WorkoutRow.id.in_(workout_ids))
+        )
+        return {row.id: row.name for row in result}
+
     async def folders(self) -> Sequence[str]:
         """Return every folder label in use, sorted."""
         result = await self._session.execute(
