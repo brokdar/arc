@@ -79,8 +79,8 @@ decision-log id (`D12`) when one applies. Do not list files — the diff does th
 Do not open the body with a `Word: value` line; the Conventional Commits parser
 reads it as a footer.
 
-Add a `Co-Authored-By:` trailer naming the model you actually are — do not copy
-another model's name from history.
+Do not add a `Co-Authored-By:` trailer or any other AI-attribution footer —
+the user does not want this in commits or PRs.
 
 ## 4. Companion artifacts
 
