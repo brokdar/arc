@@ -14,8 +14,10 @@ resource for every page that exists today.
 
 import datetime as dt
 import uuid
+from typing import Annotated
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.api.pagination import Page
 from app.api.validation import PostgresText
@@ -41,6 +43,9 @@ from app.services.activity import (
     MIN_RIR,
     MIN_RPE,
 )
+
+#: A timezone as it is written: bounded to the width of the column holding it.
+TimezoneName = Annotated[PostgresText, Field(max_length=MAX_TIMEZONE_LENGTH)]
 
 
 class RecordingStopRead(BaseModel):
@@ -172,14 +177,29 @@ class SessionUpdate(BaseModel):
     discipline records that the athlete decided it, and setting the timezone
     re-derives ``local_date``, which is what puts a late-evening ride back on
     the right day.
+
+    **Optional by omission, never nullable.** Neither field can be *cleared*:
+    a session always has a discipline and always has a timezone, so the
+    service refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``
+    keeps the Python-side ``= None`` "unset" default while dropping the
+    ``null`` branch from the contract, so the schema promises exactly what the
+    parser accepts — the same rule the optional *query* parameters follow
+    (`.claude/rules/api-optional-query-params.md`), applied to a request body.
+    Other update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay
+    ``X | None`` on purpose: for those, ``null`` means "clear this field".
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    discipline: SessionDiscipline | None = None
-    timezone: PostgresText | None = Field(
+    discipline: SessionDiscipline | SkipJsonSchema[None] = None
+    # The bound rides on the *string* branch, not on the union. `Field(
+    # max_length=...)` beside a `X | SkipJsonSchema[None]` default is applied
+    # to the whole union — and `len(None)` is a `TypeError` inside pydantic's
+    # validator, which reaches the client as a 500 where the service's
+    # "timezone cannot be cleared" 422 belongs. (`X | None` happens to hoist
+    # the constraint onto the non-null member; this union does not.)
+    timezone: TimezoneName | SkipJsonSchema[None] = Field(
         default=None,
-        max_length=MAX_TIMEZONE_LENGTH,
         description=(
             "An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. "
             "Anything else is refused: a timezone that cannot be resolved makes "
@@ -218,9 +238,8 @@ class ManualSessionCreate(BaseModel):
     #: as local time on whichever machine happened to receive it.
     start_time: AwareDatetime = Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)
     #: The athlete-local timezone at the time, which fixes the session's date.
-    timezone: PostgresText = Field(
+    timezone: TimezoneName = Field(
         default="UTC",
-        max_length=MAX_TIMEZONE_LENGTH,
         description="IANA name, fixed offset (UTC+02:00), or UTC.",
     )
     duration_s: int = Field(ge=MIN_MANUAL_DURATION_S, le=MAX_MANUAL_DURATION_S)

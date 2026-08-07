@@ -12,10 +12,9 @@ import { Button } from "@/components/ui/button";
 import type { components, paths } from "@/generated/api/schema";
 import { SESSIONS_QUERY_PREFIX } from "@/lib/activity";
 import { $api } from "@/lib/api/client";
-import { apiErrorMessages } from "@/lib/api-errors";
+import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
 import { formatUtcStamp } from "@/lib/format";
 import {
-  canReject,
   describeReport,
   INGEST_EVENTS_QUERY_PREFIX,
   INGEST_OUTCOMES,
@@ -25,6 +24,8 @@ import {
   QUARANTINE_REASONS,
   QUARANTINE_STATUSES,
   type QuarantineRecord,
+  REJECT_OFFERS,
+  waitingLabel,
 } from "@/lib/ingest";
 
 type IngestEvent = components["schemas"]["IngestEventRead"];
@@ -51,16 +52,18 @@ const EVENTS_PAGE = 20;
  * client reading the status instead would report success and show nothing.
  */
 export function Inbox() {
+  const [queueOffset, setQueueOffset] = useState(0);
   const [eventOffset, setEventOffset] = useState(0);
 
   const quarantine = $api.useQuery("get", "/api/v1/ingest/quarantine", {
-    params: { query: { limit: QUARANTINE_PAGE } },
+    params: { query: { offset: queueOffset, limit: QUARANTINE_PAGE } },
   });
   const events = $api.useQuery("get", "/api/v1/ingest/events", {
     params: { query: { offset: eventOffset, limit: EVENTS_PAGE } },
   });
 
   const records = quarantine.data?.items ?? [];
+  const queueTotal = quarantine.data?.total ?? 0;
   const pending = records.filter((record) => record.status === "pending");
   const resolved = records.filter((record) => record.status !== "pending");
 
@@ -70,9 +73,12 @@ export function Inbox() {
         <h1 className="font-semibold text-lg tracking-[-0.01em]">Inbox</h1>
         <span className="font-mono text-ink-muted text-sm">
           {quarantine.data
-            ? pending.length === 0
-              ? "nothing waiting"
-              : `${pending.length} waiting`
+            ? waitingLabel({
+                pending: pending.length,
+                onPage: records.length,
+                offset: queueOffset,
+                total: queueTotal,
+              })
             : ""}
         </span>
       </Toolbar>
@@ -81,12 +87,25 @@ export function Inbox() {
         <UploadPanel />
 
         <section className="flex flex-col gap-2.5">
-          <SectionLabel level={2}>Waiting on you</SectionLabel>
+          {/* One pager for the whole queue, not one per band: the endpoint
+              returns pending first and resolved after (`list_quarantine`), so
+              a page is a slice of that single order and the two bands below
+              are how it is *read*, not what it is paged by. The range counts
+              records, therefore, and the toolbar counts what is waiting. */}
+          <Pager
+            heading="Waiting on you"
+            subject="quarantine records"
+            offset={queueOffset}
+            onPage={records.length}
+            total={queueTotal}
+            pageSize={QUARANTINE_PAGE}
+            onOffsetChange={setQueueOffset}
+          />
           {quarantine.isPending ? (
             <p className="text-ink-muted text-sm">Loading the queue…</p>
           ) : quarantine.error ? (
             <p role="alert" className="text-destructive text-sm">
-              Could not load the queue. Is the API reachable?
+              {loadFailureMessage(quarantine.error, "the queue")}
             </p>
           ) : pending.length === 0 ? (
             <Panel className="px-5 py-4 text-ink-muted text-base">
@@ -122,11 +141,73 @@ export function Inbox() {
           total={events.data?.total ?? 0}
           offset={eventOffset}
           loading={events.isPending}
-          failed={events.error != null}
+          error={events.error}
           onOffsetChange={setEventOffset}
         />
       </PageBody>
     </>
+  );
+}
+
+/**
+ * The heading of a paged band: what it holds, where in it you are, and the
+ * two steps.
+ *
+ * Shared by the queue and the log because they page identically, and because
+ * two hand-rolled copies of `Math.min(offset + items.length, total)` is two
+ * chances to get the last page's range wrong.
+ *
+ * The buttons read "Newer" and "Older" but are *named* for what they page —
+ * "Newer quarantine records", "Newer ingest log rows". Two pagers on one page
+ * whose controls are both called "Newer" are two controls a screen reader
+ * cannot tell apart, and the visible word stays inside the spoken name
+ * (WCAG 2.5.3), so nothing is said that is not also shown.
+ */
+function Pager({
+  heading,
+  subject,
+  offset,
+  onPage,
+  total,
+  pageSize,
+  onOffsetChange,
+}: {
+  heading: string;
+  subject: string;
+  offset: number;
+  onPage: number;
+  total: number;
+  pageSize: number;
+  onOffsetChange: (offset: number) => void;
+}) {
+  const last = Math.min(offset + onPage, total);
+  return (
+    <div className="flex items-baseline gap-2.5">
+      <SectionLabel level={2}>{heading}</SectionLabel>
+      <span className="font-mono text-2xs text-ink-faint">
+        {total === 0 ? "" : `${offset + 1}–${last} of ${total}`}
+      </span>
+      <span className="ml-auto flex items-center gap-1.5">
+        <Button
+          size="xs"
+          variant="secondary"
+          aria-label={`Newer ${subject}`}
+          disabled={offset === 0}
+          onClick={() => onOffsetChange(Math.max(0, offset - pageSize))}
+        >
+          Newer
+        </Button>
+        <Button
+          size="xs"
+          variant="secondary"
+          aria-label={`Older ${subject}`}
+          disabled={last >= total}
+          onClick={() => onOffsetChange(offset + pageSize)}
+        >
+          Older
+        </Button>
+      </span>
+    </div>
   );
 }
 
@@ -244,13 +325,21 @@ function UploadOutcome({ report }: { report: IngestReport }) {
       {report.detail ? (
         <span className="text-ink-muted text-sm">{report.detail}</span>
       ) : null}
-      {report.session_ids.map((id) => (
+      {/* One link per session, and each one says *which*. A multisport file
+          is ingested as one session per sport (A4.5), and N links all reading
+          "Open the session" are N controls a screen reader announces
+          identically and a person has to click through to tell apart. The
+          report carries ids and nothing to name them by, so the label counts:
+          the order here is the order the sports were in the file. */}
+      {report.session_ids.map((id, index) => (
         <Link
           key={id}
           href={`/sessions/${id}`}
           className="text-accent underline-offset-2 hover:underline"
         >
-          Open the session
+          {report.session_ids.length === 1
+            ? "Open the session"
+            : `Open session ${index + 1}`}
         </Link>
       ))}
     </div>
@@ -269,6 +358,9 @@ function QuarantineCard({ record }: { record: QuarantineRecord }) {
   const [rejecting, setRejecting] = useState(false);
   const queryClient = useQueryClient();
   const copy = QUARANTINE_REASONS[record.reason];
+  // What overruling *this* verdict is called, or nothing where the API would
+  // answer 409 (D107). Undefined is the whole condition for the second button.
+  const offer = REJECT_OFFERS[record.reason];
   const pending = record.status === "pending";
 
   const invalidate = () => {
@@ -353,23 +445,27 @@ function QuarantineCard({ record }: { record: QuarantineRecord }) {
             disabled={busy}
             onConfirm={() => confirm.mutate(variables)}
           />
-          {canReject(record.reason) && !rejecting ? (
+          {offer && !rejecting ? (
             <Button
               variant="secondary"
               disabled={busy}
               onClick={() => setRejecting(true)}
             >
-              Not a duplicate
+              {offer.label}
             </Button>
           ) : null}
         </div>
       ) : null}
 
-      {rejecting ? (
+      {rejecting && offer ? (
         <InlineConfirm
-          question="Ingest this file as its own session?"
-          confirmLabel="Ingest it"
+          question={offer.question}
+          confirmLabel={offer.confirmLabel}
           cancelLabel="Keep waiting"
+          // Disabled while the first answer is in flight: a second click is
+          // the same decision twice, and its 409 would land *after* the
+          // success and paint a refusal over a reject that went through.
+          disabled={busy}
           onConfirm={() => reject.mutate(variables)}
           onCancel={() => setRejecting(false)}
         />
@@ -410,49 +506,35 @@ function IngestLog({
   total,
   offset,
   loading,
-  failed,
+  error,
   onOffsetChange,
 }: {
   items: readonly IngestEvent[];
   total: number;
   offset: number;
   loading: boolean;
-  failed: boolean;
+  /** Whatever the query threw, or null. Carries its own status (D-note in
+      `lib/api-errors.ts`), so the message can name the right remedy. */
+  error: unknown;
   onOffsetChange: (offset: number) => void;
 }) {
-  const last = Math.min(offset + items.length, total);
   return (
     <section className="flex flex-col gap-2.5">
-      <div className="flex items-baseline gap-2.5">
-        <SectionLabel level={2}>Ingest log</SectionLabel>
-        <span className="font-mono text-2xs text-ink-faint">
-          {total === 0 ? "" : `${offset + 1}–${last} of ${total}`}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5">
-          <Button
-            size="xs"
-            variant="secondary"
-            disabled={offset === 0}
-            onClick={() => onOffsetChange(Math.max(0, offset - EVENTS_PAGE))}
-          >
-            Newer
-          </Button>
-          <Button
-            size="xs"
-            variant="secondary"
-            disabled={last >= total}
-            onClick={() => onOffsetChange(offset + EVENTS_PAGE)}
-          >
-            Older
-          </Button>
-        </span>
-      </div>
+      <Pager
+        heading="Ingest log"
+        subject="ingest log rows"
+        offset={offset}
+        onPage={items.length}
+        total={total}
+        pageSize={EVENTS_PAGE}
+        onOffsetChange={onOffsetChange}
+      />
 
       {loading ? (
         <p className="text-ink-muted text-sm">Loading the log…</p>
-      ) : failed ? (
+      ) : error != null ? (
         <p role="alert" className="text-destructive text-sm">
-          Could not load the ingest log.
+          {loadFailureMessage(error, "the ingest log")}
         </p>
       ) : items.length === 0 ? (
         <Panel className="px-5 py-4 text-ink-muted text-base">

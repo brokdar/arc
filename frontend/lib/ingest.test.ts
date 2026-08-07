@@ -7,6 +7,8 @@ import {
   INGEST_OUTCOMES,
   QUARANTINE_REASONS,
   QUARANTINE_STATUSES,
+  REJECT_OFFERS,
+  waitingLabel,
 } from "@/lib/ingest";
 
 type Schemas = components["schemas"];
@@ -53,10 +55,64 @@ describe("the ingest vocabulary", () => {
     expect(INGEST_OUTCOMES.duplicate_file).toBe("Already had it");
   });
 
-  it("offers reject only where there is something safe to ingest", () => {
+  it("offers reject for both verdicts the API lets you overrule", () => {
+    // D107 generalised D98: `implausible_channel` is overrulable too, because
+    // the cleaner nulls what it cannot believe — so the ride survives its
+    // broken strap. Everything else is still a 409.
     expect(canReject("suspected_duplicate")).toBe(true);
+    expect(canReject("implausible_channel")).toBe(true);
     expect(canReject("unreadable_file")).toBe(false);
     expect(canReject("too_short")).toBe(false);
+    expect(canReject("no_samples")).toBe(false);
+    expect(canReject("non_monotonic_timestamps")).toBe(false);
+  });
+
+  it("says what each reject actually does, in that verdict's own terms", () => {
+    // The two are different acts, so one shared "Not a duplicate" over both
+    // would describe only one of them.
+    expect(REJECT_OFFERS.suspected_duplicate?.label).toBe("Not a duplicate");
+    expect(REJECT_OFFERS.implausible_channel?.label).toBe("Ingest it anyway");
+    expect(REJECT_OFFERS.implausible_channel?.question).toContain("blanked");
+    // And the confirm side still offers discard for both: the remedy names it.
+    expect(QUARANTINE_REASONS.implausible_channel.remedy).toContain("Discard");
+  });
+});
+
+describe("waitingLabel", () => {
+  // The endpoint's `total` counts every record, resolved ones included, and a
+  // page is a page — so "how many are waiting on you" is answerable only where
+  // the page has demonstrably reached past the pending ones.
+  it("counts exactly when a resolved record proves the pending ran out", () => {
+    expect(waitingLabel({ pending: 2, onPage: 3, offset: 0, total: 9 })).toBe(
+      "2 waiting",
+    );
+    expect(waitingLabel({ pending: 0, onPage: 3, offset: 0, total: 9 })).toBe(
+      "nothing waiting",
+    );
+  });
+
+  it("counts exactly when the whole queue is on the page", () => {
+    expect(waitingLabel({ pending: 3, onPage: 3, offset: 0, total: 3 })).toBe(
+      "3 waiting",
+    );
+  });
+
+  it("refuses to state a total it cannot see the end of", () => {
+    // Fifty pending on a fifty-record page and fifty-eight records behind it:
+    // the ones past the cut may be pending too, so the number is a floor.
+    expect(
+      waitingLabel({ pending: 50, onPage: 50, offset: 0, total: 58 }),
+    ).toBe("at least 50 waiting");
+  });
+
+  it("reports the page, not the queue, once past the first one", () => {
+    // Anywhere but the first page the pending records are behind us.
+    expect(waitingLabel({ pending: 5, onPage: 8, offset: 50, total: 58 })).toBe(
+      "5 waiting on this page",
+    );
+    expect(waitingLabel({ pending: 0, onPage: 8, offset: 50, total: 58 })).toBe(
+      "nothing waiting on this page",
+    );
   });
 });
 

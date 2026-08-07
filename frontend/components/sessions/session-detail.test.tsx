@@ -57,8 +57,30 @@ describe("a device session", () => {
     expect(metric("Started")).toHaveTextContent("07:14");
     expect(metric("Ended")).toHaveTextContent("09:53");
     expect(metric("Timezone")).toHaveTextContent("Europe/Zurich");
-    expect(metric("Duration")).toHaveTextContent("2:29");
+  });
+
+  it("prints the wall clock and the recording time as two different numbers", async () => {
+    renderDetail(ACTIVITY_IDS.outdoorRide);
+    await ready();
+
+    // 05:14 to 07:53 is 2:39 on the clock; 2:29 of it was being recorded.
+    // They used to be the same number twice in two formats, because the row's
+    // `duration_s` *is* the recording time for a device session — which hid
+    // the very ten minutes the panel below prints as the paused total.
+    expect(metric("Duration")).toHaveTextContent("2:39");
     expect(metric("Recording time")).toHaveTextContent("2:29:00");
+    expect(metric("Stops")).toHaveTextContent("1 · 10:00 paused");
+  });
+
+  it("shows one number twice only where there was nothing to subtract", async () => {
+    renderDetail(ACTIVITY_IDS.trainerRide);
+    await ready();
+
+    // A clean trainer hour: 16:02 to 17:02, no stops, so elapsed and recording
+    // genuinely agree — and the page says so rather than implying a pause.
+    expect(metric("Duration")).toHaveTextContent("1:00");
+    expect(metric("Recording time")).toHaveTextContent("1:00:00");
+    expect(metric("Stops")).toHaveTextContent("0");
   });
 
   it("reads a fixed-offset timezone the way the backend writes it", async () => {
@@ -142,6 +164,8 @@ describe("a hand-entered session", () => {
         name: "Not assessed: Entered by hand — there were no pauses to subtract",
       }),
     ).toBeInTheDocument();
+    // Wall clock either way: a manual session's duration *is* end minus start.
+    expect(metric("Duration")).toHaveTextContent("1:00");
     expect(metric("RPE")).toHaveTextContent("7/10");
     expect(
       screen.getByText("Felt strong; added a set of pull-ups at the end."),

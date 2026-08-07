@@ -10,6 +10,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 
 from tests.unit.golden_fit import golden
@@ -167,6 +168,15 @@ async def test_sessions_need_a_session_cookie(
 ) -> None:
     assert (await anon_client.get(SESSIONS)).status_code == 401
     assert (await anon_client.post(MANUAL, json=a_manual_session())).status_code == 401
+    # The detail and the override, too. The id need not exist: the session
+    # guard runs before the lookup, so a stranger gets 401 rather than the
+    # 404 that would tell them whether the id is real.
+    missing = "0199a1b2-0000-7000-8000-000000000000"
+    assert (await anon_client.get(f"{SESSIONS}/{missing}")).status_code == 401
+    patch = await anon_client.patch(
+        f"{SESSIONS}/{missing}", json={"discipline": "other"}
+    )
+    assert patch.status_code == 401
 
 
 async def test_overriding_the_discipline_records_that_the_athlete_decided(
@@ -211,12 +221,55 @@ async def test_an_unresolvable_timezone_is_refused(
     # A stored timezone that cannot be resolved makes the session's date
     # unrecoverable, so it fails where it is written.
     session_id = await ingest(client, "gym.fit", "strength_watch.fit")
+    before = (await client.get(f"{SESSIONS}/{session_id}")).json()
 
     response = await client.patch(
         f"{SESSIONS}/{session_id}", json={"timezone": "Middle/Earth"}
     )
 
     assert response.status_code == 422
+    # And the refusal left the row alone. A 422 that had already written the
+    # zone would put the session on a day it was never on, which is the exact
+    # damage the check exists to prevent.
+    assert (await client.get(f"{SESSIONS}/{session_id}")).json() == before
+
+
+# A session always has a discipline and always has a timezone, so neither
+# field has a null to mean anything and the service refuses one. The *schema*
+# used to advertise `X | None` anyway, which is the same schema/parser mismatch
+# `.claude/rules/api-optional-query-params.md` describes for query parameters:
+# the contract promised something the API rejects, and Schemathesis' fuzzer
+# fails on exactly that (`API rejected schema-compliant request`). The two
+# tests below hold both ends — the contract no longer offers `null`, and the
+# service still refuses one from a caller who sends it anyway.
+
+
+@pytest.mark.parametrize("field", ["discipline", "timezone"])
+async def test_a_session_field_that_cannot_be_cleared_is_refused(
+    data_root: Path, client: AsyncClient, field: str
+) -> None:
+    session_id = await ingest(client, "gym.fit", "strength_watch.fit")
+    before = (await client.get(f"{SESSIONS}/{session_id}")).json()
+
+    response = await client.patch(f"{SESSIONS}/{session_id}", json={field: None})
+
+    assert response.status_code == 422, response.text
+    assert f"{field} cannot be cleared" in response.json()["detail"]
+    assert (await client.get(f"{SESSIONS}/{session_id}")).json() == before
+
+
+async def test_the_session_patch_contract_does_not_offer_null(
+    data_root: Path, client: AsyncClient
+) -> None:
+    spec = (await client.get("/openapi.json")).json()
+
+    update = spec["components"]["schemas"]["SessionUpdate"]["properties"]
+
+    # `SkipJsonSchema[None]` keeps the Python-side unset default and drops the
+    # `null` branch from the contract, so the schema promises exactly what the
+    # parser accepts: omit a field to leave it alone, never null it.
+    assert "null" not in str(update), update
+    assert update["timezone"]["type"] == "string"
 
 
 async def test_an_empty_patch_is_refused(data_root: Path, client: AsyncClient) -> None:
@@ -308,6 +361,9 @@ async def test_a_manual_session_needs_a_resolvable_timezone_and_a_real_duration(
     assert bad_zone.status_code == 422
     assert too_short.status_code == 422
     assert naive.status_code == 422
+    # None of the three wrote a row. A half-created session is worse than a
+    # refusal: it shows up in the log as a session that never happened.
+    assert (await client.get(SESSIONS)).json()["total"] == 0
 
 
 async def test_a_manual_session_defaults_to_utc_and_no_sets(

@@ -100,6 +100,14 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
   const icon = disciplineIconName(session.discipline);
   const start = localStamp(session.start_time, session.timezone);
   const end = localStamp(session.end_time, session.timezone);
+  // Wall clock, and derived rather than read: `duration_s` is the *recording*
+  // time for a device session (`app.api.routes.activity._duration`), so
+  // printing it under "Duration" beside "Recording time" showed one number
+  // twice in two formats and hid the pauses. End minus start is the other
+  // number — and the two now differ by exactly the paused total the recording
+  // panel prints below (D101: elapsed − recording = Σ stop rows).
+  const elapsedS =
+    (Date.parse(session.end_time) - Date.parse(session.start_time)) / 1000;
 
   return (
     <>
@@ -148,9 +156,7 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
               <Metric label="Timezone" mono={false}>
                 {session.timezone}
               </Metric>
-              <Metric label="Duration">
-                {formatDurationHm(session.duration_s)}
-              </Metric>
+              <Metric label="Duration">{formatDurationHm(elapsedS)}</Metric>
               <Metric label="Recording time">
                 {session.recording_time_s === null ? (
                   <NotAssessed reason="Entered by hand — there were no pauses to subtract" />

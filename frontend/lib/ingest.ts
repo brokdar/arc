@@ -67,7 +67,7 @@ export const QUARANTINE_REASONS: Readonly<
   implausible_channel: {
     title: "A channel is systematically implausible",
     remedy:
-      "Too much of one channel is outside any physical range for a spike to explain — a mis-paired sensor, usually. Fix the pairing and re-record.",
+      "Too much of one channel is outside any physical range for a spike to explain — a mis-paired sensor, usually. Discard this copy and fix the pairing, or ingest it anyway: the broken channel arrives blanked and the rest of the ride is kept.",
   },
 };
 
@@ -92,15 +92,91 @@ export const INGEST_OUTCOMES: Readonly<Record<IngestOutcome, string>> = {
 };
 
 /**
- * Whether "this is not a duplicate" is an offer worth making.
+ * What "overrule this verdict" is called, per verdict that can be overruled.
  *
- * Only a `suspected_duplicate` holds something safe to ingest; the API answers
- * 409 for every other reason (D98), and disagreeing with the parser does not
- * make the bytes readable. So the button is not rendered rather than rendered
- * and refused.
+ * Two of them can (D107, which generalised D98's "only a `suspected_duplicate`"):
+ * `suspected_duplicate` waives the duplicate checks, and
+ * `implausible_channel` waives the implausible-channel check and nothing else
+ * — the cleaner nulls what it cannot believe, so the ride is ingested with the
+ * broken channel blanked rather than with garbage in it. The API answers 409
+ * for every other reason, so those get no button at all rather than a button
+ * that is refused.
+ *
+ * The copy differs because the *act* differs, and a single "Not a duplicate"
+ * over both would describe only one of them. Each entry says what the button
+ * does, not which enum member it belongs to.
+ */
+export interface RejectOffer {
+  /** The button that opens the question. */
+  readonly label: string;
+  /** What the confirm strip asks before it happens. */
+  readonly question: string;
+  /** The button that goes through with it. */
+  readonly confirmLabel: string;
+}
+
+export const REJECT_OFFERS: Readonly<
+  Partial<Record<QuarantineReason, RejectOffer>>
+> = {
+  suspected_duplicate: {
+    label: "Not a duplicate",
+    question: "Ingest this file as its own session?",
+    confirmLabel: "Ingest it",
+  },
+  implausible_channel: {
+    label: "Ingest it anyway",
+    question: "Ingest it anyway — the broken channel arrives blanked?",
+    confirmLabel: "Ingest it",
+  },
+};
+
+/**
+ * Whether overruling the verdict is an offer worth making.
+ *
+ * Derived from `REJECT_OFFERS` rather than re-listing the reasons, so a
+ * verdict the product learns to overrule cannot become offerable without
+ * copy that says what overruling it does.
  */
 export function canReject(reason: QuarantineReason): boolean {
-  return reason === "suspected_duplicate";
+  return REJECT_OFFERS[reason] !== undefined;
+}
+
+/**
+ * How many files are waiting on the athlete, said only as far as it is known.
+ *
+ * The count is a page's worth of records, and the endpoint's `total` is *every*
+ * record — resolved ones included — so neither number is "how many are
+ * pending". What makes an answer possible at all is the server's sort order:
+ * `GET /ingest/quarantine` returns pending first (`list_quarantine`). So the
+ * pending total is known exactly when this page has already reached past them:
+ * either a resolved record appears on it, or it is the last page. Otherwise
+ * the page is solid pending and there may be more behind it, and the label
+ * says "at least" rather than a number it cannot stand behind.
+ *
+ * Anywhere but the first page the question is not answerable at all — the
+ * pending records are behind us — so the label reports the page instead.
+ */
+export function waitingLabel(queue: {
+  /** Pending records on the page in hand. */
+  readonly pending: number;
+  /** Records on the page in hand, pending or not. */
+  readonly onPage: number;
+  /** The offset this page was fetched at. */
+  readonly offset: number;
+  /** Every record the queue holds, whatever its status. */
+  readonly total: number;
+}): string {
+  const { pending, onPage, offset, total } = queue;
+  const lastPage = offset + onPage >= total;
+  if (offset > 0) {
+    return lastPage && pending === 0
+      ? "nothing waiting on this page"
+      : `${pending} waiting on this page`;
+  }
+  if (pending < onPage || lastPage) {
+    return pending === 0 ? "nothing waiting" : `${pending} waiting`;
+  }
+  return `at least ${pending} waiting`;
 }
 
 /**

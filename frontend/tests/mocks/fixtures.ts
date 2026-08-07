@@ -999,6 +999,27 @@ const RECORDING_IDS = {
   trainerRide: "0199a000-0000-7000-8000-000000000302",
 } as const;
 
+/**
+ * Details the pipeline really writes, quoted rather than invented.
+ *
+ * A `detail` is the parser's own sentence, truncated to `MAX_DETAIL_LENGTH`
+ * and stored (`app.ingest.pipeline._refuse_whole_file`). A fixture that puts a
+ * shorter, tidier sentence there is testing a message no backend emits — and
+ * these two in particular are the strings a *row* is read for, so the row was
+ * being asserted against copy that does not exist.
+ */
+export const DETAILS = {
+  /** `app.ingest.parsers.fit._decode`, for bytes that are not a FIT file. */
+  unreadableFit:
+    "the file is not a readable FIT recording: no samples could be " +
+    "decoded from it (not a FIT file @ 0; the Garmin decoder said: not a " +
+    "FIT file)",
+  /** `app.ingest.parsers.parse`, for an extension no parser is registered for. */
+  noParser: (filename: string) =>
+    `'${filename}' is not a file type this application reads ` +
+    "(expected one of: fit, gpx, tcx)",
+} as const;
+
 /** sha256 is 64 hex digits; these are the shape the column actually holds. */
 const HASHES = {
   outdoorRide:
@@ -1204,7 +1225,7 @@ function seedQuarantine(): Schemas["QuarantineRecordRead"][] {
       // Nothing parsed, so there is no activity to have an index.
       file_sport_index: null,
       reason: "unreadable_file",
-      detail: "not a FIT file: bad header magic",
+      detail: DETAILS.unreadableFit,
       status: "pending",
       suspected_session_id: null,
       created_at: "2026-08-06T06:12:33Z",
@@ -1234,7 +1255,7 @@ function seedEvents(): Schemas["IngestEventRead"][] {
       filename: "corrupt-export.fit",
       file_hash: HASHES.corrupt,
       outcome: "quarantined",
-      detail: "not a FIT file: bad header magic",
+      detail: DETAILS.unreadableFit,
       session_id: null,
     },
     {
@@ -1286,9 +1307,18 @@ function seedEvents(): Schemas["IngestEventRead"][] {
   // Enough history that the log is genuinely longer than one page. Every one
   // of these is the shape `_known_file` writes when a hash is already sitting
   // unresolved in quarantine: `duplicate_file`, no session, that sentence.
+  //
+  // And they are dated **inside the window in which that sentence was true**:
+  // the file was quarantined at 18:44:02 on the 30th and the athlete discarded
+  // it at 08:00 on the 31st, so a re-sighting saying "already waiting in
+  // quarantine" belongs between those two instants and nowhere else. The
+  // previous run sat on 2026-07-20…29 — before the record it claims to have
+  // found existed, which is a payload the pipeline cannot produce.
   const rescans = Array.from({ length: 20 }, (_, index) => ({
     id: `0199a000-0000-7000-8000-0000000006${String(index).padStart(2, "0")}`,
-    at: `2026-07-${String(29 - Math.floor(index / 2)).padStart(2, "0")}T0${index % 2 === 0 ? 8 : 7}:15:00Z`,
+    // 19:00 on the 30th, then every half hour: the last is 04:30 on the 31st,
+    // three and a half hours before the record was resolved.
+    at: rescanStamp(index),
     filename: "2026-07-30-lap.fit",
     file_hash: HASHES.shortLap,
     outcome: "duplicate_file" as const,
@@ -1296,6 +1326,14 @@ function seedEvents(): Schemas["IngestEventRead"][] {
     session_id: null,
   }));
   return [...meaningful, ...rescans];
+}
+
+/** The instant of re-sighting `index`, half-hourly from 2026-07-30T19:00:00Z. */
+function rescanStamp(index: number): string {
+  const first = Date.UTC(2026, 6, 30, 19, 0, 0);
+  return new Date(first + index * 30 * 60_000)
+    .toISOString()
+    .replace(".000", "");
 }
 
 /**
@@ -1364,12 +1402,17 @@ export function contentHash(text: string): string {
     a = Math.imul(a ^ text.charCodeAt(index), 0x01000193) >>> 0;
     b = Math.imul(b + text.charCodeAt(index) + index, 0x85ebca6b) >>> 0;
   }
+  // `>>> 0` is the whole point: `Math.imul` is *signed*, so without it roughly
+  // two in five words came out negative and stringified with a leading `-` —
+  // a "digest" containing a character sha256 cannot produce, which the schema
+  // could not catch (it is a string either way) and which made
+  // `Number.parseInt(hash.slice(0, 6), 16)` in `ingestedSessionFixture` return
+  // NaN for the exact bytes `inbox.test.tsx` uploads.
   const word = (seed: number) =>
-    Math.imul(seed ^ (seed >>> 15), 0x2545f491 >>> 0)
+    (Math.imul(seed ^ (seed >>> 15), 0x2545f491) >>> 0)
       .toString(16)
-      .padStart(8, "0")
-      .slice(-8);
-  return [a, b, a ^ b, Math.imul(a, 31) >>> 0]
+      .padStart(8, "0");
+  return [a, b, (a ^ b) >>> 0, Math.imul(a, 31) >>> 0]
     .map((seed) => `${word(seed)}${word(seed + 1)}`)
     .join("");
 }
@@ -1440,4 +1483,127 @@ export function ingestedSessionFixture(
     created_at: "2026-08-07T07:00:00Z",
     updated_at: "2026-08-07T07:00:00Z",
   };
+}
+
+// --- fixtures longer than one page -------------------------------------------
+//
+// A three-row list cannot fail the way a paged list fails: an offset that is
+// never sent, a range that lies on the last page, an "Older" that stays
+// enabled past the end are all invisible until there is a second page. These
+// two build one.
+
+/**
+ * A quarantine queue longer than one request, in the order the API returns it.
+ *
+ * Pending first, then resolved, newest first within each — `list_quarantine`'s
+ * own sort, and the fact the waiting count is derived from (`waitingLabel`).
+ * Every record is a `too_short` lap, which is the one verdict that arrives in
+ * bulk in real life: a head unit left recording between efforts.
+ */
+export function longQuarantineFixture(
+  pendingCount: number,
+  resolvedCount: number,
+): Schemas["QuarantineRecordRead"][] {
+  const record = (
+    index: number,
+    status: Schemas["QuarantineStatus"],
+  ): Schemas["QuarantineRecordRead"] => {
+    // Newest first: index 0 is the most recent, so the stamps run backwards.
+    const created = new Date(Date.UTC(2026, 7, 6, 6, 0, 0) - index * 3_600_000);
+    const seconds = 30 + (index % 80);
+    return {
+      id: `0199a000-0000-7000-8000-00000000${(0x7000 + index).toString(16)}`,
+      original_filename: `lap-${String(index).padStart(3, "0")}.fit`,
+      file_hash: contentHash(`lap-${index}`),
+      file_sport_index: 0,
+      reason: "too_short",
+      detail: `the activity lasts ${seconds} s; at least 120 s is needed for a session`,
+      status,
+      suspected_session_id: null,
+      created_at: created.toISOString().replace(".000", ""),
+      // A resolved record has a resolution time; a pending one does not.
+      resolved_at:
+        status === "pending"
+          ? null
+          : new Date(created.getTime() + 3_600_000)
+              .toISOString()
+              .replace(".000", ""),
+    };
+  };
+  return [
+    ...Array.from({ length: pendingCount }, (_, index) =>
+      record(index, "pending"),
+    ),
+    ...Array.from({ length: resolvedCount }, (_, index) =>
+      record(pendingCount + index, "confirmed_discarded"),
+    ),
+  ];
+}
+
+/**
+ * A session log longer than one page, newest first, with honest arithmetic.
+ *
+ * One device ride per day counting backwards from 2026-08-06. Every third one
+ * has a stop in it, and where it does, `duration_s` is elapsed *minus* the
+ * stop's rows — because that is what the API returns for a device session
+ * (`_duration`), and a run of rows whose duration ignored their pauses would
+ * be a page of sessions no pipeline could have produced.
+ */
+export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
+  return Array.from({ length: count }, (_, index) => {
+    const start = new Date(Date.UTC(2026, 7, 6, 6, 0, 0) - index * 86_400_000);
+    const elapsed = 3600 + (index % 5) * 600;
+    const stops =
+      index % 3 === 0 ? [{ start_index: 900, end_index: 900 + 120 }] : [];
+    const paused = stops.reduce(
+      (total, stop) => total + (stop.end_index - stop.start_index),
+      0,
+    );
+    const recording = elapsed - paused;
+    const stamp = (at: Date) => at.toISOString().replace(".000", "");
+    const id = `0199a000-0000-7000-8000-00000000${(0x8000 + index).toString(16)}`;
+    return {
+      id,
+      // Started at 06:00 UTC, so the UTC day and the local day agree.
+      local_date: stamp(start).slice(0, 10),
+      start_time: stamp(start),
+      end_time: stamp(new Date(start.getTime() + elapsed * 1000)),
+      timezone: "UTC",
+      discipline: "cycling" as const,
+      classification_source: "sport_field" as const,
+      discipline_overridden: false,
+      recording_kind: "device" as const,
+      status: "unmatched" as const,
+      duration_s: recording,
+      recording_time_s: recording,
+      rpe: null,
+      notes: null,
+      recordings: [
+        {
+          id: `0199a000-0000-7000-8000-00000000${(0x9000 + index).toString(16)}`,
+          file_hash: contentHash(`ride-${index}`),
+          file_sport_index: 0,
+          original_ext: "fit",
+          sport: "cycling",
+          elapsed_time_s: elapsed,
+          recording_time_s: recording,
+          recording_stops: stops,
+          median_time_delta_s: 1,
+          moving_time_s: recording,
+          power_source_candidates: ["Quarq DZero"],
+          power_source: "Quarq DZero",
+          power_source_rule: "only candidate",
+          hr_source_candidates: [],
+          hr_source: null,
+          hr_source_rule: null,
+          channels: ["power", "cadence", "speed"],
+          anomaly_count: 0,
+          created_at: stamp(new Date(start.getTime() + elapsed * 1000)),
+        },
+      ],
+      logged_sets: [],
+      created_at: stamp(new Date(start.getTime() + elapsed * 1000)),
+      updated_at: stamp(new Date(start.getTime() + elapsed * 1000)),
+    };
+  });
 }

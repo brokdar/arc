@@ -159,6 +159,13 @@ async def test_the_quarantine_queue_and_the_log_need_a_session(
         UPLOAD, files={"file": ("ride.fit", b"x", "application/octet-stream")}
     )
     assert upload_response.status_code == 401
+    # The two decisions too: they delete a file and re-run the pipeline, so
+    # they are the last endpoints here that may answer anything but 401 to a
+    # stranger. The id need not exist — the guard runs before the lookup.
+    record_id = "0199a1b2-0000-7000-8000-000000000000"
+    for decision in ("confirm", "reject"):
+        response = await anon_client.post(f"{QUARANTINE}/{record_id}/{decision}")
+        assert response.status_code == 401, decision
 
 
 async def test_the_ingest_log_records_every_file_newest_first(

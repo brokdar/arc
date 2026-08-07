@@ -5,7 +5,11 @@ import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionList } from "@/components/sessions/session-list";
-import { ACTIVITY_IDS } from "@/tests/mocks/fixtures";
+import {
+  ACTIVITY_IDS,
+  sessionRunFixture,
+  toListItem,
+} from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -119,6 +123,72 @@ describe("the session log", () => {
 
     await screen.findByText("Nothing in that discipline");
     expect(asked).toEqual([null, "strength"]);
+  });
+});
+
+describe("a log longer than one page", () => {
+  /** 57 rides — two full pages of 25 and a short third. */
+  function longLog(): (string | null)[] {
+    const rows = sessionRunFixture(57).map(toListItem);
+    const offsets: (string | null)[] = [];
+    server.use(
+      http.get("/api/v1/sessions", ({ query, response }) => {
+        offsets.push(query.get("offset"));
+        const offset = Number(query.get("offset") ?? 0);
+        const limit = Number(query.get("limit") ?? 25);
+        return response(200).json({
+          items: rows.slice(offset, offset + limit),
+          total: rows.length,
+          offset,
+          limit,
+        });
+      }),
+    );
+    return offsets;
+  }
+
+  it("walks forwards and back, one page at a time", async () => {
+    const offsets = longLog();
+    const user = userEvent.setup();
+    renderList();
+
+    expect(await screen.findByText("1–25 of 57")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Older" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findByText("26–50 of 57")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Newer" })).toBeEnabled();
+
+    // The last page is short, and the range says how short rather than
+    // running to the page size.
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findByText("51–57 of 57")).toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(7);
+    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Newer" }));
+    expect(await screen.findByText("26–50 of 57")).toBeInTheDocument();
+
+    // Every step asked the server for its page: a pager that paged the rows
+    // it already had would show the same twenty-five three times.
+    expect(offsets).toEqual(["0", "25", "50", "25"]);
+  });
+
+  it("returns to the first page when the filter changes under it", async () => {
+    // Page three of "all" is not page three of "cycling", and holding the
+    // offset across a filter change lands on rows that may not exist.
+    const offsets = longLog();
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText("1–25 of 57");
+
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    await screen.findByText("26–50 of 57");
+    await user.selectOptions(screen.getByLabelText("Discipline"), "cycling");
+
+    expect(await screen.findByText("1–25 of 57")).toBeInTheDocument();
+    expect(offsets).toEqual(["0", "25", "0"]);
   });
 });
 

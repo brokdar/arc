@@ -47,6 +47,23 @@ CONFLICT: Responses = {
 INVALID: Responses = {
     422: {"model": ValidationErrorDetail, "description": "The upload is unusable"}
 }
+#: The upload's success description, spelled out because "200" reads as
+#: "ingested" and here it does not have to be: a refused file is a *result*.
+UPLOAD_OK: Responses = {
+    200: {
+        "description": (
+            "The pipeline's report on the file. **A refused file is a 200 too**, "
+            'with `outcome: "quarantined"`, the ids in `quarantine_ids` and the '
+            "reason in `detail`: being unreadable, too short or a suspected "
+            "duplicate is a result, not a failed request. The other outcomes are "
+            "`ingested` (one `session_id` per sport in the file), `duplicate_file` "
+            "(the hash was already known, and `session_ids` says what it is "
+            "already stored as) and `error`. Only a request that is itself wrong "
+            "— an empty part, a file over the size limit — answers 4xx, so a "
+            "client must branch on `outcome` and never on the status."
+        )
+    }
+}
 
 
 def get_service(session: SessionDep) -> IngestService:
@@ -86,7 +103,7 @@ def to_report(report: IngestReport) -> IngestReportRead:
     )
 
 
-@router.post("/upload", responses=INVALID)
+@router.post("/upload", responses=UPLOAD_OK | INVALID)
 async def upload_activity_file(
     request: Request, service: ServiceDep, actor: ActorDep, file: UploadDep
 ) -> IngestReportRead:

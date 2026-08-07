@@ -14,8 +14,10 @@ import { expect, type Page, test } from "@playwright/test";
 
 const RIDE_SESSION = "0199a000-0000-7000-8000-000000000101";
 const INGESTED_SESSION = "0199a000-0000-7000-8000-000000000901";
+const REJECTED_SESSION = "0199a000-0000-7000-8000-000000000902";
 const DUPLICATE_RECORD = "0199a000-0000-7000-8000-000000000201";
 const CORRUPT_RECORD = "0199a000-0000-7000-8000-000000000202";
+const STRAP_RECORD = "0199a000-0000-7000-8000-000000000203";
 
 interface QuarantineRecord {
   id: string;
@@ -63,10 +65,31 @@ async function mockApi(page: Page) {
         file_hash: "c0ffee11deadbeef".repeat(4),
         file_sport_index: null,
         reason: "unreadable_file",
-        detail: "not a FIT file: bad header magic",
+        // The parser's own sentence (`app.ingest.parsers.fit`), not a tidier
+        // one written for the fixture.
+        detail:
+          "the file is not a readable FIT recording: no samples could be " +
+          "decoded from it (not a FIT file @ 0; the Garmin decoder said: " +
+          "not a FIT file)",
         status: "pending",
         suspected_session_id: null,
         created_at: "2026-08-06T06:12:33Z",
+        resolved_at: null,
+      },
+      {
+        // The other verdict the API lets you overrule (D107): the ride is
+        // fine, the strap is not, and the cleaner blanks what it cannot
+        // believe — so "ingest it anyway" is a real answer here.
+        id: STRAP_RECORD,
+        original_filename: "strap-2026-08-06.fit",
+        file_hash: "ab12cd34ef56ab78".repeat(4),
+        file_sport_index: 0,
+        reason: "implausible_channel",
+        detail:
+          "41% of the hr channel is outside 20-230 bpm; a mis-paired sensor rather than a spike",
+        status: "pending",
+        suspected_session_id: null,
+        created_at: "2026-08-06T06:12:35Z",
         resolved_at: null,
       },
     ] as QuarantineRecord[],
@@ -143,6 +166,57 @@ async function mockApi(page: Page) {
       record.resolved_at = "2026-08-07T09:00:00Z";
       return route.fulfill(json(record));
     }
+    if (path.endsWith("/reject") && method === "POST") {
+      const record = state.quarantine.find((entry) =>
+        path.includes(entry.id),
+      ) as QuarantineRecord;
+      if (record.status !== "pending") {
+        return route.fulfill(
+          json({ detail: "That record is already resolved" }, 409),
+        );
+      }
+      // The API's own rule (D107): two verdicts can be overruled, and this
+      // fake holds the line so the spec walks the path the server allows.
+      if (
+        record.reason !== "suspected_duplicate" &&
+        record.reason !== "implausible_channel"
+      ) {
+        return route.fulfill(
+          json(
+            {
+              detail:
+                "Only a suspected duplicate or an implausible channel can " +
+                "be rejected; this file could not be read",
+            },
+            409,
+          ),
+        );
+      }
+      record.status = "rejected_ingested";
+      record.resolved_at = "2026-08-07T09:00:00Z";
+      state.events.unshift({
+        id: "0199a000-0000-7000-8000-000000000701",
+        at: "2026-08-07T09:00:00Z",
+        filename: record.original_filename,
+        file_hash: record.file_hash,
+        outcome: "ingested",
+        detail: "1 session(s) ingested, 0 quarantined",
+        session_id: REJECTED_SESSION,
+      });
+      return route.fulfill(
+        json({
+          record,
+          report: {
+            filename: record.original_filename,
+            file_hash: record.file_hash,
+            outcome: "ingested",
+            detail: "1 session(s) ingested, 0 quarantined",
+            session_ids: [REJECTED_SESSION],
+            quarantine_ids: [],
+          },
+        }),
+      );
+    }
     if (path.endsWith("/ingest/upload") && method === "POST") {
       // The fake reads the filename out of the multipart body it was posted,
       // so the outcome is a function of the file, not of the route.
@@ -183,27 +257,69 @@ async function mockApi(page: Page) {
   return state;
 }
 
-/** A hand-entered session, which needs no recording metadata to render. */
+/**
+ * The session an ingested file became — a **device** session, with the file.
+ *
+ * It used to be a hand-entered one: `recording_kind: "manual"` beside
+ * `classification_source: "sport_field"` and no recordings, which is a payload
+ * the API cannot produce (nothing classified it from a sport field, because
+ * there was no file), and which made the spec walk from an uploaded FIT to a
+ * page saying "No device file". `RecordingPanel` — the half of this page that
+ * explains the ride's own numbers — was never rendered end to end.
+ *
+ * The arithmetic is the API's, exactly:
+ *
+ * * `end_time − start_time` is the **elapsed** time: 05:00 to 06:45 is 6300 s;
+ * * a stop is a half-open row range on the 1 Hz grid (D89), so 2400–2700 is
+ *   300 rows and 300 seconds, and `elapsed − recording` is that sum exactly
+ *   (D101) — 6300 − 300 = 6000;
+ * * `duration_s` for a device session **is** the recording time
+ *   (`_duration`), so both say 6000;
+ * * moving time is time at or above 1 km/h, so it sits under the recording
+ *   time rather than above it.
+ */
 function sessionRead(id: string) {
   return {
     id,
     local_date: "2026-08-07",
     start_time: "2026-08-07T05:00:00Z",
-    end_time: "2026-08-07T06:00:00Z",
+    end_time: "2026-08-07T06:45:00Z",
     timezone: "UTC",
     discipline: "cycling",
     classification_source: "sport_field",
     discipline_overridden: false,
-    recording_kind: "manual",
+    recording_kind: "device",
     status: "unmatched",
-    duration_s: 3600,
-    recording_time_s: null,
+    duration_s: 6000,
+    recording_time_s: 6000,
     rpe: null,
     notes: null,
-    recordings: [],
+    recordings: [
+      {
+        id: "0199a000-0000-7000-8000-000000000301",
+        file_hash: "1f3a9c0e7b5d2468".repeat(4),
+        file_sport_index: 0,
+        original_ext: "fit",
+        sport: "cycling",
+        elapsed_time_s: 6300,
+        recording_time_s: 6000,
+        recording_stops: [{ start_index: 2400, end_index: 2700 }],
+        median_time_delta_s: 1,
+        moving_time_s: 5820,
+        power_source_candidates: ["Wahoo KICKR"],
+        power_source: "Wahoo KICKR",
+        power_source_rule: "only candidate",
+        hr_source_candidates: ["Garmin HRM-Pro"],
+        hr_source: "Garmin HRM-Pro",
+        hr_source_rule: "only candidate",
+        channels: ["power", "hr", "cadence", "speed"],
+        anomaly_count: 0,
+        created_at: "2026-08-07T06:50:00Z",
+      },
+    ],
     logged_sets: [],
-    created_at: "2026-08-07T06:05:00Z",
-    updated_at: "2026-08-07T06:05:00Z",
+    created_at: "2026-08-07T06:50:00Z",
+    updated_at: "2026-08-07T06:50:00Z",
   };
 }
 
@@ -214,7 +330,7 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
 
   await page.goto("/inbox");
   await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
-  await expect(page.getByText("2 waiting")).toBeVisible();
+  await expect(page.getByText("3 waiting")).toBeVisible();
 
   // --- the queue explains itself -------------------------------------------
   const duplicate = page
@@ -225,14 +341,27 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
     duplicate.getByRole("link", { name: "The session it looks like" }),
   ).toHaveAttribute("href", `/sessions/${RIDE_SESSION}`);
 
-  // Only the duplicate holds something safe to ingest, so only it is offered
-  // the second answer.
+  // Two verdicts can be overruled and they are offered in their own words
+  // (D107): "not a duplicate" for the overlap, "ingest it anyway" for the
+  // broken strap. Unreadable bytes stay unreadable, so that card gets neither.
+  const strap = page
+    .getByTestId("quarantine-record")
+    .filter({ hasText: "strap-2026-08-06.fit" });
+  await expect(
+    strap.getByRole("button", { name: "Ingest it anyway" }),
+  ).toBeVisible();
   const corrupt = page
     .getByTestId("quarantine-record")
     .filter({ hasText: "corrupt-export.fit" });
   await expect(
     corrupt.getByRole("button", { name: "Not a duplicate" }),
   ).toHaveCount(0);
+  await expect(
+    corrupt.getByRole("button", { name: "Ingest it anyway" }),
+  ).toHaveCount(0);
+  await expect(
+    corrupt.getByRole("button", { name: "Discard this copy" }),
+  ).toBeVisible();
 
   // --- answer it ------------------------------------------------------------
   await duplicate.getByRole("button", { name: "Discard this copy" }).click();
@@ -240,10 +369,29 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
 
   await expect(page.getByText("Already decided")).toBeVisible();
   await expect(duplicate.getByText("Discarded")).toBeVisible();
-  await expect(page.getByText("1 waiting")).toBeVisible();
+  await expect(page.getByText("2 waiting")).toBeVisible();
   expect(
     state.quarantine.find((record) => record.id === DUPLICATE_RECORD)?.status,
   ).toBe("confirmed_discarded");
+
+  // --- overrule the other one ----------------------------------------------
+  await strap.getByRole("button", { name: "Ingest it anyway" }).click();
+  await expect(
+    page.getByRole("alertdialog", {
+      name: "Ingest it anyway — the broken channel arrives blanked?",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Ingest it" }).click();
+
+  await expect(strap.getByText("Ingested anyway")).toBeVisible();
+  await expect(page.getByText("1 waiting")).toBeVisible();
+  expect(
+    state.quarantine.find((record) => record.id === STRAP_RECORD)?.status,
+  ).toBe("rejected_ingested");
+  // And the ingest it produced is in the log, linked to the session it became.
+  await expect(
+    page.getByRole("table").getByRole("link", { name: "strap-2026-08-06.fit" }),
+  ).toHaveAttribute("href", `/sessions/${REJECTED_SESSION}`);
 
   // --- upload a file --------------------------------------------------------
   await page.getByLabel("Activity file").setInputFiles({
@@ -268,5 +416,26 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
   await expect(
     page.getByRole("heading", { name: "Corrections" }),
   ).toBeVisible();
-  await expect(page.getByText(/No device file/)).toBeVisible();
+
+  // The recording panel: the half of the page that explains the ride's own
+  // numbers. It renders only for a session with a file behind it, which is
+  // what an uploaded FIT produces — so this is the assertion that proves the
+  // upload led somewhere, rather than a "No device file" notice.
+  await expect(page.getByText(/No device file/)).toHaveCount(0);
+  await expect(page.getByText("Wahoo KICKR")).toBeVisible();
+  await expect(page.getByText("Garmin HRM-Pro")).toBeVisible();
+  // Both channels had one candidate, so both print the tie-break that was
+  // never needed — FIT names candidates and nothing that chose (D96).
+  await expect(page.getByText("chosen: only candidate")).toHaveCount(2);
+  // 6300 s elapsed, one 300-row stop, 6000 s recorded — the page shows its
+  // arithmetic rather than asserting it (D101).
+  await expect(page.getByText("1:45:00")).toBeVisible();
+  // Twice: the session's "Recording time" and the file's "Recording" are the
+  // same 6000 s, which is what makes the session's account of itself the
+  // file's account of itself.
+  await expect(page.getByText("1:40:00")).toHaveCount(2);
+  await expect(page.getByText("1 · 5:00 paused")).toBeVisible();
+  // And the wall clock is the wall clock: "Duration" is end minus start, so
+  // it differs from the recording time by exactly that paused total.
+  await expect(page.getByText("1:45", { exact: true })).toBeVisible();
 });

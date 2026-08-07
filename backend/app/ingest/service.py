@@ -352,8 +352,10 @@ class IngestService:
         """
         path = Path(record.quarantined_path)
         if not path.is_file():
+            # Without the path: it is a server filesystem location, and the
+            # read schema promises not to expose it (`QuarantineRecordRead`).
             raise ConflictError(
-                f"The quarantined file is no longer at {record.quarantined_path}; "
+                "The quarantined file is no longer on disk; "
                 "nothing can be ingested from this record."
             )
         return path

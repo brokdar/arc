@@ -2313,14 +2313,25 @@ export interface components {
      *     discipline records that the athlete decided it, and setting the timezone
      *     re-derives ``local_date``, which is what puts a late-evening ride back on
      *     the right day.
+     *
+     *     **Optional by omission, never nullable.** Neither field can be *cleared*:
+     *     a session always has a discipline and always has a timezone, so the
+     *     service refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``
+     *     keeps the Python-side ``= None`` "unset" default while dropping the
+     *     ``null`` branch from the contract, so the schema promises exactly what the
+     *     parser accepts — the same rule the optional *query* parameters follow
+     *     (`.claude/rules/api-optional-query-params.md`), applied to a request body.
+     *     Other update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay
+     *     ``X | None`` on purpose: for those, ``null`` means "clear this field".
      */
     SessionUpdate: {
-      discipline?: components["schemas"]["SessionDiscipline"] | null;
+      /** Discipline */
+      discipline?: components["schemas"]["SessionDiscipline"];
       /**
        * Timezone
        * @description An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. Anything else is refused: a timezone that cannot be resolved makes the session's date unrecoverable.
        */
-      timezone?: string | null;
+      timezone?: string;
     };
     /**
      * SetsCompletedSchema
@@ -3538,7 +3549,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Successful Response */
+      /** @description The pipeline's report on the file. **A refused file is a 200 too**, with `outcome: "quarantined"`, the ids in `quarantine_ids` and the reason in `detail`: being unreadable, too short or a suspected duplicate is a result, not a failed request. The other outcomes are `ingested` (one `session_id` per sport in the file), `duplicate_file` (the hash was already known, and `session_ids` says what it is already stored as) and `error`. Only a request that is itself wrong — an empty part, a file over the size limit — answers 4xx, so a client must branch on `outcome` and never on the status. */
       200: {
         headers: {
           [name: string]: unknown;

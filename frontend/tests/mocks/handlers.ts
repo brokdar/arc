@@ -2,10 +2,10 @@ import { createOpenApiHttp } from "openapi-msw";
 
 import type { components, paths } from "@/generated/api/schema";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
-import { localStamp } from "@/lib/format";
 import {
   anchorVersionFixture,
   contentHash,
+  DETAILS,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
@@ -249,12 +249,14 @@ export const handlers = [
           detail: `Quarantine record ${record.id} is already resolved`,
         });
       }
-      if (record.reason !== "suspected_duplicate") {
-        // The API's own rule (D98): disagreeing with the parser does not make
-        // the bytes readable, so there is nothing safe to ingest.
+      if (!OVERRULABLE.has(record.reason)) {
+        // The API's own rule (D107): two verdicts can be overruled — a
+        // suspected duplicate and an implausible channel — and nothing about
+        // disagreeing with the parser makes unreadable bytes readable.
         return response(409).json({
           detail:
-            "Only a suspected duplicate can be rejected; this file could not be read",
+            "Only a suspected duplicate or an implausible channel can be " +
+            "rejected; this file could not be read",
         });
       }
       record.status = "rejected_ingested";
@@ -326,7 +328,7 @@ export const handlers = [
 
     const extension = filename.split(".").pop()?.toLowerCase() ?? "";
     if (!READABLE_EXTENSIONS.has(extension)) {
-      const detail = `no parser for '.${extension}'`;
+      const detail = DETAILS.noParser(filename);
       const record: components["schemas"]["QuarantineRecordRead"] = {
         id: mintId(),
         original_filename: filename,
@@ -431,14 +433,13 @@ export const handlers = [
         session.classification_source = "manual";
       }
       if (body.timezone) {
-        const stamp = localStamp(session.start_time, body.timezone);
-        if (stamp === null) {
+        if (UNRESOLVABLE_ZONES.has(body.timezone)) {
           return response(422).json({
             detail: `'${body.timezone}' is neither 'UTC', a UTC±HH:MM offset, nor a known IANA timezone name`,
           });
         }
         session.timezone = body.timezone;
-        session.local_date = stamp.date;
+        session.local_date = statedLocalDate(session.start_time, body.timezone);
       }
       session.updated_at = NOW;
       return response(200).json(session);
@@ -446,11 +447,80 @@ export const handlers = [
   ),
 ];
 
+/**
+ * The zones this mock refuses, listed rather than decided.
+ *
+ * `app.services.activity` resolves a zone with `zoneinfo` against the tzdata
+ * on the server; the browser has its own copy and its own opinion, so the
+ * mock cannot *compute* the API's answer. It states it. A zone a test uses
+ * that is in neither this set nor `LOCAL_DATES` makes `statedLocalDate` throw
+ * — refusing to invent an answer is the point.
+ */
+const UNRESOLVABLE_ZONES = new Set([
+  "Middle-earth/Shire",
+  "Middle/Earth",
+  "Mars/Olympus_Mons",
+]);
+
+/**
+ * What day a timezone puts a session on, **stated**, not derived.
+ *
+ * The handler used to answer this by calling `localStamp` — the application's
+ * own function, and the one the page under test uses to render the date it
+ * gets back. A mock that computes its reply with the code being tested agrees
+ * with that code by construction: break `localStamp` and the fixture breaks
+ * with it, the assertion still passes, and the test has verified nothing but
+ * that a function equals itself. So the answers are written down, worked out
+ * from the offsets by hand.
+ */
+const LOCAL_DATES: Readonly<Record<string, string>> = {
+  // The trainer ride, 2026-08-03 16:02 UTC.
+  //   +12:00 in August (NZST) → 04:02 on the 4th.
+  "2026-08-03T16:02:00Z|Pacific/Auckland": "2026-08-04",
+  //   +14:00 → 06:02 on the 4th.
+  "2026-08-03T16:02:00Z|Pacific/Kiritimati": "2026-08-04",
+  //   the stored zone itself: +02:00 → 18:02, still the 3rd.
+  "2026-08-03T16:02:00Z|UTC+02:00": "2026-08-03",
+  //   UTC → 16:02, the 3rd.
+  "2026-08-03T16:02:00Z|UTC": "2026-08-03",
+  //   +02:00 (CEST) → 18:02, the 3rd.
+  "2026-08-03T16:02:00Z|Europe/Zurich": "2026-08-03",
+  // The morning ride, 2026-08-05 05:14 UTC — early enough that nothing west
+  // of UTC moves it, and +02:00 does not either.
+  "2026-08-05T05:14:00Z|Europe/Zurich": "2026-08-05",
+  "2026-08-05T05:14:00Z|UTC": "2026-08-05",
+  //   −10:00 (HST) → 19:14 on the 4th.
+  "2026-08-05T05:14:00Z|Pacific/Honolulu": "2026-08-04",
+  // The gym session, 2026-08-06 16:30 UTC.
+  "2026-08-06T16:30:00Z|Europe/Zurich": "2026-08-06",
+  "2026-08-06T16:30:00Z|UTC": "2026-08-06",
+  //   +12:00 → 04:30 on the 7th.
+  "2026-08-06T16:30:00Z|Pacific/Auckland": "2026-08-07",
+};
+
+function statedLocalDate(startTime: string, timezone: string): string {
+  const stated = LOCAL_DATES[`${startTime}|${timezone}`];
+  if (stated === undefined) {
+    throw new Error(
+      `The sessions mock has no stated local_date for '${timezone}' at ` +
+        `${startTime}. Add the day it falls on to LOCAL_DATES (or the zone to ` +
+        "UNRESOLVABLE_ZONES) rather than letting the mock derive its own answer.",
+    );
+  }
+  return stated;
+}
+
 /** The instant the mock pipeline claims to have acted. */
 const NOW = "2026-08-07T09:00:00Z";
 
 /** What the parsers can open (`app.ingest.parsers.base.SUPPORTED_EXTENSIONS`). */
 const READABLE_EXTENSIONS = new Set(["fit", "gpx", "tcx"]);
+
+/** The verdicts `IngestService.reject` accepts (D107); every other one is a 409. */
+const OVERRULABLE = new Set<components["schemas"]["QuarantineReason"]>([
+  "suspected_duplicate",
+  "implausible_channel",
+]);
 
 /**
  * Pull the `file` part out of a multipart body, by hand.
