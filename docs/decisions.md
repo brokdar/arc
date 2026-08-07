@@ -1477,3 +1477,47 @@ keyed by the generated `Purpose` union, the table cannot miss a purpose without
 failing the type-check, and `purpose.test.ts` reads the enum out of the
 committed `openapi.json` so a vocabulary the backend gains fails a test rather
 than rendering an uncoloured chip.
+
+## D64 — A prediction resolves against `PinnedAnchor` pairs, not bare anchor versions
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`predict_endurance_load` takes `Mapping[AnchorType, PinnedAnchor]`, where
+`PinnedAnchor` (`backend/app/domain/prediction.py`) pairs an `AnchorVersion`
+with the `uuid.UUID` it was pinned by, rather than the work order's
+`Mapping[AnchorType, AnchorVersion]`.
+
+This displaces two alternatives: putting an `id` on the domain
+`AnchorVersion`, and passing a second parallel mapping of ids beside the
+versions.
+
+*Rationale:* WP-3's work order (B2) asks the returned `PredictedLoad` to carry
+`anchor_version_id` — which is what makes the number reproducible later — but
+`app.domain.anchors.AnchorVersion` is deliberately id-free, because identity
+belongs to persistence and the value object is what zone derivation, target
+resolution and the codecs all share. Adding an id to it would push a storage
+concern into every construction site, including the ones that never came from a
+row. Two parallel mappings, the other way out, can disagree with each other and
+nothing would notice. One pair type keeps the id beside the value it belongs to,
+and the B4 service builds it in one line from the row it already loads
+(`PinnedAnchor(version_id=row.id, version=row.to_domain())`).
+
+## D65 — The 1 Hz expansion has a one-day ceiling
+
+**Date:** 2026-08-07 · **Status:** accepted · **WP:** WP-3
+
+`predict_endurance_load` returns `None` for a prescription longer than
+`MAX_PREDICTABLE_DURATION_S` (86 400 s) instead of expanding it, alongside the
+work order's other three `None` cases (no FTP pinned, zero coverage, any
+distance-based step).
+
+This displaces expanding whatever the workout model accepts.
+
+*Rationale:* the workout model bounds a single step (`MAX_STEP_SECONDS`,
+12 hours) and the flattened step count (`MAX_FLAT_STEPS`, 1 000) but not their
+product, so a legal, API-creatable tree can describe 43 million seconds — and
+the 1 Hz expansion would try to materialise a list of 43 million floats on a
+**read** path, since predicted load is computed on every week and session read.
+A day is far past anything the MVP plans, and "not predictable" is a state the
+callers already handle, so the ceiling costs nothing that exists and removes an
+out-of-memory read.
