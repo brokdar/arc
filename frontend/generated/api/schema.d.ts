@@ -650,9 +650,10 @@ export interface paths {
     };
     /**
      * Get Session
-     * @description Get one completed session with its recordings' metadata.
+     * @description Get one completed session, its recordings' metadata and its metrics.
      *
-     *     Not the samples: those are in `data/streams/` and WP-5 serves them.
+     *     Not the samples: those are 1-2 MB and live at
+     *     `GET /sessions/{id}/streams`.
      */
     get: operations["sessions-get_session"];
     put?: never;
@@ -670,6 +671,61 @@ export interface paths {
      *     than the offset that happened to be true once (D93).
      */
     patch: operations["sessions-update_session"];
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/metrics/recompute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Recompute Session Metrics
+     * @description Recompute one session's metrics against the anchors in force now.
+     *
+     *     Appends version *n+1* and supersedes *n*; the old version stays readable
+     *     with the pins it was computed against (invariant 1). Appending a new FTP
+     *     and recomputing therefore changes the **new** version's pin and leaves
+     *     every earlier one exactly as it was.
+     */
+    post: operations["sessions-recompute_session_metrics"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/streams": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Streams
+     * @description The per-second samples behind one session, for the charts.
+     *
+     *     Its own resource because it is 1-2 MB for a long ride (A4.1: 14 400 rows
+     *     per channel for four hours). Every channel is the **cleaned** column with
+     *     its nulls intact — a recording stop is a break in the trace, not a run of
+     *     zeros — and the anomaly regions come with it so the chart can mark what
+     *     was repaired (A4.2).
+     *
+     *     404 for a session that has no recording: a gym session typed in by hand
+     *     never had samples, and the detail says so because that sentence is the
+     *     empty state the page renders.
+     */
+    get: operations["sessions-get_session_streams"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/v1/workout-labels": {
@@ -825,6 +881,36 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * AnchorPinRead
+     * @description An anchor version a metric artefact was computed against.
+     *
+     *     Resolved rather than left as an id: the header renders `FTP 262 ± 15 ·
+     *     estimated`, and a client that had to fetch four anchor versions to draw
+     *     one line would fetch them on every session it showed.
+     */
+    AnchorPinRead: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /** Ci High */
+      ci_high: number | null;
+      /** Ci Low */
+      ci_low: number | null;
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      provenance: components["schemas"]["Provenance"];
+      /** Unit */
+      unit: string;
+      /** Value */
+      value: number;
+      /**
+       * Version Id
+       * Format: uuid
+       */
+      version_id: string;
+    };
+    /**
      * AnchorSource
      * @description Who appended the version. Distinct from :class:`Provenance`.
      *
@@ -843,7 +929,7 @@ export interface components {
      *     yet, and :func:`app.domain.zones.zones_for` rejects them.
      * @enum {string}
      */
-    AnchorType: "ftp" | "lthr" | "max_hr" | "cp" | "w_prime";
+    AnchorType: "ftp" | "lthr" | "max_hr" | "resting_hr" | "cp" | "w_prime";
     /**
      * AnchorUnit
      * @description Units an anchor value can be expressed in.
@@ -859,7 +945,7 @@ export interface components {
        * Anchor Type
        * @enum {string}
        */
-      anchor_type: "ftp" | "lthr" | "max_hr";
+      anchor_type: "ftp" | "lthr" | "max_hr" | "resting_hr";
       /** Ci High */
       ci_high?: number | null;
       /** Ci Low */
@@ -907,6 +993,40 @@ export interface components {
       /** Value */
       value: number;
     };
+    /**
+     * AnomalyKind
+     * @description What was done to a region of a channel, and therefore what it now is.
+     *
+     *     ``SPIKE_CLIPPED`` — a short out-of-range excursion replaced by the last
+     *     good reading. ``DROPOUT_HELD`` — a longer missing or out-of-range run
+     *     carried forward at the last good reading. ``GAP_INTERPOLATED`` — the same
+     *     run on a positional channel, filled with a straight line.
+     *
+     *     ``DROPPED`` — an implausible **value** the repair rules declined to repair,
+     *     set to null: one in a run too long to repair honestly, one in a run that
+     *     touches a recording stop, or one outside the channel's own believable
+     *     readings (before its first, after its last). It is a repair like the others
+     *     precisely because a null is a claim ("there is no data here") replacing a
+     *     value the file did contain, and A4.2's rule is that every such claim is
+     *     recorded. A row that was **already** null is not dropped and never appears
+     *     here: nothing was substituted for it, and a channel the device samples once
+     *     a minute would otherwise arrive as an hour of anomalies about rows no
+     *     device ever wrote.
+     *
+     *     ``RESAMPLED_ONLY`` — nothing was repaired. One row per untouched channel,
+     *     spanning the whole frame, so "this channel needed no cleaning" can be told
+     *     apart from "the cleaner never ran". The grid's own filling of sub-threshold
+     *     gaps is *not* an anomaly: it is the storage contract (A4.1), it is visible
+     *     per row through :attr:`StreamFrame.device_t`, and one row per four-second
+     *     sample would put tens of thousands of anomalies on an ordinary ride.
+     * @enum {string}
+     */
+    AnomalyKind:
+      | "gap_interpolated"
+      | "spike_clipped"
+      | "dropout_held"
+      | "dropped"
+      | "resampled_only";
     /**
      * AthleteRead
      * @description The athlete profile as returned by the API.
@@ -984,6 +1104,14 @@ export interface components {
        * @description A FIT, GPX or TCX file.
        */
       file: string;
+    };
+    /**
+     * CadenceMetricsRead
+     * @description Everything derived from the cadence channel.
+     */
+    CadenceMetricsRead: {
+      average_cadence: components["schemas"]["MetricRead"];
+      max_cadence: components["schemas"]["MetricRead"];
     };
     /**
      * CeilingSchema
@@ -1144,6 +1272,22 @@ export interface components {
        */
       updated_at: string;
     };
+    /**
+     * ExplanationRead
+     * @description Why a number is the number — data attached to the number, not page copy.
+     */
+    ExplanationRead: {
+      /** Assumptions */
+      assumptions: string[];
+      /** Citation */
+      citation: string | null;
+      /** Formula */
+      formula: string;
+      /** Inputs */
+      inputs: {
+        [key: string]: string;
+      };
+    };
     /** HTTPValidationError */
     HTTPValidationError: {
       /** Detail */
@@ -1156,6 +1300,16 @@ export interface components {
     HealthStatus: {
       /** Status */
       status: string;
+    };
+    /**
+     * HeartRateMetricsRead
+     * @description Everything derived from the heart-rate channel.
+     */
+    HeartRateMetricsRead: {
+      average_hr: components["schemas"]["MetricRead"];
+      efficiency_factor: components["schemas"]["MetricRead"];
+      hrss: components["schemas"]["MetricRead"];
+      max_hr: components["schemas"]["MetricRead"];
     };
     /**
      * IngestEventRead
@@ -1215,6 +1369,30 @@ export interface components {
       session_ids: string[];
     };
     /**
+     * IntervalRead
+     * @description One detected work interval, addressed by row on the 1 Hz grid.
+     */
+    IntervalRead: {
+      /** Average Hr */
+      average_hr: number | null;
+      /** Average Power */
+      average_power: number | null;
+      /** Duration S */
+      duration_s: number;
+      /** End Index */
+      end_index: number;
+      /** Max Power */
+      max_power: number | null;
+      /** Start Index */
+      start_index: number;
+    };
+    /**
+     * LoadBasis
+     * @description Which model produced the training load that was selected (A5.2).
+     * @enum {string}
+     */
+    LoadBasis: "power" | "hr";
+    /**
      * LoadKind
      * @description How the load of a prescribed set is expressed.
      *
@@ -1225,6 +1403,28 @@ export interface components {
      * @enum {string}
      */
     LoadKind: "kg" | "percent_e1rm" | "rpe" | "bodyweight";
+    /**
+     * LoadRead
+     * @description Both load models, the selected one, and the rule that chose it (A5.2).
+     *
+     *     Both values are here whichever was selected — that is the whole point.
+     *     The counterfactual sentence ("had power been unavailable, the HR model
+     *     would have given 75") is composed by the client from these two fields.
+     */
+    LoadRead: {
+      explanation?: components["schemas"]["ExplanationRead"] | null;
+      /** Hr Load */
+      hr_load?: number | null;
+      load_basis?: components["schemas"]["LoadBasis"] | null;
+      /** Load Basis Rule */
+      load_basis_rule?: string | null;
+      /** Not Assessed */
+      not_assessed?: string | null;
+      /** Power Load */
+      power_load?: number | null;
+      /** Training Load */
+      training_load?: number | null;
+    };
     /**
      * LoadSchema
      * @description How heavy a prescribed set is.
@@ -1344,6 +1544,36 @@ export interface components {
       inputs: {
         [key: string]: string;
       };
+    };
+    /**
+     * MetricRead
+     * @description One metric slot: answered, or refused with a reason.
+     *
+     *     Exactly one of ``value`` and ``not_assessed`` is non-null.
+     *     ``explanation`` is present exactly when ``value`` is.
+     */
+    MetricRead: {
+      explanation?: components["schemas"]["ExplanationRead"] | null;
+      /** Not Assessed */
+      not_assessed?: string | null;
+      /** Value */
+      value?: number | null;
+    };
+    /**
+     * MetricsRecompute
+     * @description Why a recomputation was asked for. The body is optional.
+     *
+     *     The reason lands on the **new** version (`recompute_reason`) and is what a
+     *     later reader sees when two versions of one session's numbers disagree —
+     *     "anchor changed" and "stream re-ingested" are different stories, and
+     *     neither is reconstructible from the numbers themselves.
+     */
+    MetricsRecompute: {
+      /**
+       * Reason
+       * @description Why the metrics are being recomputed.
+       */
+      reason?: string | null;
     };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
@@ -1488,9 +1718,15 @@ export interface components {
     PlanState: "active" | "paused";
     /**
      * PlanWeekDayRead
-     * @description One day of the week, with the sessions planned for it.
+     * @description One day of the week: what was planned for it, and what was recorded.
      */
     PlanWeekDayRead: {
+      /** Completed Duration S */
+      completed_duration_s: number | null;
+      /** Completed Load */
+      completed_load: number | null;
+      /** Completed Session Count */
+      completed_session_count: number;
       /**
        * Date
        * Format: date
@@ -1512,6 +1748,16 @@ export interface components {
      *     missing number instead of leaving a client to invent a reason for it.
      */
     PlanWeekDisciplineRead: {
+      /** Completed Duration S */
+      completed_duration_s: number | null;
+      /** Completed Load */
+      completed_load: number | null;
+      /** Completed Load Sessions Counted */
+      completed_load_sessions_counted: number;
+      /** Completed Load Sessions Uncounted */
+      completed_load_sessions_uncounted: number;
+      /** Completed Session Count */
+      completed_session_count: number;
       discipline: components["schemas"]["Discipline"];
       /** Duration Sessions Counted */
       duration_sessions_counted: number;
@@ -1537,6 +1783,26 @@ export interface components {
     PlanWeekRead: {
       /** By Discipline */
       by_discipline: components["schemas"]["PlanWeekDisciplineRead"][];
+      /** Completed Duration S */
+      completed_duration_s: number | null;
+      /** Completed Load */
+      completed_load: number | null;
+      /** Completed Load Sessions Counted */
+      completed_load_sessions_counted: number;
+      /** Completed Load Sessions Uncounted */
+      completed_load_sessions_uncounted: number;
+      /** Completed Polarization Index */
+      completed_polarization_index: number | null;
+      /** Completed Polarization Not Assessed */
+      completed_polarization_not_assessed: string | null;
+      /** Completed Polarization Rule */
+      completed_polarization_rule: string;
+      /** Completed Polarization Sessions Counted */
+      completed_polarization_sessions_counted: number;
+      /** Completed Polarization Sessions Uncounted */
+      completed_polarization_sessions_uncounted: number;
+      /** Completed Session Count */
+      completed_session_count: number;
       /** Days */
       days: components["schemas"]["PlanWeekDayRead"][];
       /** Duration Sessions Counted */
@@ -1742,6 +2008,20 @@ export interface components {
         | null;
       /** Workout Id */
       workout_id?: string | null;
+    };
+    /**
+     * PowerMetricsRead
+     * @description Everything derived from the power channel.
+     */
+    PowerMetricsRead: {
+      average_power: components["schemas"]["MetricRead"];
+      coasting_time_s: components["schemas"]["MetricRead"];
+      intensity_factor: components["schemas"]["MetricRead"];
+      max_power: components["schemas"]["MetricRead"];
+      normalized_power: components["schemas"]["MetricRead"];
+      variability_index: components["schemas"]["MetricRead"];
+      work_above_ftp_kj: components["schemas"]["MetricRead"];
+      work_kj: components["schemas"]["MetricRead"];
     };
     /**
      * PredictedLoadRead
@@ -2208,6 +2488,9 @@ export interface components {
        * Format: uuid
        */
       id: string;
+      /** Load */
+      load: number | null;
+      load_basis: components["schemas"]["LoadBasis"] | null;
       /**
        * Local Date
        * Format: date
@@ -2240,6 +2523,40 @@ export interface components {
      */
     SessionMatchStatus: "unmatched";
     /**
+     * SessionMetricsRead
+     * @description One version of one session's metrics, with what it was computed from.
+     */
+    SessionMetricsRead: {
+      cadence: components["schemas"]["CadenceMetricsRead"];
+      /**
+       * Computed At
+       * Format: date-time
+       */
+      computed_at: string;
+      /** Elapsed Time S */
+      elapsed_time_s: number;
+      elevation_gain_m: components["schemas"]["MetricRead"];
+      heart_rate: components["schemas"]["HeartRateMetricsRead"];
+      hr_zone_model: components["schemas"]["ZoneModel"] | null;
+      /** Intervals */
+      intervals: components["schemas"]["IntervalRead"][];
+      load: components["schemas"]["LoadRead"];
+      /** Moving Time S */
+      moving_time_s: number;
+      /** Pins */
+      pins: components["schemas"]["AnchorPinRead"][];
+      power: components["schemas"]["PowerMetricsRead"];
+      power_zone_model: components["schemas"]["ZoneModel"] | null;
+      /** Recompute Reason */
+      recompute_reason: string | null;
+      /** Recording Time S */
+      recording_time_s: number;
+      strength: components["schemas"]["StrengthRead"];
+      time_in_zone: components["schemas"]["TimeInZoneBlockRead"];
+      /** Version */
+      version: number;
+    };
+    /**
      * SessionRead
      * @description One completed session with the recordings behind it.
      */
@@ -2265,6 +2582,9 @@ export interface components {
        * Format: uuid
        */
       id: string;
+      /** Load */
+      load: number | null;
+      load_basis: components["schemas"]["LoadBasis"] | null;
       /**
        * Local Date
        * Format: date
@@ -2272,6 +2592,7 @@ export interface components {
       local_date: string;
       /** Logged Sets */
       logged_sets: components["schemas"]["LoggedSetRead"][];
+      metrics: components["schemas"]["SessionMetricsRead"] | null;
       /** Notes */
       notes: string | null;
       recording_kind: components["schemas"]["RecordingKind"];
@@ -2305,6 +2626,34 @@ export interface components {
      * @enum {string}
      */
     "SessionStatus-Input": "planned" | "completed" | "missed" | "displaced";
+    /**
+     * SessionStreamsRead
+     * @description The chart payload: every channel on one index-aligned grid.
+     *
+     *     Separate from `SessionRead` because it is 1-2 MB for a long ride. Every
+     *     column has exactly ``length`` entries by construction (A4.1), which is
+     *     what lets a client index them together without checking.
+     */
+    SessionStreamsRead: {
+      /** Anomalies */
+      anomalies: components["schemas"]["StreamAnomalyRead"][];
+      /** Channels */
+      channels: components["schemas"]["StreamChannelRead"][];
+      /** Length */
+      length: number;
+      /**
+       * Recording Id
+       * Format: uuid
+       */
+      recording_id: string;
+      /** Recording Stops */
+      recording_stops: components["schemas"]["StreamStopRead"][];
+      /**
+       * T0
+       * Format: date-time
+       */
+      t0: string;
+    };
     /**
      * SessionUpdate
      * @description Corrections to a session's guessed facts.
@@ -2418,6 +2767,59 @@ export interface components {
       role?: components["schemas"]["StepRole"] | null;
     };
     /**
+     * StreamAnomalyRead
+     * @description One region of one channel the cleaner repaired (A4.2).
+     */
+    StreamAnomalyRead: {
+      channel: components["schemas"]["StreamChannel"];
+      /** End Index */
+      end_index: number;
+      kind: components["schemas"]["AnomalyKind"];
+      /** Start Index */
+      start_index: number;
+      /** Substituted Value */
+      substituted_value: number | null;
+    };
+    /**
+     * StreamChannel
+     * @description A per-sample measurement a recording may carry.
+     *
+     *     Values are the parquet column names and the ``*_fixed`` columns are these
+     *     plus that suffix, so this enum is the storage vocabulary as well as the
+     *     domain's.
+     * @enum {string}
+     */
+    StreamChannel:
+      | "power"
+      | "hr"
+      | "cadence"
+      | "speed"
+      | "elevation"
+      | "temp"
+      | "lat"
+      | "lon";
+    /**
+     * StreamChannelRead
+     * @description One channel's cleaned column, on the 1 Hz grid.
+     */
+    StreamChannelRead: {
+      channel: components["schemas"]["StreamChannel"];
+      /** Source */
+      source: string | null;
+      /** Values */
+      values: (number | null)[];
+    };
+    /**
+     * StreamStopRead
+     * @description One recording pause, as a half-open row range.
+     */
+    StreamStopRead: {
+      /** End Index */
+      end_index: number;
+      /** Start Index */
+      start_index: number;
+    };
+    /**
      * StrengthGroupSchema
      * @description One or more lines performed together; more than one is a superset.
      */
@@ -2426,6 +2828,21 @@ export interface components {
       items: components["schemas"]["StrengthSetSchema"][];
       /** Label */
       label?: string | null;
+    };
+    /**
+     * StrengthRead
+     * @description What a strength session moved. Kilograms, **never** a training load.
+     */
+    StrengthRead: {
+      /** Coverage */
+      coverage?: number | null;
+      explanation?: components["schemas"]["ExplanationRead"] | null;
+      /** Not Assessed */
+      not_assessed?: string | null;
+      /** Sets Completed */
+      sets_completed?: number | null;
+      /** Volume Load Kg */
+      volume_load_kg?: number | null;
     };
     /**
      * StrengthSetSchema
@@ -2475,6 +2892,38 @@ export interface components {
       /** Min Fraction */
       min_fraction: number;
       selector: components["schemas"]["StepSelectorSchema"];
+    };
+    /**
+     * TimeInZoneBlockRead
+     * @description The zone distributions, one per channel that has one.
+     */
+    TimeInZoneBlockRead: {
+      hr: components["schemas"]["TimeInZoneRead"];
+      power: components["schemas"]["TimeInZoneRead"];
+    };
+    /**
+     * TimeInZoneRead
+     * @description One channel's zone distribution, or the reason it has none.
+     */
+    TimeInZoneRead: {
+      /** Easy S */
+      easy_s?: number | null;
+      explanation?: components["schemas"]["ExplanationRead"] | null;
+      /** Hard S */
+      hard_s?: number | null;
+      /** Moderate S */
+      moderate_s?: number | null;
+      /** Not Assessed */
+      not_assessed?: string | null;
+      polarization_index?: components["schemas"]["MetricRead"] | null;
+      /** Total S */
+      total_s?: number | null;
+      zone_model?: components["schemas"]["ZoneModel"] | null;
+      /**
+       * Zones
+       * @default []
+       */
+      zones: components["schemas"]["ZoneTimeRead"][];
     };
     /** ValidationError */
     ValidationError: {
@@ -2666,6 +3115,18 @@ export interface components {
       upper: number | null;
       /** Upper Pct */
       upper_pct: number | null;
+    };
+    /**
+     * ZoneTimeRead
+     * @description Seconds spent in one band of one zone model.
+     */
+    ZoneTimeRead: {
+      /** Index */
+      index: number;
+      /** Name */
+      name: string;
+      /** Seconds */
+      seconds: number;
     };
     /**
      * ZonesRead
@@ -4399,6 +4860,117 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "sessions-recompute_session_metrics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["MetricsRecompute"] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionMetricsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "sessions-get_session_streams": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionStreamsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

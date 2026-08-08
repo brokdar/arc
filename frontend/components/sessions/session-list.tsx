@@ -26,6 +26,7 @@ import {
 } from "@/lib/activity";
 import { $api } from "@/lib/api/client";
 import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
+import { LOAD_BASIS_LABELS } from "@/lib/metrics";
 
 /** How many rows one page of the log holds. */
 const PAGE = 25;
@@ -166,12 +167,13 @@ export function SessionList() {
 export interface SessionRowProps {
   readonly session: SessionListItem;
   /**
-   * What goes in the load column.
+   * What goes in the load column, when a caller wants to override it.
    *
-   * A slot, not a number: training load over real streams is WP-5's, and until
-   * it lands the column renders the *reason* there is nothing there rather
-   * than collapsing — a grid whose columns come and go is a grid a returning
-   * eye cannot read (UI convention 4).
+   * The row fills the column from the session's own current metric artefact.
+   * The prop stays because the column is a **slot**: a row with no artefact
+   * yet, or one whose load could not be computed from either model, renders
+   * the reason rather than collapsing — a grid whose columns come and go is a
+   * grid a returning eye cannot read (UI convention 4).
    */
   readonly load?: React.ReactNode;
 }
@@ -208,7 +210,7 @@ export function SessionRow({ session, load }: SessionRowProps) {
       </span>
 
       <span className="font-mono text-sm">
-        {load ?? <NotAssessed reason="Training load arrives with WP-5" />}
+        {load ?? <SessionLoad session={session} />}
       </span>
 
       <span className="text-ink-muted text-sm">
@@ -217,6 +219,29 @@ export function SessionRow({ session, load }: SessionRowProps) {
 
       <MatchBadge status={session.status} />
     </Link>
+  );
+}
+
+/**
+ * The load column: the number and which model produced it, or the reason.
+ *
+ * The basis is beside the number rather than only in a tooltip because a load
+ * from heart rate and a load from power are not the same measurement (A5.2),
+ * and a column that showed only the figure would invite comparing them.
+ */
+function SessionLoad({ session }: { session: SessionListItem }) {
+  if (session.load === null || session.load_basis === null) {
+    return (
+      <NotAssessed reason="No training load: nothing has been computed for this session, or neither the power nor the heart-rate model could be" />
+    );
+  }
+  return (
+    <span className="flex items-baseline gap-1">
+      {Math.round(session.load)}
+      <span className="text-2xs text-ink-faint">
+        {LOAD_BASIS_LABELS[session.load_basis]}
+      </span>
+    </span>
   );
 }
 

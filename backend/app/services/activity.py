@@ -28,6 +28,7 @@ from typing import Any, Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
+from app.core.logging import get_logger
 from app.domain.activity import (
     ClassificationSource,
     RecordingKind,
@@ -46,6 +47,9 @@ from app.persistence.activity import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.services.exercises import ExerciseService
+from app.services.metrics import SessionMetricsService
+
+logger = get_logger(__name__)
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "session"
@@ -113,12 +117,14 @@ class SessionService:
         recordings: RecordingRepository,
         audit: AuditRepository,
         exercises: ExerciseService,
+        metrics: SessionMetricsService,
     ) -> None:
         self._session = session
         self._repository = repository
         self._recordings = recordings
         self._audit = audit
         self._exercises = exercises
+        self._metrics = metrics
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -129,6 +135,7 @@ class SessionService:
             RecordingRepository(session),
             AuditRepository(session),
             ExerciseService.from_session(session),
+            SessionMetricsService.from_session(session),
         )
 
     # --- reads ---------------------------------------------------------------
@@ -192,7 +199,14 @@ class SessionService:
             raise ValidationError("Supply at least one field to update")
 
         changed: dict[str, Any] = {}
+        # Whether the artefact is stale afterwards, which is a narrower
+        # question than "was a field submitted": only the discipline reaches
+        # the metrics, and only when it actually moves.
+        discipline_changed = False
         if "discipline" in updates:
+            discipline_changed = (
+                SessionDiscipline(updates["discipline"]) is not row.discipline
+            )
             row.discipline = SessionDiscipline(updates["discipline"])
             # The athlete's answer is not a classification, so the source stops
             # claiming one guessed it; the flag is what stops a later
@@ -219,7 +233,64 @@ class SessionService:
         )
         await commit(self._session)
         await self._session.refresh(row)
+        # A discipline correction changes which load model is preferred
+        # (A5.2), so the artefact is stale the moment it is applied. A
+        # timezone correction does not touch a single metric input, and a
+        # version chain that grew a link every time the athlete fixed a
+        # timezone would make "which numbers was this verdict confirmed
+        # against" unanswerable by drowning it — so the recompute is gated on
+        # the discipline having actually moved, not on a field having been
+        # submitted.
+        #
+        # Only the stream-free path can be re-run from here: reading a parquet
+        # file is `app.ingest`'s job and a service may not reach it, so a
+        # device session's correction is recovered through the recompute
+        # endpoint, which can.
+        if discipline_changed and not row.recordings:
+            row = await self._recompute_strength(
+                row, actor=actor, reason="session corrected"
+            )
         return row
+
+    async def _recompute_strength(
+        self, row: SessionRow, *, actor: Actor, reason: str | None
+    ) -> SessionRow:
+        """Append a metric version for a session that has no stream.
+
+        **Isolated from the write that preceded it**, and isolated in fact
+        rather than only in intent: the session is already committed, so a
+        failure here must leave the athlete with a stored session and no
+        numbers rather than a 500 over work that succeeded. Without the guard,
+        a unique-constraint race or a dropped connection turns a successful
+        `POST /manual-sessions` into an error the client retries — and the
+        retry creates a *second* session, because the first one is already in
+        the database.
+
+        The same shape, and the same reasoning, as
+        `app.ingest.pipeline.IngestPipeline._compute_metrics`. The rollback
+        matters as much as the `except`: the failed write has poisoned the
+        session, and the request still has to answer from it.
+
+        Returns the session row the caller should answer with. That is not
+        cosmetic — `rollback()` **expires every instance** in the session
+        (unlike `commit()`, which this codebase configures not to), so the
+        handle the caller came in with would raise `MissingGreenlet` the
+        moment the route touched it — reading even ``row.id`` off an expired
+        instance is a lazy database read. Hence the id is taken **before** the
+        attempt, and a freshly loaded row is the only usable answer after a
+        rollback.
+        """
+        session_id = row.id
+        try:
+            reloaded = await self._repository.get(session_id)
+            if reloaded is None:  # pragma: no cover — committed a line ago
+                return row
+            await self._metrics.record_strength(reloaded, actor=actor, reason=reason)
+            return reloaded
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.exception("session_metrics_failed", session_id=str(session_id))
+            await self._session.rollback()
+            return await self._repository.get(session_id) or row
 
     async def create_manual(
         self,
@@ -281,7 +352,7 @@ class SessionService:
         )
         await commit(self._session)
         await self._session.refresh(row)
-        return row
+        return await self._recompute_strength(row, actor=actor, reason=None)
 
     async def _logged_set(self, entry: LoggedSetInput, index: int) -> LoggedSetRow:
         """Build one set row, resolving a catalogue reference to its name.

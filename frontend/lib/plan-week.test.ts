@@ -104,6 +104,75 @@ describe("moveSessionInWeek", () => {
     ]);
   });
 
+  /**
+   * The completed side is not the optimistic edit's to touch.
+   *
+   * WP-5 gave the week what was actually recorded, and a ride nobody planned
+   * produces a `by_discipline` row with **no planned sessions in it**. The
+   * rebuild works from the planned cards, so a row with none looked empty and
+   * was dropped — deleting a recorded ride from the cache until the refetch
+   * put it back, which is a number changing under the athlete for a reason
+   * that has nothing to do with what they dragged.
+   */
+  it("keeps a discipline row that exists only for what was recorded", () => {
+    const base = planWeekFixture(START);
+    const week = {
+      ...base,
+      by_discipline: base.by_discipline.map((row) =>
+        row.discipline === "strength"
+          ? {
+              ...row,
+              // Nothing planned for strength any more, but a gym session did
+              // happen — exactly what the API sends.
+              session_count: 0,
+              planned_duration_s: null,
+              duration_sessions_counted: 0,
+              duration_sessions_uncounted: 0,
+              planned_load: null,
+              load_sessions_counted: 0,
+              load_sessions_uncounted: 0,
+              total_sets: null,
+              completed_session_count: 1,
+              completed_duration_s: 3_600,
+              completed_load: null,
+              completed_load_sessions_counted: 0,
+              completed_load_sessions_uncounted: 1,
+            }
+          : row,
+      ),
+    };
+
+    const moved = moveSessionInWeek(week, SESSION_IDS.vo2, "2026-07-31");
+
+    const strength = moved.by_discipline.find(
+      (row) => row.discipline === "strength",
+    );
+    expect(strength).toBeDefined();
+    expect(strength?.completed_session_count).toBe(1);
+    expect(strength?.completed_duration_s).toBe(3_600);
+  });
+
+  it("carries a planned row's completed columns through a move", () => {
+    const base = planWeekFixture(START);
+    const week = {
+      ...base,
+      by_discipline: base.by_discipline.map((row) =>
+        row.discipline === "cycling"
+          ? { ...row, completed_session_count: 2, completed_load: 148 }
+          : row,
+      ),
+    };
+
+    const moved = moveSessionInWeek(week, SESSION_IDS.vo2, "2026-07-31");
+
+    const cycling = moved.by_discipline.find(
+      (row) => row.discipline === "cycling",
+    );
+    // Moving a *planned* card says nothing about what was recorded.
+    expect(cycling?.completed_session_count).toBe(2);
+    expect(cycling?.completed_load).toBe(148);
+  });
+
   it("is a no-op for a same-day drop", () => {
     const week = planWeekFixture(START);
     expect(moveSessionInWeek(week, SESSION_IDS.vo2, "2026-07-28")).toBe(week);

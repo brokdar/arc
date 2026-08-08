@@ -21,10 +21,16 @@ from app.domain.anchors import (
 )
 
 Protocol = Annotated[PostgresText, Field(min_length=1, max_length=200)]
-#: The appendable anchor types — the MVP three, spelled as a `Literal` so the
-#: contract does not advertise the reserved `cp`/`w_prime` (which the service
-#: also refuses, for callers that do not come through this schema).
-WritableAnchorType = Literal[AnchorType.FTP, AnchorType.LTHR, AnchorType.MAX_HR]
+#: The appendable anchor types, spelled as a `Literal` so the contract does
+#: not advertise the reserved `cp`/`w_prime` (which the service also refuses,
+#: for callers that do not come through this schema). `resting_hr` joined them
+#: with WP-5: HRSS reads it, so the athlete has to be able to enter it (D114).
+WritableAnchorType = Literal[
+    AnchorType.FTP,
+    AnchorType.LTHR,
+    AnchorType.MAX_HR,
+    AnchorType.RESTING_HR,
+]
 #: Bounds are per anchor type (`app.domain.anchors.ANCHOR_BOUNDS`), so the
 #: schema only rejects what is nonsensical for every type; the domain gives
 #: the precise message.

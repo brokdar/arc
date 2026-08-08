@@ -115,6 +115,14 @@ db-upgrade:
 db-revision message:
 	cd backend && POSTGRES__HOST=localhost uv run alembic revision --autogenerate -m "{{message}}"
 
+# Regenerate the frontend's session-metrics fixture from the real domain.
+# Run after changing app/domain/metrics.py, alignment.py or
+# session_analysis.py, and commit the result: the fixture is generated so that
+# every number in it agrees with the stream it was computed from.
+metrics-fixture:
+	cd backend && uv run python scripts/emit_metrics_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-metrics.ts
+
 # --- API contract ------------------------------------------------------------
 
 # Regenerate the OpenAPI schema and frontend API types

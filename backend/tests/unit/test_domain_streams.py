@@ -14,7 +14,7 @@ thought of.
 import datetime as dt
 
 import pytest
-from hypothesis import assume, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from app.domain.activity import QuarantineReason
@@ -813,7 +813,12 @@ def test_a_few_spikes_are_a_repair_not_a_quarantine() -> None:
 
 
 @given(offsets(min_samples=3, max_gap_s=GAP_THRESHOLD_S))
-@settings(max_examples=100)
+# `filter_too_much` suppressed, not worked around: the strategy generates gaps
+# freely and the `assume` below keeps only the runs that reach two minutes, so
+# a large share of inputs is filtered **by construction**. Whether that share
+# trips the health check depends on the seed, which made this the one flaky
+# test in the suite — it failed roughly one run in three on the same tree.
+@settings(max_examples=100, suppress_health_check=[HealthCheck.filter_too_much])
 def test_a_long_enough_plausible_activity_is_never_refused(
     offsets_s: list[float],
 ) -> None:

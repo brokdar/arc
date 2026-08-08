@@ -61,7 +61,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: "Analysis",
     icon: AnalysisIcon,
     ready: false,
-    arrives: "Analysis arrives with WP-5, once sessions have streams to plot",
+    arrives:
+      "Per-session analysis is on each session page; the aggregate surface — power curves, trends — arrives after the MVP",
   },
   {
     href: "/coach",

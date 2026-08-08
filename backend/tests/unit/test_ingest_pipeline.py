@@ -124,7 +124,13 @@ async def test_the_ingest_is_logged_and_audited(
     assert event.filename == "ride.fit"
     assert event.session_id == report.session_ids[0]
     audit = await rows(db_session, AuditLogEntry)
-    assert [entry.action for entry in audit] == ["session.ingested"]
+    # WP-5: the metric artefact is computed after the ingest commits, and it
+    # audits itself. The order is the guarantee — the session is durable
+    # before anything derived from it is attempted (WP-5 B-2).
+    assert [entry.action for entry in audit] == [
+        "session.ingested",
+        "session.metrics_computed",
+    ]
     assert audit[0].actor == "athlete"
 
 

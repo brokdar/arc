@@ -33,6 +33,97 @@ Object.assign(globalThis, {
   FormData: NodeFormData,
 });
 
+/**
+ * uPlot reads `matchMedia` and `devicePixelRatio` when it is imported, to
+ * follow a display that changes DPI. jsdom implements neither, so *importing*
+ * the stream charts throws before a single assertion runs — the second place
+ * (after `File`/`FormData`) where jsdom is not a faithful stand-in for a
+ * browser rather than a mock that needs adjusting.
+ *
+ * The stub reports a display that never changes, which is the only honest
+ * answer in a headless environment: the charts are asserted on their data and
+ * their structure, and the pixels they paint to a canvas jsdom does not
+ * implement are an e2e concern.
+ */
+if (typeof window !== "undefined" && !window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+/**
+ * uPlot also needs a `ResizeObserver` and a 2D canvas context, and jsdom has
+ * neither.
+ *
+ * Both are stubbed rather than polyfilled, because what they would provide is
+ * not what these tests assert. A component test proves the charts are given
+ * the right *data* and that the page around them renders — the pixels uPlot
+ * paints are an end-to-end concern, and pulling in a native canvas
+ * implementation to render them into a headless DOM nobody looks at would buy
+ * a slower suite and no extra confidence.
+ *
+ * The context is a proxy of no-ops that answers every drawing call, so a draw
+ * hook runs to completion instead of throwing on the first `clearRect` — which
+ * is the difference between "the chart drew nothing" and "importing the page
+ * failed".
+ */
+class NoopResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+class NoopPath2D {
+  addPath() {}
+  arc() {}
+  closePath() {}
+  lineTo() {}
+  moveTo() {}
+  rect() {}
+}
+
+if (typeof globalThis.Path2D === "undefined") {
+  globalThis.Path2D = NoopPath2D as unknown as typeof Path2D;
+}
+
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver =
+    NoopResizeObserver as unknown as typeof ResizeObserver;
+}
+
+if (typeof HTMLCanvasElement !== "undefined") {
+  function noopContext(this: HTMLCanvasElement) {
+    return new Proxy(
+      { canvas: this, font: "", fillStyle: "", strokeStyle: "" },
+      {
+        get: (target: Record<string, unknown>, property: string) =>
+          property in target
+            ? target[property]
+            : property === "measureText"
+              ? () => ({ width: 0 })
+              : () => undefined,
+        set: (target: Record<string, unknown>, property: string, value) => {
+          target[property] = value;
+          return true;
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D;
+  }
+
+  HTMLCanvasElement.prototype.getContext =
+    noopContext as unknown as typeof HTMLCanvasElement.prototype.getContext;
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();

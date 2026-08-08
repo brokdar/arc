@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-5 — metrics, session analysis and stream charts
+
+A recorded session now has numbers, and every one of them says where it came
+from. Decisions D112–D133.
+
+**The metric set (`backend/app/domain/`)**
+
+- The rest of the **Coggan chain** beside the NP/IF/TSS WP-3 already shared
+  with the planned side: average power as *total work over recording time*
+  (Appendix A.1's convention, and deliberately not the average a head unit
+  shows), variability index, efficiency factor, work, work above FTP, coasting
+  (moving ≥ 1 km/h at ≤ 10 W, display only), per-channel average and maximum,
+  and elevation gain against a 2 m hysteresis band (D120). The duration term in
+  training load is **recording time** — elapsed minus every stop over 30 s
+  (A5.1) — stated at the call site, in the docstring, and in the number's own
+  explanation.
+- **HRSS by per-sample integration** (A5.3), not the widely copied
+  single-average form: by Jensen's inequality that one systematically
+  under-reports exactly the variable-intensity sessions HR load exists for. A
+  square-wave HR series and a constant one with the same mean produce different
+  numbers, and the square wave is higher. Every guard names the input it is
+  missing. Resting heart rate becomes an **anchor** for it — with provenance,
+  an effective date and append-only history — rather than a profile field
+  (D114).
+- **Both load models are computed and both are stored**, with the one selected,
+  the rule that chose it, and enough to render A5.2's counterfactual (*"Load
+  79, from power. Had power been unavailable, the heart-rate model would have
+  given 75."*). Storing only the winner throws the comparison away permanently,
+  and the comparison is the only way to learn whether an HR-only day can be
+  trusted.
+- **Time in zone** per channel with the three-zone collapse and Treff's
+  polarization index (A5.4). A degenerate split is `not_assessed`, not `-inf`.
+  The five-zone HR model collapses Z1–2 / Z3 / Z4–5, which is where the
+  boundary physiologically sits rather than where the integers line up (D121).
+- **Interval detection and structure alignment** (`app/domain/alignment.py`):
+  threshold crossing over a 10 s centred smoothing, then an order-preserving
+  dynamic-programming assignment of detected intervals to planned work steps.
+  Confidence is duration and intensity agreement; pairs below 0.5 are excluded
+  with `alignment_low_confidence`. `offset_s` is a **real input** from day one
+  (A7.1): it moves the assignment through a proximity term while confidence
+  keeps measuring agreement alone (D123). Nothing persists it yet — an
+  alignment describes a match, and matches arrive with WP-6 (D116).
+- `NotAssessed(reason)` is the shape a metric answers with when it cannot: the
+  reason, never `None` and never a zero standing in for a missing channel.
+  WP-7's scoring axes will reuse it.
+
+**The artefact (`session_metrics`, migration 0006)**
+
+- One session's numbers are a **versioned artefact**. A recomputation appends
+  version *n+1* and supersedes *n*; nothing is updated in place, and the old
+  version stays readable with the pins it was computed against (invariant 1).
+  Appending a new FTP and recomputing changes the new version's pin and leaves
+  every earlier one exactly as it was.
+- The **pins are columns** — FTP, LTHR, max HR, resting HR, plus the zone model
+  per channel (A5.5) — because "recompute everything that used this FTP
+  version" cannot be a JSON scan. The numbers are one JSON payload, each value
+  beside its rendered explanation and each absence beside its reason.
+- Metrics are computed **after** the ingest transaction commits, per session,
+  inside a `try` (D125): a metric failure leaves an ingested ride with no
+  numbers rather than un-ingesting the file, and the file is the irreplaceable
+  half. A manual strength session takes the stream-free path on create and on
+  correction.
+
+**API**
+
+- `GET /api/v1/sessions/{id}/streams` — the chart payload, its own resource
+  because it is 1–2 MB for a long ride: per-channel cleaned columns with their
+  nulls intact, the recording stops, the repaired regions, per-channel sources.
+  404 with a reason-naming detail for a session that was typed in by hand.
+- `POST /api/v1/sessions/{id}/metrics/recompute` — audited, returns the new
+  version.
+- Session detail carries `metrics`; list rows carry `load` and `load_basis`.
+  The plan week carries **completed** duration and load per day and per
+  discipline with their own coverage pairs, plus a weekly polarization index
+  counting exactly one channel per session and stating which rule chose it
+  (A5.4, D127). Planned and completed stay in separate columns and are never
+  summed.
+
+**The session analysis page (`/sessions/{id}`)**
+
+- The header metric row, the stacked **uPlot** stream charts (power, HR,
+  cadence, elevation) with a synced cursor, zoom, drag-selection statistics, an
+  FTP reference line from the artefact's own pin, and recording stops drawn as
+  breaks rather than as zero watts. uPlot is the only chart dependency added —
+  the zone bar is SVG from the shared ramp (D113).
+- The detected-intervals table, the strength card for a session with no stream,
+  and a "not computed yet" state that offers the action rather than describing
+  the absence.
+- Every number renders its explanation through **one** shared affordance, and
+  every absent number renders `NotAssessed` with its reason in the slot it
+  would have occupied. The planned-band overlay on the power chart is a prop
+  that renders nothing until WP-6 fills it.
+- The frontend's metric and stream fixtures are **generated** by running the
+  real domain over a synthetic stream (`just metrics-fixture`, D132), so the
+  numbers in a test agree with the trace beneath them.
+
 ### WP-4 — ingestion: watched folder, FIT parsing, sessions & streams
 
 Device files become sessions. Decisions D89–D100.

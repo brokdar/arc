@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from app.domain.anchors import AnchorType, AnchorVersion
+from app.domain.anchors import AnchorType, AnchorVersion, describe_anchor
 from app.domain.metrics import (
     NP_WINDOW_S,
     MetricExplanation,
@@ -144,20 +144,6 @@ def _midpoint(
     return None
 
 
-def _describe(version: AnchorVersion) -> str:
-    """Render an anchor version the way an explanation names its inputs.
-
-    The version's own value, provenance and effective date — never "the
-    current FTP": the number was computed against a frozen version and must
-    keep explaining itself after the athlete's FTP moves.
-    """
-    provenance = version.provenance.value.replace("_", " ")
-    return (
-        f"{version.value:g} {version.unit.value} "
-        f"({provenance}, effective {version.effective_date.isoformat()})"
-    )
-
-
 #: Coverage this close to whole is rendered as an inequality rather than
 #: rounded, in either direction. One decimal place is as fine as the phrasing
 #: goes, and past it a partial coverage would round to a flat ``100%`` or
@@ -267,7 +253,7 @@ def predict_endurance_load(
         ),
         inputs=MappingProxyType(
             {
-                "FTP": _describe(ftp.version),
+                "FTP": describe_anchor(ftp.version),
                 "planned NP": f"{planned_np:.0f} W over the prescribed watts",
                 "duration": f"{total_duration_s} s prescribed",
                 "coverage": _coverage_phrase(coverage),
