@@ -23,6 +23,8 @@ from app.api.routes.matching import session_router as session_matches_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
 from app.api.routes.purposes import router as purposes_router
+from app.api.routes.scoring import planned_router as planned_reasons_router
+from app.api.routes.scoring import router as scores_router
 from app.api.routes.workouts import labels_router as workout_labels_router
 from app.api.routes.workouts import router as workouts_router
 from app.api.routes.zones import router as zones_router
@@ -31,7 +33,9 @@ from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
 from app.ingest.inbox import register_inbox_job
+from app.ingest.scoring import install_stream_loader
 from app.services.matching import register_missed_sessions_job
+from app.services.scoring import register_prompt_expiry_job
 from app.services.templates import verify_bundled_resources
 
 #: Runtime data tree created on startup, relative to `settings.data.root`.
@@ -63,6 +67,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The missed-session sweep (WP-6.7). Hourly, and idempotent, so it needs no
     # agreement with the athlete's midnight beyond `MATCHING__TIMEZONE`.
     register_missed_sessions_job(app.state.scheduler)
+    # The evening-prompt expiry sweep (WP-7.3). Hourly and idempotent, like the
+    # one above; each prompt carries its own 72-hour deadline.
+    register_prompt_expiry_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)
@@ -80,6 +87,12 @@ def generate_operation_id(route: APIRoute) -> str:
 def create_app() -> FastAPI:
     """Build the FastAPI application with all routers and middleware."""
     settings = get_settings()
+    # The scoring engine reads the cleaned 1 Hz columns, which only the ingest
+    # layer may open (`app.services` cannot import `app.ingest`), so the loader
+    # is installed here rather than imported there. Wiring rather than lifespan:
+    # scoring is triggered from matching and from the rescore seam on every path
+    # into the application, tests included, and those do not run a lifespan.
+    install_stream_loader()
     app = FastAPI(
         title=settings.application_name,
         lifespan=lifespan,
@@ -141,6 +154,8 @@ def create_app() -> FastAPI:
     api.include_router(ingest_router)
     api.include_router(matches_router)
     api.include_router(session_matches_router)
+    api.include_router(scores_router)
+    api.include_router(planned_reasons_router)
     app.include_router(api)
 
     return app

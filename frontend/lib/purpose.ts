@@ -222,7 +222,12 @@ const STRENGTH_PURPOSES: ReadonlySet<Purpose> = new Set<Purpose>([
  * The status vocabulary as the status dot renders it.
  *
  * `planned` is the pending grey; the other three are the outcome colours the
- * whole app uses for completed / missed / trained-something-else.
+ * whole app uses for completed / missed / trained-something-else. They are the
+ * same tokens `COMPLETION_TONES` (lib/scoring.ts) uses for the states these
+ * statuses map onto, so one fact never wears two colours depending on which
+ * component drew it — `displaced` in particular is **not** purple, which
+ * belongs to the over verdict and to the coach and to nothing else (D84,
+ * D156).
  */
 export const STATUS_TONES: Readonly<
   Record<SessionStatus, { label: string; color: string }>
@@ -232,6 +237,6 @@ export const STATUS_TONES: Readonly<
   missed: { label: "Missed", color: "var(--color-status-missed)" },
   displaced: {
     label: "Trained something else",
-    color: "var(--color-status-over)",
+    color: "var(--color-status-different)",
   },
 };

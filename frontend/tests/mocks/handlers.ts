@@ -3,10 +3,12 @@ import { createOpenApiHttp } from "openapi-msw";
 import type { components, paths } from "@/generated/api/schema";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
 import {
+  alignmentRead,
   anchorVersionFixture,
   applyLinkStatuses,
   contentHash,
   DETAILS,
+  declarationRead,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
@@ -22,10 +24,16 @@ import {
   purposeTemplateFixture,
   RIDE_METRICS,
   RIDE_STREAMS,
+  reasonsRead,
+  reasonsRefusal,
   restoreLinkStatuses,
+  SCORING_NOW,
   SESSION_IDS,
+  scoreRead,
+  scoringFor,
   statedBreakdown,
   statedRematch,
+  statedScoring,
   toListItem,
   WORKOUT_LABELS,
   WORKOUTS,
@@ -903,7 +911,174 @@ export const handlers = [
       return response(200).json(withMatch(survivor));
     },
   ),
+
+  // --- scores, alignment and the athlete's verdict (WP-7) --------------------
+
+  http.get("/api/v1/sessions/{session_id}/score", ({ params, response }) => {
+    const record = scoringFor(params.session_id);
+    if (!record) {
+      return response(404).json({ detail: NOT_SCORED });
+    }
+    return response(200).json(scoreRead(record));
+  }),
+
+  http.get(
+    "/api/v1/sessions/{session_id}/alignment",
+    ({ params, response }) => {
+      const record = scoringFor(params.session_id);
+      if (!record) {
+        return response(404).json({ detail: NOT_ALIGNED });
+      }
+      return response(200).json(alignmentRead(record));
+    },
+  ),
+
+  // The offset lands, and both versions move with it. Answering with the
+  // alignment it already had would let a component that sent the wrong offset
+  // — or none — still pass, and the whole point of the control is that the
+  // number it sends changes which effort answers which step.
+  http.put(
+    "/api/v1/sessions/{session_id}/alignment",
+    async ({ params, request, response }) => {
+      const record = scoringFor(params.session_id);
+      if (!record) {
+        return response(404).json({ detail: NOT_ALIGNED });
+      }
+      const body = await request.json();
+      if (Math.abs(body.offset_s) > MAX_ALIGNMENT_OFFSET_S) {
+        return response(422).json({
+          detail:
+            `An alignment offset of ${body.offset_s} s is further than the ` +
+            `${MAX_ALIGNMENT_OFFSET_S} s a correction can plausibly be.`,
+        });
+      }
+      // Throws for an offset nothing was generated for, rather than answering
+      // with a pairing no `align` produced.
+      statedScoring(
+        record.session_id,
+        record.planned_session_id,
+        body.offset_s,
+      );
+      record.offset_s = body.offset_s;
+      record.alignment_version += 1;
+      record.score_version += 1;
+      return response(200).json(alignmentRead(record));
+    },
+  ),
+
+  http.get("/api/v1/sessions/{session_id}/verdict", ({ params, response }) => {
+    const record = scoringFor(params.session_id);
+    const declared = record ? declarationRead(record) : null;
+    if (!record || !declared) {
+      return response(404).json({
+        detail:
+          `Session ${params.session_id} has no declared verdict yet. The ` +
+          "suggested one is on its score.",
+      });
+    }
+    return response(200).json(declared);
+  }),
+
+  // Echoes the verdict and the reasons it was sent, and applies the server's
+  // own rule to them: a canned reply could not fail when the form drops a
+  // reason, and a handler that accepted four could not fail when the picker
+  // stops counting.
+  http.put(
+    "/api/v1/sessions/{session_id}/verdict",
+    async ({ params, request, response }) => {
+      const record = scoringFor(params.session_id);
+      if (!record) {
+        return response(404).json({ detail: NOT_SCORED });
+      }
+      const body = await request.json();
+      const refusal = reasonsRefusal(body.verdict, body.reasons ?? []);
+      if (refusal) {
+        return response(422).json({ detail: refusal });
+      }
+      const reasons = body.reasons ?? [];
+      const note = body.note ?? null;
+      record.declaration = {
+        declared_verdict: body.verdict,
+        declared_at: SCORING_NOW,
+        suggested_at_declaration: scoreRead(record).suggested_verdict,
+        // Declaring again is the athlete ruling on the machine's current
+        // opinion, so it clears the flag — exactly as `declare` does.
+        contested: false,
+        contested_at: null,
+        contested_verdict: null,
+        // An `as_intended` declaration carrying nothing appends no version: a
+        // reasons chain whose tip says nothing is indistinguishable from
+        // silence.
+        reasons:
+          reasons.length > 0 || note !== null
+            ? [
+                {
+                  version: 1,
+                  recorded_at: SCORING_NOW,
+                  revision_reason: null,
+                  reasons: [...reasons],
+                  note,
+                  recorded_by: "athlete",
+                },
+              ]
+            : [],
+      };
+      const declared = declarationRead(record);
+      if (!declared) {
+        throw new Error("a declaration was just written and is not there");
+      }
+      return response(200).json(declared);
+    },
+  ),
+
+  // Append-only: a revision is version n+1, and what was said before stays
+  // readable.
+  http.put(
+    "/api/v1/sessions/{session_id}/verdict/reasons",
+    async ({ params, request, response }) => {
+      const record = scoringFor(params.session_id);
+      if (!record?.declaration) {
+        return response(404).json({
+          detail: `Session ${params.session_id} has no declared verdict yet.`,
+        });
+      }
+      const body = await request.json();
+      const refusal = reasonsRefusal(
+        record.declaration.declared_verdict,
+        body.reasons,
+      );
+      if (refusal) {
+        return response(422).json({ detail: refusal });
+      }
+      const chain = record.declaration.reasons;
+      const appended = {
+        version: chain.length + 1,
+        recorded_at: SCORING_NOW,
+        revision_reason: body.revision_reason ?? null,
+        reasons: [...body.reasons],
+        note: body.note ?? null,
+        recorded_by: "athlete",
+      };
+      chain.push(appended);
+      return response(200).json(reasonsRead(appended));
+    },
+  ),
 ];
+
+/** `app.services.scoring.MAX_ALIGNMENT_OFFSET_S` — six hours, in seconds. */
+const MAX_ALIGNMENT_OFFSET_S = 6 * 60 * 60;
+
+/** `app.api.routes.scoring.get_session_score`'s own 404 sentence. */
+const NOT_SCORED =
+  "This session has no score. A session is scored once it is linked to a " +
+  "planned session and that link is settled; a pending proposal is a " +
+  "question, not a link.";
+
+/** And `get_session_alignment`'s. */
+const NOT_ALIGNED =
+  "This session has no alignment. Only a session linked to an endurance " +
+  "prescription is aligned — a strength session's sets are paired by " +
+  "position, not on a timeline.";
 
 /** `app.services.matching.MAX_MERGE_GAP_S` — six hours, in seconds. */
 const MAX_MERGE_GAP_S = 6 * 60 * 60;

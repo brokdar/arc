@@ -10,6 +10,7 @@ import {
 import type { components } from "@/generated/api/schema";
 import { weekdayLabel } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
+import { COMPLETION_TONES } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
 type PlanWeekDay = components["schemas"]["PlanWeekDayRead"];
@@ -122,6 +123,29 @@ function DayColumn({
             : null,
       )}
     >
+      {/* The strip (WP-7.5): one bar per day, in the colour of the **worst**
+          state any of its cards is in. A day that showed the best of its
+          outcomes would hide the abandoned session behind the completed one,
+          which is the one thing a strip exists to surface. A day with nothing
+          planned and nothing recorded has no state and gets no bar — an
+          uncoloured rule rather than a grey one, because grey already means
+          `planned`. */}
+      {day.completion_state ? (
+        <span
+          role="img"
+          aria-label={`${weekdayLabel(day.date)}: ${COMPLETION_TONES[day.completion_state].label}`}
+          title={COMPLETION_TONES[day.completion_state].label}
+          data-testid={`day-state-${day.date}`}
+          data-state={day.completion_state}
+          className="h-[3px] rounded-full"
+          style={{
+            backgroundColor: COMPLETION_TONES[day.completion_state].color,
+          }}
+        />
+      ) : (
+        <span className="h-[3px] rounded-full bg-hairline" />
+      )}
+
       <div className="flex items-center justify-between px-0.5 pb-0.5">
         <span
           className={cn(

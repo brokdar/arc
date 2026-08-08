@@ -29,10 +29,11 @@ Build-plan invariant 4, in one place:
 The freeze rule asks two questions this module does not own — has this session
 been matched (WP-6), and how is a rescore requested (WP-7) — and both are
 module-level hooks with a default and a setter, in the same spirit as
-`app.persistence.db.set_session_factory`. WP-6 has since filled the first with
-a real query (:func:`_has_a_match`); the seam stays because it is what lets a
-test drive the freeze rule without building a link, and because WP-7 still
-needs the second.
+`app.persistence.db.set_session_factory`. WP-6 filled the first with a real
+query (:func:`_has_a_match`) and WP-7 the second with a real rescore
+(:func:`_rescore`); both seams stay, because they are what let a test drive the
+freeze rule without building a link and observe the rescore without building a
+score.
 """
 
 import datetime as dt
@@ -80,6 +81,7 @@ from app.persistence.planned_sessions import (
     PlannedSessionRow,
 )
 from app.services.anchors import AnchorService, parse_pins, resolve_pins
+from app.services.scoring import REASON_INTENT_EDITED, ScoringService
 from app.services.templates import purpose_templates
 from app.services.workouts import WorkoutService
 
@@ -142,15 +144,29 @@ async def _has_a_match(session: AsyncSession, planned_session_id: uuid.UUID) -> 
     return link is not None
 
 
-async def _no_scores_yet(
-    _session: AsyncSession, _planned_session_id: uuid.UUID, _version: int
+async def _rescore(
+    session: AsyncSession, planned_session_id: uuid.UUID, version: int
 ) -> None:
-    """MVP default: there is nothing to rescore, because scoring does not exist.
+    """Rescore whatever is linked to this session (WP-7.4).
 
-    **WP-7 replaces this** with the rescore it needs, via
-    :func:`set_rescore_trigger`. The call site is already correct: it fires
-    exactly when a post-hoc intent edit lands, inside the same transaction.
+    The freeze rule's second external question, answered against the scoring
+    service. It runs **inside the caller's transaction** — the intent edit and
+    the score version it caused land together or not at all — so it must not
+    commit, which is why it calls the no-commit entry point.
+
+    A rescore whose suggested verdict now contradicts a declaration the athlete
+    already made sets ``contested`` on that declaration and changes nothing
+    else: the machine may revise its own opinion as often as it likes and never
+    the athlete's (see `ScoringService._contest`).
+
+    Still behind :func:`set_rescore_trigger`, which tests use to observe the
+    seam without building a link.
     """
+    await ScoringService.from_session(session).rescore_for_planned_session(
+        planned_session_id,
+        actor=Actor.system(),
+        reason=f"{REASON_INTENT_EDITED} (intent version {version})",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +204,7 @@ class SessionResolution:
 
 
 _match_probe: MatchProbe = _has_a_match
-_rescore_trigger: RescoreTrigger = _no_scores_yet
+_rescore_trigger: RescoreTrigger = _rescore
 
 
 def set_match_probe(probe: MatchProbe | None) -> None:
@@ -200,7 +216,7 @@ def set_match_probe(probe: MatchProbe | None) -> None:
 def set_rescore_trigger(trigger: RescoreTrigger | None) -> None:
     """Install the rescore trigger; ``None`` restores the default."""
     global _rescore_trigger  # noqa: PLW0603
-    _rescore_trigger = trigger or _no_scores_yet
+    _rescore_trigger = trigger or _rescore
 
 
 class PlannedSessionService:

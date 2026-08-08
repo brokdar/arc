@@ -109,11 +109,31 @@
   --color-accent-wash: rgb(76 141 255 / 0.07); /* drop target, today's row */
 
   /* --- Status ----------------------------------------------------------- */
-  --color-status-completed: #4fb477;
+  /* The ten states `app.domain.scoring.CompletionState` names, in nine
+     colours — the week strip colours a day by one of them, and
+     `COMPLETION_TONES` in lib/scoring.ts is the lookup that maps them.
+     `lib/scoring.test.ts` measures every one of these against the purple
+     reservation and against the card, so a new tone that reads as the coach's
+     or as its neighbour's fails there rather than in review. */
+  --color-status-completed: #4fb477; /* judged: as intended */
   --color-status-under: #d9a441;
   --color-status-missed: #e05c5c;
   --color-status-over: #a78bfa;
-  --color-status-pending: #6b7280;
+  --color-status-pending: #6b7280; /* planned: still ahead of the athlete */
+  /* Matched and recorded, and judged by nobody yet (D152). Deliberately not
+     the completed green: a session arrives in this state some seconds before
+     it is scored, and painting it green would be the strip declaring a
+     verdict nothing computed. */
+  --color-status-recorded: #4f9db4;
+  /* Started and given up. Its own tone rather than the missed red: a session
+     that was abandoned happened, and the strip must not say it did not. */
+  --color-status-abandoned: #d9663c;
+  /* "The athlete trained, and it was not this" — the `displaced` link status
+     and the `different_session` verdict are the same statement from two
+     different writers, so they are one colour (D156). */
+  --color-status-different: #c86fa8;
+  /* Ridden with nothing planned for it. */
+  --color-status-unplanned: #7d8fa8;
 
   /* Tinted strips: a refusal (danger), a paused plan (warn), a session that
      did not happen (missed). Each is its status colour at the alpha the

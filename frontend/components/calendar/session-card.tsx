@@ -1,11 +1,12 @@
 "use client";
 
 import { PurposeBadge } from "@/components/design/purpose-badge";
-import { StatusDot } from "@/components/design/status-dot";
+import { CompletionDot } from "@/components/design/status-dot";
 import { DisciplineIcon } from "@/components/icons";
 import type { components } from "@/generated/api/schema";
 import { formatDurationHm, formatSets } from "@/lib/format";
 import { purposeTone } from "@/lib/purpose";
+import { COMPLETION_TONES, type CompletionState } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
 export type WeekSession = components["schemas"]["WeekSessionRead"];
@@ -28,7 +29,13 @@ export function SessionCard({
   onDragStateChange,
 }: SessionCardProps) {
   const tone = purposeTone(session.purpose);
-  const missed = session.status === "missed";
+  const state = session.completion_state;
+  const missed = state === "missed";
+  // Judged, and judged as something other than what was asked for. The card
+  // says so in words as well as in the dot's colour: "under" is the whole
+  // point of looking at last week, and a 6px dot is not where it should have
+  // to be read from.
+  const judged = JUDGED_STATES.has(state);
   // Cycling sessions are measured in time, strength in sets: the card shows
   // whichever the prescription actually states rather than an empty slot.
   const measure =
@@ -83,10 +90,7 @@ export function SessionCard({
             {measure}
           </span>
         </span>
-        <StatusDot
-          status={session.status}
-          outline={isToday && session.status === "planned"}
-        />
+        <CompletionDot state={state} outline={isToday && state === "planned"} />
       </span>
 
       <span
@@ -113,14 +117,25 @@ export function SessionCard({
 
       <span className="flex items-center justify-between gap-1 pt-0.5">
         <PurposeBadge purpose={session.purpose} />
-        {/* The link, but only where the status dot cannot already say it. A
-            `completed` dot and a `displaced` dot are the *consequences* of a
-            confirmed link and of an executed-instead-of one, so repeating them
-            here would be saying the same thing twice; a **pending** proposal
-            changes neither status by design (D140), which makes it the one
-            link state a card is otherwise silent about. WP-7 owns the full
-            colour-coded week strip. */}
-        {session.match_status === "pending" ? (
+        {/* The verdict first, where there is one: a link state is how the card
+            got here and the verdict is what it turned out to be, and only one
+            of those is worth a badge. A `completed` dot and a `displaced` dot
+            are the *consequences* of a confirmed link and of an
+            executed-instead-of one, so repeating them here would be saying the
+            same thing twice; a **pending** proposal changes neither status by
+            design (D140), which makes it the one link state a card is
+            otherwise silent about. */}
+        {judged ? (
+          <span
+            className="whitespace-nowrap rounded-badge border px-1 py-px text-2xs"
+            style={{
+              color: COMPLETION_TONES[state].color,
+              borderColor: COMPLETION_TONES[state].color,
+            }}
+          >
+            {COMPLETION_TONES[state].label}
+          </span>
+        ) : session.match_status === "pending" ? (
           <span
             title="A proposal is waiting on you: open the session it came from to confirm or reject it"
             className="whitespace-nowrap rounded-badge border border-accent-border bg-accent-surface px-1 py-px text-2xs text-accent"
@@ -138,3 +153,22 @@ export function SessionCard({
     </button>
   );
 }
+
+/**
+ * States that are a **verdict** — something a person ruled on, or the machine
+ * suggested and nobody has overruled.
+ *
+ * `completed` is not one of them: it is the gap between ingest and the first
+ * score, and badging it "Recorded, not yet judged" would put a label on every
+ * card for the seconds before anything had an opinion. `missed`, `planned` and
+ * `unplanned` are facts about the calendar rather than judgements, and the dot
+ * already carries them.
+ */
+const JUDGED_STATES: ReadonlySet<CompletionState> = new Set<CompletionState>([
+  "completed-as_intended",
+  "under",
+  "over",
+  "abandoned",
+  "different_session",
+  "displaced",
+]);

@@ -49,6 +49,42 @@
         "title": "AbsoluteRangeSchema",
         "type": "object"
       },
+      "AlignedStepRead": {
+        "description": "One planned work step paired with one detected effort.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "interval_index": {
+            "title": "Interval Index",
+            "type": "integer"
+          },
+          "step_index": {
+            "title": "Step Index",
+            "type": "integer"
+          }
+        },
+        "required": ["step_index", "interval_index", "confidence"],
+        "title": "AlignedStepRead",
+        "type": "object"
+      },
+      "AlignmentOffsetUpdate": {
+        "additionalProperties": false,
+        "description": "Slide the planned timeline along the recording.\n\nFunctional, not cosmetic: the offset changes which detected effort answers\nwhich prescribed step, so it changes the adherence and pacing axes. Setting\nit creates a new alignment version and rescores the session (A7.1).",
+        "properties": {
+          "offset_s": {
+            "description": "Seconds to slide the planned timeline by before the steps are assigned. Positive means the workout began later than the recording did.",
+            "maximum": 21600.0,
+            "minimum": -21600.0,
+            "title": "Offset S",
+            "type": "integer"
+          }
+        },
+        "required": ["offset_s"],
+        "title": "AlignmentOffsetUpdate",
+        "type": "object"
+      },
       "AnchorPinRead": {
         "description": "An anchor version a metric artefact was computed against.\n\nResolved rather than left as an id: the header renders `FTP 262 \u00b1 15 \u00b7\nestimated`, and a client that had to fetch four anchor versions to draw\none line would fetch them on every session it showed.",
         "properties": {
@@ -466,6 +502,57 @@
         "title": "AthleteUpdate",
         "type": "object"
       },
+      "AxisRead": {
+        "description": "One scoring axis: answered with a number, or refused with a reason.\n\nExactly one of ``value`` and ``not_assessed`` is non-null, and\n``explanation`` is present exactly when ``value`` is.",
+        "properties": {
+          "axis": {
+            "$ref": "#/components/schemas/ScoringAxis"
+          },
+          "criteria": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CriterionOutcomeRead"
+            },
+            "title": "Criteria",
+            "type": "array"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplanationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": ["axis"],
+        "title": "AxisRead",
+        "type": "object"
+      },
       "BandSchema": {
         "additionalProperties": false,
         "description": "An acceptable range around a step's prescribed target, as fractions.",
@@ -580,6 +667,98 @@
         "enum": ["sport_field", "heuristic", "manual"],
         "title": "ClassificationSource",
         "type": "string"
+      },
+      "CompletionState": {
+        "description": "What the calendar's week strip colours one day, or one card, by.\n\nThe build plan's list (WP-7.5) plus one member it does not name and the\ncalendar cannot do without: :attr:`COMPLETED`. A session is matched and\nrecorded some seconds before it is scored, and every session spends the\ngap between ingest and its first score in a state that is neither\n``planned`` nor any verdict. Rendering it as ``completed-as_intended``\nwould be the machine declaring a verdict nobody computed (D152).",
+        "enum": [
+          "planned",
+          "completed",
+          "completed-as_intended",
+          "under",
+          "over",
+          "abandoned",
+          "different_session",
+          "missed",
+          "displaced",
+          "unplanned"
+        ],
+        "title": "CompletionState",
+        "type": "string"
+      },
+      "CriterionKind": {
+        "description": "The five MVP criterion types, as they appear in the ``kind`` tag.",
+        "enum": [
+          "time_in_band",
+          "duration_floor",
+          "ceiling",
+          "sets_completed",
+          "load_within"
+        ],
+        "title": "CriterionKind",
+        "type": "string"
+      },
+      "CriterionOutcomeRead": {
+        "description": "One success criterion, checked.\n\n``passed`` has three states and the third is not a failure: ``null`` means\nthe criterion could not be checked, and ``not_assessed`` says why. Render\nthat as a reason, never as a red cross \u2014 a ride with no power meter did\nnot fail its time-in-band criterion.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CriterionKind"
+          },
+          "not_assessed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Assessed"
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "required": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required"
+          }
+        },
+        "required": ["index", "kind", "detail"],
+        "title": "CriterionOutcomeRead",
+        "type": "object"
       },
       "Discipline": {
         "description": "The two disciplines the MVP trains.",
@@ -696,6 +875,30 @@
         },
         "required": ["detail"],
         "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ExcludedStepRead": {
+        "description": "A pair the assignment made and the confidence gate then refused.\n\nDifferent from a step that was never performed, and shown differently:\n\"we matched this step to that effort and did not trust the match\".",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "interval_index": {
+            "title": "Interval Index",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "step_index": {
+            "title": "Step Index",
+            "type": "integer"
+          }
+        },
+        "required": ["step_index", "interval_index", "confidence", "reason"],
+        "title": "ExcludedStepRead",
         "type": "object"
       },
       "ExerciseCategory": {
@@ -1917,6 +2120,38 @@
         "title": "MetricsRecompute",
         "type": "object"
       },
+      "MissedReasonsUpdate": {
+        "additionalProperties": false,
+        "description": "Answer the evening prompt about a session that was missed.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reasons": {
+            "description": "One to three reasons, ordered by primacy.",
+            "items": {
+              "$ref": "#/components/schemas/Reason"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": ["reasons"],
+        "title": "MissedReasonsUpdate",
+        "type": "object"
+      },
       "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
@@ -2246,6 +2481,16 @@
             "title": "Completed Session Count",
             "type": "integer"
           },
+          "completion_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompletionState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "date": {
             "format": "date",
             "title": "Date",
@@ -2264,7 +2509,8 @@
           "sessions",
           "completed_session_count",
           "completed_duration_s",
-          "completed_load"
+          "completed_load",
+          "completion_state"
         ],
         "title": "PlanWeekDayRead",
         "type": "object"
@@ -3445,6 +3691,77 @@
         "title": "RampStepSchema",
         "type": "object"
       },
+      "Reason": {
+        "description": "Why a session was not as intended \u2014 the controlled list (WP-7.3).\n\nControlled rather than free text because the point is to be able to count\nthem: \"three of your last five threshold sessions were cut short by\n``time``\" is a sentence the coaching agent can only write if the reason is\na value. The free-text note travels *beside* the list, never instead of it.\n\n``NOT_PROVIDED`` is the honest member: it is what an expired evening\nprompt records (WP-7.3) and what an athlete who declines to say picks. It\nis not a null \u2014 \"we asked and got no answer\" is a different fact from \"we\nnever asked\".",
+        "enum": [
+          "time",
+          "weather",
+          "heat",
+          "traffic",
+          "terrain",
+          "fatigue",
+          "sleep",
+          "fuelling",
+          "illness",
+          "equipment",
+          "group_ride",
+          "felt_good",
+          "not_provided"
+        ],
+        "title": "Reason",
+        "type": "string"
+      },
+      "ReasonsRead": {
+        "description": "One version of the reasons behind a verdict, or behind a missed session.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reasons": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Reason"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recorded_by": {
+            "title": "Recorded By",
+            "type": "string"
+          },
+          "revision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Reason"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["version", "recorded_at", "recorded_by"],
+        "title": "ReasonsRead",
+        "type": "object"
+      },
       "RecordingKind": {
         "description": "Whether a session came from a device file or was entered by hand.",
         "enum": ["device", "manual"],
@@ -3842,6 +4159,28 @@
         "title": "ResolvedTargetRead",
         "type": "object"
       },
+      "ScoreRecompute": {
+        "additionalProperties": false,
+        "description": "Why a recomputation was asked for. The body is optional.\n\nThe reason lands on the **new** version and is what a later reader sees\nwhen two score versions disagree.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the score is being recomputed.",
+            "title": "Reason"
+          }
+        },
+        "title": "ScoreRecompute",
+        "type": "object"
+      },
       "ScoringAxis": {
         "description": "The axes WP-7 scores a session on.\n\nNamed here rather than in WP-7 because the templates reference them, and\nthe templates are written now. ``RESPONSE`` and ``FUELLING`` are in the\nvocabulary but out of MVP scope: WP-7 returns ``not_assessed(deferred)``\nfor them, so the shape exists without the behaviour.",
         "enum": [
@@ -3855,6 +4194,82 @@
         ],
         "title": "ScoringAxis",
         "type": "string"
+      },
+      "SessionAlignmentRead": {
+        "description": "One version of how a recording lines up with its prescription.",
+        "properties": {
+          "aligned": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AlignedStepRead"
+            },
+            "title": "Aligned",
+            "type": "array"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "excluded": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExcludedStepRead"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "offset_s": {
+            "title": "Offset S",
+            "type": "integer"
+          },
+          "planned_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Session Id"
+          },
+          "recompute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recompute Reason"
+          },
+          "unmatched_intervals": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Unmatched Intervals",
+            "type": "array"
+          },
+          "unmatched_steps": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Unmatched Steps",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": ["version", "computed_at", "offset_s"],
+        "title": "SessionAlignmentRead",
+        "type": "object"
       },
       "SessionDiscipline": {
         "description": "What a *recorded* session was.\n\nA superset of `app.domain.athlete.Discipline`, and deliberately a separate\nenum: `Discipline` is the vocabulary of things we **prescribe**, and every\npurpose, workout and planned session is one of its two members. A device\nfile, by contrast, can hold a walk, a swim or a sport the head unit does\nnot name \u2014 things we never plan and never score, but must still be able to\ningest without lying about. ``OTHER`` is that bucket.\n\nThe two shared members carry the **same string values** as `Discipline`,\nso the WP-6 candidate query is a value comparison and the athlete-facing\nvocabulary is one vocabulary (see :func:`as_planned_discipline`).",
@@ -4493,6 +4908,130 @@
           "updated_at"
         ],
         "title": "SessionRead",
+        "type": "object"
+      },
+      "SessionScoreRead": {
+        "description": "One version of one session's score, with what it was computed from.",
+        "properties": {
+          "alignment_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alignment Version Id"
+          },
+          "axes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AxisRead"
+            },
+            "title": "Axes",
+            "type": "array"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "intent_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Version"
+          },
+          "metrics_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics Version Id"
+          },
+          "other_criteria": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CriterionOutcomeRead"
+            },
+            "title": "Other Criteria",
+            "type": "array"
+          },
+          "pinned_anchor_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Pinned Anchor Versions",
+            "type": "object"
+          },
+          "planned_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Session Id"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "recompute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recompute Reason"
+          },
+          "standalone": {
+            "default": false,
+            "title": "Standalone",
+            "type": "boolean"
+          },
+          "suggested_verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          },
+          "verdict_rationale": {
+            "title": "Verdict Rationale",
+            "type": "string"
+          },
+          "verdict_rule": {
+            "$ref": "#/components/schemas/VerdictRule"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "purpose",
+          "suggested_verdict",
+          "verdict_rule",
+          "verdict_rationale",
+          "version",
+          "computed_at"
+        ],
+        "title": "SessionScoreRead",
         "type": "object"
       },
       "SessionStatus-Input": {
@@ -5224,9 +5763,215 @@
         "title": "ValidationErrorDetail",
         "type": "object"
       },
+      "Verdict": {
+        "description": "How a session turned out, in five words the whole product agrees on.\n\nThe machine suggests one (:func:`suggest_verdict`) and the athlete\ndeclares one. They are the same vocabulary on purpose: an override is the\nathlete picking a different member of this enum, not writing an essay,\nwhich is what makes \"how often does the machine agree with me\" a question\nwith an answer.",
+        "enum": [
+          "as_intended",
+          "under",
+          "over",
+          "abandoned",
+          "different_session"
+        ],
+        "title": "Verdict",
+        "type": "string"
+      },
+      "VerdictDeclarationRead": {
+        "description": "What the athlete said the session was, and whether it is contested.",
+        "properties": {
+          "contested": {
+            "default": false,
+            "title": "Contested",
+            "type": "boolean"
+          },
+          "contested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contested At"
+          },
+          "contested_verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "declared_at": {
+            "format": "date-time",
+            "title": "Declared At",
+            "type": "string"
+          },
+          "declared_verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          },
+          "planned_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Session Id"
+          },
+          "reasons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasonsRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Version Id"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "suggested_at_declaration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["session_id", "declared_verdict", "declared_at"],
+        "title": "VerdictDeclarationRead",
+        "type": "object"
+      },
+      "VerdictDeclare": {
+        "additionalProperties": false,
+        "description": "Declare what the session was. The athlete's, and only the athlete's.\n\nAnything but `as_intended` needs one to three reasons, in order of\nprimacy \u2014 pick `not_provided` rather than leaving the list empty if you\nwould rather not say.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free text beside the reasons, never instead of them.",
+            "title": "Note"
+          },
+          "reasons": {
+            "default": [],
+            "description": "One to three reasons, ordered by primacy, required for any verdict but `as_intended`. Each may appear once.",
+            "items": {
+              "$ref": "#/components/schemas/Reason"
+            },
+            "maxItems": 3,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict",
+            "description": "What the session actually was."
+          }
+        },
+        "required": ["verdict"],
+        "title": "VerdictDeclare",
+        "type": "object"
+      },
+      "VerdictReasonsUpdate": {
+        "additionalProperties": false,
+        "description": "Revise the reasons behind a declaration. Append-only: a new version.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reasons": {
+            "description": "One to three reasons, ordered by primacy.",
+            "items": {
+              "$ref": "#/components/schemas/Reason"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "revision_reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the earlier answer is being revised.",
+            "title": "Revision Reason"
+          }
+        },
+        "required": ["reasons"],
+        "title": "VerdictReasonsUpdate",
+        "type": "object"
+      },
+      "VerdictRule": {
+        "description": "Which row of :func:`suggest_verdict`'s table produced the suggestion.\n\nStored with the score so the reason a session reads `under` survives every\nlater change to the table: a suggestion whose rule is recorded can be\nexplained a year later, and one that is not has to be re-derived against\nwhatever the code says today.",
+        "enum": [
+          "displaced_link",
+          "completion_below_floor",
+          "execution_at_or_above_floor",
+          "off_target_over",
+          "off_target_under",
+          "ceiling_exceeded",
+          "completion_above_ceiling",
+          "completion_short",
+          "nothing_contradicts"
+        ],
+        "title": "VerdictRule",
+        "type": "string"
+      },
       "WeekSessionRead": {
         "description": "One planned session, as a calendar card shows it.",
         "properties": {
+          "completion_state": {
+            "$ref": "#/components/schemas/CompletionState"
+          },
           "date": {
             "format": "date",
             "title": "Date",
@@ -5395,7 +6140,8 @@
           "predicted_load_coverage",
           "predicted_volume_load_kg",
           "matched_session_id",
-          "match_status"
+          "match_status",
+          "completion_state"
         ],
         "title": "WeekSessionRead",
         "type": "object"
@@ -8454,6 +9200,168 @@
         "tags": ["planned-sessions"]
       }
     },
+    "/api/v1/planned-sessions/{planned_session_id}/reasons": {
+      "get": {
+        "description": "Why a planned session was missed, as last answered.\n\n404 while the evening prompt stands unanswered: \"nobody has said yet\" and\n\"the prompt expired, so the reason is `not_provided`\" are different states,\nand the second one is a row.",
+        "operationId": "scores-get_missed_session_reasons",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReasonsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Missed Session Reasons",
+        "tags": ["scores"]
+      },
+      "put": {
+        "description": "Answer the evening prompt about a missed session.\n\nCloses the prompt as `answered`. Answering again is a revision \u2014 a new\nversion, with the earlier answer still readable. Athlete-only.",
+        "operationId": "scores-answer_missed_session_prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "planned_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Planned Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MissedReasonsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReasonsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Only the athlete may write this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such planned session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The request violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Answer Missed Session Prompt",
+        "tags": ["scores"]
+      }
+    },
     "/api/v1/purposes": {
       "get": {
         "description": "List every purpose with its scoring axes and default success criteria.",
@@ -8801,6 +9709,158 @@
         "tags": ["sessions"]
       }
     },
+    "/api/v1/sessions/{session_id}/alignment": {
+      "get": {
+        "description": "The alignment version in force: which effort answered which step.",
+        "operationId": "scores-get_session_alignment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionAlignmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session, or nothing scored"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Alignment",
+        "tags": ["scores"]
+      },
+      "put": {
+        "description": "Slide the planned timeline and rescore against the new pairing.\n\nThe athlete started recording three minutes before starting the workout, or\nthe warm-up ran long. Correcting it writes a new alignment version and a\nnew score version in one transaction, so a score never points at an\nalignment that is not the one in force (A7.1).",
+        "operationId": "scores-set_session_alignment_offset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlignmentOffsetUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionAlignmentRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The request violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Set Session Alignment Offset",
+        "tags": ["scores"]
+      }
+    },
     "/api/v1/sessions/{session_id}/merge": {
       "post": {
         "description": "Fold a second recording of one ride into this session (WP-6.5).\n\nThe garage-door case: a head unit stopped and restarted leaves two files,\ntwo sessions and half a ride each. **Both recordings are kept** and both\nmove onto this session, whose span widens to cover them; the other session\nrow is removed.\n\nA metric version is then appended over the **joined** stream \u2014 the two\ngrids laid end to end, with the gap between them left unrecorded and\nreported as a recording stop \u2014 so the numbers describe the whole ride\nrather than the first half of it. That recompute reads parquet, which is\nwhy it happens here rather than inside the merge itself.\n\nHere rather than under `/matches` because it is an edit to the session and\nit answers with the session.",
@@ -9049,6 +10109,238 @@
         "tags": ["matches"]
       }
     },
+    "/api/v1/sessions/{session_id}/score": {
+      "get": {
+        "description": "The score version in force for one session.\n\n404 when nothing has been scored \u2014 an unlinked session, one whose link is\nstill an unanswered proposal, or one ingested before scoring existed. The\ndetail says which, because that sentence is the empty state the page\nrenders.",
+        "operationId": "scores-get_session_score",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScoreRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session, or nothing scored"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Score",
+        "tags": ["scores"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/score/history": {
+      "get": {
+        "description": "Every version of one session's score, oldest first.\n\nNothing is ever overwritten (invariant 1), so this is the record of how the\nmachine's opinion moved \u2014 and of what each version was computed against.\nEmpty for a session that has never been scored.",
+        "operationId": "scores-get_session_score_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SessionScoreRead"
+                  },
+                  "title": "Response Scores-Get Session Score History",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Score History",
+        "tags": ["scores"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/score/recompute": {
+      "post": {
+        "description": "Recompute one session's score and append version *n+1*.\n\nThe old version stays readable with the intent version, pins and alignment\nversion it was computed against. If a declared verdict now disagrees with\nthe new suggestion, the **declaration** is flagged `contested` and left\nexactly as the athlete wrote it (WP-7.4).",
+        "operationId": "scores-recompute_session_score",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScoreRecompute"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionScoreRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The request violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Recompute Session Score",
+        "tags": ["scores"]
+      }
+    },
     "/api/v1/sessions/{session_id}/streams": {
       "get": {
         "description": "The per-second samples behind one session, for the charts.\n\nIts own resource because it is 1-2 MB for a long ride (A4.1: 14 400 rows\nper channel for four hours). Every channel is the **cleaned** column with\nits nulls intact \u2014 a recording stop is a break in the trace, not a run of\nzeros \u2014 and the anomaly regions come with it so the chart can mark what\nwas repaired (A4.2).\n\n404 for a session that has no recording: a gym session typed in by hand\nnever had samples, and the detail says so because that sentence is the\nempty state the page renders.",
@@ -9191,6 +10483,265 @@
         ],
         "summary": "Mark Session Unplanned",
         "tags": ["matches"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/verdict": {
+      "get": {
+        "description": "What the athlete declared this session was, and why.",
+        "operationId": "scores-get_session_verdict",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictDeclarationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session, or nothing scored"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Verdict",
+        "tags": ["scores"]
+      },
+      "put": {
+        "description": "Declare what the session was \u2014 confirming the suggestion, or overriding it.\n\n**Only the athlete may call this.** A 403 for anyone else, including a\ncoaching agent holding a valid write-scoped key: this is the athlete's own\naccount of the session, and an agent that could write it would be\ninventing testimony to read back later (WP-7.2).\n\nDeclaring again replaces the standing declaration and clears any\n`contested` flag \u2014 the athlete has now ruled on the machine's current\nopinion.",
+        "operationId": "scores-declare_session_verdict",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictDeclare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerdictDeclarationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Only the athlete may write this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The request violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Declare Session Verdict",
+        "tags": ["scores"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/verdict/reasons": {
+      "put": {
+        "description": "Revise the reasons behind a declared verdict.\n\nAppend-only: this writes version *n+1* and leaves what was said before\nreadable. Athlete-only, for the same reason the declaration is.",
+        "operationId": "scores-revise_session_reasons",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictReasonsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReasonsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Only the athlete may write this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session, or nothing scored"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The request violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Revise Session Reasons",
+        "tags": ["scores"]
       }
     },
     "/api/v1/workout-labels": {

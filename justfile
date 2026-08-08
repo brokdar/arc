@@ -131,6 +131,16 @@ matching-fixture:
 	cd backend && uv run python scripts/emit_matching_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-matching.ts
 
+# Regenerate the frontend's score and alignment fixtures from the real domain.
+# Run after changing app/domain/scoring.py, app/domain/alignment.py or the two
+# sides the script states itself against: the axis values, their explanations,
+# the criterion outcomes and the suggested verdict are the domain's, and the
+# alignment at each offset is what `align` actually pairs — not what a fixture
+# author expected it to.
+scoring-fixture:
+	cd backend && uv run python scripts/emit_scoring_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-scoring.ts
+
 # --- API contract ------------------------------------------------------------
 
 # Regenerate the OpenAPI schema and frontend API types
