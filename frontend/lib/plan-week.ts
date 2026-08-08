@@ -117,7 +117,13 @@ function withTotals(week: PlanWeek, days: readonly PlanWeekDay[]): PlanWeek {
       const group = sessions.filter(
         (session) => session.discipline === discipline,
       );
-      if (group.length === 0) {
+      const completed = completedOf(week, discipline);
+      // A discipline row exists for *either* side. The backend emits one with
+      // no planned sessions and a recorded ride in it, and dropping such a
+      // row here — because the optimistic rebuild only knows about planned
+      // cards — deleted what actually happened from the cache until the
+      // refetch put it back.
+      if (group.length === 0 && completed.completed_session_count === 0) {
         return [];
       }
       const sets = group.filter((session) => session.total_sets !== null);
@@ -129,7 +135,7 @@ function withTotals(week: PlanWeek, days: readonly PlanWeekDay[]): PlanWeek {
         // was recorded, so the completed columns are carried over rather than
         // recomputed. A discipline that had no row before the move has
         // nothing recorded either, which is what the fallback says.
-        ...completedOf(week, discipline),
+        ...completed,
         total_sets: sets.length
           ? sets.reduce((sum, session) => sum + (session.total_sets ?? 0), 0)
           : null,

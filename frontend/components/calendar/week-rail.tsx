@@ -165,9 +165,11 @@ export function WeekRail({
                   <DisciplineIcon discipline={row.discipline} size={12} />
                   {disciplineLabel(row.discipline)}
                 </span>
-                <span className="font-mono text-2xs text-ink-faint">
-                  {row.session_count}{" "}
-                  {row.session_count === 1 ? "session" : "sessions"}
+                <span className="flex gap-1.5 font-mono text-2xs text-ink-faint">
+                  <span>{plannedCount(row)}</span>
+                  {row.completed_session_count > 0 ? (
+                    <span>· {row.completed_session_count} recorded</span>
+                  ) : null}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
@@ -234,6 +236,21 @@ function sessionCoverage(counted: number, total: number): string {
 }
 
 /**
+ * How many sessions a discipline has planned this week.
+ *
+ * "nothing planned" rather than "0 sessions" because the row can exist for
+ * its **completed** side alone: WP-5 gave the week what was recorded, and a
+ * ride nobody planned produces a discipline row with no planned sessions in
+ * it. "0 sessions" beside a recorded ride reads as a contradiction.
+ */
+function plannedCount(row: DisciplineRow): string {
+  if (row.session_count === 0) {
+    return "nothing planned";
+  }
+  return `${row.session_count} ${row.session_count === 1 ? "session" : "sessions"}`;
+}
+
+/**
  * Why a discipline row has no TSS. Two different facts, never interchangeable.
  *
  * A strength row has none because kilograms and TSS are different axes and
@@ -247,6 +264,12 @@ function loadReason(row: DisciplineRow): string {
     return "Strength volume is measured in kilograms, not TSS";
   }
   const total = row.load_sessions_counted + row.load_sessions_uncounted;
+  if (total === 0) {
+    // The row is here for what was *recorded*; there is nothing planned to
+    // have failed to predict, and "no prediction for 0 of 0 sessions" is not
+    // a sentence.
+    return "Nothing was planned for this discipline this week";
+  }
   return `No prediction for ${row.load_sessions_uncounted} of ${total} ${
     total === 1 ? "session" : "sessions"
   }`;
@@ -258,6 +281,9 @@ function durationReason(row: DisciplineRow): string {
     return "A lift is prescribed in sets and reps, not in minutes";
   }
   const total = row.duration_sessions_counted + row.duration_sessions_uncounted;
+  if (total === 0) {
+    return "Nothing was planned for this discipline this week";
+  }
   return `No prescribed duration for ${row.duration_sessions_uncounted} of ${total} ${
     total === 1 ? "session" : "sessions"
   }`;

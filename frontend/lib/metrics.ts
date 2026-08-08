@@ -89,6 +89,20 @@ export const LOAD_BASIS_LABELS: Readonly<Record<LoadBasis, string>> = {
 };
 
 /**
+ * The unit a load is written in, which is **not** the same for both models.
+ *
+ * TSS is the power model's scale (one hour at FTP = 100). The heart-rate
+ * model's is HRSS — rescaled so one hour at threshold HR is also 100, which
+ * is what makes the two comparable, and precisely why stamping "TSS" on an
+ * HRSS value is the mistake worth guarding: the numbers sit in the same
+ * range, so nothing looks wrong.
+ */
+export const LOAD_BASIS_UNITS: Readonly<Record<LoadBasis, string>> = {
+  power: "TSS",
+  hr: "HRSS",
+};
+
+/**
  * The zone-ramp token one band of a zone model paints with.
  *
  * The seven-zone power model maps one-to-one onto the ramp. The five-zone
@@ -221,6 +235,13 @@ function mean(values: readonly (number | null)[]): number | null {
 /**
  * Statistics for the rows a selection covers, computed in the browser.
  *
+ * The range is **half-open** — `[from, to)` — which is the convention every
+ * other range in this system uses: recording stops, anomaly regions, detected
+ * intervals and the label the chart header prints beside the selection. An
+ * inclusive count here made a drag report one second more than the label
+ * above it said, which is the kind of disagreement nobody reports and
+ * everybody half-notices.
+ *
  * Null rows are **excluded**, never read as zero — the same rule the backend
  * applies, and the reason a selection across a coffee stop reports the riding
  * either side of it rather than an average dragged toward nothing.
@@ -231,7 +252,7 @@ export function selectionStats(
   to: number,
 ): SelectionStats {
   const start = Math.max(0, Math.min(from, to));
-  const end = Math.min(streams.length, Math.max(from, to) + 1);
+  const end = Math.min(streams.length, Math.max(from, to));
   const slice = (channel: StreamChannel) =>
     (channelValues(streams, channel) ?? []).slice(start, end);
   const watts = slice("power").filter(

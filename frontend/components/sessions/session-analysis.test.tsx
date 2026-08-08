@@ -60,6 +60,60 @@ describe("the metric header", () => {
     expect(screen.getByLabelText(/estimated:/)).toBeInTheDocument();
   });
 
+  it("labels a heart-rate load HRSS, never TSS", () => {
+    // Both scales put an hour at threshold at 100, so the numbers sit in the
+    // same range and an HRSS value stamped "TSS" looks entirely plausible.
+    const metrics = without({
+      load: {
+        not_assessed: null,
+        training_load: 75,
+        load_basis: "hr",
+        load_basis_rule:
+          "no power was recorded, so the heart-rate model was used",
+        power_load: null,
+        hr_load: 75,
+        explanation: null,
+      },
+    });
+
+    render(<MetricHeader metrics={metrics} />);
+
+    expect(screen.getByText("HRSS")).toBeInTheDocument();
+    expect(screen.queryByText("TSS")).not.toBeInTheDocument();
+    expect(screen.getByText(/from heart rate/)).toBeInTheDocument();
+  });
+
+  it("labels a power load TSS", () => {
+    render(<MetricHeader metrics={RIDE_METRICS} />);
+
+    expect(screen.getByText("TSS")).toBeInTheDocument();
+    expect(screen.queryByText("HRSS")).not.toBeInTheDocument();
+  });
+
+  it("shows a stream-free session's elapsed time, never 0:00", () => {
+    // `recording_time_s` is 0.0 on every artefact with no recording behind
+    // it — a typed-in gym session has no pauses to subtract — and printing it
+    // put "0:00" under an hour in the gym.
+    const metrics = without({ recording_time_s: 0, elapsed_time_s: 3_600 });
+
+    render(<MetricHeader metrics={metrics} />);
+
+    expect(screen.getByText("1:00:00")).toBeInTheDocument();
+    expect(screen.queryByText("0:00")).not.toBeInTheDocument();
+    // And it says which of the two durations is on screen: they differ.
+    expect(screen.getByText("elapsed")).toBeInTheDocument();
+  });
+
+  it("holds the duration slot when a session records neither", () => {
+    const metrics = without({ recording_time_s: 0, elapsed_time_s: 0 });
+
+    render(<MetricHeader metrics={metrics} />);
+
+    expect(
+      screen.getByRole("img", { name: /Not assessed: This session records/ }),
+    ).toBeInTheDocument();
+  });
+
   it("states the counterfactual when both load models exist", () => {
     render(<MetricHeader metrics={RIDE_METRICS} />);
 
@@ -342,11 +396,21 @@ describe("selection statistics", () => {
 
     // The selection spans the pause; the average is of the riding either side
     // of it, dragged toward nothing by nothing.
-    expect(across.durationS).toBe(
-      stop.end_index + 10 - (stop.start_index - 10) + 1,
-    );
     expect(across.averagePower).not.toBeNull();
     expect(across.averagePower ?? 0).toBeGreaterThan(0);
+  });
+
+  it("counts a half-open range, like every other range in the system", () => {
+    // `[from, to)`, the same convention as recording stops, anomaly regions
+    // and detected intervals — and the same as the label the chart header
+    // prints beside the selection, which an inclusive count contradicted by
+    // exactly one second.
+    expect(selectionStats(RIDE_STREAMS, 0, 200).durationS).toBe(200);
+    expect(selectionStats(RIDE_STREAMS, 120, 180).durationS).toBe(60);
+    // Dragged backwards is the same range.
+    expect(selectionStats(RIDE_STREAMS, 180, 120).durationS).toBe(60);
+    // And a drag that went nowhere selected nothing.
+    expect(selectionStats(RIDE_STREAMS, 90, 90).durationS).toBe(0);
   });
 
   it("recomputes when the range changes", () => {

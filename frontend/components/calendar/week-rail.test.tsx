@@ -187,4 +187,59 @@ describe("WeekRail", () => {
     expect(within(rail()).queryByText("Fatigue")).not.toBeInTheDocument();
     expect(within(rail()).queryByText("Form")).not.toBeInTheDocument();
   });
+
+  /**
+   * A discipline row can exist for its **completed** side alone.
+   *
+   * WP-5 gave the week what was recorded, so a ride nobody planned produces a
+   * row with no planned sessions in it. Copy built for the planned side
+   * rendered "0 sessions" beside a ride that happened, and a coverage reason
+   * of "No prediction for 0 of 0 sessions" — a sentence about nothing.
+   */
+  it("says nothing was planned rather than 0 sessions", () => {
+    const week: PlanWeek = {
+      ...WEEK,
+      by_discipline: [
+        {
+          discipline: "cycling",
+          session_count: 0,
+          planned_duration_s: null,
+          duration_sessions_counted: 0,
+          duration_sessions_uncounted: 0,
+          planned_load: null,
+          load_sessions_counted: 0,
+          load_sessions_uncounted: 0,
+          total_sets: null,
+          completed_session_count: 1,
+          completed_duration_s: 4_200,
+          completed_load: 71,
+          completed_load_sessions_counted: 1,
+          completed_load_sessions_uncounted: 0,
+        },
+      ],
+    };
+
+    render(<WeekRail week={week} />);
+
+    const row = disciplineRow("Cycling");
+    expect(within(row).getByText("nothing planned")).toBeInTheDocument();
+    expect(within(row).queryByText("0 sessions")).not.toBeInTheDocument();
+    // The row explains its own existence: something was recorded.
+    expect(within(row).getByText("· 1 recorded")).toBeInTheDocument();
+    // And no sentence about nothing: both planned cells say the same true
+    // thing rather than "No prediction for 0 of 0 sessions".
+    expect(
+      within(row).getAllByRole("img", {
+        name: "Not assessed: Nothing was planned for this discipline this week",
+      }),
+    ).toHaveLength(2);
+    expect(within(row).queryByText(/0 of 0/)).not.toBeInTheDocument();
+  });
+
+  it("still counts a planned discipline the way it always did", () => {
+    render(<WeekRail week={WEEK} />);
+
+    expect(within(rail()).getByText("3 sessions")).toBeInTheDocument();
+    expect(within(rail()).queryByText(/recorded/)).not.toBeInTheDocument();
+  });
 });

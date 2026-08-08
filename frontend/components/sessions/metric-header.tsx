@@ -8,6 +8,7 @@ import { SectionLabel } from "@/components/design/section-label";
 import { formatDurationClock } from "@/lib/format";
 import {
   LOAD_BASIS_LABELS,
+  LOAD_BASIS_UNITS,
   loadCounterfactual,
   pinOf,
   type SessionMetrics,
@@ -55,14 +56,10 @@ export function MetricHeader({
     >
       <Stat
         label="Duration"
-        value={
-          <span className="font-mono text-ink text-xl">
-            {formatDurationClock(metrics.recording_time_s)}
-          </span>
-        }
+        value={<Duration metrics={metrics} />}
         note={
           plannedDurationS === undefined
-            ? "recording time"
+            ? durationBasis(metrics)
             : `plan ${formatDurationClock(plannedDurationS)}`
         }
       />
@@ -103,7 +100,11 @@ export function MetricHeader({
 
       <Stat
         label="Load"
-        unit={load.load_basis ? "TSS" : undefined}
+        // TSS is the *power* model's scale; the heart-rate model's is HRSS.
+        // Both are calibrated so an hour at threshold is 100, so an
+        // HRSS value stamped "TSS" looks entirely plausible — which is
+        // exactly why it has to be labelled by its basis.
+        unit={load.load_basis ? LOAD_BASIS_UNITS[load.load_basis] : undefined}
         value={
           load.not_assessed ? (
             <NotAssessed reason={load.not_assessed} />
@@ -158,6 +159,40 @@ export function MetricHeader({
       ) : null}
     </Panel>
   );
+}
+
+/**
+ * How long the session lasted, and never a zero standing in for absent.
+ *
+ * `recording_time_s` is the load-bearing duration for a *device* session —
+ * elapsed with the pauses removed (A4.4) — and it is **0.0** on every
+ * stream-free artefact, because a typed-in gym session has no recording and
+ * therefore no recording time. Printing it there rendered "0:00" under a
+ * session the athlete spent an hour on. So the elapsed time is the answer
+ * when there is no recording, the note says which of the two is on screen,
+ * and a session with neither holds the slot with its reason.
+ */
+function Duration({ metrics }: { metrics: SessionMetrics }) {
+  const seconds =
+    metrics.recording_time_s > 0
+      ? metrics.recording_time_s
+      : metrics.elapsed_time_s;
+  if (seconds <= 0) {
+    return <NotAssessed reason="This session records no duration to report" />;
+  }
+  return (
+    <span className="font-mono text-ink text-xl">
+      {formatDurationClock(seconds)}
+    </span>
+  );
+}
+
+/** Which duration the stat above is showing. The two are different numbers. */
+function durationBasis(metrics: SessionMetrics): string {
+  if (metrics.recording_time_s > 0) {
+    return "recording time";
+  }
+  return metrics.elapsed_time_s > 0 ? "elapsed" : " ";
 }
 
 /** One stat of the header row: label, number, and a line of context. */

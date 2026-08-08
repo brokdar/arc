@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import uPlot from "uplot";
 // uPlot's own stylesheet, and it is load-bearing rather than cosmetic: it is
 // what positions the canvas inside its wrapper. Without it every panel of the
@@ -11,6 +11,7 @@ import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { chartToken } from "@/lib/chart-tokens";
 import { formatDurationClock } from "@/lib/format";
+import { type LiveValue, useLive, useLiveValue } from "@/lib/live-value";
 import {
   channelValues,
   type SelectionStats,
@@ -123,6 +124,16 @@ export interface StreamChartsProps {
  * arrays already loaded. That is the one place this codebase computes a
  * training number twice; see `lib/metrics.normalizedPower` for why, and for
  * the test that keeps the two in step.
+ *
+ * **The panels are built once per data identity, and nothing about an
+ * interaction rebuilds them.** The cursor position and the selection are
+ * `LiveValue`s rather than component state (`lib/live-value.ts`), so a
+ * mousemove re-renders only the readout that displays it. Every prop a panel
+ * receives is memoised or stable for the same reason: an inline
+ * `repairs.filter(...)` mints a new array each render, which lands in the
+ * create-effect's dependencies and tears the canvas down — sixty times a
+ * second while the pointer moves, and in the middle of the drag the athlete
+ * is performing.
  */
 export function StreamCharts({
   streams,
@@ -130,11 +141,8 @@ export function StreamCharts({
   plannedBands,
   className,
 }: StreamChartsProps) {
-  const [cursorRow, setCursorRow] = useState<number | null>(null);
-  const [selection, setSelection] = useState<{
-    from: number;
-    to: number;
-  } | null>(null);
+  const cursor = useLiveValue<number | null>(null);
+  const selection = useLiveValue<Selection | null>(null);
 
   const present = useMemo(
     () =>
@@ -155,26 +163,22 @@ export function StreamCharts({
     [streams.length],
   );
 
-  const repairs = useMemo(
-    () =>
-      streams.anomalies.map(
-        (anomaly): Repair => ({
-          channel: anomaly.channel,
-          fromS: anomaly.start_index,
-          toS: anomaly.end_index,
-          kind: anomaly.kind,
-        }),
-      ),
-    [streams.anomalies],
-  );
-
-  const stats = useMemo(
-    () =>
-      selection === null
-        ? null
-        : selectionStats(streams, selection.from, selection.to),
-    [selection, streams],
-  );
+  // Grouped once, by channel: the per-panel array has to keep its identity
+  // between renders or the panel it belongs to is rebuilt.
+  const repairsByChannel = useMemo(() => {
+    const grouped = new Map<StreamChannel, Repair[]>();
+    for (const anomaly of streams.anomalies) {
+      const repairs = grouped.get(anomaly.channel) ?? [];
+      repairs.push({
+        channel: anomaly.channel,
+        fromS: anomaly.start_index,
+        toS: anomaly.end_index,
+        kind: anomaly.kind,
+      });
+      grouped.set(anomaly.channel, repairs);
+    }
+    return grouped;
+  }, [streams.anomalies]);
 
   if (present.length === 0) {
     return null;
@@ -184,13 +188,8 @@ export function StreamCharts({
     <section className={cn("flex flex-col gap-2.5", className)}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <SectionLabel level={2}>Streams</SectionLabel>
-        {selection ? (
-          <span className="font-mono text-2xs text-ink-faint">
-            selection {formatDurationClock(selection.from)} –{" "}
-            {formatDurationClock(selection.to)}
-          </span>
-        ) : null}
-        <Readout streams={streams} row={cursorRow} className="ml-auto" />
+        <SelectionLabel selection={selection} />
+        <Readout streams={streams} cursor={cursor} className="ml-auto" />
       </div>
 
       <Panel tone="inset" className="flex flex-col gap-1 px-2 py-2">
@@ -207,30 +206,62 @@ export function StreamCharts({
             axis={index === present.length - 1}
             referenceLine={panel.channel === "power" ? ftpWatts : undefined}
             bands={panel.channel === "power" ? plannedBands : undefined}
-            repairs={repairs.filter(
-              (repair) => repair.channel === panel.channel,
-            )}
-            onCursor={setCursorRow}
-            onSelect={setSelection}
+            repairs={repairsByChannel.get(panel.channel) ?? NO_REPAIRS}
+            onCursor={cursor.set}
+            onSelect={selection.set}
           />
         ))}
       </Panel>
 
-      {stats ? <SelectionPanel stats={stats} /> : null}
+      <SelectionPanel streams={streams} selection={selection} />
     </section>
   );
 }
 
-/** The synced-cursor readout: what every channel said at one instant. */
+/** One shared empty array, so "no repairs" is the same identity every render. */
+const NO_REPAIRS: readonly Repair[] = [];
+
+/** The rows a drag covers, half-open like every other range here. */
+interface Selection {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** The range a drag covers, named in the section header. */
+function SelectionLabel({
+  selection,
+}: {
+  selection: LiveValue<Selection | null>;
+}) {
+  const range = useLive(selection);
+  if (range === null) {
+    return null;
+  }
+  return (
+    <span className="font-mono text-2xs text-ink-faint">
+      selection {formatDurationClock(range.from)} –{" "}
+      {formatDurationClock(range.to)}
+    </span>
+  );
+}
+
+/**
+ * The synced-cursor readout: what every channel said at one instant.
+ *
+ * The only component that re-renders as the pointer moves. It subscribes to
+ * the cursor rather than receiving it, so the panels above it never learn the
+ * pointer moved and are never rebuilt.
+ */
 function Readout({
   streams,
-  row,
+  cursor,
   className,
 }: {
   streams: SessionStreams;
-  row: number | null;
+  cursor: LiveValue<number | null>;
   className?: string;
 }) {
+  const row = useLive(cursor);
   const at = (channel: StreamChannel) => {
     if (row === null) {
       return null;
@@ -267,8 +298,33 @@ function Readout({
   );
 }
 
-/** Live statistics for the selected range. */
-function SelectionPanel({ stats }: { stats: SelectionStats }) {
+/**
+ * Live statistics for the selected range.
+ *
+ * Subscribes for the same reason the readout does, and computes on demand:
+ * the arrays are already in the browser, so the whole panel is a fold over a
+ * slice of them.
+ */
+function SelectionPanel({
+  streams,
+  selection,
+}: {
+  streams: SessionStreams;
+  selection: LiveValue<Selection | null>;
+}) {
+  const range = useLive(selection);
+  const stats = useMemo(
+    () =>
+      range === null ? null : selectionStats(streams, range.from, range.to),
+    [range, streams],
+  );
+  if (stats === null) {
+    return null;
+  }
+  return <SelectionFigures stats={stats} />;
+}
+
+function SelectionFigures({ stats }: { stats: SelectionStats }) {
   const cells: readonly [string, string][] = [
     ["duration", formatDurationClock(stats.durationS)],
     [
@@ -342,7 +398,6 @@ function ChannelPlot({
   onSelect: (range: { from: number; to: number } | null) => void;
 }) {
   const host = useRef<HTMLDivElement | null>(null);
-  const plot = useRef<uPlot | null>(null);
 
   useEffect(() => {
     const element = host.current;
@@ -422,7 +477,6 @@ function ChannelPlot({
       [Array.from(elapsed), Array.from(values)] as unknown as uPlot.AlignedData,
       element,
     );
-    plot.current = instance;
 
     const observer = new ResizeObserver(() => {
       instance.setSize({ width: element.clientWidth || 640, height });
@@ -431,10 +485,13 @@ function ChannelPlot({
     return () => {
       observer.disconnect();
       instance.destroy();
-      plot.current = null;
     };
-    // Rebuilt only when the shape of the panel changes. The data is set
-    // separately below so that a new session does not tear down the canvas.
+    // Every dependency below is either a constant of the panel's shape or is
+    // memoised against `streams`, so this runs **once per session** — not per
+    // render, and never while the pointer is moving. That is the whole
+    // contract: `stream-charts.test.tsx` asserts the canvas node survives a
+    // re-render, because the way this regresses is somebody deriving a prop
+    // inline at the call site.
   }, [
     height,
     axis,
