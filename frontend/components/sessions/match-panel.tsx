@@ -475,11 +475,16 @@ function Unlinked({ session }: { session: Session }) {
  */
 function DisplacementOffer({ match }: { match: Match }) {
   const refresh = useRefresh(match.session_id);
-  const unlink = $api.useMutation("delete", "/api/v1/matches/{match_id}");
   // Two calls rather than one, because the API has no "change this link's
   // kind": `displaced` is decided when a link is created (`MatchCreate`), so
   // converting one means taking it off and putting the other on. The second is
-  // chained off the first's success, so a failed unlink cannot leave two.
+  // chained off the first's success, so a failed unlink cannot leave two —
+  // and the unlink refreshes on its own success, so a failed *create* leaves
+  // the panel showing the true intermediate state (unlinked) rather than a
+  // link that no longer exists.
+  const unlink = $api.useMutation("delete", "/api/v1/matches/{match_id}", {
+    onSuccess: refresh,
+  });
   const create = $api.useMutation("post", "/api/v1/matches", {
     onSuccess: refresh,
   });

@@ -96,8 +96,14 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
   same PR. Integration tests build the schema via `alembic upgrade head` and
   run `alembic check` — model/migration drift fails CI.
 - **Decisions**: when you resolve an ambiguity or depart from
-  `docs/mvp-build-plan.md`, append an entry to `docs/decisions.md` (what,
-  what it displaced, why). Entries are append-only.
+  `docs/mvp-build-plan.md`, append an entry to `docs/decisions.md`. Entries are
+  append-only and **compact**: `## D<n> — <title>` plus three short lines —
+  **What** / **Displaced** / **Why** — ~80 words total. Deep reasoning belongs
+  in the docstring at the code site; the entry's Why then just points there
+  (`see similarity() docstring`). **Never Read the file whole** (45k+ tokens):
+  next free ID is `grep -c "^## D" docs/decisions.md`, the index is
+  `grep "^## D"`, and prior art is a keyword grep — read only the entries a
+  grep surfaces.
 - **Commits, PRs, merges**: commit subjects follow Conventional Commits, scoped
   by work package (`feat(wp-1): ...`). `main` is **squash-only** (the
   `protect-main` ruleset allows no other method, and PRs are required) with

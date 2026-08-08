@@ -354,6 +354,44 @@ describe("linking by hand", () => {
     ).toBe("displaced");
   });
 
+  it("shows the unlinked state when a displacement conversion fails halfway", async () => {
+    const user = userEvent.setup();
+    renderDetail(ACTIVITY_IDS.trainerRide);
+    const panel = await ready();
+
+    await user.click(
+      within(panel).getByRole("button", { name: "Link to a planned session" }),
+    );
+    const picker = await screen.findByText("Which planned session was this?");
+    const list = picker.closest("[data-slot='planned-picker']") as HTMLElement;
+    const long = within(list)
+      .getByText(/04\.08\.2026/)
+      .closest("li");
+    await user.click(
+      within(long as HTMLElement).getByRole("button", { name: "This was it" }),
+    );
+    const offer = await screen.findByRole("status");
+
+    // The conversion is a delete followed by a create. The delete succeeds and
+    // the create does not — the panel must show the true intermediate state
+    // (no link), not go on rendering the link the delete just removed.
+    server.use(
+      // Untyped: an infrastructure failure has no schema to conform to.
+      http.untyped.post("http://localhost:8000/api/v1/matches", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    await user.click(
+      within(offer).getByRole("button", { name: "Record it as done instead" }),
+    );
+
+    expect(
+      await within(plan()).findByRole("button", {
+        name: "Link to a planned session",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("marks a session unplanned, and drops the proposal on the way", async () => {
     const user = userEvent.setup();
     renderDetail(ACTIVITY_IDS.trainerRide);

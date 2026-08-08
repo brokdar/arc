@@ -286,6 +286,38 @@ async def test_a_swap_retargets_the_link_and_restores_what_it_left(
     assert (await get_planned(client, wrong["id"]))["status"] == "planned"
 
 
+async def test_a_swap_keeps_a_displaced_link_displaced(client: AsyncClient) -> None:
+    """WP-6.4: a swap changes which session was displaced, not the claim.
+
+    Promoting the link to `confirmed` would hand WP-7 adherence axes for a
+    prescription the ride never followed — the flip `confirm` refuses."""
+    await append_ftp(client)
+    first = await plan(client, MONDAY)
+    second = await plan(client, TUESDAY)
+    done = await record(client, MONDAY, duration_s=600)
+    made = (
+        await client.post(
+            MATCHES,
+            json={
+                "session_id": done["id"],
+                "planned_session_id": first["id"],
+                "displaced": True,
+            },
+        )
+    ).json()
+
+    response = await client.patch(
+        f"{MATCHES}/{made['id']}", json={"planned_session_id": second["id"]}
+    )
+    assert response.status_code == 200, response.text
+    swapped = response.json()
+
+    assert swapped["status"] == MatchLinkStatus.DISPLACED.value
+    assert (await get_planned(client, second["id"]))["status"] == "displaced"
+    assert (await get_planned(client, first["id"]))["status"] == "planned"
+    assert (await get_session(client, done["id"]))["status"] == "displaced"
+
+
 async def test_an_unplanned_group_ride_stands_as_its_own_thing(
     client: AsyncClient,
 ) -> None:
@@ -537,6 +569,58 @@ async def test_a_rematch_is_idempotent(client: AsyncClient) -> None:
     assert len(await inbox(client)) == 1
 
 
+async def test_a_rematch_keeps_an_auto_high_link(client: AsyncClient) -> None:
+    """Idempotence for the settled case too. The auto link moved its planned
+    session to `completed`, and the candidate query must still offer that row
+    to its own session — otherwise a re-match over an unchanged ride would
+    find no candidates and drop the link as unplanned."""
+    await append_ftp(client)
+    planned = await plan(client, MONDAY)
+    done = await record(client, MONDAY, duration_s=RIDE_DURATION_S)
+    link = done["match"]
+    assert link["status"] == MatchLinkStatus.AUTO_HIGH.value
+
+    outcome = (await client.post(f"{SESSIONS}/{done['id']}/rematch")).json()
+
+    assert outcome["candidates"] == 1
+    assert outcome["match"]["id"] == link["id"]
+    assert outcome["match"]["status"] == MatchLinkStatus.AUTO_HIGH.value
+    assert outcome["status"] == "matched"
+    assert (await get_planned(client, planned["id"]))["status"] == "completed"
+
+
+async def test_a_link_revised_down_to_pending_releases_both_sides(
+    client: AsyncClient,
+) -> None:
+    """An auto link whose re-score falls into the proposal band becomes a
+    question again — and a question moves nothing (D140), so the statuses the
+    link had set are restored rather than stranded at `matched`."""
+    await append_ftp(client)
+    planned = await plan(client, MONDAY)
+    done = await record(client, MONDAY, duration_s=RIDE_DURATION_S)
+    assert done["match"]["status"] == MatchLinkStatus.AUTO_HIGH.value
+
+    # The prescription more than doubles after the ride (a post-hoc intent
+    # edit): the next re-score is 2 760 / 6 000 = 0.46 — proposal band.
+    steady = {
+        "discipline": "cycling",
+        "steps": [{"kind": "steady", "duration_s": 6_000, "role": "work"}],
+    }
+    edited = await client.patch(
+        f"{PLANNED}/{planned['id']}", json={"structure": steady}
+    )
+    assert edited.status_code == 200, edited.text
+
+    outcome = (await client.post(f"{SESSIONS}/{done['id']}/rematch")).json()
+
+    assert outcome["match"]["id"] == done["match"]["id"]
+    assert outcome["match"]["status"] == MatchLinkStatus.PENDING.value
+    # Both sides are back where they stood before the machine's first verdict.
+    assert outcome["status"] == "unmatched"
+    assert (await get_planned(client, planned["id"]))["status"] == "planned"
+    assert len(await inbox(client)) == 1
+
+
 async def test_a_rematch_reconsiders_a_session_called_unplanned(
     client: AsyncClient,
 ) -> None:
@@ -763,6 +847,68 @@ async def test_merging_refuses_a_session_typed_in_by_hand(
 
     assert response.status_code == 422
     assert "no recording to merge" in response.json()["detail"]
+
+
+async def test_merging_refuses_an_absorbed_session_that_is_linked(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """Deleting the absorbed row would cascade its link away at the database
+    level — below the service that restores statuses — stranding the planned
+    session at `completed` with no link, unreachable by re-match and invisible
+    to the sweep. Refused instead: the athlete unlinks first."""
+    start = dt.datetime(2026, 8, 10, 6, 0, tzinfo=dt.UTC)
+    survivor_id = await upload_gpx(client, "a.gpx", gpx_document(start=start))
+    absorbed_id = await upload_gpx(
+        client, "b.gpx", gpx_document(start=start + dt.timedelta(minutes=20))
+    )
+    await append_ftp(client)
+    planned = await plan(client, MONDAY)
+    made = (
+        await client.post(
+            MATCHES,
+            json={"session_id": absorbed_id, "planned_session_id": planned["id"]},
+        )
+    ).json()
+
+    response = await client.post(
+        f"{SESSIONS}/{survivor_id}/merge", json={"absorbed_session_id": absorbed_id}
+    )
+
+    assert response.status_code == 409, response.text
+    assert "unlink" in response.json()["detail"]
+    # Nothing moved: the link and both sessions stand exactly as they were.
+    assert (await get_session(client, absorbed_id))["match"]["id"] == made["id"]
+    assert (await get_planned(client, planned["id"]))["status"] == "completed"
+
+
+async def test_a_merged_session_missing_one_stream_keeps_its_own_span(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """A recompute that can read only one of two stream files must still
+    report the whole session's elapsed time, not the lone survivor's."""
+    start = dt.datetime(2026, 8, 10, 6, 0, tzinfo=dt.UTC)
+    survivor_id = await upload_gpx(client, "a.gpx", gpx_document(start=start))
+    absorbed_id = await upload_gpx(
+        client, "b.gpx", gpx_document(start=start + dt.timedelta(minutes=20))
+    )
+    merge = await client.post(
+        f"{SESSIONS}/{survivor_id}/merge", json={"absorbed_session_id": absorbed_id}
+    )
+    assert merge.status_code == 200, merge.text
+    merged = merge.json()["metrics"]
+
+    recordings = merge.json()["recordings"]
+    (data_root / "streams" / f"{recordings[-1]['id']}.parquet").unlink()
+
+    redo = await client.post(f"{SESSIONS}/{survivor_id}/metrics/recompute")
+    assert redo.status_code == 200, redo.text
+    after = (await get_session(client, survivor_id))["metrics"]
+
+    # Half the streams, but the session still spans the whole ride.
+    assert after["elapsed_time_s"] == pytest.approx(merged["elapsed_time_s"])
+    assert after["recording_time_s"] == pytest.approx(
+        merged["recording_time_s"] / 2, rel=0.05
+    )
 
 
 # --- the missed sweep (WP-6.7) --------------------------------------------------

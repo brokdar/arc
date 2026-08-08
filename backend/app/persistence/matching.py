@@ -45,6 +45,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    or_,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -271,9 +272,18 @@ class SessionMatchRepository:
         `missed` sessions are candidates. The sweep marks a session missed at
         the end of day+1 and the window reaches a day either side, so a ride
         uploaded late can and should still claim the session it was.
+
+        The status filter carries the same own-link exception: an `auto_high`
+        link has already moved its planned session to `completed`, and
+        filtering that row out would defeat the exclusion above it — the
+        re-match would not see its own target, conclude the ride was
+        unplanned, and drop a settled link.
         """
         linked = select(SessionMatchRow.planned_session_id).where(
             SessionMatchRow.session_id != for_session
+        )
+        own = select(SessionMatchRow.planned_session_id).where(
+            SessionMatchRow.session_id == for_session
         )
         result = await self._session.execute(
             select(PlannedSessionRow)
@@ -281,8 +291,11 @@ class SessionMatchRepository:
                 PlannedSessionRow.discipline == discipline,
                 PlannedSessionRow.date >= earliest,
                 PlannedSessionRow.date <= latest,
-                PlannedSessionRow.status.in_(
-                    (SessionStatus.PLANNED, SessionStatus.MISSED)
+                or_(
+                    PlannedSessionRow.status.in_(
+                        (SessionStatus.PLANNED, SessionStatus.MISSED)
+                    ),
+                    PlannedSessionRow.id.in_(own),
                 ),
                 PlannedSessionRow.id.not_in(linked),
             )
@@ -296,9 +309,15 @@ class SessionMatchRepository:
         """Still-open planned sessions whose grace has run out (WP-6.7).
 
         Open means `planned`: a session already marked missed has been swept,
-        and one that is completed or displaced has been answered. Bounded
-        because the sweep runs against the whole history of the plan, and a
-        first run after a long absence must not load all of it at once.
+        and one that is completed or displaced has been answered. **Any link
+        at all keeps a session out of the sweep, a pending proposal included**
+        (D148): a proposal is a standing question in the UI, and marking the
+        session missed underneath it would both nag the athlete about a ride
+        the machine has already found and corrupt the statuses the link is
+        holding for its restore. Answering the proposal settles the session
+        either way; rejecting it puts the session back in the sweep's reach.
+        Bounded because the sweep runs against the whole history of the plan,
+        and a first run after a long absence must not load all of it at once.
         """
         linked = select(SessionMatchRow.planned_session_id)
         result = await self._session.execute(

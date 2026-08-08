@@ -417,9 +417,14 @@ class SessionAnalyser:
         return (
             _Durations(
                 recording_time_s=sum(one.recording_time_s for one in recordings),
+                # Counted over the session's recordings, not the readable
+                # survivors: a merged session with one unreadable stream file
+                # still spans the whole ride, and taking the lone survivor's
+                # own span would describe half the ride while claiming to
+                # describe the session.
                 elapsed_time_s=(
                     recordings[0].elapsed_time_s
-                    if len(recordings) == 1
+                    if len(session_row.recordings) == 1
                     else session_row.duration_s
                 ),
                 moving_time_s=sum(one.moving_time_s for one in recordings),

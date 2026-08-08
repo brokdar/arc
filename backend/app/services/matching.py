@@ -455,7 +455,7 @@ class MatchingService:
         link.status = MatchLinkStatus.CONFIRMED
         link.confirmed_at = dt.datetime.now(dt.UTC)
         await self._links.add(link)
-        await self._settle_statuses(row, planned, MatchLinkStatus.CONFIRMED)
+        await self._settle_statuses(row, planned, link)
         await self._audit.record(
             actor=actor,
             action="match.confirmed",
@@ -511,9 +511,13 @@ class MatchingService:
         """Retarget a link at a different planned session.
 
         One operation rather than an unlink and a link, because it is one
-        decision: the old planned session goes back to exactly what it was, the
-        new one takes the link, and the result is `confirmed` — a retarget is
-        always the athlete's.
+        decision: the old planned session goes back to exactly what it was and
+        the new one takes the link. A retarget is always the athlete's, so an
+        open link comes out `confirmed` — but a `displaced` link **stays
+        displaced**: it says "I trained, and it was not this", and the swap
+        changes which *this* was, not the claim itself. Promoting it would
+        hand WP-7 adherence axes for a prescription the ride never followed —
+        the exact flip `confirm` refuses with a 409.
 
         Raises:
             NotFoundError: When the link or the new planned session is absent.
@@ -539,15 +543,20 @@ class MatchingService:
         await self._planned.save(previous_planned)
         from_id = link.planned_session_id
 
+        status = (
+            MatchLinkStatus.DISPLACED
+            if link.status is MatchLinkStatus.DISPLACED
+            else MatchLinkStatus.CONFIRMED
+        )
         result = await self._score(row, target, await self._summary(row.id))
         link.planned_session_id = target.id
         link.previous_planned_status = target.status
-        link.status = MatchLinkStatus.CONFIRMED
+        link.status = status
         link.confirmed_at = dt.datetime.now(dt.UTC)
         link.similarity = result.score
         link.breakdown = similarity_to_json(result)
         await self._links.add(link)
-        await self._settle_statuses(row, target, MatchLinkStatus.CONFIRMED)
+        await self._settle_statuses(row, target, link)
         await self._audit.record(
             actor=actor,
             action="match.swapped",
@@ -613,12 +622,26 @@ class MatchingService:
             ValidationError: When a session is merged into itself, when either
                 side has no recording to merge, when the disciplines differ, or
                 when the two are further apart than :data:`MAX_MERGE_GAP_S`.
+            ConflictError: When the absorbed session is linked to a planned
+                session. Deleting the absorbed row would cascade its link away
+                at the database level — below the service that restores
+                statuses — leaving the planned session `completed` with no
+                link, unreachable by re-match (which only offers `planned` and
+                `missed` candidates) and invisible to the missed sweep. The
+                athlete states what the ride was by unlinking first.
         """
         if session_id == absorbed_session_id:
             raise ValidationError("A session cannot be merged into itself")
         survivor = await self._require_session(session_id)
         absorbed = await self._require_session(absorbed_session_id)
         _check_mergeable(survivor, absorbed)
+        absorbed_link = await self._links.for_session(absorbed_session_id)
+        if absorbed_link is not None:
+            raise ConflictError(
+                f"Session {absorbed_session_id} is linked to a planned session "
+                f"({absorbed_link.status.value}); unlink it before merging, or "
+                "merge the other way around."
+            )
 
         moved: list[RecordingRow] = list(absorbed.recordings)
         # A **move**, both halves of it, and both before the flush. The
@@ -838,7 +861,7 @@ class MatchingService:
         if status in STICKY_STATUSES:
             link.confirmed_at = dt.datetime.now(dt.UTC)
         link = await self._links.add(link)
-        await self._settle_statuses(row, planned, status)
+        await self._settle_statuses(row, planned, link)
         await self._audit.record(
             actor=actor,
             action=action,
@@ -858,16 +881,23 @@ class MatchingService:
         self,
         row: SessionRow,
         planned: PlannedSessionRow,
-        status: MatchLinkStatus,
+        link: SessionMatchRow,
     ) -> None:
         """Move both sides to the statuses one link status implies.
 
-        The table in the module docstring, in one place. `pending` moves
-        nothing: a proposal is a question (D140).
+        The table in the module docstring, in one place. `pending` **restores**
+        both sides to what the link recorded rather than moving nothing: for a
+        fresh proposal the recorded statuses are the current ones and the
+        restore is a no-op — a question moves nothing (D140) — but a link
+        *revised down* to pending (an `auto_high` whose re-score fell below the
+        threshold) is holding the pre-link statuses, and an early return would
+        strand the session at `matched` under an unanswered proposal.
         """
+        status = link.status
         if status is MatchLinkStatus.PENDING:
-            return
-        if status is MatchLinkStatus.DISPLACED:
+            row.status = link.previous_session_status
+            planned.status = link.previous_planned_status
+        elif status is MatchLinkStatus.DISPLACED:
             row.status = SessionMatchStatus.DISPLACED
             planned.status = SessionStatus.DISPLACED
         else:
