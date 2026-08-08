@@ -11,6 +11,7 @@ import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
 import { MatchPanel } from "@/components/sessions/match-panel";
+import { ScoringPanel } from "@/components/sessions/scoring-panel";
 import { SessionAnalysis } from "@/components/sessions/session-analysis";
 import { MatchBadge } from "@/components/sessions/session-list";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -62,9 +63,11 @@ export interface SessionDetailProps {
  * (`NotAssessed`, UI convention 4) — a session with no power meter is not a
  * session that recorded zero watts.
  *
- * The mockup's right-hand column — the WP-7 execution axes, the WP-8 coach
- * evaluation — is deliberately **not** here, not even as a placeholder: a
- * stubbed scoring panel would be a claim about a session nothing has scored.
+ * The mockup's right-hand column is filled in by work package: WP-7's
+ * execution axes and the verdict the athlete declares on them are the
+ * `ScoringPanel` below the link, and the WP-8 coach evaluation is still
+ * deliberately absent — a stubbed panel would be a claim about a session
+ * nothing has evaluated.
  */
 export function SessionDetail({ sessionId }: SessionDetailProps) {
   const valid = isUuid(sessionId);
@@ -156,6 +159,12 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
             ride that has just landed, and a pending proposal is the one thing
             on this page waiting on an answer. */}
         <MatchPanel session={session} />
+
+        {/* Directly under the link, because the judgement is *about* the link:
+            a session is scored against the prescription it answered, and the
+            panel's own empty state is the sentence explaining that an
+            unanswered proposal is a question rather than a link. */}
+        <ScoringPanel session={session} />
 
         <section className="flex flex-col gap-2.5">
           <SectionLabel level={2}>Session</SectionLabel>

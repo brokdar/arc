@@ -134,6 +134,27 @@ class MatchingSettings(BaseModel):
     """
 
 
+class ScoringSettings(BaseModel):
+    """WP-7: how often the evening prompts are swept for expiry."""
+
+    prompt_expiry_interval_seconds: int = 3600
+    """How often the evening-prompt expiry sweep runs.
+
+    Hourly, for the reason the missed sweep is hourly: the deadline is stored
+    on each prompt (`expires_at`, 72 h after it was raised), so the job's only
+    duty is to notice a deadline passing, and noticing within the hour is
+    close enough for something the athlete has had three days to answer.
+    """
+
+    prompt_expiry_batch: int = 200
+    """Most prompts one sweep will expire.
+
+    A bound rather than pagination: the sweep is idempotent and the next run is
+    an hour away, so a first run after a long absence catches up over a few
+    passes instead of in one transaction.
+    """
+
+
 class McpSettings(BaseModel):
     """MCP server settings.
 
@@ -180,6 +201,7 @@ class Settings(BaseSettings):
     data: DataSettings = DataSettings()
     ingest: IngestSettings = IngestSettings()
     matching: MatchingSettings = MatchingSettings()
+    scoring: ScoringSettings = ScoringSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()
 

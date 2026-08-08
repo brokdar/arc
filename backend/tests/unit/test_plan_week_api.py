@@ -244,6 +244,9 @@ async def test_a_card_carries_what_a_calendar_renders(client: AsyncClient) -> No
         # WP-6: nothing has been recorded against this session yet.
         "matched_session_id": None,
         "match_status": None,
+        # WP-7: which colour the week strip paints it. Nothing is recorded, so
+        # the session's own status is the whole answer.
+        "completion_state": "planned",
     }
 
 

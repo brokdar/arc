@@ -287,6 +287,37 @@ class Alignment:
     unmatched_intervals: tuple[int, ...]
 
 
+def alignment_to_json(alignment: Alignment) -> dict[str, object]:
+    """Render an alignment for storage and for the API (WP-7 persists it).
+
+    Flat and lossless: every pair the assignment made is here, kept or
+    excluded, so the stored version explains a score without the recording
+    having to be read again.
+    """
+    return {
+        "offset_s": alignment.offset_s,
+        "aligned": [
+            {
+                "step_index": pair.step_index,
+                "interval_index": pair.interval_index,
+                "confidence": pair.confidence,
+            }
+            for pair in alignment.aligned
+        ],
+        "excluded": [
+            {
+                "step_index": pair.step_index,
+                "interval_index": pair.interval_index,
+                "confidence": pair.confidence,
+                "reason": pair.reason,
+            }
+            for pair in alignment.excluded
+        ],
+        "unmatched_steps": list(alignment.unmatched_steps),
+        "unmatched_intervals": list(alignment.unmatched_intervals),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class _Planned:
     """One alignable planned work step, placed on the planned timeline."""

@@ -2,6 +2,7 @@ import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
 import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
+import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
 
 type Schemas = components["schemas"];
 
@@ -481,7 +482,10 @@ const STRENGTH_CRITERIA: Schemas["SessionIntentRead"]["success_criteria"] = [
 
 interface SessionSeed {
   readonly dayOffset: number;
-  readonly session: Omit<Schemas["WeekSessionRead"], "date">;
+  readonly session: Omit<
+    Schemas["WeekSessionRead"],
+    "date" | "completion_state"
+  >;
   readonly structure: Schemas["SessionIntentRead"]["structure"];
   readonly criteria: Schemas["SessionIntentRead"]["success_criteria"];
   readonly resolvedSteps: Schemas["ResolvedStepRead"][];
@@ -657,23 +661,96 @@ const SEEDS: readonly SessionSeed[] = [
 ];
 
 /**
+ * `app.domain.scoring.completion_state`, line for line.
+ *
+ * Derived rather than typed onto each seed, for the reason every other total
+ * in this fixture is: the API computes it, so a fixture that stated it by hand
+ * could disagree with the payload the API produces — and, worse, could produce
+ * a card whose `status` and `completion_state` contradict each other, which is
+ * a week no service can answer with.
+ *
+ * The status leads, because it is the fact: a session the sweep marked
+ * `missed` is missed whatever anyone later computes. Only a `completed`
+ * session asks the verdict, and only then does the absence of one mean
+ * `completed` — judged by nobody yet (D152).
+ */
+function completionState(
+  status: Schemas["WeekSessionRead"]["status"],
+  verdict: Schemas["Verdict"] | null,
+): Schemas["CompletionState"] {
+  if (status !== "completed" || verdict === null) {
+    return status;
+  }
+  return VERDICT_STATES[verdict];
+}
+
+/** `app.domain.scoring.VERDICT_STATES`. */
+const VERDICT_STATES: Readonly<
+  Record<Schemas["Verdict"], Schemas["CompletionState"]>
+> = {
+  as_intended: "completed-as_intended",
+  under: "under",
+  over: "over",
+  abandoned: "abandoned",
+  different_session: "different_session",
+};
+
+/**
+ * `app.domain.scoring.STATE_SEVERITY`, worst first: a day takes the worst of
+ * its cards' states, so an abandoned session is never hidden behind a
+ * completed one. `null` for a day with nothing planned and nothing recorded.
+ */
+const STATE_SEVERITY: readonly Schemas["CompletionState"][] = [
+  "abandoned",
+  "missed",
+  "different_session",
+  "displaced",
+  "under",
+  "over",
+  "planned",
+  "completed",
+  "completed-as_intended",
+  "unplanned",
+];
+
+function worstState(
+  states: readonly Schemas["CompletionState"][],
+): Schemas["CompletionState"] | null {
+  return STATE_SEVERITY.find((state) => states.includes(state)) ?? null;
+}
+
+/**
  * Seven days from `start`, with the seeded sessions on their offsets.
  *
  * Every total is the same fold the service performs over the same cards
  * (`app.services.plan`), so the rail and the grid reconcile by construction
  * rather than by a number typed twice.
+ *
+ * `verdicts` is how a test asks for a **judged** week: the strip colours a
+ * card by its completion state, and a state like `under` only exists because
+ * somebody declared a verdict on a completed session. Passing the verdict and
+ * deriving the state — rather than setting the state directly — is what stops
+ * a test asserting against a card that says `planned` and `abandoned` at once.
  */
-export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
+export function planWeekFixture(
+  start: string,
+  verdicts: Readonly<Record<string, Schemas["Verdict"]>> = {},
+): Schemas["PlanWeekRead"] {
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(start, index);
+    const sessions = SEEDS.filter((seed) => seed.dayOffset === index).map(
+      (seed) => ({
+        ...seed.session,
+        date,
+        completion_state: completionState(
+          seed.session.status,
+          verdicts[seed.session.id] ?? null,
+        ),
+      }),
+    );
     return {
       date,
-      sessions: SEEDS.filter((seed) => seed.dayOffset === index).map(
-        (seed) => ({
-          ...seed.session,
-          date,
-        }),
-      ),
+      sessions,
       // Nothing recorded in this fixture's week: the completed columns are
       // exercised by the session fixtures, and a planned-week fixture that
       // invented recordings would assert against a week no ingest could
@@ -681,6 +758,7 @@ export function planWeekFixture(start: string): Schemas["PlanWeekRead"] {
       completed_session_count: 0,
       completed_duration_s: null,
       completed_load: null,
+      completion_state: worstState(sessions.map((one) => one.completion_state)),
     };
   });
   const sessions = days.flatMap((day) => day.sessions);
@@ -1503,6 +1581,7 @@ export function ingestState(): IngestMockState {
 /** Put the ingest mock back to its seed. Wired into the global `afterEach`. */
 export function resetMockState(): void {
   state = seededState();
+  resetScoringState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -2353,3 +2432,292 @@ export function seedMergeCandidate(): Schemas["SessionRead"] {
   ingestState().sessions.unshift(half);
   return half;
 }
+
+// --- WP-7: the score, the alignment and the athlete's verdict -----------------
+//
+// Kept out of the seed on purpose. A session is scored once its link is
+// **settled** — a pending proposal is a question, not a link — and the three
+// recordings this file seeds carry two open proposals and one unmatched ride.
+// Seeding a score would therefore mean seeding a link that is not there, which
+// is exactly the kind of quietly impossible state a fixture must not invent.
+// A test that wants a judged session calls `seedScoredSession` and gets both.
+
+/** One revision of the reasons behind a verdict, as the mock stores it. */
+export interface ReasonsVersionRecord {
+  version: number;
+  recorded_at: string;
+  revision_reason: string | null;
+  reasons: Schemas["Reason"][];
+  note: string | null;
+  recorded_by: string;
+}
+
+/** The athlete's standing declaration, and whether the machine contests it. */
+export interface DeclarationRecord {
+  declared_verdict: Schemas["Verdict"];
+  declared_at: string;
+  suggested_at_declaration: Schemas["Verdict"] | null;
+  contested: boolean;
+  contested_at: string | null;
+  contested_verdict: Schemas["Verdict"] | null;
+  /** Append-only: the tip is what is in force, the rest is what was said. */
+  reasons: ReasonsVersionRecord[];
+}
+
+/**
+ * Everything one scored session is, as the mock stores it.
+ *
+ * The score and the alignment are **not** stored: they are looked up in
+ * `generated-scoring.ts` by the offset in force, because the domain is what
+ * produces them and a mock that kept its own copy would be free to drift from
+ * it. What is stored is the mutable part — which offset is in force, how many
+ * versions have been written, and what the athlete has said.
+ */
+export interface ScoringRecord {
+  session_id: string;
+  planned_session_id: string;
+  offset_s: number;
+  score_version: number;
+  alignment_version: number;
+  declaration: DeclarationRecord | null;
+}
+
+/** The instant the mock's scoring operations claim to have happened. */
+export const SCORING_NOW = "2026-08-07T09:10:00Z";
+
+const scoring = new Map<string, ScoringRecord>();
+
+/** The scoring record one session carries, or null. */
+export function scoringFor(sessionId: string): ScoringRecord | null {
+  return scoring.get(sessionId) ?? null;
+}
+
+/** Drop every scoring record. Wired into `resetMockState`. */
+export function resetScoringState(): void {
+  scoring.clear();
+}
+
+/**
+ * Settle a link and score the session behind it — the state WP-7 needs.
+ *
+ * Both halves together, because one without the other is not a state the API
+ * can be in: a score belongs to a settled link, and a settled link on a
+ * session the pipeline could score has one. The pair must exist in
+ * `generated-scoring.ts`; asking for one that does not throws rather than
+ * inventing a score, for the reason `statedBreakdown` throws.
+ */
+export function seedScoredSession(
+  sessionId: string,
+  plannedSessionId: string,
+  offsetS = 0,
+): ScoringRecord {
+  statedScoring(sessionId, plannedSessionId, offsetS);
+  const state = ingestState();
+  const existing = linkForSession(sessionId);
+  if (existing) {
+    state.matches = state.matches.filter((row) => row.id !== existing.id);
+    restoreLinkStatuses(existing);
+  }
+  const link = linkRecord({
+    sessionId,
+    plannedSessionId,
+    status: "confirmed",
+    createdBy: "athlete",
+  });
+  state.matches.unshift(link);
+  applyLinkStatuses(link);
+  const record: ScoringRecord = {
+    session_id: sessionId,
+    planned_session_id: plannedSessionId,
+    offset_s: offsetS,
+    score_version: 1,
+    alignment_version: 1,
+    declaration: null,
+  };
+  scoring.set(sessionId, record);
+  return record;
+}
+
+/**
+ * The score and the alignment for one pair at one offset, **stated**.
+ *
+ * Throws for a combination nothing has been generated for: a mock cannot
+ * compute a score — that is the domain's job, and reimplementing the axes here
+ * would make every test agree with the reimplementation. Add the offset to
+ * `backend/scripts/emit_scoring_fixture.py` and run `just scoring-fixture`
+ * instead.
+ */
+export function statedScoring(
+  sessionId: string,
+  plannedSessionId: string,
+  offsetS: number,
+): (typeof SCORED_PAIRS)[string] {
+  const pair = SCORED_PAIRS[`${sessionId}|${plannedSessionId}|${offsetS}`];
+  if (pair === undefined) {
+    throw new Error(
+      `No generated score for session ${sessionId} against planned session ` +
+        `${plannedSessionId} at an offset of ${offsetS} s. Add it to ` +
+        "backend/scripts/emit_scoring_fixture.py and run `just " +
+        "scoring-fixture` rather than inventing a score here.",
+    );
+  }
+  return pair;
+}
+
+/**
+ * Flag a declaration the machine has come to disagree with (WP-7.4).
+ *
+ * `app.services.scoring._contest`'s rule, not a shortcut past it: contested
+ * means the new suggestion contradicts what the athlete **declared** *and*
+ * differs from what the machine was suggesting when they declared it. An
+ * override of a suggestion that has not moved is not contested, and a mock
+ * that let a test set the flag anyway would let the banner be tested against
+ * a state the service never produces.
+ */
+export function contestDeclaration(
+  sessionId: string,
+  suggested: Schemas["Verdict"],
+): void {
+  const record = scoring.get(sessionId);
+  const held = record?.declaration;
+  if (!held) {
+    throw new Error(`Session ${sessionId} has no declaration to contest.`);
+  }
+  if (
+    suggested === held.declared_verdict ||
+    suggested === held.suggested_at_declaration
+  ) {
+    throw new Error(
+      `A suggestion of ${suggested} contests nothing: the athlete declared ` +
+        `${held.declared_verdict} against a suggestion of ` +
+        `${held.suggested_at_declaration}, and one of those is the same.`,
+    );
+  }
+  held.contested = true;
+  held.contested_at = SCORING_NOW;
+  held.contested_verdict = suggested;
+}
+
+/** The unsuperseded reasons version, or null. */
+export function reasonsTip(record: ScoringRecord): ReasonsVersionRecord | null {
+  const chain = record.declaration?.reasons ?? [];
+  return chain.length > 0 ? chain[chain.length - 1] : null;
+}
+
+/** One stored reasons version, on the wire. */
+export function reasonsRead(
+  version: ReasonsVersionRecord,
+): Schemas["ReasonsRead"] {
+  return { ...version, reasons: [...version.reasons] };
+}
+
+/** The declaration in force, with the reasons in force. */
+export function declarationRead(
+  record: ScoringRecord,
+): Schemas["VerdictDeclarationRead"] | null {
+  const held = record.declaration;
+  if (!held) {
+    return null;
+  }
+  const tip = reasonsTip(record);
+  return {
+    session_id: record.session_id,
+    planned_session_id: record.planned_session_id,
+    declared_verdict: held.declared_verdict,
+    declared_at: held.declared_at,
+    suggested_at_declaration: held.suggested_at_declaration,
+    score_version_id: versionId(record.session_id, "sc", record.score_version),
+    contested: held.contested,
+    contested_at: held.contested_at,
+    contested_verdict: held.contested_verdict,
+    reasons: tip ? reasonsRead(tip) : null,
+  };
+}
+
+/** One version of one session's score, as the API projects it. */
+export function scoreRead(record: ScoringRecord): Schemas["SessionScoreRead"] {
+  const pair = statedScoring(
+    record.session_id,
+    record.planned_session_id,
+    record.offset_s,
+  );
+  return {
+    ...pair.score,
+    version: record.score_version,
+    computed_at: SCORING_NOW,
+    recompute_reason:
+      record.score_version === 1 ? null : "the alignment offset was corrected",
+    planned_session_id: record.planned_session_id,
+    intent_version: 1,
+    pinned_anchor_versions: { ftp: SCORED_FTP_VERSION_ID },
+    metrics_version_id: versionId(record.session_id, "me", 1),
+    alignment_version_id: versionId(
+      record.session_id,
+      "al",
+      record.alignment_version,
+    ),
+  };
+}
+
+/** One version of one session's alignment, as the API projects it. */
+export function alignmentRead(
+  record: ScoringRecord,
+): Schemas["SessionAlignmentRead"] {
+  const pair = statedScoring(
+    record.session_id,
+    record.planned_session_id,
+    record.offset_s,
+  );
+  return {
+    ...pair.alignment,
+    version: record.alignment_version,
+    computed_at: SCORING_NOW,
+    recompute_reason:
+      record.alignment_version === 1
+        ? null
+        : "the athlete corrected the offset",
+    planned_session_id: record.planned_session_id,
+  };
+}
+
+/**
+ * `app.domain.scoring`'s reason rule, as the **server** applies it.
+ *
+ * Restated here rather than trusted to the client: a mock that accepted any
+ * list could not fail when the form stopped enforcing the rule, and the whole
+ * point of a typed handler that honours its request is that the test can be
+ * wrong about it.
+ */
+export function reasonsRefusal(
+  verdict: Schemas["Verdict"],
+  reasons: readonly Schemas["Reason"][],
+): string | null {
+  if (new Set(reasons).size !== reasons.length) {
+    return "Each reason may appear once.";
+  }
+  if (reasons.length > 3) {
+    return "At most three reasons, ordered by primacy.";
+  }
+  if (verdict !== "as_intended" && reasons.length < 1) {
+    return `A verdict of ${verdict} needs one to three reasons, ordered by primacy.`;
+  }
+  return null;
+}
+
+/**
+ * A stable, uuid-shaped id for version `n` of one facet of one session.
+ *
+ * Derived rather than minted so a re-render asks for the same id twice and
+ * gets it: these are the ids a score reports having been computed *against*,
+ * and one that changed on every read would make the artefact look recomputed.
+ */
+function versionId(
+  sessionId: string,
+  facet: keyof typeof FACET_CODES,
+  version: number,
+): string {
+  return `${sessionId.slice(0, 24)}${FACET_CODES[facet]}${String(version).padStart(10, "0")}`;
+}
+
+/** Two hex digits per facet, so the ids stay uuid-shaped and stay apart. */
+const FACET_CODES = { sc: "5c", al: "a1", me: "6e" } as const;

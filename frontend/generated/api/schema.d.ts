@@ -692,6 +692,37 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/planned-sessions/{planned_session_id}/reasons": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Missed Session Reasons
+     * @description Why a planned session was missed, as last answered.
+     *
+     *     404 while the evening prompt stands unanswered: "nobody has said yet" and
+     *     "the prompt expired, so the reason is `not_provided`" are different states,
+     *     and the second one is a row.
+     */
+    get: operations["scores-get_missed_session_reasons"];
+    /**
+     * Answer Missed Session Prompt
+     * @description Answer the evening prompt about a missed session.
+     *
+     *     Closes the prompt as `answered`. Answering again is a revision — a new
+     *     version, with the earlier answer still readable. Athlete-only.
+     */
+    put: operations["scores-answer_missed_session_prompt"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/purposes": {
     parameters: {
       query?: never;
@@ -792,6 +823,38 @@ export interface paths {
     patch: operations["sessions-update_session"];
     trace?: never;
   };
+  "/api/v1/sessions/{session_id}/alignment": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Alignment
+     * @description The alignment version in force: which effort answered which step.
+     *
+     *     Gone with the link, like the score: a pairing between a recording and a
+     *     prescription says nothing about a session that answers to no prescription.
+     */
+    get: operations["scores-get_session_alignment"];
+    /**
+     * Set Session Alignment Offset
+     * @description Slide the planned timeline and rescore against the new pairing.
+     *
+     *     The athlete started recording three minutes before starting the workout, or
+     *     the warm-up ran long. Correcting it writes a new alignment version and a
+     *     new score version in one transaction, so a score never points at an
+     *     alignment that is not the one in force (A7.1).
+     */
+    put: operations["scores-set_session_alignment_offset"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sessions/{session_id}/merge": {
     parameters: {
       query?: never;
@@ -877,6 +940,85 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/sessions/{session_id}/score": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Score
+     * @description The score version in force for one session.
+     *
+     *     404 when nothing has been scored — an unlinked session, one whose link is
+     *     still an unanswered proposal, or one ingested before scoring existed. The
+     *     detail says which, because that sentence is the empty state the page
+     *     renders.
+     *
+     *     Also 404 once the link a score was computed against is **gone** — unlinked,
+     *     rejected, called unplanned, or pointed at a different plan entry. The
+     *     versions stay on `/score/history`, where they are the record of what was
+     *     measured; what they stop being is this session's standing judgement (D161).
+     */
+    get: operations["scores-get_session_score"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/score/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Score History
+     * @description Every version of one session's score, oldest first.
+     *
+     *     Nothing is ever overwritten (invariant 1), so this is the record of how the
+     *     machine's opinion moved — and of what each version was computed against.
+     *     Empty for a session that has never been scored.
+     */
+    get: operations["scores-get_session_score_history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/score/recompute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Recompute Session Score
+     * @description Recompute one session's score and append version *n+1*.
+     *
+     *     The old version stays readable with the intent version, pins and alignment
+     *     version it was computed against. If a declared verdict now disagrees with
+     *     the new suggestion, the **declaration** is flagged `contested` and left
+     *     exactly as the athlete wrote it (WP-7.4).
+     */
+    post: operations["scores-recompute_session_score"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sessions/{session_id}/streams": {
     parameters: {
       query?: never;
@@ -925,6 +1067,62 @@ export interface paths {
      *     the second one should be an unlink.
      */
     post: operations["matches-mark_session_unplanned"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/verdict": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Verdict
+     * @description What the athlete declared this session was, and why.
+     */
+    get: operations["scores-get_session_verdict"];
+    /**
+     * Declare Session Verdict
+     * @description Declare what the session was — confirming the suggestion, or overriding it.
+     *
+     *     **Only the athlete may call this.** A 403 for anyone else, including a
+     *     coaching agent holding a valid write-scoped key: this is the athlete's own
+     *     account of the session, and an agent that could write it would be
+     *     inventing testimony to read back later (WP-7.2).
+     *
+     *     Declaring again replaces the standing declaration and clears any
+     *     `contested` flag — the athlete has now ruled on the machine's current
+     *     opinion.
+     */
+    put: operations["scores-declare_session_verdict"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/verdict/reasons": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Revise Session Reasons
+     * @description Revise the reasons behind a declared verdict.
+     *
+     *     Append-only: this writes version *n+1* and leaves what was said before
+     *     readable. Athlete-only, for the same reason the declaration is.
+     */
+    put: operations["scores-revise_session_reasons"];
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1082,6 +1280,33 @@ export interface components {
       /** Low */
       low: number;
       unit: components["schemas"]["ChannelUnit"];
+    };
+    /**
+     * AlignedStepRead
+     * @description One planned work step paired with one detected effort.
+     */
+    AlignedStepRead: {
+      /** Confidence */
+      confidence: number;
+      /** Interval Index */
+      interval_index: number;
+      /** Step Index */
+      step_index: number;
+    };
+    /**
+     * AlignmentOffsetUpdate
+     * @description Slide the planned timeline along the recording.
+     *
+     *     Functional, not cosmetic: the offset changes which detected effort answers
+     *     which prescribed step, so it changes the adherence and pacing axes. Setting
+     *     it creates a new alignment version and rescores the session (A7.1).
+     */
+    AlignmentOffsetUpdate: {
+      /**
+       * Offset S
+       * @description Seconds to slide the planned timeline by before the steps are assigned. Positive means the workout began later than the recording did.
+       */
+      offset_s: number;
     };
     /**
      * AnchorPinRead
@@ -1285,6 +1510,26 @@ export interface components {
       sex?: components["schemas"]["Sex"] | null;
     };
     /**
+     * AxisRead
+     * @description One scoring axis: answered with a number, or refused with a reason.
+     *
+     *     Exactly one of ``value`` and ``not_assessed`` is non-null, and
+     *     ``explanation`` is present exactly when ``value`` is.
+     */
+    AxisRead: {
+      axis: components["schemas"]["ScoringAxis"];
+      /**
+       * Criteria
+       * @default []
+       */
+      criteria: components["schemas"]["CriterionOutcomeRead"][];
+      explanation?: components["schemas"]["ExplanationRead"] | null;
+      /** Not Assessed */
+      not_assessed?: string | null;
+      /** Value */
+      value?: number | null;
+    };
+    /**
      * BandSchema
      * @description An acceptable range around a step's prescribed target, as fractions.
      */
@@ -1369,6 +1614,64 @@ export interface components {
      */
     ClassificationSource: "sport_field" | "heuristic" | "manual";
     /**
+     * CompletionState
+     * @description What the calendar's week strip colours one day, or one card, by.
+     *
+     *     The build plan's list (WP-7.5) plus one member it does not name and the
+     *     calendar cannot do without: :attr:`COMPLETED`. A session is matched and
+     *     recorded some seconds before it is scored, and every session spends the
+     *     gap between ingest and its first score in a state that is neither
+     *     ``planned`` nor any verdict. Rendering it as ``completed-as_intended``
+     *     would be the machine declaring a verdict nobody computed (D152).
+     * @enum {string}
+     */
+    CompletionState:
+      | "planned"
+      | "completed"
+      | "completed-as_intended"
+      | "under"
+      | "over"
+      | "abandoned"
+      | "different_session"
+      | "missed"
+      | "displaced"
+      | "unplanned";
+    /**
+     * CriterionKind
+     * @description The five MVP criterion types, as they appear in the ``kind`` tag.
+     * @enum {string}
+     */
+    CriterionKind:
+      | "time_in_band"
+      | "duration_floor"
+      | "ceiling"
+      | "sets_completed"
+      | "load_within";
+    /**
+     * CriterionOutcomeRead
+     * @description One success criterion, checked.
+     *
+     *     ``passed`` has three states and the third is not a failure: ``null`` means
+     *     the criterion could not be checked, and ``not_assessed`` says why. Render
+     *     that as a reason, never as a red cross — a ride with no power meter did
+     *     not fail its time-in-band criterion.
+     */
+    CriterionOutcomeRead: {
+      /** Detail */
+      detail: string;
+      /** Index */
+      index: number;
+      kind: components["schemas"]["CriterionKind"];
+      /** Not Assessed */
+      not_assessed?: string | null;
+      /** Observed */
+      observed?: number | null;
+      /** Passed */
+      passed?: boolean | null;
+      /** Required */
+      required?: number | null;
+    };
+    /**
      * Discipline
      * @description The two disciplines the MVP trains.
      * @enum {string}
@@ -1432,6 +1735,23 @@ export interface components {
     ErrorDetail: {
       /** Detail */
       detail: string;
+    };
+    /**
+     * ExcludedStepRead
+     * @description A pair the assignment made and the confidence gate then refused.
+     *
+     *     Different from a step that was never performed, and shown differently:
+     *     "we matched this step to that effort and did not trust the match".
+     */
+    ExcludedStepRead: {
+      /** Confidence */
+      confidence: number;
+      /** Interval Index */
+      interval_index: number;
+      /** Reason */
+      reason: string;
+      /** Step Index */
+      step_index: number;
     };
     /**
      * ExerciseCategory
@@ -2013,6 +2333,19 @@ export interface components {
        */
       reason?: string | null;
     };
+    /**
+     * MissedReasonsUpdate
+     * @description Answer the evening prompt about a session that was missed.
+     */
+    MissedReasonsUpdate: {
+      /** Note */
+      note?: string | null;
+      /**
+       * Reasons
+       * @description One to three reasons, ordered by primacy.
+       */
+      reasons: components["schemas"]["Reason"][];
+    };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -2176,6 +2509,7 @@ export interface components {
       completed_load: number | null;
       /** Completed Session Count */
       completed_session_count: number;
+      completion_state: components["schemas"]["CompletionState"] | null;
       /**
        * Date
        * Format: date
@@ -2675,6 +3009,59 @@ export interface components {
       };
     };
     /**
+     * Reason
+     * @description Why a session was not as intended — the controlled list (WP-7.3).
+     *
+     *     Controlled rather than free text because the point is to be able to count
+     *     them: "three of your last five threshold sessions were cut short by
+     *     ``time``" is a sentence the coaching agent can only write if the reason is
+     *     a value. The free-text note travels *beside* the list, never instead of it.
+     *
+     *     ``NOT_PROVIDED`` is the honest member: it is what an expired evening
+     *     prompt records (WP-7.3) and what an athlete who declines to say picks. It
+     *     is not a null — "we asked and got no answer" is a different fact from "we
+     *     never asked".
+     * @enum {string}
+     */
+    Reason:
+      | "time"
+      | "weather"
+      | "heat"
+      | "traffic"
+      | "terrain"
+      | "fatigue"
+      | "sleep"
+      | "fuelling"
+      | "illness"
+      | "equipment"
+      | "group_ride"
+      | "felt_good"
+      | "not_provided";
+    /**
+     * ReasonsRead
+     * @description One version of the reasons behind a verdict, or behind a missed session.
+     */
+    ReasonsRead: {
+      /** Note */
+      note?: string | null;
+      /**
+       * Reasons
+       * @default []
+       */
+      reasons: components["schemas"]["Reason"][];
+      /**
+       * Recorded At
+       * Format: date-time
+       */
+      recorded_at: string;
+      /** Recorded By */
+      recorded_by: string;
+      /** Revision Reason */
+      revision_reason?: string | null;
+      /** Version */
+      version: number;
+    };
+    /**
      * RecordingKind
      * @description Whether a session came from a device file or was entered by hand.
      * @enum {string}
@@ -2825,6 +3212,20 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * ScoreRecompute
+     * @description Why a recomputation was asked for. The body is optional.
+     *
+     *     The reason lands on the **new** version and is what a later reader sees
+     *     when two score versions disagree.
+     */
+    ScoreRecompute: {
+      /**
+       * Reason
+       * @description Why the score is being recomputed.
+       */
+      reason?: string | null;
+    };
+    /**
      * ScoringAxis
      * @description The axes WP-7 scores a session on.
      *
@@ -2842,6 +3243,45 @@ export interface components {
       | "sets_load"
       | "response"
       | "fuelling";
+    /**
+     * SessionAlignmentRead
+     * @description One version of how a recording lines up with its prescription.
+     */
+    SessionAlignmentRead: {
+      /**
+       * Aligned
+       * @default []
+       */
+      aligned: components["schemas"]["AlignedStepRead"][];
+      /**
+       * Computed At
+       * Format: date-time
+       */
+      computed_at: string;
+      /**
+       * Excluded
+       * @default []
+       */
+      excluded: components["schemas"]["ExcludedStepRead"][];
+      /** Offset S */
+      offset_s: number;
+      /** Planned Session Id */
+      planned_session_id?: string | null;
+      /** Recompute Reason */
+      recompute_reason?: string | null;
+      /**
+       * Unmatched Intervals
+       * @default []
+       */
+      unmatched_intervals: number[];
+      /**
+       * Unmatched Steps
+       * @default []
+       */
+      unmatched_steps: number[];
+      /** Version */
+      version: number;
+    };
     /**
      * SessionDiscipline
      * @description What a *recorded* session was.
@@ -3098,6 +3538,56 @@ export interface components {
        * Format: date-time
        */
       updated_at: string;
+    };
+    /**
+     * SessionScoreRead
+     * @description One version of one session's score, with what it was computed from.
+     */
+    SessionScoreRead: {
+      /** Alignment Version Id */
+      alignment_version_id?: string | null;
+      /**
+       * Axes
+       * @default []
+       */
+      axes: components["schemas"]["AxisRead"][];
+      /**
+       * Computed At
+       * Format: date-time
+       */
+      computed_at: string;
+      /** Intent Version */
+      intent_version?: number | null;
+      /** Metrics Version Id */
+      metrics_version_id?: string | null;
+      /**
+       * Other Criteria
+       * @default []
+       */
+      other_criteria: components["schemas"]["CriterionOutcomeRead"][];
+      /**
+       * Pinned Anchor Versions
+       * @default {}
+       */
+      pinned_anchor_versions: {
+        [key: string]: string;
+      };
+      /** Planned Session Id */
+      planned_session_id?: string | null;
+      purpose: components["schemas"]["Purpose"];
+      /** Recompute Reason */
+      recompute_reason?: string | null;
+      /**
+       * Standalone
+       * @default false
+       */
+      standalone: boolean;
+      suggested_verdict: components["schemas"]["Verdict"];
+      /** Verdict Rationale */
+      verdict_rationale: string;
+      verdict_rule: components["schemas"]["VerdictRule"];
+      /** Version */
+      version: number;
     };
     /**
      * SessionStatus
@@ -3442,10 +3932,120 @@ export interface components {
       detail: string | unknown[];
     };
     /**
+     * Verdict
+     * @description How a session turned out, in five words the whole product agrees on.
+     *
+     *     The machine suggests one (:func:`suggest_verdict`) and the athlete
+     *     declares one. They are the same vocabulary on purpose: an override is the
+     *     athlete picking a different member of this enum, not writing an essay,
+     *     which is what makes "how often does the machine agree with me" a question
+     *     with an answer.
+     * @enum {string}
+     */
+    Verdict:
+      | "as_intended"
+      | "under"
+      | "over"
+      | "abandoned"
+      | "different_session";
+    /**
+     * VerdictDeclarationRead
+     * @description What the athlete said the session was, and whether it is contested.
+     */
+    VerdictDeclarationRead: {
+      /**
+       * Contested
+       * @default false
+       */
+      contested: boolean;
+      /** Contested At */
+      contested_at?: string | null;
+      contested_verdict?: components["schemas"]["Verdict"] | null;
+      /**
+       * Declared At
+       * Format: date-time
+       */
+      declared_at: string;
+      declared_verdict: components["schemas"]["Verdict"];
+      /** Planned Session Id */
+      planned_session_id?: string | null;
+      reasons?: components["schemas"]["ReasonsRead"] | null;
+      /** Score Version Id */
+      score_version_id?: string | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      suggested_at_declaration?: components["schemas"]["Verdict"] | null;
+    };
+    /**
+     * VerdictDeclare
+     * @description Declare what the session was. The athlete's, and only the athlete's.
+     *
+     *     Anything but `as_intended` needs one to three reasons, in order of
+     *     primacy — pick `not_provided` rather than leaving the list empty if you
+     *     would rather not say.
+     */
+    VerdictDeclare: {
+      /**
+       * Note
+       * @description Free text beside the reasons, never instead of them.
+       */
+      note?: string | null;
+      /**
+       * Reasons
+       * @description One to three reasons, ordered by primacy, required for any verdict but `as_intended`. Each may appear once.
+       * @default []
+       */
+      reasons: components["schemas"]["Reason"][];
+      /** @description What the session actually was. */
+      verdict: components["schemas"]["Verdict"];
+    };
+    /**
+     * VerdictReasonsUpdate
+     * @description Revise the reasons behind a declaration. Append-only: a new version.
+     */
+    VerdictReasonsUpdate: {
+      /** Note */
+      note?: string | null;
+      /**
+       * Reasons
+       * @description One to three reasons, ordered by primacy.
+       */
+      reasons: components["schemas"]["Reason"][];
+      /**
+       * Revision Reason
+       * @description Why the earlier answer is being revised.
+       */
+      revision_reason?: string | null;
+    };
+    /**
+     * VerdictRule
+     * @description Which row of :func:`suggest_verdict`'s table produced the suggestion.
+     *
+     *     Stored with the score so the reason a session reads `under` survives every
+     *     later change to the table: a suggestion whose rule is recorded can be
+     *     explained a year later, and one that is not has to be re-derived against
+     *     whatever the code says today.
+     * @enum {string}
+     */
+    VerdictRule:
+      | "displaced_link"
+      | "completion_below_floor"
+      | "execution_at_or_above_floor"
+      | "off_target_over"
+      | "off_target_under"
+      | "ceiling_exceeded"
+      | "completion_above_ceiling"
+      | "completion_short"
+      | "nothing_contradicts";
+    /**
      * WeekSessionRead
      * @description One planned session, as a calendar card shows it.
      */
     WeekSessionRead: {
+      completion_state: components["schemas"]["CompletionState"];
       /**
        * Date
        * Format: date
@@ -5527,6 +6127,126 @@ export interface operations {
       };
     };
   };
+  "scores-get_missed_session_reasons": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasonsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-answer_missed_session_prompt": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        planned_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MissedReasonsUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasonsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Only the athlete may write this */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such planned session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "purposes-list_purposes": {
     parameters: {
       query?: never;
@@ -5754,6 +6474,117 @@ export interface operations {
       };
     };
   };
+  "scores-get_session_alignment": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionAlignmentRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session, or nothing scored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-set_session_alignment_offset": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AlignmentOffsetUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionAlignmentRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "sessions-merge_sessions": {
     parameters: {
       query?: never;
@@ -5927,6 +6758,166 @@ export interface operations {
       };
     };
   };
+  "scores-get_session_score": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionScoreRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session, or nothing scored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-get_session_score_history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionScoreRead"][];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-recompute_session_score": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ScoreRecompute"] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionScoreRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "sessions-get_session_streams": {
     parameters: {
       query?: never;
@@ -6030,6 +7021,197 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-get_session_verdict": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VerdictDeclarationRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session, or nothing scored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "scores-declare_session_verdict": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["VerdictDeclare"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VerdictDeclarationRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Only the athlete may write this */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "scores-revise_session_reasons": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["VerdictReasonsUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReasonsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Only the athlete may write this */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session, or nothing scored */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

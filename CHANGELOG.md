@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WP-7 — scoring engine, verdicts and reasons
+
+A matched session is now scored against its frozen intent, given a suggested
+verdict the athlete rules on, and asked for reasons when it deviated.
+Decisions D149–D158.
+
+**The axes (`backend/app/domain/scoring.py`)**
+
+- Five computed axes — `completion`, `adherence` (time-in-band per aligned
+  work step, criterion-weighted, each band judged through its **frozen**
+  `smoothing_s`), `discipline` (ceilings), `pacing` (last-rep NP over
+  first-rep NP across repeat blocks), `sets_load` (strength) — plus
+  `response`/`fuelling` as `not_assessed(deferred)`. Every axis returns a
+  score in [0, 1] or `not_assessed(reason)` with per-criterion pass/fail
+  detail and a `MetricExplanation`; scoring is total and never raises out of
+  the ingest path. Steps the alignment excluded are reported as
+  `alignment_low_confidence`, not scored as violations.
+- The verdict table is nine ordered, documented rows (displaced →
+  `different_session`; completion < 0.5 → `abandoned`; execution ≥ 0.8 with
+  ceilings held → `as_intended`; off-target by side → `over`/`under`; …) —
+  deterministic, exhaustively tested, and only ever a suggestion.
+
+**Testimony and versions (persistence, services)**
+
+- Scores and alignments are versioned artefacts pinning anchor versions,
+  intent version and alignment version; rescores (post-hoc intent edit through
+  the WP-2 seam, manual recompute, offset change) append version n+1, never
+  overwrite (migration `0008_scoring`).
+- The verdict declaration is athlete-only — the service refuses any other
+  actor (403) — and is never auto-rewritten: a rescore whose new suggestion
+  contradicts both the declaration and what was suggested at declaration time
+  sets `contested` (D150); re-declaring clears it. Reasons (1–3, ordered by
+  primacy, controlled list + free text) are append-only revisions. Evening
+  prompts expire after 72 h into the auto-reason `not_provided` via a
+  scheduler job.
+- Alignment's time offset (A7.1) is functional: `PUT …/alignment` re-pairs
+  steps to efforts and rescores in one transaction.
+
+**The surfaces**
+
+- Session detail gains the judgement panel (axis grid with explanations,
+  suggested verdict + rationale, one-tap confirm, override + reason picker,
+  contested banner) and the alignment panel with the offset control.
+- The calendar week now carries a `completion_state` per session and day
+  (`as_intended`/`under`/`over`/`abandoned`/`different_session`/`missed`/
+  `displaced`/`unplanned`/…), rendered as day strips and card badges from
+  shared `--color-status-*` tokens; `displaced` moved off the purple reserved
+  for the coach and the over verdict (A3.4).
+
 ### WP-6 — matching engine
 
 A completed session now finds the plan entry it answers — as a proposal, never

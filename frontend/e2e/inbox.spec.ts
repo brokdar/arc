@@ -247,7 +247,27 @@ async function mockApi(page: Page) {
     if (path.endsWith("/sessions")) {
       return route.fulfill(json(paged([])));
     }
-    if (path.includes("/sessions/") && method === "GET") {
+    // WP-7's facets hang one segment below the session, and this session is
+    // **unmatched** — so the API 404s all three, with the sentence that names
+    // the missing input. Answering them with the session itself (which the
+    // looser `/sessions/` test below used to do) is not a lenient fake, it is
+    // a fake serving a payload no endpoint can produce.
+    if (/\/sessions\/[^/]+\/(score|alignment|verdict)$/.test(path)) {
+      return route.fulfill(
+        json(
+          {
+            detail:
+              "This session has no score. A session is scored once it is " +
+              "linked to a planned session and that link is settled; a " +
+              "pending proposal is a question, not a link. A session that " +
+              "was scored and then unlinked keeps its versions on its score " +
+              "history, but no longer answers to a prescription.",
+          },
+          404,
+        ),
+      );
+    }
+    if (/\/sessions\/[^/]+$/.test(path) && method === "GET") {
       return route.fulfill(json(sessionRead(path.split("/").pop() as string)));
     }
 

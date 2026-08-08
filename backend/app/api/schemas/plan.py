@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from app.domain.athlete import Discipline
 from app.domain.matching import MatchLinkStatus
 from app.domain.purpose import Purpose
+from app.domain.scoring import CompletionState
 from app.domain.sessions import SessionStatus
 
 
@@ -72,6 +73,12 @@ class WeekSessionRead(BaseModel):
     #: is still ``planned`` until the athlete answers it, so the card shows a
     #: question rather than a completion.
     match_status: MatchLinkStatus | None
+    #: What the week strip colours this card by (WP-7.5). Derived from
+    #: ``status`` and the athlete's declared verdict, falling back to the
+    #: machine's suggestion until one is declared. ``completed`` means matched
+    #: and recorded but **not yet judged** — a real state, and never rendered
+    #: as a verdict.
+    completion_state: CompletionState
 
 
 class PlanWeekDayRead(BaseModel):
@@ -88,6 +95,10 @@ class PlanWeekDayRead(BaseModel):
     completed_duration_s: float | None
     #: Their total training load; null when none of them has one yet.
     completed_load: float | None
+    #: The state the strip colours this day by: the **worst** of its cards'
+    #: states, and ``unplanned`` when something was ridden that nothing was
+    #: planned for. Null for a day with nothing planned and nothing recorded.
+    completion_state: CompletionState | None
 
 
 class PlanWeekDisciplineRead(BaseModel):

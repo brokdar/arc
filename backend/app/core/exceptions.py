@@ -56,6 +56,19 @@ class UnauthorizedError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
 
 
+class ForbiddenError(AppError):
+    """The caller is authenticated and still may not do this.
+
+    401 says "identify yourself"; this says "we know who you are, and this
+    operation is not yours". The MVP has exactly one such rule and it is
+    load-bearing: only `app.domain.actor.Actor.athlete` may declare a verdict
+    or record a reason (WP-7.2), so the coaching agent presenting a perfectly
+    valid write-scoped key is refused here rather than at the adapter.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+
 class NotFoundError(AppError):
     """The requested resource does not exist."""
 

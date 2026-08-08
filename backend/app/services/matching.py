@@ -111,6 +111,7 @@ from app.persistence.matching import (
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.services.metrics import MetricSummary, SessionMetricsService, summarise
 from app.services.planned_sessions import PlannedSessionService
+from app.services.scoring import REASON_MATCH_SETTLED, ScoringService
 
 logger = get_logger(__name__)
 
@@ -356,6 +357,7 @@ class MatchingService:
         )
         await commit(self._session)
         await self._session.refresh(row)
+        await self._score_settled(link, actor=actor)
         return MatchOutcome(session=row, link=link, candidates=len(candidates))
 
     def _best(
@@ -430,6 +432,7 @@ class MatchingService:
             action="match.linked",
         )
         await commit(self._session)
+        await self._score_settled(link, actor=actor)
         return link
 
     async def confirm(self, link_id: uuid.UUID, *, actor: Actor) -> SessionMatchRow:
@@ -465,6 +468,7 @@ class MatchingService:
         )
         await commit(self._session)
         await self._session.refresh(link)
+        await self._score_settled(link, actor=actor)
         return link
 
     async def reject(self, link_id: uuid.UUID, *, actor: Actor) -> SessionRow:
@@ -570,6 +574,7 @@ class MatchingService:
         )
         await commit(self._session)
         await self._session.refresh(link)
+        await self._score_settled(link, actor=actor)
         return link
 
     async def mark_unplanned(
@@ -746,6 +751,49 @@ class MatchingService:
         return raised
 
     # --- helpers -------------------------------------------------------------
+
+    async def _score_settled(
+        self, link: SessionMatchRow | None, *, actor: Actor
+    ) -> None:
+        """Score a link that has just settled (WP-7.1).
+
+        **After the commit**, and inside its own ``try``, for the reason the
+        ingest pipeline computes metrics that way: the link is durable, and a
+        scoring failure has to leave a matched session with no score rather
+        than undo the match. The score is recoverable by hand from
+        `POST /sessions/{id}/score/recompute`; the athlete's answer to a
+        proposal is not.
+
+        A **pending** proposal is not scored. A proposal is a question, and
+        putting a verdict on the answer before the athlete has given it is the
+        same mistake `_settle_statuses` refuses to make with the statuses
+        (D140).
+
+        **On a session of its own**, which is what makes "leave the match
+        alone" true rather than aspirational. Rolling *this* service's session
+        back to undo a half-written score expires every persistent object on
+        it — `expire_on_commit=False` does not survive a ROLLBACK — including
+        the link and the session row the caller is about to serialize. The
+        next attribute read is then a lazy load in an async route with no
+        greenlet, and the endpoint answers 500: the match survived in the
+        database and the athlete was told it had not. A second session cannot
+        touch the caller's objects at all, so the failure costs exactly the
+        score (D159). Same shape as
+        `app.ingest.service.IngestService.reject_quarantine`, and for the same
+        reason.
+        """
+        if link is None or link.status is MatchLinkStatus.PENDING:
+            return
+        # Read off the link *before* opening the second session: everything
+        # below has to be reachable without touching the caller's objects.
+        session_id = link.session_id
+        try:
+            async with session_scope() as scoring_session:
+                await ScoringService.from_session(scoring_session).score_session(
+                    session_id, actor=actor, reason=REASON_MATCH_SETTLED
+                )
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.exception("scoring_failed", session_id=str(session_id))
 
     async def _require_session(self, session_id: uuid.UUID) -> SessionRow:
         """The completed session, or a 404.

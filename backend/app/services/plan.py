@@ -37,7 +37,7 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.activity import as_planned_discipline
+from app.domain.activity import SessionMatchStatus, as_planned_discipline
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
 from app.domain.matching import MatchLinkStatus
@@ -53,6 +53,7 @@ from app.domain.prediction import (
     predict_strength_volume,
 )
 from app.domain.purpose import Purpose
+from app.domain.scoring import CompletionState, Verdict, completion_state, worst_state
 from app.domain.sessions import SessionStatus
 from app.domain.strength import StrengthWorkout
 from app.domain.workout import WorkoutBody, workout_body_from_json
@@ -65,6 +66,10 @@ from app.persistence.matching import SessionMatchRepository, SessionMatchRow
 from app.persistence.planned_sessions import (
     PlannedSessionRepository,
     PlannedSessionRow,
+)
+from app.persistence.scoring import (
+    SessionScoreRepository,
+    VerdictDeclarationRepository,
 )
 from app.persistence.workouts import WorkoutRepository
 from app.services.anchors import AnchorService, parse_pins, resolve_pins
@@ -133,6 +138,11 @@ class WeekSession:
     #: above is still `planned` until the athlete answers it, and the card
     #: renders a question rather than a completion.
     match_status: MatchLinkStatus | None = None
+    #: What the week strip colours this card by (WP-7.5): the session's own
+    #: status, refined by the athlete's declared verdict — or, until there is
+    #: one, by the machine's suggestion. `completed` means matched and not yet
+    #: judged, which is a real state and not a verdict.
+    completion_state: CompletionState = CompletionState.PLANNED
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +169,10 @@ class CompletedSession:
             picked, or ``None`` when neither channel produced a distribution.
         moderate_s: The same, moderate.
         hard_s: The same, hard.
+        match_status: Where this recording stands relative to the plan. The
+            week strip needs it for one state a planned session can never be
+            in: `unplanned`, which is a fact about a *ride* nothing was
+            planned for.
     """
 
     id: uuid.UUID
@@ -169,6 +183,7 @@ class CompletedSession:
     easy_s: float | None
     moderate_s: float | None
     hard_s: float | None
+    match_status: SessionMatchStatus = SessionMatchStatus.UNMATCHED
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +198,12 @@ class WeekDay:
     completed_duration_s: float | None
     #: Their total training load; ``None`` when none of them has one.
     completed_load: float | None
+    #: The state the strip colours this day by: the **worst** of its cards'
+    #: states, plus `unplanned` when something was ridden that nothing was
+    #: planned for. ``None`` for a day on which nothing was planned and nothing
+    #: was done — an empty day has no outcome, and colouring it `planned`
+    #: would draw a session that does not exist.
+    completion_state: CompletionState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,6 +319,8 @@ class PlanService:
         completed: SessionRepository,
         metrics: SessionMetricsService,
         matches: SessionMatchRepository,
+        scores: SessionScoreRepository,
+        declarations: VerdictDeclarationRepository,
     ) -> None:
         self._session = session
         self._sessions = sessions
@@ -306,6 +329,8 @@ class PlanService:
         self._completed = completed
         self._metrics = metrics
         self._matches = matches
+        self._scores = scores
+        self._declarations = declarations
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -318,6 +343,8 @@ class PlanService:
             SessionRepository(session),
             SessionMetricsService.from_session(session),
             SessionMatchRepository(session),
+            SessionScoreRepository(session),
+            VerdictDeclarationRepository(session),
         )
 
     async def week(self, start: dt.date | None = None) -> PlanWeek:
@@ -384,8 +411,15 @@ class PlanService:
             for version_id in session_pins.values()
         )
         links = await self._matches.for_planned_sessions([row.id for row in rows])
+        verdicts = await self._verdicts(links)
         cards = [
-            _card(row, titles, resolve_pins(pins[row.id], versions), links.get(row.id))
+            _card(
+                row,
+                titles,
+                resolve_pins(pins[row.id], versions),
+                links.get(row.id),
+                verdicts.get(row.id),
+            )
             for row in rows
         ]
         done = await self._completed_sessions(first, dates[-1])
@@ -437,6 +471,39 @@ class PlanService:
             by_discipline=_by_discipline(cards, done),
         )
 
+    async def _verdicts(
+        self, links: Mapping[uuid.UUID, SessionMatchRow]
+    ) -> dict[uuid.UUID, Verdict | None]:
+        """The verdict standing on each linked planned session, in two queries.
+
+        **The athlete's declaration wins wherever there is one.** The machine's
+        suggestion is what the strip shows until then, and a calendar that kept
+        showing the suggestion after the athlete had overruled it would be
+        arguing with them once a week.
+
+        A score is only read for the plan entry it was **computed against**.
+        Both sides are already keyed by the link, so the only way the two can
+        disagree is a swap whose rescore did not land — and showing the old
+        prescription's verdict on the new one's card would be the strip
+        answering a question nobody asked of it (D161).
+        """
+        session_ids = [link.session_id for link in links.values()]
+        declared = await self._declarations.for_sessions(session_ids)
+        scored = await self._scores.current_for_sessions(session_ids)
+        resolved: dict[uuid.UUID, Verdict | None] = {}
+        for planned_id, link in links.items():
+            declaration = declared.get(link.session_id)
+            if declaration is not None:
+                resolved[planned_id] = declaration.declared_verdict
+                continue
+            score = scored.get(link.session_id)
+            resolved[planned_id] = (
+                score.suggested_verdict
+                if score is not None and score.planned_session_id == planned_id
+                else None
+            )
+        return resolved
+
     async def _completed_sessions(
         self, start: dt.date, end: dt.date
     ) -> list[CompletedSession]:
@@ -466,6 +533,7 @@ class PlanService:
                     easy_s=summary.easy_s if summary is not None else None,
                     moderate_s=summary.moderate_s if summary is not None else None,
                     hard_s=summary.hard_s if summary is not None else None,
+                    match_status=row.status,
                 )
             )
         return completed
@@ -490,14 +558,19 @@ def _day(
 ) -> WeekDay:
     """One day of the grid: what was planned for it and what was recorded."""
     loads = [entry.load for entry in done if entry.load is not None]
+    planned = tuple(card for card in cards if card.date == day)
+    states = [card.completion_state for card in planned]
+    if any(entry.match_status is SessionMatchStatus.UNPLANNED for entry in done):
+        states.append(CompletionState.UNPLANNED)
     return WeekDay(
         date=day,
-        sessions=tuple(card for card in cards if card.date == day),
+        sessions=planned,
         completed_session_count=len(done),
         completed_duration_s=(
             sum(entry.duration_s for entry in done) if done else None
         ),
         completed_load=sum(loads) if loads else None,
+        completion_state=worst_state(states),
     )
 
 
@@ -517,6 +590,7 @@ def _card(
     titles: dict[uuid.UUID, str],
     anchors: Mapping[AnchorType, PinnedAnchor],
     link: SessionMatchRow | None = None,
+    verdict: Verdict | None = None,
 ) -> WeekSession:
     """Project one stored session onto its calendar card.
 
@@ -547,6 +621,7 @@ def _card(
         predicted_volume_load_kg=volume,
         matched_session_id=link.session_id if link is not None else None,
         match_status=link.status if link is not None else None,
+        completion_state=completion_state(row.status, verdict),
     )
 
 
