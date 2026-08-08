@@ -29,11 +29,13 @@ import {
   reasonsProblem,
   resolveAxis,
   type SessionScore,
+  scoreLists,
   VERDICT_HINTS,
   VERDICT_LABELS,
   VERDICT_ORDER,
   type Verdict,
   type VerdictDeclaration,
+  verdictLabel,
 } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
@@ -145,13 +147,16 @@ function AxisGrid({ score }: { score: SessionScore }) {
       data-testid="axis-grid"
       className="grid grid-cols-2 gap-x-6 gap-y-3.5 border-hairline border-t pt-3.5 sm:grid-cols-3"
     >
-      {score.axes.map((axis) => {
+      {scoreLists(score).axes.map((axis) => {
         const resolved = resolveAxis(axis);
         return (
           <div key={axis.axis} className="flex min-w-0 flex-col gap-1">
             <dt>
+              {/* An axis this build has no label for prints its own name
+                  rather than nothing: a backend that gains an axis should show
+                  up as an unfamiliar word, not as a blank slot. */}
               <SectionLabel title={AXIS_QUESTIONS[axis.axis]}>
-                {AXIS_LABELS[axis.axis]}
+                {AXIS_LABELS[axis.axis] ?? axis.axis}
               </SectionLabel>
             </dt>
             <dd className="font-mono text-ink text-lg">
@@ -182,20 +187,21 @@ function AxisGrid({ score }: { score: SessionScore }) {
  * nobody kept.
  */
 function CriteriaDetail({ score }: { score: SessionScore }) {
+  const lists = scoreLists(score);
   const groups = [
-    ...score.axes
-      .filter((axis) => axis.criteria.length > 0)
+    ...lists.axes
+      .filter((axis) => (axis.criteria ?? []).length > 0)
       .map((axis) => ({
         key: axis.axis,
-        label: AXIS_LABELS[axis.axis],
+        label: AXIS_LABELS[axis.axis] ?? axis.axis,
         criteria: axis.criteria,
       })),
-    ...(score.other_criteria.length > 0
+    ...(lists.otherCriteria.length > 0
       ? [
           {
             key: "other",
             label: "Not scored on this purpose",
-            criteria: score.other_criteria,
+            criteria: lists.otherCriteria,
           },
         ]
       : []),
@@ -228,7 +234,7 @@ function CriteriaDetail({ score }: { score: SessionScore }) {
               >
                 <Outcome outcome={outcome} />
                 <span className="text-ink-faint">
-                  {CRITERION_LABELS[outcome.kind]}
+                  {CRITERION_LABELS[outcome.kind] ?? outcome.kind}
                 </span>
                 <span className="min-w-0 text-ink-secondary">
                   {outcome.detail}
@@ -369,13 +375,18 @@ function VerdictBlock({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <SectionLabel>arc suggests</SectionLabel>
-        <VerdictBadge verdict={score.suggested_verdict} />
-        <span className="max-w-[62ch] text-ink-secondary text-sm">
-          {score.verdict_rationale}
-        </span>
-      </div>
+      {/* Only when there is one. A score that names no suggestion is a broken
+          artefact, and the honest thing to do about it is to say nothing on
+          the machine's behalf — the athlete can still declare. */}
+      {score.suggested_verdict ? (
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+          <SectionLabel>arc suggests</SectionLabel>
+          <VerdictBadge verdict={score.suggested_verdict} />
+          <span className="max-w-[62ch] text-ink-secondary text-sm">
+            {score.verdict_rationale}
+          </span>
+        </div>
+      ) : null}
 
       {declaration ? (
         <Declared declaration={declaration} timezone={timezone} />
@@ -409,11 +420,9 @@ function VerdictBlock({
         />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          {declaration ? null : (
+          {declaration || !score.suggested_verdict ? null : (
             <Button disabled={busy} onClick={confirmSuggestion}>
-              {score.suggested_verdict === "as_intended"
-                ? "Confirm — as intended"
-                : `Confirm — ${VERDICT_LABELS[score.suggested_verdict].toLowerCase()}`}
+              {`Confirm — ${verdictLabel(score.suggested_verdict).toLowerCase()}`}
             </Button>
           )}
           <Button
@@ -532,16 +541,16 @@ function ContestedBanner({
     >
       <span className="mr-auto max-w-[62ch] text-ink-secondary text-sm">
         A later score says this was{" "}
-        <strong className="text-ink">{VERDICT_LABELS[contested]}</strong>. You
+        <strong className="text-ink">{verdictLabel(contested)}</strong>. You
         said{" "}
         <strong className="text-ink">
-          {VERDICT_LABELS[declaration.declared_verdict]}
+          {verdictLabel(declaration.declared_verdict)}
         </strong>
         , and that is what stands — nothing has changed. Re-confirm to say you
         have seen this.
       </span>
       <Button size="sm" disabled={busy} onClick={onReconfirm}>
-        Re-confirm {VERDICT_LABELS[declaration.declared_verdict].toLowerCase()}
+        Re-confirm {verdictLabel(declaration.declared_verdict).toLowerCase()}
       </Button>
     </div>
   );
@@ -554,7 +563,7 @@ function VerdictBadge({ verdict }: { verdict: Verdict }) {
       data-verdict={verdict}
       className="whitespace-nowrap rounded-badge border border-hairline px-1.5 py-0.5 font-medium text-ink text-sm"
     >
-      {VERDICT_LABELS[verdict]}
+      {verdictLabel(verdict)}
     </span>
   );
 }

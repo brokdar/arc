@@ -277,8 +277,16 @@ function week(
               predicted_intensity_factor: null,
               predicted_load_coverage: null,
               predicted_volume_load_kg: null,
+              // WP-7.5: what the week strip colours the card by. `planned` and
+              // nothing else — the session has just been written, so there is
+              // no recording to have judged and no verdict to refine it with.
+              completion_state: "planned",
             }))
           : [],
+      // The worst of the day's cards, and null for a day with nothing planned
+      // and nothing recorded.
+      completion_state:
+        iso === ISO_TODAY && sessions.length > 0 ? "planned" : null,
     };
   });
   return {

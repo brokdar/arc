@@ -10,7 +10,7 @@ import {
 import type { components } from "@/generated/api/schema";
 import { weekdayLabel } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
-import { COMPLETION_TONES } from "@/lib/scoring";
+import { completionTone } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
 type PlanWeekDay = components["schemas"]["PlanWeekDayRead"];
@@ -74,6 +74,7 @@ function DayColumn({
   onDragStateChange,
 }: DayColumnProps) {
   const [over, setOver] = useState(false);
+  const tone = completionTone(day.completion_state);
 
   function readSessionId(transfer: DataTransfer | null): string {
     if (!transfer) {
@@ -130,17 +131,15 @@ function DayColumn({
           planned and nothing recorded has no state and gets no bar — an
           uncoloured rule rather than a grey one, because grey already means
           `planned`. */}
-      {day.completion_state ? (
+      {tone ? (
         <span
           role="img"
-          aria-label={`${weekdayLabel(day.date)}: ${COMPLETION_TONES[day.completion_state].label}`}
-          title={COMPLETION_TONES[day.completion_state].label}
+          aria-label={`${weekdayLabel(day.date)}: ${tone.label}`}
+          title={tone.label}
           data-testid={`day-state-${day.date}`}
           data-state={day.completion_state}
           className="h-[3px] rounded-full"
-          style={{
-            backgroundColor: COMPLETION_TONES[day.completion_state].color,
-          }}
+          style={{ backgroundColor: tone.color }}
         />
       ) : (
         <span className="h-[3px] rounded-full bg-hairline" />

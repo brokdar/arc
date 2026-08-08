@@ -11,7 +11,11 @@ import { Input } from "@/components/ui/input";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
 import { formatDurationClock } from "@/lib/format";
-import { excludedReason, formatConfidence } from "@/lib/scoring";
+import {
+  alignmentLists,
+  excludedReason,
+  formatConfidence,
+} from "@/lib/scoring";
 
 /** `app.services.scoring.MAX_ALIGNMENT_OFFSET_S`: six hours either way. */
 export const MAX_OFFSET_S = 6 * 60 * 60;
@@ -98,6 +102,7 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
   }
 
   const held = alignment.data;
+  const lists = alignmentLists(held);
   const parsed = Number.parseInt(offset, 10);
   const valid = Number.isFinite(parsed) && Math.abs(parsed) <= MAX_OFFSET_S;
   const problems = apiErrorMessages(slide.error);
@@ -178,7 +183,7 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
             </tr>
           </thead>
           <tbody>
-            {held.aligned.map((pair) => (
+            {lists.aligned.map((pair) => (
               <Row
                 key={`aligned-${pair.step_index}`}
                 step={pair.step_index}
@@ -187,7 +192,7 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
                 detail="Paired."
               />
             ))}
-            {held.excluded.map((pair) => (
+            {lists.excluded.map((pair) => (
               <Row
                 key={`excluded-${pair.step_index}`}
                 step={pair.step_index}
@@ -197,7 +202,7 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
                 muted
               />
             ))}
-            {held.unmatched_steps.map((step) => (
+            {lists.unmatchedSteps.map((step) => (
               <Row
                 key={`unmatched-${step}`}
                 step={step}
@@ -207,7 +212,7 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
                 muted
               />
             ))}
-            {held.unmatched_intervals.map((interval) => (
+            {lists.unmatchedIntervals.map((interval) => (
               <Row
                 key={`extra-${interval}`}
                 step={null}
@@ -220,10 +225,10 @@ export function AlignmentPanel({ sessionId }: AlignmentPanelProps) {
           </tbody>
         </table>
 
-        {held.aligned.length === 0 &&
-        held.excluded.length === 0 &&
-        held.unmatched_steps.length === 0 &&
-        held.unmatched_intervals.length === 0 ? (
+        {lists.aligned.length === 0 &&
+        lists.excluded.length === 0 &&
+        lists.unmatchedSteps.length === 0 &&
+        lists.unmatchedIntervals.length === 0 ? (
           <p className="text-ink-muted text-sm">
             This prescription has no work steps to pair — there is nothing on
             the timeline for a detected effort to answer.

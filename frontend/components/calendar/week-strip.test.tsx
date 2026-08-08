@@ -89,6 +89,40 @@ describe("the week strip", () => {
     );
   });
 
+  it("still draws a card whose state never arrived", () => {
+    // The field is new (WP-7.5), and an older payload — a cached response, a
+    // hand-built fake, a client running ahead of its server — simply has no
+    // `completion_state` on it. The card must fall back to its status, which
+    // is exactly `completion_state(status, null)` in the domain, rather than
+    // throwing and taking the whole week down with it. This is the failure
+    // `e2e/plan-a-week.spec.ts` hit; it belongs here, one layer down.
+    const week = planWeekFixture(START);
+    const days = week.days.map((day) => ({
+      ...day,
+      completion_state: undefined as never,
+      sessions: day.sessions.map((session) => ({
+        ...session,
+        completion_state: undefined as never,
+      })),
+    }));
+    render(
+      <WeekGrid
+        days={days}
+        today={START}
+        onOpen={() => {}}
+        onMove={() => {}}
+        onPlan={() => {}}
+      />,
+    );
+
+    const day = screen.getByTestId(`day-${START}`);
+    expect(within(day).getByText("Strength — lower")).toBeInTheDocument();
+    expect(
+      within(day).getByRole("img", { name: "Recorded, not yet judged" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId(`day-state-${START}`)).toBeNull();
+  });
+
   it("leaves a day with nothing planned and nothing recorded uncoloured", () => {
     renderWeek();
 

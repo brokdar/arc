@@ -1,5 +1,5 @@
 import { type SessionStatus, STATUS_TONES } from "@/lib/purpose";
-import { COMPLETION_TONES, type CompletionState } from "@/lib/scoring";
+import { type CompletionState, completionTone } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,7 +35,8 @@ export function StatusDot({ status, outline, className }: StatusDotProps) {
 }
 
 export interface CompletionDotProps {
-  readonly state: CompletionState;
+  /** The state off the wire. A state with no tone draws nothing. */
+  readonly state: CompletionState | null | undefined;
   readonly outline?: boolean;
   readonly className?: string;
 }
@@ -50,13 +51,22 @@ export interface CompletionDotProps {
  * travels with the colour for the same reason `StatusDot`'s does — colour is
  * a second channel on top of a name a screen reader can read, never the only
  * one.
+ *
+ * A state this table has no tone for draws **nothing**. Not a grey dot: grey
+ * is `planned`, and a card whose state did not arrive is not a card with a
+ * session still ahead of the athlete. Saying nothing is the only honest thing
+ * a six-pixel dot can do about a state it does not know — and it is what keeps
+ * one unrecognised value from taking the week down with it.
  */
 export function CompletionDot({
   state,
   outline,
   className,
 }: CompletionDotProps) {
-  const tone = COMPLETION_TONES[state];
+  const tone = completionTone(state);
+  if (!tone) {
+    return null;
+  }
   return (
     <span
       role="img"

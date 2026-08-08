@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import type * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +14,8 @@ import {
   seedScoredSession,
   statedScoring,
 } from "@/tests/mocks/fixtures";
+import { http } from "@/tests/mocks/handlers";
+import { server } from "@/tests/mocks/server";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -90,6 +93,24 @@ describe("a session nothing has scored", () => {
     await screen.findByRole("heading", { name: "Corrections" });
 
     await within(judgement()).findByText(/a pending proposal is a question/i);
+  });
+
+  it("leaves the rest of the page standing when the score cannot be read", async () => {
+    // A 200 that is not a score — a stale cache, a proxy, a fake that answers
+    // every path under `/sessions/` with the session. The panel degrades to an
+    // empty grid; the five sections around it have nothing to do with scoring
+    // and must still render. This is the failure `e2e/inbox.spec.ts` hit, one
+    // layer down from where it was found.
+    server.use(
+      http.untyped.get("http://localhost:8000/api/v1/sessions/:id/score", () =>
+        HttpResponse.json({ purpose: "vo2max" }),
+      ),
+    );
+    renderDetail(ACTIVITY_IDS.outdoorRide);
+
+    await screen.findByRole("heading", { name: "Corrections" });
+    expect(screen.getByRole("heading", { name: "Recording" })).toBeVisible();
+    expect(await screen.findByTestId("axis-grid")).toBeEmptyDOMElement();
   });
 });
 

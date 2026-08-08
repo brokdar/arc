@@ -6,7 +6,7 @@ import { DisciplineIcon } from "@/components/icons";
 import type { components } from "@/generated/api/schema";
 import { formatDurationHm, formatSets } from "@/lib/format";
 import { purposeTone } from "@/lib/purpose";
-import { COMPLETION_TONES, type CompletionState } from "@/lib/scoring";
+import { type CompletionState, completionTone } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
 
 export type WeekSession = components["schemas"]["WeekSessionRead"];
@@ -29,13 +29,19 @@ export function SessionCard({
   onDragStateChange,
 }: SessionCardProps) {
   const tone = purposeTone(session.purpose);
-  const state = session.completion_state;
+  // The card's own status is the fallback, not a default: every `SessionStatus`
+  // member is also a `CompletionState`, and `completion_state(status, null)` in
+  // the domain is exactly this — the state a session is in before any verdict
+  // refines it. So a payload that predates the field, or one whose state did
+  // not arrive, still colours correctly rather than taking the week down.
+  const state = session.completion_state ?? session.status;
+  const stateTone = completionTone(state);
   const missed = state === "missed";
   // Judged, and judged as something other than what was asked for. The card
   // says so in words as well as in the dot's colour: "under" is the whole
   // point of looking at last week, and a 6px dot is not where it should have
   // to be read from.
-  const judged = JUDGED_STATES.has(state);
+  const judged = stateTone !== null && JUDGED_STATES.has(state);
   // Cycling sessions are measured in time, strength in sets: the card shows
   // whichever the prescription actually states rather than an empty slot.
   const measure =
@@ -125,15 +131,12 @@ export function SessionCard({
             same thing twice; a **pending** proposal changes neither status by
             design (D140), which makes it the one link state a card is
             otherwise silent about. */}
-        {judged ? (
+        {judged && stateTone ? (
           <span
             className="whitespace-nowrap rounded-badge border px-1 py-px text-2xs"
-            style={{
-              color: COMPLETION_TONES[state].color,
-              borderColor: COMPLETION_TONES[state].color,
-            }}
+            style={{ color: stateTone.color, borderColor: stateTone.color }}
           >
-            {COMPLETION_TONES[state].label}
+            {stateTone.label}
           </span>
         ) : session.match_status === "pending" ? (
           <span

@@ -35,6 +35,47 @@ export type ResolvedAxis =
     }
   | { readonly kind: "absent"; readonly reason: string };
 
+/**
+ * The lists a score carries, made safe to iterate.
+ *
+ * The same promise `resolve` makes about one metric slot, made about the whole
+ * artefact: **a malformed payload degrades, it does not throw**. A score with
+ * no `axes` renders an empty grid and the session page around it still says
+ * everything else it knows — which matters because this panel sits in the
+ * middle of a page whose other five sections have nothing to do with scoring,
+ * and a `.map` on an absent key would take all of them down with it.
+ */
+export function scoreLists(score: SessionScore): {
+  readonly axes: readonly AxisResult[];
+  readonly otherCriteria: readonly CriterionOutcome[];
+} {
+  return {
+    axes: Array.isArray(score.axes) ? score.axes : [],
+    otherCriteria: Array.isArray(score.other_criteria)
+      ? score.other_criteria
+      : [],
+  };
+}
+
+/** The same, for the four lists an alignment carries. */
+export function alignmentLists(alignment: SessionAlignment): {
+  readonly aligned: readonly AlignedStep[];
+  readonly excluded: readonly ExcludedStep[];
+  readonly unmatchedSteps: readonly number[];
+  readonly unmatchedIntervals: readonly number[];
+} {
+  return {
+    aligned: Array.isArray(alignment.aligned) ? alignment.aligned : [],
+    excluded: Array.isArray(alignment.excluded) ? alignment.excluded : [],
+    unmatchedSteps: Array.isArray(alignment.unmatched_steps)
+      ? alignment.unmatched_steps
+      : [],
+    unmatchedIntervals: Array.isArray(alignment.unmatched_intervals)
+      ? alignment.unmatched_intervals
+      : [],
+  };
+}
+
 /** Narrow one axis. A malformed axis reads as absent, never as zero. */
 export function resolveAxis(axis: AxisResult): ResolvedAxis {
   if (axis.value !== null && axis.value !== undefined) {
@@ -103,6 +144,19 @@ export const VERDICT_LABELS: Readonly<Record<Verdict, string>> = {
   abandoned: "Abandoned",
   different_session: "A different session",
 };
+
+/**
+ * A verdict, as a person reads it — and as its own value when this build has
+ * no word for it.
+ *
+ * Total for the same reason `completionTone` is: the label is looked up by a
+ * string off the wire, and a verdict added to the backend after this table was
+ * written must print as an unfamiliar word rather than crash the panel it
+ * appears in (several call sites go straight on to `.toLowerCase()`).
+ */
+export function verdictLabel(verdict: Verdict | null | undefined): string {
+  return verdict ? (VERDICT_LABELS[verdict] ?? verdict) : "not stated";
+}
 
 /** One line of help under each verdict in the picker. */
 export const VERDICT_HINTS: Readonly<Record<Verdict, string>> = {
@@ -234,6 +288,21 @@ export const COMPLETION_TONES: Readonly<
   },
   unplanned: { label: "Unplanned", color: "var(--color-status-unplanned)" },
 };
+
+/**
+ * The tone for a state, or `null` when there is not one.
+ *
+ * Total, and that is the point: this is a lookup keyed by a **string off the
+ * wire**, so a payload that omits the key or carries a state added to the
+ * backend after this table was written has to degrade rather than throw. A
+ * week grid that crashed on an unknown state would take the whole calendar
+ * with it, and the calendar is not the thing that is broken in that case.
+ */
+export function completionTone(
+  state: CompletionState | null | undefined,
+): CompletionTone | null {
+  return state ? (COMPLETION_TONES[state] ?? null) : null;
+}
 
 /**
  * How an axis score is written: a percentage, in monospace by its caller.
