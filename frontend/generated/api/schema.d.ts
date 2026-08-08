@@ -4888,6 +4888,15 @@ export interface operations {
           "application/json": components["schemas"]["SessionMetricsRead"];
         };
       };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description No valid session */
       401: {
         headers: {

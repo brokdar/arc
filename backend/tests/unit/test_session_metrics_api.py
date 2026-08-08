@@ -259,6 +259,22 @@ async def test_recomputing_an_unknown_session_is_a_404(
     assert response.status_code == 404
 
 
+async def test_recompute_with_an_unparseable_body_returns_documented_400(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """Found by Schemathesis: FastAPI answers 400, so the contract must say so."""
+    missing = "0199a1b2-0000-7000-8000-000000000000"
+
+    response = await client.post(
+        f"{SESSIONS}/{missing}/metrics/recompute",
+        content=b"\x0f\xff\xfe not json",
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert "detail" in response.json()
+
+
 # --- streams ------------------------------------------------------------------
 
 

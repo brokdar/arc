@@ -471,7 +471,7 @@ async def get_session_streams(
     return to_streams(await load_streams(row, RecordingRepository(session)))
 
 
-@router.post("/{session_id}/metrics/recompute", responses=NOT_FOUND)
+@router.post("/{session_id}/metrics/recompute", responses=NOT_FOUND | BAD_BODY)
 async def recompute_session_metrics(
     analyser: AnalyserDep,
     metrics: MetricsDep,
