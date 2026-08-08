@@ -9711,7 +9711,7 @@
     },
     "/api/v1/sessions/{session_id}/alignment": {
       "get": {
-        "description": "The alignment version in force: which effort answered which step.",
+        "description": "The alignment version in force: which effort answered which step.\n\nGone with the link, like the score: a pairing between a recording and a\nprescription says nothing about a session that answers to no prescription.",
         "operationId": "scores-get_session_alignment",
         "parameters": [
           {
@@ -10111,7 +10111,7 @@
     },
     "/api/v1/sessions/{session_id}/score": {
       "get": {
-        "description": "The score version in force for one session.\n\n404 when nothing has been scored \u2014 an unlinked session, one whose link is\nstill an unanswered proposal, or one ingested before scoring existed. The\ndetail says which, because that sentence is the empty state the page\nrenders.",
+        "description": "The score version in force for one session.\n\n404 when nothing has been scored \u2014 an unlinked session, one whose link is\nstill an unanswered proposal, or one ingested before scoring existed. The\ndetail says which, because that sentence is the empty state the page\nrenders.\n\nAlso 404 once the link a score was computed against is **gone** \u2014 unlinked,\nrejected, called unplanned, or pointed at a different plan entry. The\nversions stay on `/score/history`, where they are the record of what was\nmeasured; what they stop being is this session's standing judgement (D161).",
         "operationId": "scores-get_session_score",
         "parameters": [
           {

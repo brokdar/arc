@@ -768,16 +768,32 @@ class MatchingService:
         putting a verdict on the answer before the athlete has given it is the
         same mistake `_settle_statuses` refuses to make with the statuses
         (D140).
+
+        **On a session of its own**, which is what makes "leave the match
+        alone" true rather than aspirational. Rolling *this* service's session
+        back to undo a half-written score expires every persistent object on
+        it — `expire_on_commit=False` does not survive a ROLLBACK — including
+        the link and the session row the caller is about to serialize. The
+        next attribute read is then a lazy load in an async route with no
+        greenlet, and the endpoint answers 500: the match survived in the
+        database and the athlete was told it had not. A second session cannot
+        touch the caller's objects at all, so the failure costs exactly the
+        score (D159). Same shape as
+        `app.ingest.service.IngestService.reject_quarantine`, and for the same
+        reason.
         """
         if link is None or link.status is MatchLinkStatus.PENDING:
             return
+        # Read off the link *before* opening the second session: everything
+        # below has to be reachable without touching the caller's objects.
+        session_id = link.session_id
         try:
-            await ScoringService.from_session(self._session).score_session(
-                link.session_id, actor=actor, reason=REASON_MATCH_SETTLED
-            )
+            async with session_scope() as scoring_session:
+                await ScoringService.from_session(scoring_session).score_session(
+                    session_id, actor=actor, reason=REASON_MATCH_SETTLED
+                )
         except Exception:  # noqa: BLE001 — see the docstring
-            logger.exception("scoring_failed", session_id=str(link.session_id))
-            await self._session.rollback()
+            logger.exception("scoring_failed", session_id=str(session_id))
 
     async def _require_session(self, session_id: uuid.UUID) -> SessionRow:
         """The completed session, or a 404.

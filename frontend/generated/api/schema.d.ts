@@ -833,6 +833,9 @@ export interface paths {
     /**
      * Get Session Alignment
      * @description The alignment version in force: which effort answered which step.
+     *
+     *     Gone with the link, like the score: a pairing between a recording and a
+     *     prescription says nothing about a session that answers to no prescription.
      */
     get: operations["scores-get_session_alignment"];
     /**
@@ -952,6 +955,11 @@ export interface paths {
      *     still an unanswered proposal, or one ingested before scoring existed. The
      *     detail says which, because that sentence is the empty state the page
      *     renders.
+     *
+     *     Also 404 once the link a score was computed against is **gone** — unlinked,
+     *     rejected, called unplanned, or pointed at a different plan entry. The
+     *     versions stay on `/score/history`, where they are the record of what was
+     *     measured; what they stop being is this session's standing judgement (D161).
      */
     get: operations["scores-get_session_score"];
     put?: never;

@@ -389,6 +389,30 @@ class EveningPromptRepository:
         )
         return list(result.scalars()), total or 0
 
+    async def expired(
+        self, *, now: dt.datetime, limit: int
+    ) -> Sequence[EveningPromptRow]:
+        """Pending prompts whose deadline has passed, **oldest deadline first**.
+
+        The batch is taken *after* the deadline filter and in the order the
+        sweep wants to work through, which :meth:`list` cannot do for it: that
+        one pages newest-first for the inbox, so a sweep that borrowed it drew
+        the freshest prompts — the ones least likely to have expired — and
+        discarded most of them. With more pending prompts than the batch size,
+        the genuinely overdue ones were never in the page at all and were
+        starved until the backlog fell below the limit (D164).
+        """
+        result = await self._session.execute(
+            select(EveningPromptRow)
+            .where(
+                EveningPromptRow.status == EveningPromptStatus.PENDING,
+                EveningPromptRow.expires_at <= now,
+            )
+            .order_by(EveningPromptRow.expires_at.asc(), EveningPromptRow.id.asc())
+            .limit(limit)
+        )
+        return list(result.scalars())
+
     async def add(self, row: EveningPromptRow) -> EveningPromptRow:
         """Persist a prompt and refresh generated fields.
 

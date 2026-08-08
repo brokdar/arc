@@ -480,6 +480,12 @@ class PlanService:
         suggestion is what the strip shows until then, and a calendar that kept
         showing the suggestion after the athlete had overruled it would be
         arguing with them once a week.
+
+        A score is only read for the plan entry it was **computed against**.
+        Both sides are already keyed by the link, so the only way the two can
+        disagree is a swap whose rescore did not land — and showing the old
+        prescription's verdict on the new one's card would be the strip
+        answering a question nobody asked of it (D161).
         """
         session_ids = [link.session_id for link in links.values()]
         declared = await self._declarations.for_sessions(session_ids)
@@ -492,7 +498,9 @@ class PlanService:
                 continue
             score = scored.get(link.session_id)
             resolved[planned_id] = (
-                score.suggested_verdict if score is not None else None
+                score.suggested_verdict
+                if score is not None and score.planned_session_id == planned_id
+                else None
             )
         return resolved
 

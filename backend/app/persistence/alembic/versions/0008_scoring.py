@@ -23,6 +23,13 @@ hang off the planned session (there is no declaration to hang from), and
 difference. Portable as written — SQLite and Postgres both take it — so no
 batch mode is needed here; this revision only creates tables.
 
+Its version chain is closed by **two** unique constraints rather than one,
+because it has two possible subjects and the version is numbered within
+whichever one a row names. The check constraint leaves exactly one of the two
+columns non-null and NULLs are distinct in a unique index on both dialects, so
+each constraint binds only its own half of the table — and two concurrent
+revisions can no longer both land version *n+1* (D165).
+
 **Every reference to a planned session is `ON DELETE SET NULL`**, not CASCADE,
 except the reasons' own subject. Deleting a plan entry must not destroy the
 record of what was measured against it; the artefact stays readable and simply
@@ -320,29 +327,19 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_session_reasons")),
-    )
-    op.create_index(
-        op.f("ix_session_reasons_declaration_id"),
-        "session_reasons",
-        ["declaration_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_session_reasons_planned_session_id"),
-        "session_reasons",
-        ["planned_session_id"],
-        unique=False,
+        sa.UniqueConstraint(
+            "declaration_id", "version", name=op.f("uq_session_reasons_declaration_id")
+        ),
+        sa.UniqueConstraint(
+            "planned_session_id",
+            "version",
+            name=op.f("uq_session_reasons_planned_session_id"),
+        ),
     )
 
 
 def downgrade() -> None:
     """Revert the migration."""
-    op.drop_index(
-        op.f("ix_session_reasons_planned_session_id"), table_name="session_reasons"
-    )
-    op.drop_index(
-        op.f("ix_session_reasons_declaration_id"), table_name="session_reasons"
-    )
     op.drop_table("session_reasons")
     op.drop_index(
         op.f("ix_verdict_declarations_planned_session_id"),

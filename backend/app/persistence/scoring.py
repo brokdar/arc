@@ -244,17 +244,31 @@ class SessionReasonsRow(Base):
             "(declaration_id IS NULL) <> (planned_session_id IS NULL)",
             name="one_subject",
         ),
+        # One row per (subject, version), like both sibling chains — and
+        # **two** constraints, because this chain has two possible subjects
+        # and the version is numbered within whichever one the row names
+        # (`SessionReasonsRepository.for_declaration` /
+        # `for_planned_session` are what `next_version` counts). A
+        # `(session_id, version)` key would be neither: there is no
+        # `session_id` here, and the missed side has no session at all.
+        # The check constraint leaves exactly one of the two columns non-null,
+        # and NULLs are distinct in a unique index on both SQLite and
+        # Postgres, so each constraint binds only the rows it is about (D165).
+        UniqueConstraint("declaration_id", "version"),
+        UniqueConstraint("planned_session_id", "version"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     #: The declaration these reasons explain, for a session that was done.
+    #: No index of its own: the constraint above leads on this column.
     declaration_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("verdict_declarations.id", ondelete="CASCADE"), index=True
+        ForeignKey("verdict_declarations.id", ondelete="CASCADE")
     )
     #: The planned session these reasons explain, for one that was missed —
-    #: there is no declaration to hang them from.
+    #: there is no declaration to hang them from. Indexed by its own
+    #: constraint, as above.
     planned_session_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("planned_sessions.id", ondelete="CASCADE"), index=True
+        ForeignKey("planned_sessions.id", ondelete="CASCADE")
     )
     version: Mapped[int] = mapped_column(Integer)
     as_of: Mapped[dt.datetime] = mapped_column(UtcDateTime, server_default=func.now())

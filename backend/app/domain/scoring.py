@@ -319,6 +319,12 @@ class ScoredStep:
         step_index: `app.domain.workout.FlatStep.index`.
         repetition: The step's repeat-block iteration numbers, outermost
             first — what makes "the last rep versus the first" answerable.
+        block: `app.domain.workout.FlatStep.block` — which repeat block
+            :attr:`repetition` is counting. Carried beside it and **required**,
+            because the iteration number alone does not identify a repetition:
+            3 × 30 s sprints followed by 3 × 5 min at threshold emit
+            ``(1,) (2,) (3,)`` twice, and grouping on the number would put
+            sprint 1 and threshold 1 in one bucket.
         confidence: The alignment confidence of the pair.
         start_index: First row of the detected effort, on the 1 Hz grid.
         end_index: One past the last.
@@ -330,6 +336,7 @@ class ScoredStep:
 
     step_index: int
     repetition: tuple[int, ...]
+    block: tuple[int, ...]
     confidence: float
     start_index: int
     end_index: int
@@ -450,19 +457,38 @@ def trailing_mean(values: Sequence[float | None], window_s: int) -> list[float |
     averaging across one would score a step against samples that do not exist.
 
     ``window_s`` of 0 or 1 returns the readings unchanged.
+
+    **One pass, not one per row.** The window slides by exactly one row, so the
+    sum is carried: the arriving reading is added and the departing one
+    subtracted, which makes this O(n) instead of O(n × window). Re-slicing and
+    re-summing cost 1.7 s on a five-hour column at
+    `app.domain.criteria.MAX_SMOOTHING_S`, per channel and window, and
+    :func:`score_session` is a synchronous call awaited on the ingest and match
+    paths — that time was the API's event loop, blocked (D163).
+
+    The carried sum counts **only readings**, exactly as the slice did: a row
+    with no reading changes neither the total nor the count, and a window
+    holding none of them resets the total rather than carrying a rounding
+    residue across the gap.
     """
     if window_s < 0:
         raise ValueError(f"window_s must not be negative, got {window_s}")
     if window_s <= 1:
         return list(values)
     smoothed: list[float | None] = []
-    for index in range(len(values)):
-        window = [
-            value
-            for value in values[max(0, index - window_s + 1) : index + 1]
-            if value is not None
-        ]
-        smoothed.append(sum(window) / len(window) if window else None)
+    total = 0.0
+    readings = 0
+    for index, value in enumerate(values):
+        if value is not None:
+            total += value
+            readings += 1
+        leaving = index - window_s
+        if leaving >= 0 and (gone := values[leaving]) is not None:
+            total -= gone
+            readings -= 1
+        if readings == 0:
+            total = 0.0
+        smoothed.append(total / readings if readings else None)
     return smoothed
 
 
@@ -994,62 +1020,138 @@ def _resolve_limit(
 # --- pacing ---------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _BlockFade:
+    """One repeat block's fade, measured against itself."""
+
+    #: Position of the block in execution order, 1-based — what the
+    #: explanation calls it, because a tree path is not a thing to show anyone.
+    position: int
+    repetitions: int
+    first: float
+    last: float
+    value: float
+
+    @property
+    def ratio(self) -> float:
+        """Last repetition's NP over the first's."""
+        return self.last / self.first
+
+
 def _score_pacing(inputs: ScoringInputs) -> Assessment:
     """Fade across a repeat block: last rep's NP against the first's (WP-7.1).
 
-    The efforts are grouped by the **outermost** repeat-block iteration
-    (`app.domain.workout.FlatStep.repetition`), so ``5 × 5 min`` is five reps
-    however its recoveries are nested. Normalized power is taken over the
-    recording rows the alignment assigned to each rep, concatenated across the
-    rep's steps.
+    Efforts are grouped by **which block they belong to and which iteration of
+    it they are** — `app.domain.workout.FlatStep.block` beside
+    :attr:`~ScoredStep.repetition`. The iteration number alone is not an
+    identity: it restarts at 1 in every sibling block, so ``3 × 30 s`` sprints
+    followed by ``3 × 5 min`` at threshold would put sprint 1 and threshold 1
+    into one "rep 1" and compare that concatenation against a rep 3 made the
+    same way — a fade measured between two efforts that were never the same
+    effort (D162). Nesting is not a problem: ``5 × (4 min + 1 min)`` is five
+    repetitions of one block however its recoveries sit inside it.
 
+    Each block is compared **against itself**, and the axis is the **worst** of
+    them. A session is not well paced because one of its two blocks held; the
+    block that fell apart is the finding, and averaging it away would hide
+    exactly what this axis exists to surface — the same reason
+    :func:`worst_state` rolls a day up to its worst outcome rather than its
+    best.
+
+    Normalized power is taken over the recording rows the alignment assigned to
+    each repetition, concatenated across that repetition's steps.
     :data:`PACING_ALLOWED_FADE` of fade is free — nobody holds the fifth
     interval to the watt — and the score reaches zero at
     :data:`PACING_ZERO_FADE`.
     """
-    reps: dict[int, list[ScoredStep]] = {}
+    blocks: dict[tuple[int, ...], dict[int, list[ScoredStep]]] = {}
     for step in inputs.scored_steps:
         if step.repetition:
-            reps.setdefault(step.repetition[0], []).append(step)
-    if len(reps) < 2:
+            blocks.setdefault(step.block, {}).setdefault(step.repetition[0], []).append(
+                step
+            )
+    repeated = [
+        (position, reps)
+        for position, reps in enumerate(
+            (blocks[key] for key in sorted(blocks)), start=1
+        )
+        if len(reps) >= 2
+    ]
+    if not repeated:
         return NotAssessed(
             "this session has fewer than two repeated work blocks the "
             "alignment could score, so there is no fade to measure"
         )
-    order = sorted(reps)
-    first = _rep_normalized_power(inputs, reps[order[0]])
-    last = _rep_normalized_power(inputs, reps[order[-1]])
-    if first is None or last is None or first <= 0:
+    faded = [
+        measured
+        for position, reps in repeated
+        if (measured := _block_fade(inputs, position, reps)) is not None
+    ]
+    if not faded:
         return NotAssessed(
             "no power was recorded across the first and last repetition, so "
             "their normalized power cannot be compared"
         )
-    ratio = last / first
-    fade = max(0.0, 1.0 - ratio)
+    worst = min(faded, key=lambda one: one.value)
+    return Measured(
+        value=worst.value,
+        explanation=MetricExplanation(
+            formula=(
+                "pacing = the lowest score of any repeat block, where a "
+                "block scores 1 while its fade ≤ 5 %, falling to 0 at 25 % "
+                "fade, and fade = 1 − NP(last rep) / NP(first rep) of that "
+                "block"
+            ),
+            inputs={
+                "repeat blocks measured": f"{len(faded)}",
+                "worst block": f"{worst.position}",
+                "repetitions in it": f"{worst.repetitions}",
+                "NP of its first repetition": f"{worst.first:.0f} W",
+                "NP of its last repetition": f"{worst.last:.0f} W",
+                "ratio": f"{worst.ratio:.3f}",
+                "score by block": ", ".join(
+                    f"block {one.position} {one.value:.0%}" for one in faded
+                ),
+            },
+            assumptions=(
+                "a repetition ridden harder than the first is not penalised",
+                "only repetitions the alignment kept are compared",
+                (
+                    "each repeat block is compared against itself: two blocks "
+                    "prescribe different efforts, and the first sprint against "
+                    "the last threshold interval is not a fade"
+                ),
+                (
+                    "the worst block is the axis; averaging a block that fell "
+                    "apart against one that held would hide it"
+                ),
+            ),
+            citation="Allen & Coggan, Training and Racing with a Power Meter",
+        ),
+    )
+
+
+def _block_fade(
+    inputs: ScoringInputs, position: int, reps: Mapping[int, Sequence[ScoredStep]]
+) -> _BlockFade | None:
+    """One block's fade score, or ``None`` when its ends cannot be compared."""
+    order = sorted(reps)
+    first = _rep_normalized_power(inputs, reps[order[0]])
+    last = _rep_normalized_power(inputs, reps[order[-1]])
+    if first is None or last is None or first <= 0:
+        return None
+    fade = max(0.0, 1.0 - last / first)
     if fade <= PACING_ALLOWED_FADE:
         value = 1.0
     else:
         span = PACING_ZERO_FADE - PACING_ALLOWED_FADE
         value = max(0.0, 1.0 - (fade - PACING_ALLOWED_FADE) / span)
-    return Measured(
+    return _BlockFade(
+        position=position,
+        repetitions=len(reps),
+        first=first,
+        last=last,
         value=value,
-        explanation=MetricExplanation(
-            formula=(
-                "pacing = 1 while fade ≤ 5 %, falling to 0 at 25 % fade, where "
-                "fade = 1 − NP(last rep) / NP(first rep)"
-            ),
-            inputs={
-                "repetitions aligned": f"{len(reps)}",
-                "NP of the first repetition": f"{first:.0f} W",
-                "NP of the last repetition": f"{last:.0f} W",
-                "ratio": f"{ratio:.3f}",
-            },
-            assumptions=(
-                "a repetition ridden harder than the first is not penalised",
-                "only repetitions the alignment kept are compared",
-            ),
-            citation="Allen & Coggan, Training and Racing with a Power Meter",
-        ),
     )
 
 

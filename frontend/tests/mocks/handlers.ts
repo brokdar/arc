@@ -1072,13 +1072,16 @@ const MAX_ALIGNMENT_OFFSET_S = 6 * 60 * 60;
 const NOT_SCORED =
   "This session has no score. A session is scored once it is linked to a " +
   "planned session and that link is settled; a pending proposal is a " +
-  "question, not a link.";
+  "question, not a link. A session that was scored and then unlinked keeps " +
+  "its versions on its score history, but no longer answers to a " +
+  "prescription.";
 
 /** And `get_session_alignment`'s. */
 const NOT_ALIGNED =
   "This session has no alignment. Only a session linked to an endurance " +
   "prescription is aligned — a strength session's sets are paired by " +
-  "position, not on a timeline.";
+  "position, not on a timeline, and an unlinked session has no prescription " +
+  "to pair against.";
 
 /** `app.services.matching.MAX_MERGE_GAP_S` — six hours, in seconds. */
 const MAX_MERGE_GAP_S = 6 * 60 * 60;

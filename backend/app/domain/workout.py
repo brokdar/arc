@@ -409,6 +409,22 @@ class FlatStep:
     repetition: tuple[int, ...]
 
     @property
+    def block(self) -> tuple[int, ...]:
+        """Tree path of the **outermost repeat block** this step sits in.
+
+        Empty for a step outside every block. Every ancestor of a leaf is a
+        :class:`RepeatBlock` — nothing else has children — so the outermost one
+        is always the top-level element ``path[:1]`` names.
+
+        :attr:`repetition` counts iterations of *this* block and of nothing
+        else, so it only identifies a repetition when read beside it: two
+        sibling blocks both number their iterations from 1, and grouping on the
+        number alone concatenates the first sprint with the first threshold
+        effort (WP-7's `pacing` axis).
+        """
+        return self.path[:1] if self.repetition else ()
+
+    @property
     def role(self) -> StepRole:
         """The leaf step's role."""
         return self.step.role

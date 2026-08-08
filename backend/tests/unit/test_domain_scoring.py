@@ -13,7 +13,12 @@ order of the rows is the whole design, so every row gets a case that reaches
 it — including the rows that only fire because an earlier one did not.
 """
 
+from collections.abc import Sequence
+from dataclasses import replace
+
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from app.domain.anchors import AnchorType
 from app.domain.criteria import (
@@ -135,15 +140,28 @@ def endurance_inputs(
     )
 
 
-def rep(step_index: int, repetition: int, start: int, end: int) -> ScoredStep:
-    """One aligned work step, ridden over ``[start, end)`` against 250 W."""
+def rep(
+    step_index: int,
+    repetition: int,
+    start: int,
+    end: int,
+    *,
+    block: tuple[int, ...] = (1,),
+    target: float = 250.0,
+) -> ScoredStep:
+    """One aligned work step, ridden over ``[start, end)`` against 250 W.
+
+    ``block`` defaults to `intervals_workout`'s only repeat block, which sits
+    at top-level index 1.
+    """
     return ScoredStep(
         step_index=step_index,
         repetition=(repetition,),
+        block=block,
         confidence=0.9,
         start_index=start,
         end_index=end,
-        targets={Channel.POWER: 250.0},
+        targets={Channel.POWER: target},
     )
 
 
@@ -175,6 +193,59 @@ def test_a_window_holding_no_reading_stays_unrecorded() -> None:
     # A recording stop is not a period of low power: averaging across one would
     # score a step against samples that do not exist.
     assert trailing_mean([None, None, 100.0], 2) == [None, None, 100.0]
+
+
+def naive_trailing_mean(
+    values: Sequence[float | None], window_s: int
+) -> list[float | None]:
+    """The definition, re-sliced per row — O(n × window) and obviously right."""
+    if window_s <= 1:
+        return list(values)
+    smoothed: list[float | None] = []
+    for index in range(len(values)):
+        window = [
+            value
+            for value in values[max(0, index - window_s + 1) : index + 1]
+            if value is not None
+        ]
+        smoothed.append(sum(window) / len(window) if window else None)
+    return smoothed
+
+
+@given(
+    values=st.lists(
+        st.one_of(
+            st.none(),
+            st.floats(min_value=-2_000.0, max_value=2_000.0, allow_nan=False, width=32),
+        ),
+        max_size=200,
+    ),
+    window_s=st.integers(min_value=0, max_value=64),
+)
+def test_the_carried_sum_agrees_with_re_slicing_the_window(
+    values: list[float | None], window_s: int
+) -> None:
+    """The O(n) window is the O(n × window) definition, gaps and all.
+
+    The implementation carries a running sum rather than re-summing each row
+    (D163), which is a rewrite of arithmetic that was already correct — so the
+    property worth stating is that it did not change the answer. The `None`
+    handling is the delicate half: a row with no reading must count as neither
+    a zero nor a sample, and a window holding none of them must stay `None`
+    rather than divide by nothing.
+
+    Compared with a tolerance, not for equality: a carried sum and a fresh sum
+    over the same floats differ in the last bits, and pinning those would be
+    pinning the order of additions rather than the function.
+    """
+    expected = naive_trailing_mean(values, window_s)
+    actual = trailing_mean(values, window_s)
+
+    assert len(actual) == len(expected)
+    for index, (one, other) in enumerate(zip(actual, expected, strict=True)):
+        assert (one is None) == (other is None), f"row {index} disagrees on absence"
+        if one is not None and other is not None:
+            assert one == pytest.approx(other, rel=1e-9, abs=1e-9), f"row {index}"
 
 
 # --- completion ---------------------------------------------------------------
@@ -310,6 +381,7 @@ def test_the_bands_frozen_smoothing_window_is_the_one_applied() -> None:
         ScoredStep(
             step_index=1,
             repetition=(1,),
+            block=(1,),
             confidence=0.9,
             start_index=0,
             end_index=600,
@@ -473,6 +545,165 @@ def test_a_rider_who_finished_stronger_is_not_penalised() -> None:
     result = axis(pacing_inputs(360.0), ScoringAxis.PACING)
 
     assert isinstance(result.assessment, Measured)
+    assert result.assessment.value == 1.0
+
+
+def two_block_inputs(scored: tuple[ScoredStep, ...]) -> ScoringInputs:
+    """2 × 30 s sprints, then 3 × 5 min at threshold — two repeat blocks.
+
+    The shape the single-key grouping got wrong: `FlatStep.repetition` restarts
+    at 1 in the second block, so both blocks emit ``(1,)`` and ``(2,)``.
+    """
+    steps = flatten(
+        EnduranceWorkout(
+            steps=(
+                RepeatBlock(
+                    times=2,
+                    children=(
+                        step(StepRole.WORK, 30, 600.0),
+                        step(StepRole.RECOVERY, 30),
+                    ),
+                ),
+                RepeatBlock(
+                    times=3,
+                    children=(
+                        step(StepRole.WORK, 300, 250.0),
+                        step(StepRole.RECOVERY, 60),
+                    ),
+                ),
+            )
+        )
+    )
+    # Sprint 1 and threshold 1 both sit at repetition (1,); only the block
+    # tells them apart. Flat indices: sprints at 0 and 2, threshold at 4, 6, 8.
+    assert [one.repetition for one in steps if one.role is StepRole.WORK] == [
+        (1,),
+        (2,),
+        (1,),
+        (2,),
+        (3,),
+    ]
+    return ScoringInputs(
+        purpose=Purpose.THRESHOLD,
+        axes=(ScoringAxis.PACING,),
+        steps=tuple(steps),
+        channels={
+            Channel.POWER: watts(
+                # Two sprints at 600 W, thirty seconds each, thirty apart.
+                (600.0, 30),
+                (100.0, 30),
+                (600.0, 30),
+                (100.0, 30),
+                # Three threshold efforts at 250 W, five minutes each.
+                (250.0, 300),
+                (100.0, 60),
+                (250.0, 300),
+                (100.0, 60),
+                (250.0, 300),
+            )
+        },
+        scored_steps=scored,
+    )
+
+
+#: The five work steps of `two_block_inputs`, each over the rows it was ridden.
+TWO_BLOCK_SCORED = (
+    ScoredStep(
+        step_index=0,
+        repetition=(1,),
+        block=(0,),
+        confidence=0.9,
+        start_index=0,
+        end_index=30,
+        targets={Channel.POWER: 600.0},
+    ),
+    ScoredStep(
+        step_index=2,
+        repetition=(2,),
+        block=(0,),
+        confidence=0.9,
+        start_index=60,
+        end_index=90,
+        targets={Channel.POWER: 600.0},
+    ),
+    ScoredStep(
+        step_index=4,
+        repetition=(1,),
+        block=(1,),
+        confidence=0.9,
+        start_index=120,
+        end_index=420,
+        targets={Channel.POWER: 250.0},
+    ),
+    ScoredStep(
+        step_index=6,
+        repetition=(2,),
+        block=(1,),
+        confidence=0.9,
+        start_index=480,
+        end_index=780,
+        targets={Channel.POWER: 250.0},
+    ),
+    ScoredStep(
+        step_index=8,
+        repetition=(3,),
+        block=(1,),
+        confidence=0.9,
+        start_index=840,
+        end_index=1_140,
+        targets={Channel.POWER: 250.0},
+    ),
+)
+
+
+def test_two_repeat_blocks_are_not_one_set_of_repetitions() -> None:
+    """Every effort was held exactly; the axis must say so.
+
+    Both blocks are ridden flat — sprint 1 and sprint 2 at 600 W, all three
+    threshold efforts at 250 W — so neither faded and pacing is 1.0. Keyed on
+    the iteration number alone, "rep 1" would be sprint 1 *concatenated with*
+    threshold 1 and "rep 3" would be threshold 3 by itself, so the axis would
+    compare a mixed 600/250 W effort against a 250 W one and report a fade of
+    about a third for a session that never faded at all.
+    """
+    result = axis(two_block_inputs(TWO_BLOCK_SCORED), ScoringAxis.PACING)
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.value == 1.0
+    assert result.assessment.explanation.inputs["repeat blocks measured"] == "2"
+
+
+def test_the_worst_repeat_block_is_the_axis() -> None:
+    # The sprints hold; the last threshold effort is 20 % down on the first —
+    # 5 % free, zero at 25 %, so that block scores 0.25. A session is not well
+    # paced because one of its two blocks was.
+    inputs = two_block_inputs(TWO_BLOCK_SCORED)
+    faded = list(inputs.channels[Channel.POWER])
+    faded[840:1_140] = [200.0] * 300
+
+    result = axis(replace(inputs, channels={Channel.POWER: faded}), ScoringAxis.PACING)
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.value == pytest.approx(0.25)
+    assert result.assessment.explanation.inputs["worst block"] == "2"
+    assert (
+        result.assessment.explanation.inputs["score by block"]
+        == "block 1 100%, block 2 25%"
+    )
+
+
+def test_a_block_ridden_once_is_not_a_pace_to_fade_across() -> None:
+    # One sprint and three threshold efforts: the sprint block has no second
+    # repetition to fade to, so it is left out rather than compared against
+    # the other block's.
+    inputs = two_block_inputs(
+        (TWO_BLOCK_SCORED[0], *TWO_BLOCK_SCORED[2:]),
+    )
+
+    result = axis(inputs, ScoringAxis.PACING)
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.explanation.inputs["repeat blocks measured"] == "1"
     assert result.assessment.value == 1.0
 
 

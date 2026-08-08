@@ -275,6 +275,50 @@ describe("declaring a verdict", () => {
     );
   });
 
+  it("does not send reasons the athlete can no longer see", async () => {
+    // Switching to "As intended" hides the reason picker and leaves nothing
+    // on screen that says "time" — but the server accepts reasons on an
+    // `as_intended` declaration, so a payload that still carried them would
+    // put a reason into the athlete's own testimony that they watched
+    // themselves drop.
+    renderDetail(ACTIVITY_IDS.outdoorRide);
+    const panel = await ready();
+
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /^Confirm — abandoned$/ }),
+    );
+    await userEvent.click(
+      within(within(panel).getByTestId("declare-form")).getByText("Time"),
+    );
+    await userEvent.click(
+      within(within(panel).getByTestId("declare-form")).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await within(panel).findByText("You said");
+
+    await userEvent.click(
+      within(panel).getByRole("button", { name: "Change what you said" }),
+    );
+    const form = within(panel).getByTestId("declare-form");
+    expect(within(form).getByText("Time").closest("label")).toBeInTheDocument();
+    await userEvent.click(
+      within(form).getByRole("radio", { name: /As intended/ }),
+    );
+    // The picker is gone, so the reasons are gone.
+    expect(within(form).queryByText("Time")).toBeNull();
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(scoringFor(ACTIVITY_IDS.outdoorRide)?.declaration).toMatchObject({
+        declared_verdict: "as_intended",
+      }),
+    );
+    expect(scoringFor(ACTIVITY_IDS.outdoorRide)?.declaration?.reasons).toEqual(
+      [],
+    );
+  });
+
   it("revises the reasons afterwards, appending rather than overwriting", async () => {
     renderDetail(ACTIVITY_IDS.outdoorRide);
     const panel = await ready();

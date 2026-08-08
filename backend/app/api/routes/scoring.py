@@ -186,13 +186,21 @@ async def get_session_score(
     still an unanswered proposal, or one ingested before scoring existed. The
     detail says which, because that sentence is the empty state the page
     renders.
+
+    Also 404 once the link a score was computed against is **gone** — unlinked,
+    rejected, called unplanned, or pointed at a different plan entry. The
+    versions stay on `/score/history`, where they are the record of what was
+    measured; what they stop being is this session's standing judgement (D161).
     """
     row = await service.get_current(session_id)
     if row is None:
         raise NotFoundError(
             f"Session {session_id} has no score. A session is scored once it "
             "is linked to a planned session and that link is settled; a "
-            "pending proposal is a question, not a link."
+            "pending proposal is a question, not a link. A session that was "
+            "scored and then unlinked keeps its versions on "
+            f"/api/v1/sessions/{session_id}/score/history, but no longer "
+            "answers to a prescription."
         )
     return to_score(row)
 
@@ -238,13 +246,18 @@ async def recompute_session_score(
 async def get_session_alignment(
     service: ServiceDep, session_id: uuid.UUID
 ) -> SessionAlignmentRead:
-    """The alignment version in force: which effort answered which step."""
+    """The alignment version in force: which effort answered which step.
+
+    Gone with the link, like the score: a pairing between a recording and a
+    prescription says nothing about a session that answers to no prescription.
+    """
     row = await service.alignment(session_id)
     if row is None:
         raise NotFoundError(
             f"Session {session_id} has no alignment. Only a session linked to "
             "an endurance prescription is aligned — a strength session's sets "
-            "are paired by position, not on a timeline."
+            "are paired by position, not on a timeline, and an unlinked "
+            "session has no prescription to pair against."
         )
     return to_alignment(row)
 

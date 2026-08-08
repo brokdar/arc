@@ -613,8 +613,16 @@ function DeclareForm({
   const close = useDirtyClose({ dirty, onClose: onCancel });
 
   const needsReasons = verdict !== "as_intended";
+  // What the form would send, which is what the form is showing. Switching an
+  // `under` declaration with reasons to "As intended" hides the picker, and a
+  // submit that still carried those reasons would add testimony the athlete
+  // watched themselves drop — the server accepts them, because an
+  // `as_intended` declaration *may* carry reasons. Held rather than cleared so
+  // that switching back does not lose what was picked.
+  const stated = needsReasons ? reasons : [];
+  const statedNote = needsReasons ? note : "";
   const full = reasons.length >= MAX_REASONS;
-  const problem = reasonsProblem(verdict, reasons);
+  const problem = reasonsProblem(verdict, stated);
 
   const toggle = (reason: Reason) => {
     setReasons((held) =>
@@ -635,7 +643,11 @@ function DeclareForm({
         if (problem) {
           return;
         }
-        onSubmit(verdict, reasons, note.trim() === "" ? null : note.trim());
+        onSubmit(
+          verdict,
+          [...stated],
+          statedNote.trim() === "" ? null : statedNote.trim(),
+        );
       }}
     >
       {initial.mode === "declare" ? (

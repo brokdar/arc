@@ -259,7 +259,9 @@ async function mockApi(page: Page) {
             detail:
               "This session has no score. A session is scored once it is " +
               "linked to a planned session and that link is settled; a " +
-              "pending proposal is a question, not a link.",
+              "pending proposal is a question, not a link. A session that " +
+              "was scored and then unlinked keeps its versions on its score " +
+              "history, but no longer answers to a prescription.",
           },
           404,
         ),

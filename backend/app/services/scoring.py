@@ -155,6 +155,15 @@ NOT_SCOREABLE = (
     "prescription to score it against"
 )
 
+#: …and what a `displaced` link says when asked to slide its timeline.
+NOT_ALIGNABLE_DISPLACED = (
+    "this link says the athlete trained something else, so the session is "
+    "scored standalone and its steps are never paired against the "
+    "prescription. There is no alignment for an offset to move. Unlink it and "
+    "link the session again if the recording really does answer to this "
+    "prescription."
+)
+
 #: Furthest an alignment offset may slide the planned timeline, in seconds.
 #: Six hours is longer than any lead-in or over-long warm-up; past it the
 #: correction is not a correction, and the control would be a way to align a
@@ -245,23 +254,79 @@ class ScoringService:
 
     # --- reads ---------------------------------------------------------------
 
+    async def standing_link(self, session_id: uuid.UUID) -> uuid.UUID | None:
+        """The plan entry this session answers to right now, or ``None``.
+
+        The judgement's subject. A score is *about* a link — this recording,
+        against that prescription — so a stored score is only the standing
+        judgement while that link is still the one in force. Unlinking,
+        rejecting, marking a session unplanned and swapping it onto a different
+        plan entry all change the answer here, and every current-score read
+        goes through it (D161).
+
+        A **pending** link is not one: a proposal is a question, and D140's
+        rule is why nothing scores against one in the first place.
+        """
+        link = await self._links.for_session(session_id)
+        if link is None or link.status is MatchLinkStatus.PENDING:
+            return None
+        return link.planned_session_id
+
+    async def _stands(self, row: SessionScoreRow | None) -> bool:
+        """Whether one stored score is still the judgement in force."""
+        if row is None:
+            return False
+        standing = await self.standing_link(row.session_id)
+        return standing is not None and standing == row.planned_session_id
+
     async def get_current(self, session_id: uuid.UUID) -> SessionScoreRow | None:
-        """The score version in force for one session, or ``None``."""
-        return await self._scores.get_current(session_id)
+        """The score version in force for one session, or ``None``.
+
+        ``None`` for a session whose link has since been removed or retargeted,
+        even though the chain behind it is intact and :meth:`history` still
+        returns every version of it. The chain is the record of what was once
+        measured (invariant 1, D153); the *judgement* answers to a link, and
+        presenting last week's verdict for a ride that now answers to nothing
+        on the calendar would be the score outliving its own subject (D161).
+        """
+        row = await self._scores.get_current(session_id)
+        return row if await self._stands(row) else None
 
     async def history(self, session_id: uuid.UUID) -> Sequence[SessionScoreRow]:
-        """Every version of one session's score, oldest first."""
+        """Every version of one session's score, oldest first.
+
+        Unfiltered, deliberately: nothing deletes a computed artefact, and the
+        history is where an unlinked session's old verdicts stay readable.
+        """
         return await self._scores.history(session_id)
 
     async def current_for_sessions(
         self, session_ids: Iterable[uuid.UUID]
     ) -> dict[uuid.UUID, SessionScoreRow]:
-        """The score in force for each of several sessions, in one query."""
+        """The score in force for each of several sessions, in one query.
+
+        Chain tips only — the caller holds the links this page is drawn from
+        and pairs them itself (`app.services.plan.PlanService._verdicts`),
+        which is the same test :meth:`get_current` applies without the second
+        round trip per session.
+        """
         return await self._scores.current_for_sessions(session_ids)
 
     async def alignment(self, session_id: uuid.UUID) -> SessionAlignmentRow | None:
-        """The alignment version in force for one session, or ``None``."""
-        return await self._alignments.get_current(session_id)
+        """The alignment version in force for one session, or ``None``.
+
+        Gated on the standing link exactly as :meth:`get_current` is: the
+        pairing is between a recording and a prescription, and a table of which
+        effort answered which step is meaningless for a session that answers to
+        no prescription.
+        """
+        row = await self._alignments.get_current(session_id)
+        if row is None:
+            return None
+        standing = await self.standing_link(session_id)
+        return (
+            row if standing is not None and standing == row.planned_session_id else None
+        )
 
     async def alignment_history(
         self, session_id: uuid.UUID
@@ -626,10 +691,18 @@ class ScoringService:
         rescoring happen in one transaction, so a score never references an
         alignment version that is not the one in force.
 
+        A `displaced` link is refused. It says the athlete trained something
+        else, so the session is scored standalone: :meth:`_score` never aligns
+        it and the score it writes references no alignment version. Sliding the
+        offset there would append alignment version *n+1* that nothing points
+        at — a 200 and a new version whose only effect is to falsify the
+        promise this method makes about the one in force (D160).
+
         Raises:
             NotFoundError: When no session has that id.
             ValidationError: When the session has no prescription to align to,
-                or the offset is implausible.
+                when the link is `displaced`, or when the offset is
+                implausible.
         """
         if abs(offset_s) > MAX_ALIGNMENT_OFFSET_S:
             raise ValidationError(
@@ -643,6 +716,8 @@ class ScoringService:
         link = await self._links.for_session(session_id)
         if link is None or link.status is MatchLinkStatus.PENDING:
             raise ValidationError(NOT_SCOREABLE)
+        if link.status is MatchLinkStatus.DISPLACED:
+            raise ValidationError(NOT_ALIGNABLE_DISPLACED)
         planned = await self._planned.get(link.planned_session_id)
         if planned is None:  # pragma: no cover — the link's FK forbids it
             raise ValidationError(NOT_SCOREABLE)
@@ -703,7 +778,10 @@ class ScoringService:
             raise NotFoundError(f"Session {session_id} not found")
         ordered = _check_reasons(verdict, reasons, note)
 
-        current = await self._scores.get_current(session_id)
+        # The score **in force**, not the chain tip: `suggested_at_declaration`
+        # is what the athlete was looking at when they ruled, and a judgement
+        # whose link has gone is not on screen for them to rule on.
+        current = await self.get_current(session_id)
         link = await self._links.for_session(session_id)
         held = await self._declarations.for_session(session_id)
         now = dt.datetime.now(dt.UTC)
@@ -928,19 +1006,21 @@ class ScoringService:
 
         Idempotent — an already-terminal prompt is not a candidate.
 
+        The batch is taken over prompts that **have** expired, oldest deadline
+        first, rather than over the newest pending ones: paging before
+        filtering starved the overdue prompts the sweep exists for whenever the
+        pending backlog was larger than one batch (D164).
+
         Returns:
-            The prompts expired, oldest first.
+            The prompts expired, oldest deadline first.
         """
         moment = now or dt.datetime.now(dt.UTC)
         settings = get_settings()
-        pending, _ = await self._prompts.list(
-            status=EveningPromptStatus.PENDING,
-            limit=settings.scoring.prompt_expiry_batch,
+        due = await self._prompts.expired(
+            now=moment, limit=settings.scoring.prompt_expiry_batch
         )
         expired: list[EveningPromptRow] = []
-        for prompt in pending:
-            if prompt.expires_at > moment:
-                continue
+        for prompt in due:
             prompt.status = EveningPromptStatus.EXPIRED
             prompt.resolved_at = moment
             await self._prompts.add(prompt)
@@ -1071,6 +1151,10 @@ def _scored_steps(
             ScoredStep(
                 step_index=pair.step_index,
                 repetition=step.repetition,
+                # The block the repetition counts within: two sibling blocks
+                # both number their iterations from 1, so the pacing axis
+                # needs both halves to tell one repetition from another.
+                block=step.block,
                 confidence=pair.confidence,
                 start_index=interval.start_index,
                 end_index=interval.end_index,

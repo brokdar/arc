@@ -11,21 +11,29 @@ into a reason rather than into silence.
 """
 
 import datetime as dt
+import uuid
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_actor
+from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.matching import EveningPromptStatus, MatchLinkStatus
 from app.domain.scoring import CompletionState, Reason, Verdict
 from app.domain.templates import ScoringAxis
 from app.persistence.matching import EveningPromptRow
-from app.persistence.scoring import SessionReasonsRow, SessionScoreRow
+from app.persistence.planned_sessions import PlannedSessionIntentRow
+from app.persistence.scoring import (
+    SessionAlignmentRow,
+    SessionReasonsRow,
+    SessionScoreRow,
+)
 from app.services.matching import MatchingService
 from app.services.scoring import ScoringService
 
@@ -345,7 +353,7 @@ async def test_a_recompute_appends_a_version_and_supersedes_the_old_one(
 
 
 async def test_unlinking_keeps_the_score_history(
-    client: AsyncClient,
+    client: AsyncClient, db_session: AsyncSession
 ) -> None:
     # Nothing deletes a computed artefact (invariant 1). What unlinking removes
     # is the *claim*: the planned session stops naming this recording, so the
@@ -363,6 +371,125 @@ async def test_unlinking_keeps_the_score_history(
     (card,) = week.json()["days"][0]["sessions"]
     assert card["id"] == planned["id"]
     assert card["completion_state"] == CompletionState.PLANNED.value
+    # …and both chains are still rows, not a deletion dressed up as a read
+    # filter: the history above is what invariant 1 protects.
+    assert (
+        await db_session.execute(select(func.count()).select_from(SessionScoreRow))
+    ).scalar_one() == 1
+    assert (
+        await db_session.execute(select(func.count()).select_from(SessionAlignmentRow))
+    ).scalar_one() == 1
+
+
+async def test_unlinking_withdraws_the_standing_judgement(
+    client: AsyncClient,
+) -> None:
+    """A score is about a link, and the link is gone (D161).
+
+    The week strip already stopped showing a verdict — it reads through the
+    link — and `GET /score` went on answering "as intended" against a
+    prescription the session no longer answers to. Two surfaces, two answers,
+    about one session.
+    """
+    _, done = await matched(client)
+    assert (await score(client, done["id"]))["suggested_verdict"]
+
+    dropped = await client.delete(f"{MATCHES}/{done['match']['id']}")
+
+    assert dropped.status_code == 200, dropped.text
+    withdrawn = await client.get(f"{SESSIONS}/{done['id']}/score")
+    assert withdrawn.status_code == 404
+    assert "score/history" in withdrawn.json()["detail"]
+    # The alignment goes with it: a table of which effort answered which step
+    # is meaningless for a session with no steps to answer.
+    assert (await client.get(f"{SESSIONS}/{done['id']}/alignment")).status_code == 404
+
+
+async def test_rejecting_a_proposal_withdraws_the_standing_judgement(
+    client: AsyncClient,
+) -> None:
+    # An `auto_high` link is scored on the spot and is not the athlete's own,
+    # so it is the one link that can be both scored and rejected. Rejecting is
+    # not unlinking: it leaves the ride `unplanned` rather than restoring it.
+    _, done = await matched(client)
+    assert (await score(client, done["id"]))["version"] == 1
+
+    rejected = await client.post(f"{MATCHES}/{done['match']['id']}/reject")
+
+    assert rejected.status_code == 200, rejected.text
+    assert (await client.get(f"{SESSIONS}/{done['id']}/score")).status_code == 404
+    history = await client.get(f"{SESSIONS}/{done['id']}/score/history")
+    assert [one["version"] for one in history.json()] == [1]
+
+
+async def test_marking_a_session_unplanned_withdraws_the_standing_judgement(
+    client: AsyncClient,
+) -> None:
+    _, done = await matched(client)
+    assert (await score(client, done["id"]))["version"] == 1
+
+    unplanned = await client.post(f"{SESSIONS}/{done['id']}/unplanned")
+
+    assert unplanned.status_code == 200, unplanned.text
+    assert (await client.get(f"{SESSIONS}/{done['id']}/score")).status_code == 404
+    assert (await client.get(f"{SESSIONS}/{done['id']}/score/history")).json()
+
+
+async def test_a_swap_moves_the_judgement_onto_the_new_prescription(
+    client: AsyncClient,
+) -> None:
+    # The link is retargeted, so the score in force must be the one computed
+    # against the plan entry the session now answers to — never the old one.
+    planned, done = await matched(client)
+    other = await plan(client, TUESDAY, structure=LONGER_RIDE)
+
+    swapped = await client.patch(
+        f"{MATCHES}/{done['match']['id']}",
+        json={"planned_session_id": other["id"]},
+    )
+
+    assert swapped.status_code == 200, swapped.text
+    document = await score(client, done["id"])
+    assert document["planned_session_id"] == other["id"]
+    assert document["version"] == 2
+    # Version 1 was judged against the session that was displaced by the swap,
+    # and it stays readable as exactly that.
+    history = (await client.get(f"{SESSIONS}/{done['id']}/score/history")).json()
+    assert history[0]["planned_session_id"] == planned["id"]
+
+
+async def test_a_scoring_failure_leaves_the_match_standing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The docstring's promise, kept end to end (D159).
+
+    Scoring runs after the match commits so that a failure costs the score and
+    not the athlete's answer to a proposal. It ran on the *same* session,
+    though, and the rollback that discarded the half-written score expired the
+    link and the session row the route was about to serialize — so the endpoint
+    answered 500 and the athlete was told the confirmation had failed, while
+    the database said it had not.
+    """
+    await append_ftp(client)
+    await plan(client)
+    done = await record(client, duration_s=RIDE_DURATION_S // 2)
+    assert done["match"]["status"] == MatchLinkStatus.PENDING.value
+    # A frozen structure the workout parser refuses — the shape a schema
+    # migration or a hand-edited row can leave behind.
+    intent = (await db_session.execute(select(PlannedSessionIntentRow))).scalar_one()
+    intent.structure = {"discipline": "cycling", "steps": [{"kind": "nonsense"}]}
+    await db_session.commit()
+
+    confirmed = await client.post(f"{MATCHES}/{done['match']['id']}/confirm")
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["status"] == MatchLinkStatus.CONFIRMED.value
+    # The match stands and the session is matched; only the score is missing,
+    # which `POST /score/recompute` is there to supply once the intent is fixed.
+    assert (await client.get(f"{SESSIONS}/{done['id']}/score")).status_code == 404
+    assert (
+        await db_session.execute(select(func.count()).select_from(SessionScoreRow))
+    ).scalar_one() == 0
 
 
 # --- the athlete's verdict --------------------------------------------------------
@@ -532,6 +659,69 @@ async def test_revising_reasons_appends_rather_than_edits(
     assert rows[0].superseded_by == rows[1].id
 
 
+async def test_two_writers_cannot_both_append_the_same_reasons_version(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The chain is closed by the database, like both sibling chains (D165).
+
+    `next_version` reads the chain and adds one, which two concurrent revisions
+    can both compute as 2. Without a uniqueness constraint both land, and
+    picking "the reasons in force" from two unsuperseded version-2 rows is a
+    coin toss. The key is the **subject**, not the session: a reasons row hangs
+    off either a declaration or a plan entry, and the missed side has no
+    session at all.
+    """
+    _, done = await matched(client)
+    await declare(
+        client,
+        done["id"],
+        verdict=Verdict.UNDER.value,
+        reasons=[Reason.TIME.value],
+    )
+    held = (await db_session.execute(select(SessionReasonsRow))).scalar_one()
+
+    db_session.add(
+        SessionReasonsRow(
+            declaration_id=held.declaration_id,
+            version=held.version,
+            as_of=dt.datetime.now(dt.UTC),
+            reasons=[Reason.FATIGUE.value],
+            recorded_by="athlete",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+    await db_session.rollback()
+
+
+async def test_the_two_reasons_subjects_number_their_versions_apart(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Each constraint binds only the half of the table it is about: NULLs are
+    # distinct in a unique index, so a missed session's version 1 and a
+    # declaration's version 1 do not collide.
+    _, done = await matched(client)
+    planned = await plan(client, TUESDAY)
+    await declare(
+        client,
+        done["id"],
+        verdict=Verdict.UNDER.value,
+        reasons=[Reason.TIME.value],
+    )
+
+    answered = await client.put(
+        f"{PLANNED}/{planned['id']}/reasons",
+        json={"reasons": [Reason.ILLNESS.value]},
+    )
+
+    assert answered.status_code == 200, answered.text
+    versions = [
+        (row.declaration_id is not None, row.version)
+        for row in (await db_session.execute(select(SessionReasonsRow))).scalars()
+    ]
+    assert sorted(versions) == [(False, 1), (True, 1)]
+
+
 async def test_reasons_cannot_be_revised_before_anything_is_declared(
     client: AsyncClient,
 ) -> None:
@@ -670,6 +860,41 @@ async def test_an_implausible_offset_is_refused(client: AsyncClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+async def test_a_displaced_link_has_no_alignment_to_slide(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A displaced session is scored standalone, so it is never aligned (D160).
+
+    The offset used to be accepted here: it wrote alignment version *n+1*, the
+    rescore took the standalone branch and stored `alignment_version_id=None`,
+    and the athlete got a 200 for a version no score would ever reference —
+    the exact promise `set_alignment_offset` makes about the one in force,
+    broken by the call that makes it.
+    """
+    await append_ftp(client)
+    planned = await plan(client)
+    done = await record(client, TUESDAY, duration_s=600)
+    linked = await client.post(
+        MATCHES,
+        json={
+            "session_id": done["id"],
+            "planned_session_id": planned["id"],
+            "displaced": True,
+        },
+    )
+    assert linked.status_code == 201, linked.text
+
+    response = await client.put(
+        f"{SESSIONS}/{done['id']}/alignment", json={"offset_s": 180}
+    )
+
+    assert response.status_code == 422
+    assert "trained something else" in response.json()["detail"]
+    assert (
+        await db_session.execute(select(func.count()).select_from(SessionAlignmentRow))
+    ).scalar_one() == 0
 
 
 async def test_a_strength_session_has_no_timeline_to_slide(
@@ -849,6 +1074,43 @@ async def test_a_prompt_inside_its_seventy_two_hours_is_left_alone(
     )
 
     assert expired == []
+
+
+async def test_the_sweep_reaches_an_overdue_prompt_behind_a_full_batch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch is taken over what has expired, not over what is newest (D164).
+
+    The sweep used to page the pending prompts newest-first and *then* check
+    the deadline. With more pending prompts than the batch size it therefore
+    only ever saw the freshest — the ones least likely to be overdue — and the
+    genuinely expired ones were starved until the backlog dropped below the
+    limit. One batch slot, two prompts, and the overdue one is the older.
+    """
+    monkeypatch.setenv("SCORING__PROMPT_EXPIRY_BATCH", "1")
+    get_settings.cache_clear()
+    await append_ftp(client)
+    overdue = await plan(client, MONDAY)
+    await plan(client, MONDAY + dt.timedelta(days=1))
+    await sweep(db_session)
+    prompts = {
+        row.planned_session_id: row
+        for row in (await db_session.execute(select(EveningPromptRow))).scalars()
+    }
+    assert len(prompts) == 2
+    # The older prompt is past its deadline; the newer one, which the
+    # newest-first page would have taken, is not.
+    now = dt.datetime.now(dt.UTC)
+    prompts[uuid.UUID(overdue["id"])].expires_at = now - dt.timedelta(hours=1)
+    await db_session.commit()
+
+    expired = await ScoringService.from_session(db_session).expire_prompts(
+        actor=Actor.system(), now=now
+    )
+
+    assert [row.planned_session_id for row in expired] == [uuid.UUID(overdue["id"])]
 
 
 async def test_answering_after_an_expiry_revises_rather_than_replaces(
