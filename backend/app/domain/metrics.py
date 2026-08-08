@@ -716,9 +716,19 @@ def select_training_load(
 
 
 #: How the zones of each model collapse into easy / moderate / hard (A.3).
-#: The addenda's band numbers (1-2 / 3-4 / 5-7) are the **power** model's;
-#: the five-zone HR model has no zones 6 or 7, and its Z4 (`SuperThreshold`)
-#: begins at LTHR, so hard starts there (D121).
+#:
+#: The addenda's band numbers (easy 1-2, moderate 3-4, hard 5-7) are the
+#: **power** model's, and the rule behind them is where *threshold* sits:
+#: `coggan_7`'s Z4 is Threshold (90-105 %FTP) and lands in **moderate**, so
+#: hard begins above it at Z5.
+#:
+#: `lthr_5` has five bands, and the same rule places them differently from a
+#: naive re-use of those integers (D121). Its Z4 is `SubThreshold`
+#: (94-100 %LTHR) — below LTHR, so moderate — and Z5 (`SuperThreshold`) is the
+#: only band above threshold, so hard is Z5 alone. Putting Z4 in hard, as an
+#: earlier version of this table did, counted every tempo-to-threshold minute
+#: as hard riding and inflated the polarization index of exactly the sessions
+#: it exists to describe.
 THREE_ZONE_BANDS: Mapping[ZoneModel, tuple[frozenset[int], ...]] = MappingProxyType(
     {
         ZoneModel.COGGAN_7: (
@@ -726,7 +736,7 @@ THREE_ZONE_BANDS: Mapping[ZoneModel, tuple[frozenset[int], ...]] = MappingProxyT
             frozenset({3, 4}),
             frozenset({5, 6, 7}),
         ),
-        ZoneModel.LTHR_5: (frozenset({1, 2}), frozenset({3}), frozenset({4, 5})),
+        ZoneModel.LTHR_5: (frozenset({1, 2}), frozenset({3, 4}), frozenset({5})),
     }
 )
 

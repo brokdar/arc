@@ -37,8 +37,6 @@ from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.domain.actor import Actor
-from app.domain.anchors import AnchorType, AnchorVersion
-from app.domain.athlete import Sex
 from app.domain.metrics import PerformedSet
 from app.domain.session_analysis import SessionInputs, analyse_session
 from app.domain.streams import StreamChannel
@@ -55,23 +53,10 @@ from app.persistence.activity import (
     SessionRow,
     StreamAnomalyRow,
 )
-from app.persistence.athlete import AthleteRepository
 from app.persistence.metrics import SessionMetricsRow
-from app.services.anchors import AnchorService
 from app.services.metrics import SessionMetricsService
 
 logger = get_logger(__name__)
-
-#: The anchors a metric artefact may pin. Every one is resolved through
-#: `AnchorService.current` — never by indexing a dictionary of anchors at a
-#: call site (addenda §7), because "which version is in force" is a domain
-#: rule about effective dates and creation times, not a lookup.
-PINNED_ANCHORS: Sequence[AnchorType] = (
-    AnchorType.FTP,
-    AnchorType.LTHR,
-    AnchorType.MAX_HR,
-    AnchorType.RESTING_HR,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,15 +159,11 @@ class SessionAnalyser:
         *,
         sessions: SessionRepository,
         recordings: RecordingRepository,
-        anchors: AnchorService,
-        athletes: AthleteRepository,
         metrics: SessionMetricsService,
     ) -> None:
         self._session = session
         self._sessions = sessions
         self._recordings = recordings
-        self._anchors = anchors
-        self._athletes = athletes
         self._metrics = metrics
 
     @classmethod
@@ -192,8 +173,6 @@ class SessionAnalyser:
             session,
             sessions=SessionRepository(session),
             recordings=RecordingRepository(session),
-            anchors=AnchorService.from_session(session),
-            athletes=AthleteRepository(session),
             metrics=SessionMetricsService.from_session(session),
         )
 
@@ -203,10 +182,16 @@ class SessionAnalyser:
         """Compute and store a new metric version for one session.
 
         Reads the session's stored stream when it has one, resolves every
-        anchor in :data:`PINNED_ANCHORS` that is **in force now** (D115) and
-        records exactly which versions those were, then runs the domain over
-        the cleaned columns with the recording's ``recording_time_s`` — A5.1's
-        duration term, not elapsed and not moving time.
+        pinnable anchor that is **in force now** (D115) and records exactly
+        which versions those were, then runs the domain over the cleaned
+        columns with the recording's ``recording_time_s`` — A5.1's duration
+        term, not elapsed and not moving time.
+
+        The anchors and the athlete's sex come from
+        `app.services.metrics.SessionMetricsService`, not from a second copy
+        of the resolution here: a ride and a typed-in gym session have to
+        agree about what was in force at the same instant, and when they did
+        not, a recompute of an unchanged session wrote a divergent version.
 
         A session with no stream (a typed-in gym session) still gets an
         artefact: its logged sets produce the strength block and every
@@ -219,8 +204,8 @@ class SessionAnalyser:
         if session_row is None:
             raise NotFoundError(f"Session {session_id} not found")
 
-        anchors = await self._current_anchors()
-        profile = await self._athletes.get()
+        anchors = await self._metrics.current_anchors()
+        sex = await self._metrics.athlete_sex()
         recording = _sole_recording(session_row)
         columns: dict[StreamChannel, tuple[float | None, ...]] = {}
         if recording is not None:
@@ -251,7 +236,7 @@ class SessionAnalyser:
                     recording.moving_time_s if recording is not None else 0.0
                 ),
                 columns=columns,
-                sex=profile.sex if profile is not None else Sex.UNSPECIFIED,
+                sex=sex,
                 anchors={
                     anchor_type: version
                     for anchor_type, (version, _) in anchors.items()
@@ -272,22 +257,3 @@ class SessionAnalyser:
             },
             reason=reason,
         )
-
-    async def _current_anchors(
-        self,
-    ) -> dict[AnchorType, tuple[AnchorVersion, uuid.UUID]]:
-        """Every pinnable anchor in force now, with the id it is pinned by.
-
-        Resolved one type at a time through `AnchorService.current`, which is
-        the domain's own "which version is in force" rule (effective date,
-        creation time, future-dating). A type with no version in force is
-        simply absent, and the metric that needed it reports the reason.
-        """
-        resolved: dict[AnchorType, tuple[AnchorVersion, uuid.UUID]] = {}
-        for anchor_type in PINNED_ANCHORS:
-            try:
-                row = await self._anchors.current(anchor_type)
-            except NotFoundError:
-                continue
-            resolved[anchor_type] = (row.to_domain(), row.id)
-        return resolved

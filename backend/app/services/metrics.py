@@ -12,6 +12,15 @@ a layer out, in `app.ingest.analysis`, because a service may not import the
 ingest layer. That split is what lets the strength path live wholly here: a
 manual session's metrics come from its logged sets, and there is no file to
 read.
+
+**Resolving the inputs lives here too.** `current_anchors` and the athlete's
+sex are read the same way for a typed-in gym session as for a ride, and
+`app.ingest.analysis` calls *this* method rather than keeping its own copy —
+ingest may import services, so there is one answer to "which anchor versions
+were in force". Two copies produced two different artefacts for one unchanged
+session: the create path recorded "no anchor is in force" and no pins, and a
+recompute of the very same session then wrote a divergent version 2 with real
+ones. A version chain whose links differ for no reason is worse than no chain.
 """
 
 import datetime as dt
@@ -24,7 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.domain.actor import Actor
-from app.domain.anchors import AnchorType
+from app.domain.anchors import AnchorType, AnchorVersion
+from app.domain.athlete import Sex
 from app.domain.metrics import LoadBasis, PerformedSet, zone_channel_for_aggregation
 from app.domain.session_analysis import (
     SessionAnalysis,
@@ -36,6 +46,7 @@ from app.domain.session_analysis import (
 from app.domain.versioning import FIRST_VERSION, next_version
 from app.persistence.activity import SessionRepository, SessionRow
 from app.persistence.anchors import AnchorVersionRow
+from app.persistence.athlete import AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.persistence.metrics import (
@@ -57,6 +68,17 @@ RECOMPUTED = "session.metrics_recomputed"
 #: from the type's name so that adding an anchor is a deliberate edit here and
 #: not a silent no-op — a pin that lands nowhere is a metric that cannot say
 #: what it was computed against.
+#: The anchors a metric artefact may pin, in the order they are resolved.
+#: Every one goes through `AnchorService.current` — never a dictionary indexed
+#: by type at a call site (addenda §7) — because "which version is in force"
+#: is a domain rule about effective dates and creation times, not a lookup.
+PINNED_ANCHORS: Sequence[AnchorType] = (
+    AnchorType.FTP,
+    AnchorType.LTHR,
+    AnchorType.MAX_HR,
+    AnchorType.RESTING_HR,
+)
+
 PIN_COLUMNS: Mapping[AnchorType, str] = {
     AnchorType.FTP: "ftp_anchor_version_id",
     AnchorType.LTHR: "lthr_anchor_version_id",
@@ -74,12 +96,14 @@ class SessionMetricsService:
         repository: SessionMetricsRepository,
         sessions: SessionRepository,
         anchors: AnchorService,
+        athletes: AthleteRepository,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._repository = repository
         self._sessions = sessions
         self._anchors = anchors
+        self._athletes = athletes
         self._audit = audit
 
     @classmethod
@@ -90,6 +114,7 @@ class SessionMetricsService:
             SessionMetricsRepository(session),
             SessionRepository(session),
             AnchorService.from_session(session),
+            AthleteRepository(session),
             AuditRepository(session),
         )
 
@@ -134,6 +159,37 @@ class SessionMetricsService:
             ]
             for row in held
         }
+
+    async def current_anchors(
+        self,
+    ) -> dict[AnchorType, tuple[AnchorVersion, uuid.UUID]]:
+        """Every pinnable anchor in force now, with the id it is pinned by.
+
+        The single answer to that question. `app.ingest.analysis` calls this
+        rather than resolving anchors itself, so a ride and a typed-in gym
+        session cannot disagree about what was in force at the same instant.
+
+        A type with no version in force is simply absent, and the metric that
+        needed it reports the reason — an athlete who has never entered a
+        resting heart rate is not an error condition.
+        """
+        resolved: dict[AnchorType, tuple[AnchorVersion, uuid.UUID]] = {}
+        for anchor_type in PINNED_ANCHORS:
+            try:
+                row = await self._anchors.current(anchor_type)
+            except NotFoundError:
+                continue
+            resolved[anchor_type] = (row.to_domain(), row.id)
+        return resolved
+
+    async def athlete_sex(self) -> Sex:
+        """The athlete's sex, or `unspecified` before a profile exists.
+
+        HRSS's coefficient depends on it (Appendix A.2), so it is an input to
+        the artefact and is resolved on the same path for every session.
+        """
+        profile = await self._athletes.get()
+        return profile.sex if profile is not None else Sex.UNSPECIFIED
 
     # --- writes --------------------------------------------------------------
 
@@ -230,23 +286,57 @@ class SessionMetricsService:
         """Compute and store the metrics of a session with no stream.
 
         A manual strength session's whole metric set comes from its logged
-        sets, so it needs no parquet file and no anchors — which is why this
-        path lives in the service rather than in `app.ingest.analysis`. Every
-        stream-derived slot on the artefact carries its reason, exactly as it
-        would for a ride whose power meter was flat.
+        sets, so it needs no parquet file — which is why this path lives in
+        the service rather than in `app.ingest.analysis`. Every stream-derived
+        slot on the artefact carries its reason, exactly as it would for a
+        ride whose power meter was flat.
+
+        It still resolves and **pins the anchors in force**, even though no
+        metric here consumes one. Two reasons, and the second is the
+        load-bearing one. The artefact is a record of what the computation
+        looked at, and "no resting-HR anchor is in force" and "there was no
+        heart rate to apply one to" are different sentences to show an
+        athlete. And a recompute of an unchanged session goes through
+        `app.ingest.analysis`, which resolves them — so omitting them here
+        made version 2 differ from version 1 for no reason anyone could point
+        at.
         """
-        analysis = analyse_session(_strength_inputs(session_row))
-        return await self.record(session_row.id, analysis, actor=actor, reason=reason)
+        anchors = await self.current_anchors()
+        analysis = analyse_session(
+            _strength_inputs(session_row, anchors=anchors, sex=await self.athlete_sex())
+        )
+        return await self.record(
+            session_row.id,
+            analysis,
+            actor=actor,
+            pins={
+                anchor_type: version_id
+                for anchor_type, (_, version_id) in anchors.items()
+            },
+            reason=reason,
+        )
 
 
-def _strength_inputs(session_row: SessionRow) -> SessionInputs:
-    """The domain inputs of a session that has logged sets and no stream."""
+def _strength_inputs(
+    session_row: SessionRow,
+    *,
+    anchors: Mapping[AnchorType, tuple[AnchorVersion, uuid.UUID]],
+    sex: Sex,
+) -> SessionInputs:
+    """The domain inputs of a session that has logged sets and no stream.
+
+    Deliberately the same shape `app.ingest.analysis` builds for a session
+    whose recording is absent, field for field — that is what makes a
+    recompute of an unchanged manual session reproduce its own payload.
+    """
     return SessionInputs(
         discipline=session_row.discipline,
         recording_time_s=0.0,
         elapsed_time_s=session_row.duration_s,
         moving_time_s=0.0,
         columns={},
+        sex=sex,
+        anchors={anchor_type: version for anchor_type, (version, _) in anchors.items()},
         sets=[
             PerformedSet(reps=logged.reps, load_kg=logged.load_kg)
             for logged in session_row.logged_sets

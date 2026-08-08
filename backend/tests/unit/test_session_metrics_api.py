@@ -385,3 +385,160 @@ async def test_a_list_row_with_no_load_keeps_its_slot(
 
     assert item["load"] is None
     assert item["load_basis"] is None
+
+
+# --- the manual path resolves the same inputs a recompute will ----------------
+
+
+async def manual_session(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
+    """Type in a gym session and return it as the API answers."""
+    payload: dict[str, Any] = {
+        "start_time": "2026-05-11T17:30:00+02:00",
+        "timezone": "Europe/Zurich",
+        "duration_s": 3600,
+        "sets": [{"exercise_id": "back_squat", "reps": 5, "load_kg": 100.0}],
+    } | overrides
+    response = await client.post(MANUAL, json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def numbers(metrics: dict[str, Any]) -> dict[str, Any]:
+    """One version's payload, without the fields a new version must change."""
+    return {
+        key: value
+        for key, value in metrics.items()
+        if key not in {"version", "computed_at", "recompute_reason"}
+    }
+
+
+async def test_a_manual_session_pins_the_anchors_in_force(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # The artefact records what the computation looked at. Without the pins,
+    # it claimed "no anchor is in force" for an athlete who has four.
+    await full_anchor_set(client)
+
+    created = await manual_session(client)
+
+    metrics = created["metrics"]
+    assert {pin["anchor_type"] for pin in metrics["pins"]} == {
+        "ftp",
+        "lthr",
+        "max_hr",
+        "resting_hr",
+    }
+    # And the reason HRSS is missing is the honest one: there was no heart
+    # rate, not an absent anchor.
+    assert "heart rate" in metrics["heart_rate"]["hrss"]["not_assessed"]
+
+
+async def test_recomputing_an_unchanged_manual_session_reproduces_it(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """Two paths, one answer.
+
+    Creating a manual session computes its metrics in the service; recomputing
+    goes through `app.ingest.analysis`. When those resolved their inputs
+    separately, version 2 of an untouched session differed from version 1 —
+    a version chain whose links disagree for no reason anyone can point at.
+    """
+    await full_anchor_set(client)
+    created = await manual_session(client)
+    session_id = created["id"]
+
+    second = (await client.post(f"{SESSIONS}/{session_id}/metrics/recompute")).json()
+
+    assert second["version"] == 2
+    assert numbers(second) == numbers(created["metrics"])
+
+
+async def test_a_metric_failure_does_not_lose_a_typed_in_session(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The session is committed before its metrics are computed.
+
+    So a failure afterwards must leave the athlete with a stored session and
+    no numbers — not a 500 over work that already succeeded, which a client
+    retries and thereby creates a *second* session.
+    """
+
+    async def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("the metrics writer fell over")
+
+    monkeypatch.setattr(
+        "app.services.metrics.SessionMetricsService.record_strength", boom
+    )
+
+    created = await manual_session(client)
+
+    assert created["metrics"] is None
+    # And it really is stored: the log has exactly one of it.
+    listed = (await client.get(SESSIONS)).json()
+    assert [item["id"] for item in listed["items"]] == [created["id"]]
+
+
+async def test_a_metric_failure_does_not_break_a_correction(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = await manual_session(client)
+
+    async def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("the metrics writer fell over")
+
+    monkeypatch.setattr(
+        "app.services.metrics.SessionMetricsService.record_strength", boom
+    )
+    response = await client.patch(
+        f"{SESSIONS}/{created['id']}", json={"discipline": "cycling"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["discipline"] == "cycling"
+
+
+# --- only what changes the numbers appends a version --------------------------
+
+
+async def test_a_timezone_correction_leaves_the_version_chain_alone(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # A timezone touches no metric input. A chain that grew a link every time
+    # the athlete fixed one would drown the question it exists to answer.
+    created = await manual_session(client)
+    assert created["metrics"]["version"] == 1
+
+    corrected = await client.patch(
+        f"{SESSIONS}/{created['id']}", json={"timezone": "UTC"}
+    )
+
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["metrics"]["version"] == 1
+
+
+async def test_re_submitting_the_same_discipline_is_not_a_change(
+    data_root: Path, client: AsyncClient
+) -> None:
+    created = await manual_session(client)
+
+    corrected = await client.patch(
+        f"{SESSIONS}/{created['id']}", json={"discipline": "strength"}
+    )
+
+    assert corrected.json()["metrics"]["version"] == 1
+
+
+async def test_a_discipline_correction_does_append_a_version(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # It changes which load model is preferred (A5.2), so the artefact is
+    # stale the moment it lands.
+    created = await manual_session(client)
+
+    corrected = await client.patch(
+        f"{SESSIONS}/{created['id']}", json={"discipline": "cycling"}
+    )
+
+    metrics = corrected.json()["metrics"]
+    assert metrics["version"] == 2
+    assert metrics["recompute_reason"] == "session corrected"

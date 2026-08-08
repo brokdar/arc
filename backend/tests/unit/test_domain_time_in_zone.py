@@ -8,6 +8,7 @@ each one is pinned rather than derived here.
 """
 
 import datetime as dt
+import math
 from collections.abc import Sequence
 
 import pytest
@@ -27,7 +28,7 @@ from app.domain.metrics import (
     polarization_index,
     time_in_zone,
 )
-from app.domain.zones import ZoneModel, zones_for
+from app.domain.zones import ZONE_MODEL_ANCHOR, ZoneModel, zones_for
 
 
 def anchor(anchor_type: AnchorType, value: float) -> AnchorVersion:
@@ -143,13 +144,58 @@ def test_the_three_zone_collapse_follows_the_model() -> None:
 
 
 def test_the_hr_model_bands_are_the_five_zone_mapping() -> None:
-    # The addenda's 1-2 / 3-4 / 5-7 numbers are the *power* model's; the
-    # five-zone HR model has no Z6 or Z7 and its Z4 begins at LTHR (D121).
+    # The addenda's 1-2 / 3-4 / 5-7 numbers are the *power* model's. The rule
+    # behind them is where **threshold** sits, and applying that rule to
+    # `lthr_5` puts its Z4 (`SubThreshold`, 94-100 %LTHR) in moderate and
+    # leaves Z5 (`SuperThreshold`, from 100 %LTHR) alone in hard (D121).
     easy, moderate, hard = THREE_ZONE_BANDS[ZoneModel.LTHR_5]
 
     assert easy == frozenset({1, 2})
-    assert moderate == frozenset({3})
-    assert hard == frozenset({4, 5})
+    assert moderate == frozenset({3, 4})
+    assert hard == frozenset({5})
+
+
+def test_the_two_models_draw_the_hard_boundary_at_the_same_place() -> None:
+    # The property the mapping exists to hold: in both models, "hard" is the
+    # bands strictly **above** threshold. `coggan_7`'s Z4 is Threshold and
+    # `lthr_5`'s Z4 is SubThreshold, so neither belongs in hard.
+    for model in (ZoneModel.COGGAN_7, ZoneModel.LTHR_5):
+        _easy, moderate, hard = THREE_ZONE_BANDS[model]
+        anchor_type = ZONE_MODEL_ANCHOR[model]
+        zones = zones_for(anchor(anchor_type, 200.0), model)
+        by_index = {zone.index: zone for zone in zones}
+        # Every hard band starts at or above the anchor; no moderate one does.
+        assert all(by_index[index].lower_pct >= 1.0 for index in hard)
+        assert all(by_index[index].lower_pct < 1.0 for index in moderate)
+
+
+def test_sub_threshold_heart_rate_is_moderate_not_hard() -> None:
+    """The regression: 94-100 %LTHR is tempo-to-threshold, not hard riding.
+
+    An earlier mapping put `lthr_5`'s Z4 in the hard band, which counted a
+    steady sub-threshold effort as hard and inflated the polarization index of
+    exactly the sessions the index exists to describe.
+    """
+    # 120 bpm is 73 %LTHR (Z1), 160 bpm is 97 % (Z4 — SubThreshold), 170 bpm
+    # is 103 % (Z5 — SuperThreshold).
+    zones = zones_for(LTHR, ZoneModel.LTHR_5)
+    banded = time_in_zone(
+        [120.0] * 600 + [160.0] * 300 + [170.0] * 100,
+        zones,
+        ZoneModel.LTHR_5,
+        anchor=LTHR,
+    )
+
+    assert isinstance(banded, TimeInZone)
+    assert banded.easy_s == pytest.approx(600.0)
+    assert banded.moderate_s == pytest.approx(300.0)
+    assert banded.hard_s == pytest.approx(100.0)
+    # And the index follows: counting the 300 sub-threshold seconds as hard
+    # would move it by more than a rounding step.
+    assert isinstance(banded.polarization_index, Measured)
+    assert round(banded.polarization_index.value, 2) == round(
+        math.log10((600 / 300) * (100 / 1000) * 100), 2
+    )
 
 
 def test_the_hr_channel_bands_against_lthr() -> None:
