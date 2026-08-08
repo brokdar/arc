@@ -123,6 +123,14 @@ metrics-fixture:
 	cd backend && uv run python scripts/emit_metrics_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-metrics.ts
 
+# Regenerate the frontend's match-breakdown fixtures from the real domain.
+# Run after changing app/domain/matching.py or the fixture rows the script
+# states its evidence against: the renormalised weights and the sentences on
+# the unassessed components are the domain's, not a fixture author's.
+matching-fixture:
+	cd backend && uv run python scripts/emit_matching_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-matching.ts
+
 # --- API contract ------------------------------------------------------------
 
 # Regenerate the OpenAPI schema and frontend API types

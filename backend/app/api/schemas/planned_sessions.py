@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.pagination import Page
 from app.api.schemas.criteria import SuccessCriterionSchema
+from app.api.schemas.matching import MatchSummary
 from app.api.schemas.workouts import WorkoutStructureSchema, WorkoutSummarySchema
 from app.api.validation import PostgresText
 from app.domain.anchors import AnchorType, AnchorUnit, Provenance
@@ -256,6 +257,10 @@ class PlannedSessionListItem(BaseModel):
     #: quotes a percentage without saying what it resolves against is the
     #: thing invariant 4 exists to prevent.
     pinned_anchors: list[PinnedAnchorRead]
+    #: The recorded session linked to this one (WP-6), when there is one. A
+    #: `pending` link is a proposal: the status above is still ``planned``
+    #: until the athlete answers it.
+    match: MatchSummary | None = None
 
 
 class PlannedSessionRead(PlannedSessionListItem):

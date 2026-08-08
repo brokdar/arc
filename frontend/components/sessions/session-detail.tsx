@@ -10,6 +10,7 @@ import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
+import { MatchPanel } from "@/components/sessions/match-panel";
 import { SessionAnalysis } from "@/components/sessions/session-analysis";
 import { MatchBadge } from "@/components/sessions/session-list";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -134,7 +135,7 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           {formatDayMonthYear(session.local_date)}
         </span>
         <div className="ml-auto">
-          <MatchBadge status={session.status} />
+          <MatchBadge status={session.status} link={session.match} />
         </div>
       </Toolbar>
 
@@ -148,6 +149,13 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           metrics={session.metrics ?? null}
           hasRecording={session.recordings.length > 0}
         />
+
+        {/* Directly under the numbers, and above the file's own account of
+            itself: what a session *was* — the planned session it answered, or
+            the fact that it answered none — is the first question asked of a
+            ride that has just landed, and a pending proposal is the one thing
+            on this page waiting on an answer. */}
+        <MatchPanel session={session} />
 
         <section className="flex flex-col gap-2.5">
           <SectionLabel level={2}>Session</SectionLabel>

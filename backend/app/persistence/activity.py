@@ -11,7 +11,8 @@ kind of change (A4.5).
 
 Do not confuse `SessionRow` with `PlannedSessionRow` in
 `app.persistence.planned_sessions`: this one is what happened, that one is
-what was asked for, and until WP-6 there is no link between them at all.
+what was asked for, and what joins them is `session_matches`
+(`app.persistence.matching`) — a link table, never a column on either side.
 See `app.domain.activity` for the vocabulary both use.
 
 `stream_anomalies` is A4.2's audit trail one level below the audit log: a
@@ -100,8 +101,10 @@ class SessionRow(Base):
     #: Set when the athlete corrected the discipline, so a correction is never
     #: silently re-guessed by a later re-classification.
     discipline_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
-    #: Reserved for WP-6, which owns this lifecycle; every session written
-    #: before it is `unmatched`.
+    #: Where this session stands relative to the plan. WP-6 owns the
+    #: lifecycle: `app.services.matching` is the only writer, and the link
+    #: itself lives in `session_matches`, not here — this column is the
+    #: denormalised answer the session list renders a badge from.
     status: Mapped[SessionMatchStatus] = mapped_column(
         enum_column(SessionMatchStatus),
         default=SessionMatchStatus.UNMATCHED,
@@ -285,6 +288,29 @@ class LoggedSetRow(Base):
     )
 
 
+def session_duration_s(row: SessionRow) -> float:
+    """How long a completed session lasted, in the sense every reader means.
+
+    **Recording time** for a device session — elapsed with the pauses taken out
+    (A4.4) — because that is what training load is computed over (A5.1) and
+    what the athlete would call the ride. Summed across recordings, so a merged
+    session (WP-6.5) reports both files. Wall-clock for a typed-in one, which
+    has no recording and therefore no pauses to subtract.
+
+    One function because four callers need the same answer — the session list,
+    the session detail, the week rail and WP-6's duration term — and a matcher
+    that compared elapsed time against a prescription while the page showed
+    recording time would disagree with the screen the athlete is looking at.
+
+    Here rather than in a service because `app.services.matching` needs it and
+    `app.services.activity` needs *that*: one of the two had to stop being the
+    home of a function that only reads a row.
+    """
+    if not row.recordings:
+        return row.duration_s
+    return sum(recording.recording_time_s for recording in row.recordings)
+
+
 class SessionRepository:
     """SQLAlchemy repository for completed sessions."""
 
@@ -328,6 +354,22 @@ class SessionRepository:
             .limit(limit)
         )
         return list(result.scalars()), total or 0
+
+    async def by_ids(
+        self, session_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, SessionRow]:
+        """Several sessions by id, in one query.
+
+        For the pages that join *onto* sessions rather than list them — WP-6's
+        proposal inbox is a page of links, and each row names the session it
+        is about.
+        """
+        if not session_ids:
+            return {}
+        result = await self._session.execute(
+            select(SessionRow).where(SessionRow.id.in_(session_ids))
+        )
+        return {row.id: row for row in result.scalars()}
 
     async def overlapping(
         self, start: dt.datetime, end: dt.datetime

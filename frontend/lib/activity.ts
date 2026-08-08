@@ -46,23 +46,33 @@ export const RECORDING_KIND_LABELS: Readonly<Record<RecordingKind, string>> = {
 };
 
 /**
- * Where a completed session stands relative to the plan.
+ * Where a completed session stands relative to the plan (WP-6).
  *
- * One member today, and the badge takes it as a **prop** rather than assuming
- * it: WP-6 owns this lifecycle and adds `matched` / `unplanned` / `displaced`
- * then (D81). Keyed by the generated enum, so the day those arrive this table
- * fails to compile instead of rendering a raw enum value.
+ * Keyed by the generated enum, which is what made adding WP-6's three members
+ * a compile error here rather than a badge rendering a raw enum value.
+ *
+ * `unmatched` and `unplanned` are the pair worth reading carefully: the first
+ * means undecided — including while a proposal is waiting on an answer — and
+ * the second means decided, that there was nothing on the calendar this could
+ * have been.
  */
 export const MATCH_STATUS_LABELS: Readonly<Record<SessionMatchStatus, string>> =
   {
     unmatched: "Unmatched",
+    matched: "Matched",
+    unplanned: "Unplanned",
+    displaced: "Instead of",
   };
 
 /** Why a badge says what it says, on hover. */
 export const MATCH_STATUS_REASONS: Readonly<
   Record<SessionMatchStatus, string>
 > = {
-  unmatched: "Not yet linked to a planned session — matching arrives with WP-6",
+  unmatched: "Not yet linked to a planned session",
+  matched: "Linked to the planned session it answered",
+  unplanned: "Nothing was planned that this could have been",
+  displaced:
+    "Deliberately linked as done instead of a planned session, and scored on its own",
 };
 
 /**

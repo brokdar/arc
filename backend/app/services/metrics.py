@@ -372,6 +372,16 @@ class MetricSummary:
         moderate_s: The same, moderate.
         hard_s: The same, hard.
         zone_channel: Which channel those three came from.
+        normalized_power: Recorded NP in watts, or ``None`` when no power was
+            recorded. WP-6's intensity term compares it against the planned NP.
+        average_hr: Recorded average heart rate, the fallback that term uses
+            when there is no power on either side.
+        interval_count: How many work intervals the detector found
+            (`app.domain.alignment.detect_work_intervals`, stored with the
+            artefact). ``None`` when the artefact carries no interval block at
+            all — an older payload — which is different from a ride in which
+            none were detected, and WP-6's structure hint needs the
+            distinction.
     """
 
     session_id: uuid.UUID
@@ -383,6 +393,9 @@ class MetricSummary:
     moderate_s: float | None
     hard_s: float | None
     zone_channel: LoadBasis | None
+    normalized_power: float | None = None
+    average_hr: float | None = None
+    interval_count: int | None = None
 
 
 def _number(document: Mapping[str, Any] | None, key: str) -> float | None:
@@ -422,6 +435,7 @@ def summarise(row: SessionMetricsRow) -> MetricSummary:
         hr_available=_number(hr_zones, "total_s") is not None,
     )
     chosen = power_zones if channel is LoadBasis.POWER else hr_zones
+    intervals = payload.get("intervals")
     return MetricSummary(
         session_id=row.session_id,
         version=row.version,
@@ -432,4 +446,7 @@ def summarise(row: SessionMetricsRow) -> MetricSummary:
         moderate_s=_number(chosen, "moderate_s") if channel is not None else None,
         hard_s=_number(chosen, "hard_s") if channel is not None else None,
         zone_channel=channel,
+        normalized_power=_number(_block(payload, "power", "normalized_power"), "value"),
+        average_hr=_number(_block(payload, "heart_rate", "average_hr"), "value"),
+        interval_count=len(intervals) if isinstance(intervals, list) else None,
     )

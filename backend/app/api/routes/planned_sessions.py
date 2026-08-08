@@ -20,6 +20,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
+from app.api.routes.matching import to_summary
 from app.api.schemas.planned_sessions import (
     MetricExplanationRead,
     PinnedAnchorRead,
@@ -49,10 +50,12 @@ from app.domain.resolution import ResolvedStep, ResolvedTarget
 from app.domain.sessions import SessionStatus
 from app.domain.workout import workout_body_from_json
 from app.persistence.db import SessionDep
+from app.persistence.matching import SessionMatchRow
 from app.persistence.planned_sessions import (
     PlannedSessionIntentRow,
     PlannedSessionRow,
 )
+from app.services.matching import MatchingService
 from app.services.planned_sessions import PlannedSessionService, SessionResolution
 from app.services.workouts import WorkoutSummary
 
@@ -76,7 +79,13 @@ def get_service(session: SessionDep) -> PlannedSessionService:
     return PlannedSessionService.from_session(session)
 
 
+def get_matching(session: SessionDep) -> MatchingService:
+    """Bind the matching service to a request-scoped session."""
+    return MatchingService.from_session(session)
+
+
 ServiceDep = Annotated[PlannedSessionService, Depends(get_service)]
+MatchingDep = Annotated[MatchingService, Depends(get_matching)]
 
 # `SkipJsonSchema[None]`: optional by omission, never `null` — see
 # `.claude/rules/api-optional-query-params.md`.
@@ -199,10 +208,13 @@ def _volume_to_read(predicted: PredictedVolume | None) -> PredictedVolumeRead | 
 
 
 def to_list_item(
-    row: PlannedSessionRow, anchors: Mapping[AnchorType, PinnedAnchor]
+    row: PlannedSessionRow,
+    anchors: Mapping[AnchorType, PinnedAnchor],
+    link: SessionMatchRow | None = None,
 ) -> PlannedSessionListItem:
     """Project a stored planned session onto its list-row shape (D79)."""
     return PlannedSessionListItem(
+        match=to_summary(link) if link is not None else None,
         id=row.id,
         date=row.date,
         discipline=row.discipline,
@@ -216,10 +228,13 @@ def to_list_item(
 
 
 def to_read(
-    row: PlannedSessionRow, resolution: SessionResolution
+    row: PlannedSessionRow,
+    resolution: SessionResolution,
+    link: SessionMatchRow | None = None,
 ) -> PlannedSessionRead:
     """Project a stored planned session onto its response shape."""
     return PlannedSessionRead(
+        match=to_summary(link) if link is not None else None,
         id=row.id,
         date=row.date,
         discipline=row.discipline,
@@ -236,21 +251,26 @@ def to_read(
 
 
 async def one_to_read(
-    service: PlannedSessionService, row: PlannedSessionRow
+    service: PlannedSessionService,
+    matching: MatchingService,
+    row: PlannedSessionRow,
 ) -> PlannedSessionRead:
-    """Resolve one session's pins and project it.
+    """Resolve one session's pins and its match link, and project it.
 
     Every endpoint that answers with a whole session goes through here, so the
-    resolved targets and the predicted load are part of the resource rather
-    than something only the detail route happens to include.
+    resolved targets, the predicted load and the recorded session that answered
+    it are part of the resource rather than something only the detail route
+    happens to include.
     """
     resolutions = await service.resolutions([row])
-    return to_read(row, resolutions[row.id])
+    links = await matching.for_planned_sessions([row.id])
+    return to_read(row, resolutions[row.id], links.get(row.id))
 
 
 @router.get("")
 async def list_planned_sessions(
     service: ServiceDep,
+    matching: MatchingDep,
     page: PageParamsDep,
     start: StartFilter = None,
     end: EndFilter = None,
@@ -275,8 +295,12 @@ async def list_planned_sessions(
     # One query for the whole page's pins, not one per session — and no
     # prescription parsed, no 1 Hz expansion run.
     anchors = await service.pins(sessions)
+    links = await matching.for_planned_sessions([session.id for session in sessions])
     return PlannedSessionsPage(
-        items=[to_list_item(session, anchors[session.id]) for session in sessions],
+        items=[
+            to_list_item(session, anchors[session.id], links.get(session.id))
+            for session in sessions
+        ],
         total=total,
         offset=page.offset,
         limit=page.limit,
@@ -287,7 +311,10 @@ async def list_planned_sessions(
     "", status_code=status.HTTP_201_CREATED, responses=BAD_BODY | INVALID | NOT_FOUND
 )
 async def create_planned_session(
-    service: ServiceDep, actor: ActorDep, payload: PlannedSessionCreate
+    service: ServiceDep,
+    matching: MatchingDep,
+    actor: ActorDep,
+    payload: PlannedSessionCreate,
 ) -> PlannedSessionRead:
     """Plan a session, freezing its prescription and pinning its anchors."""
     row = await service.create(
@@ -309,20 +336,21 @@ async def create_planned_session(
             ]
         ),
     )
-    return await one_to_read(service, row)
+    return await one_to_read(service, matching, row)
 
 
 @router.get("/{planned_session_id}", responses=NOT_FOUND)
 async def get_planned_session(
-    service: ServiceDep, planned_session_id: uuid.UUID
+    service: ServiceDep, matching: MatchingDep, planned_session_id: uuid.UUID
 ) -> PlannedSessionRead:
     """Get one planned session with the intent version in force."""
-    return await one_to_read(service, await service.get(planned_session_id))
+    return await one_to_read(service, matching, await service.get(planned_session_id))
 
 
 @router.patch("/{planned_session_id}", responses=NOT_FOUND | BAD_BODY | INVALID)
 async def update_planned_session(
     service: ServiceDep,
+    matching: MatchingDep,
     actor: ActorDep,
     planned_session_id: uuid.UUID,
     payload: PlannedSessionUpdate,
@@ -342,12 +370,13 @@ async def update_planned_session(
             for criterion in payload.success_criteria
         ]
     row = await service.update(planned_session_id, updates, actor=actor)
-    return await one_to_read(service, row)
+    return await one_to_read(service, matching, row)
 
 
 @router.post("/{planned_session_id}/move", responses=NOT_FOUND | BAD_BODY | INVALID)
 async def move_planned_session(
     service: ServiceDep,
+    matching: MatchingDep,
     actor: ActorDep,
     planned_session_id: uuid.UUID,
     payload: PlannedSessionMove,
@@ -360,7 +389,9 @@ async def move_planned_session(
     changes — no intent version, no re-pinning.
     """
     return await one_to_read(
-        service, await service.move(planned_session_id, date=payload.date, actor=actor)
+        service,
+        matching,
+        await service.move(planned_session_id, date=payload.date, actor=actor),
     )
 
 
@@ -371,6 +402,7 @@ async def move_planned_session(
 )
 async def copy_planned_session(
     service: ServiceDep,
+    matching: MatchingDep,
     actor: ActorDep,
     planned_session_id: uuid.UUID,
     payload: PlannedSessionCopy,
@@ -383,7 +415,9 @@ async def copy_planned_session(
     being planned now (invariant 4, D57).
     """
     return await one_to_read(
-        service, await service.copy(planned_session_id, date=payload.date, actor=actor)
+        service,
+        matching,
+        await service.copy(planned_session_id, date=payload.date, actor=actor),
     )
 
 

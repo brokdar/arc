@@ -17,6 +17,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict
 
 from app.domain.athlete import Discipline
+from app.domain.matching import MatchLinkStatus
 from app.domain.purpose import Purpose
 from app.domain.sessions import SessionStatus
 
@@ -65,6 +66,12 @@ class WeekSessionRead(BaseModel):
     #: kilograms. **Kilograms, not a load** — never add it to
     #: ``predicted_load``, and never render the two in one column.
     predicted_volume_load_kg: float | None
+    #: The recorded session matched to this card (WP-6), or null.
+    matched_session_id: uuid.UUID | None
+    #: What that link claims. ``pending`` is a **proposal**: ``status`` above
+    #: is still ``planned`` until the athlete answers it, so the card shows a
+    #: question rather than a completion.
+    match_status: MatchLinkStatus | None
 
 
 class PlanWeekDayRead(BaseModel):

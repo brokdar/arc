@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 
 type Schemas = components["schemas"];
@@ -512,6 +513,13 @@ const SEEDS: readonly SessionSeed[] = [
       predicted_intensity_factor: null,
       predicted_load_coverage: null,
       predicted_volume_load_kg: 1920,
+      // No link, on a card that says `completed`. Consistent, not sloppy:
+      // this fixture's week has nothing recorded in it (see the day builder
+      // below), and `completed` with no link is exactly what the API produces
+      // when the athlete marks a session done by hand — WP-6's link is what a
+      // *recording* creates.
+      matched_session_id: null,
+      match_status: null,
     },
     structure: STRENGTH_STRUCTURE,
     criteria: STRENGTH_CRITERIA,
@@ -543,6 +551,8 @@ const SEEDS: readonly SessionSeed[] = [
       // of it: both come out of `predict_endurance_load` (D88).
       predicted_load_coverage: VO2_PREDICTED_LOAD.coverage,
       predicted_volume_load_kg: null,
+      matched_session_id: null,
+      match_status: null,
     },
     structure: VO2_STRUCTURE,
     criteria: VO2_CRITERIA,
@@ -573,6 +583,8 @@ const SEEDS: readonly SessionSeed[] = [
       predicted_intensity_factor: null,
       predicted_load_coverage: null,
       predicted_volume_load_kg: null,
+      matched_session_id: null,
+      match_status: null,
     },
     structure: RECOVERY_STRUCTURE,
     criteria: RECOVERY_CRITERIA,
@@ -601,6 +613,8 @@ const SEEDS: readonly SessionSeed[] = [
       predicted_load_coverage: null,
       // Bodyweight throughout: kilograms exist once it is performed.
       predicted_volume_load_kg: null,
+      matched_session_id: null,
+      match_status: null,
     },
     structure: CORE_STRUCTURE,
     criteria: STRENGTH_CRITERIA,
@@ -628,6 +642,8 @@ const SEEDS: readonly SessionSeed[] = [
       predicted_intensity_factor: LONG_PREDICTED_LOAD.intensity_factor,
       predicted_load_coverage: LONG_PREDICTED_LOAD.coverage,
       predicted_volume_load_kg: null,
+      matched_session_id: null,
+      match_status: null,
     },
     structure: LONG_STRUCTURE,
     criteria: ENDURANCE_CRITERIA,
@@ -1425,6 +1441,16 @@ export interface IngestMockState {
   quarantine: Schemas["QuarantineRecordRead"][];
   /** Newest first. */
   events: Schemas["IngestEventRead"][];
+  /**
+   * The plan the recordings are matched against, in date order (WP-6).
+   *
+   * Here rather than beside the week fixture because a link *moves* a planned
+   * session's status — `completed`, `displaced`, or back to exactly what it
+   * was — and a status that lived in a pure function could not be moved.
+   */
+  planned: Schemas["PlannedSessionListItem"][];
+  /** Newest first, the order `list_matches` answers in. */
+  matches: MatchLinkRecord[];
   /** Content hash → the sessions that file was ingested as. The dedup key. */
   known: Map<string, string[]>;
   /** How many ids this run has minted, so each one is different. */
@@ -1436,27 +1462,53 @@ function seedState(): IngestMockState {
     sessions: seedSessions(),
     quarantine: seedQuarantine(),
     events: seedEvents(),
+    planned: seedPlanned(),
+    matches: [],
     known: new Map(),
     minted: 0,
   };
 }
 
-let state: IngestMockState = seedState();
+/**
+ * Built on first use, not at import: the seeds it reads are `const`s declared
+ * further down the file, and a module-level `seededState()` runs before they
+ * are initialised.
+ */
+let state: IngestMockState | null = null;
+
+/**
+ * A whole fresh state, links included.
+ *
+ * The links are attached in a second step because a link records the two
+ * statuses it displaced, and reading those means reading the rows — which do
+ * not exist until the first step has run. That ordering is not an accident of
+ * the mock: it is the same reason the service reads both rows before it writes
+ * a link.
+ */
+function seededState(): IngestMockState {
+  const fresh = seedState();
+  state = fresh;
+  fresh.matches = seedMatches();
+  for (const link of fresh.matches) {
+    applyLinkStatuses(link);
+  }
+  return fresh;
+}
 
 /** The current mock state. Call it per request; it is replaced, not mutated. */
 export function ingestState(): IngestMockState {
-  return state;
+  return state ?? seededState();
 }
 
 /** Put the ingest mock back to its seed. Wired into the global `afterEach`. */
 export function resetMockState(): void {
-  state = seedState();
+  state = seededState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
 export function mintId(): string {
-  state.minted += 1;
-  return `0199a000-0000-7000-8000-0000000009${String(state.minted).padStart(2, "0")}`;
+  ingestState().minted += 1;
+  return `0199a000-0000-7000-8000-0000000009${String(ingestState().minted).padStart(2, "0")}`;
 }
 
 /**
@@ -1688,4 +1740,616 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
       updated_at: stamp(new Date(start.getTime() + elapsed * 1000)),
     };
   });
+}
+
+// --- the plan the recorded sessions are matched against (WP-6) ----------------
+//
+// A second, *fixed-date* set of planned sessions, deliberately separate from
+// the week above. The week fixture is built around whatever Monday the
+// calendar asks for, because a calendar test must not have to freeze the
+// clock; a match, on the other hand, joins one planned session to one
+// recording, and the three recordings in this file sit on 2026-08-03, -05 and
+// -06. So the planned sessions a link can point at are dated around those, and
+// `GET /planned-sessions` answers with them.
+//
+// Every duration, set count and work-step count below is a property of the
+// structure document beside it, and the same numbers are what
+// `backend/scripts/emit_matching_fixture.py` stated its evidence from — so a
+// breakdown in `generated-matching.ts` and the row the picker shows describe
+// the same prescription.
+
+export const PLANNED_IDS = {
+  /** 2026-08-05, the day of the outdoor ride: the proposal it carries. */
+  vo2: "0199a000-0000-7000-8000-000000000501",
+  /** 2026-08-04: what the outdoor ride's link is swapped to. */
+  long: "0199a000-0000-7000-8000-000000000502",
+  /** 2026-08-06, the day of the gym session: the proposal it carries. */
+  strength: "0199a000-0000-7000-8000-000000000503",
+  /** 2026-08-07: what the gym session's link is swapped to. */
+  core: "0199a000-0000-7000-8000-000000000504",
+  /** 2026-08-03, the evening of the trainer ride. */
+  threshold: "0199a000-0000-7000-8000-000000000505",
+} as const;
+
+/**
+ * 2 × 20′ at threshold: 600 + 1200 + 300 + 1200 + 600 = 3900 s, two work steps.
+ *
+ * The one prescription here that no other fixture already carries, and it
+ * exists because the trainer hour needs something plausible to have been.
+ */
+const THRESHOLD_STRUCTURE: Schemas["EnduranceStructureSchema-Output"] = {
+  discipline: "cycling",
+  steps: [
+    {
+      kind: "steady",
+      role: "warmup",
+      name: "Wind up",
+      duration_s: 600,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.55,
+          pct_high: 0.65,
+        },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "work",
+      name: "Threshold 1",
+      duration_s: 1200,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.95,
+          pct_high: 1,
+        },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "recovery",
+      name: "Float",
+      duration_s: 300,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.5,
+          pct_high: 0.55,
+        },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "work",
+      name: "Threshold 2",
+      duration_s: 1200,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.95,
+          pct_high: 1,
+        },
+      },
+      distance_m: null,
+    },
+    {
+      kind: "steady",
+      role: "cooldown",
+      name: "Spin down",
+      duration_s: 600,
+      targets: {
+        power: {
+          kind: "percent_of_anchor",
+          anchor_type: "ftp",
+          pct_low: 0.45,
+          pct_high: 0.55,
+        },
+      },
+      distance_m: null,
+    },
+  ],
+};
+
+/** Five working sets over two lines — the gym session logged three of them. */
+const FULL_BODY_STRUCTURE: Schemas["StrengthStructureSchema"] = {
+  discipline: "strength",
+  groups: [
+    {
+      label: null,
+      items: [
+        {
+          exercise_id: "back_squat",
+          sets: 3,
+          reps: 5,
+          load: { kind: "percent_e1rm", value: 0.8 },
+          rir: 2,
+          rest_s: 180,
+          tempo: null,
+          notes: null,
+        },
+      ],
+    },
+    {
+      label: null,
+      items: [
+        {
+          exercise_id: "romanian_deadlift",
+          sets: 2,
+          reps: 8,
+          load: { kind: "kg", value: 80 },
+          rir: 2,
+          rest_s: 120,
+          tempo: null,
+          notes: null,
+        },
+      ],
+    },
+  ],
+};
+
+const THRESHOLD_CRITERIA: Schemas["SessionIntentRead"]["success_criteria"] = [
+  {
+    kind: "time_in_band",
+    band: { channel: "power", low: 0.95, high: 1.05, smoothing_s: 30 },
+    min_fraction: 0.8,
+    selector: { kind: "role", role: "work", index: null },
+  },
+];
+
+interface PlannedSeed {
+  readonly id: string;
+  readonly date: string;
+  readonly discipline: Schemas["Discipline"];
+  readonly purpose: Schemas["Purpose"];
+  readonly intentText: string | null;
+  readonly workoutId: string | null;
+  readonly structure: Schemas["SessionIntentRead"]["structure"];
+  readonly criteria: Schemas["SessionIntentRead"]["success_criteria"];
+  readonly pinnedAnchors: Schemas["PinnedAnchorRead"][];
+  readonly summary: Schemas["SessionIntentRead"]["summary"];
+}
+
+const PLANNED_SEEDS: readonly PlannedSeed[] = [
+  {
+    id: PLANNED_IDS.threshold,
+    date: "2026-08-03",
+    discipline: "cycling",
+    purpose: "threshold",
+    intentText: "Two twenties on the trainer, no heroics.",
+    workoutId: null,
+    structure: THRESHOLD_STRUCTURE,
+    criteria: THRESHOLD_CRITERIA,
+    pinnedAnchors: [PINNED_FTP],
+    summary: { step_count: 5, total_duration_s: 3900, total_sets: null },
+  },
+  {
+    id: PLANNED_IDS.long,
+    date: "2026-08-04",
+    discipline: "cycling",
+    purpose: "endurance",
+    intentText: "Build durability before the Ötztal.",
+    workoutId: WORKOUT_IDS.long,
+    structure: LONG_STRUCTURE,
+    criteria: ENDURANCE_CRITERIA,
+    pinnedAnchors: [PINNED_FTP],
+    summary: { step_count: 3, total_duration_s: 11400, total_sets: null },
+  },
+  {
+    id: PLANNED_IDS.vo2,
+    date: "2026-08-05",
+    discipline: "cycling",
+    purpose: "vo2max",
+    intentText: "Open the top end without digging a hole.",
+    workoutId: WORKOUT_IDS.vo2,
+    structure: VO2_STRUCTURE,
+    criteria: VO2_CRITERIA,
+    pinnedAnchors: [PINNED_FTP],
+    summary: { step_count: 12, total_duration_s: 3420, total_sets: null },
+  },
+  {
+    id: PLANNED_IDS.strength,
+    date: "2026-08-06",
+    discipline: "strength",
+    purpose: "max_strength",
+    intentText: "Squat, hinge, get out.",
+    workoutId: null,
+    structure: FULL_BODY_STRUCTURE,
+    criteria: STRENGTH_CRITERIA,
+    pinnedAnchors: [],
+    summary: { step_count: 2, total_duration_s: null, total_sets: 5 },
+  },
+  {
+    id: PLANNED_IDS.core,
+    date: "2026-08-07",
+    discipline: "strength",
+    purpose: "core",
+    intentText: null,
+    workoutId: null,
+    structure: CORE_STRUCTURE,
+    criteria: STRENGTH_CRITERIA,
+    pinnedAnchors: [],
+    summary: { step_count: 1, total_duration_s: null, total_sets: 4 },
+  },
+];
+
+/** The planned sessions `GET /planned-sessions` answers with, in date order. */
+function seedPlanned(): Schemas["PlannedSessionListItem"][] {
+  return PLANNED_SEEDS.map((seed) => ({
+    id: seed.id,
+    date: seed.date,
+    discipline: seed.discipline,
+    status: "planned",
+    intent_versions: 1,
+    created_at: "2026-07-30T09:00:00Z",
+    updated_at: "2026-07-30T09:00:00Z",
+    match: null,
+    pinned_anchors: seed.pinnedAnchors,
+    intent: {
+      id: intentId(seed.id, 1),
+      artefact_id: seed.id,
+      version: 1,
+      as_of: "2026-07-30T09:00:00Z",
+      superseded_by: null,
+      recompute_reason: null,
+      edited_post_hoc: false,
+      purpose: seed.purpose,
+      intent_text: seed.intentText,
+      coach_notes: null,
+      workout_id: seed.workoutId,
+      pinned_anchor_versions: Object.fromEntries(
+        seed.pinnedAnchors.map((anchor) => [
+          anchor.anchor_type,
+          anchor.anchor_version_id,
+        ]),
+      ),
+      structure: seed.structure,
+      success_criteria: seed.criteria,
+      summary: seed.summary,
+    },
+  }));
+}
+
+// --- links, and the three statuses that move together ------------------------
+
+/**
+ * One link, as the mock stores it.
+ *
+ * The two *contexts* a `MatchRead` carries are deliberately not stored: they
+ * are projections of the session and the planned session as they stand right
+ * now, and a stored copy would go stale the moment a confirm moved either
+ * status — which is exactly the bug a test of the confirm flow exists to
+ * catch.
+ */
+export interface MatchLinkRecord {
+  id: string;
+  session_id: string;
+  planned_session_id: string;
+  status: Schemas["MatchLinkStatus"];
+  similarity: number | null;
+  confirmed_at: string | null;
+  created_by: string;
+  previous_session_status: Schemas["SessionMatchStatus"];
+  previous_planned_status: Schemas["app__domain__sessions__SessionStatus"];
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The breakdown the domain produces for one pair, **stated**.
+ *
+ * Throws for a pair nothing has been generated for, for the reason
+ * `statedLocalDate` throws: a mock cannot compute a similarity — that is the
+ * domain's job, and reimplementing the renormalisation here would make every
+ * test agree with the reimplementation. Add the pair to
+ * `backend/scripts/emit_matching_fixture.py` and re-run `just
+ * matching-fixture` instead.
+ */
+export function statedBreakdown(
+  sessionId: string,
+  plannedSessionId: string,
+): Schemas["MatchBreakdownRead"] {
+  const breakdown = MATCH_BREAKDOWNS[`${sessionId}|${plannedSessionId}`];
+  if (breakdown === undefined) {
+    throw new Error(
+      `No generated breakdown for session ${sessionId} against planned ` +
+        `session ${plannedSessionId}. Add the pair to ` +
+        "backend/scripts/emit_matching_fixture.py and run `just " +
+        "matching-fixture` rather than inventing a similarity here.",
+    );
+  }
+  return breakdown;
+}
+
+/**
+ * What re-running matching over one session decides, **stated**.
+ *
+ * `app.domain.matching.classify` turns a score into a verdict against two
+ * thresholds; the mock states the verdict rather than applying the thresholds
+ * itself, because a mock that reimplemented `classify` would agree with its
+ * own copy of the rule instead of with the domain's. Each entry below is
+ * consistent with the score `generated-matching.ts` carries for the same pair:
+ * 0.92 is at or above the auto-link threshold, 0.69 and 0.60 are in the band
+ * where arc proposes and asks.
+ */
+const STATED_REMATCH: Readonly<
+  Record<string, { planned: string; status: Schemas["MatchLinkStatus"] }>
+> = {
+  [ACTIVITY_IDS.trainerRide]: {
+    planned: PLANNED_IDS.threshold,
+    status: "auto_high",
+  },
+  [ACTIVITY_IDS.outdoorRide]: { planned: PLANNED_IDS.vo2, status: "pending" },
+  [ACTIVITY_IDS.gym]: { planned: PLANNED_IDS.strength, status: "pending" },
+};
+
+/** What a re-run would decide about one session, or nothing at all. */
+export function statedRematch(
+  sessionId: string,
+): { planned: string; status: Schemas["MatchLinkStatus"] } | null {
+  return STATED_REMATCH[sessionId] ?? null;
+}
+
+/** The two proposals the log opens with: one per discipline, both waiting. */
+function seedMatches(): MatchLinkRecord[] {
+  return [
+    linkRecord({
+      sessionId: ACTIVITY_IDS.outdoorRide,
+      plannedSessionId: PLANNED_IDS.vo2,
+      status: "pending",
+      createdBy: "system",
+      id: "0199a000-0000-7000-8000-000000000601",
+    }),
+    linkRecord({
+      sessionId: ACTIVITY_IDS.gym,
+      plannedSessionId: PLANNED_IDS.strength,
+      status: "pending",
+      createdBy: "system",
+      id: "0199a000-0000-7000-8000-000000000602",
+    }),
+  ];
+}
+
+/**
+ * A link, with the two statuses it displaced recorded on it.
+ *
+ * The previous statuses are read off the rows rather than assumed, because
+ * that is what makes an unlink restore *exactly* what was there (WP-6.8) —
+ * including a planned session that was already `missed`.
+ */
+export function linkRecord({
+  sessionId,
+  plannedSessionId,
+  status,
+  createdBy,
+  id,
+}: {
+  sessionId: string;
+  plannedSessionId: string;
+  status: Schemas["MatchLinkStatus"];
+  createdBy: string;
+  id?: string;
+}): MatchLinkRecord {
+  const session = ingestState().sessions.find((row) => row.id === sessionId);
+  const planned = ingestState().planned.find(
+    (row) => row.id === plannedSessionId,
+  );
+  const athletes = status === "confirmed" || status === "displaced";
+  return {
+    id: id ?? mintId(),
+    session_id: sessionId,
+    planned_session_id: plannedSessionId,
+    status,
+    similarity: statedBreakdown(sessionId, plannedSessionId).score,
+    confirmed_at: athletes ? MATCH_NOW : null,
+    created_by: createdBy,
+    previous_session_status: session?.status ?? "unmatched",
+    previous_planned_status: planned?.status ?? "planned",
+    created_at: MATCH_NOW,
+    updated_at: MATCH_NOW,
+  };
+}
+
+/** The instant the mock's match operations claim to have happened. */
+export const MATCH_NOW = "2026-08-07T09:05:00Z";
+
+/**
+ * Move the two sides to where a link of this status puts them.
+ *
+ * The table is `app.services.matching`'s own, quoted rather than invented:
+ * pending changes nothing on either side (a proposal is a question), a
+ * confirmed or automatic link completes the planned session, and a displaced
+ * one leaves it neither missed nor completed.
+ */
+export function applyLinkStatuses(link: MatchLinkRecord): void {
+  const session = ingestState().sessions.find(
+    (row) => row.id === link.session_id,
+  );
+  const planned = ingestState().planned.find(
+    (row) => row.id === link.planned_session_id,
+  );
+  if (!session || !planned || link.status === "pending") {
+    return;
+  }
+  if (link.status === "displaced") {
+    session.status = "displaced";
+    planned.status = "displaced";
+    return;
+  }
+  session.status = "matched";
+  planned.status = "completed";
+}
+
+/** Put both sides back to exactly what the link displaced (WP-6.8). */
+export function restoreLinkStatuses(link: MatchLinkRecord): void {
+  const session = ingestState().sessions.find(
+    (row) => row.id === link.session_id,
+  );
+  const planned = ingestState().planned.find(
+    (row) => row.id === link.planned_session_id,
+  );
+  if (session) {
+    session.status = link.previous_session_status;
+  }
+  if (planned) {
+    planned.status = link.previous_planned_status;
+  }
+}
+
+/** The link one session carries, or null. */
+export function linkForSession(sessionId: string): MatchLinkRecord | null {
+  return (
+    ingestState().matches.find((link) => link.session_id === sessionId) ?? null
+  );
+}
+
+/** The link one planned session carries, or null. */
+export function linkForPlanned(plannedId: string): MatchLinkRecord | null {
+  return (
+    ingestState().matches.find(
+      (link) => link.planned_session_id === plannedId,
+    ) ?? null
+  );
+}
+
+/** The summary shape both joined resources carry. */
+export function matchSummary(
+  link: MatchLinkRecord | null,
+): Schemas["MatchSummary"] | null {
+  if (link === null) {
+    return null;
+  }
+  const {
+    id,
+    session_id,
+    planned_session_id,
+    status,
+    similarity,
+    confirmed_at,
+  } = link;
+  return {
+    id,
+    session_id,
+    planned_session_id,
+    status,
+    similarity,
+    confirmed_at,
+  };
+}
+
+/**
+ * One link as its own resource, both sides projected as they stand now.
+ *
+ * Throws when either side has gone: the API loads both in one query and drops
+ * a row it cannot resolve, and a mock that answered with half a proposal would
+ * be describing a response no route can produce.
+ */
+export function matchRead(link: MatchLinkRecord): Schemas["MatchRead"] {
+  const session = ingestState().sessions.find(
+    (row) => row.id === link.session_id,
+  );
+  const planned = ingestState().planned.find(
+    (row) => row.id === link.planned_session_id,
+  );
+  if (!session || !planned) {
+    throw new Error(
+      `Match ${link.id} has a side that is not in the mock state`,
+    );
+  }
+  return {
+    ...(matchSummary(link) as Schemas["MatchSummary"]),
+    breakdown: statedBreakdown(link.session_id, link.planned_session_id),
+    created_by: link.created_by,
+    previous_session_status: link.previous_session_status,
+    previous_planned_status: link.previous_planned_status,
+    created_at: link.created_at,
+    updated_at: link.updated_at,
+    session: {
+      id: session.id,
+      local_date: session.local_date,
+      discipline: session.discipline,
+      status: session.status,
+      duration_s: session.duration_s,
+    },
+    planned_session: {
+      id: planned.id,
+      date: planned.date,
+      discipline: planned.discipline,
+      purpose: planned.intent.purpose,
+      status: planned.status,
+      intent_text: planned.intent.intent_text,
+    },
+  };
+}
+
+/** A session as the API returns it: with whatever link it carries attached. */
+export function withMatch<T extends { id: string }>(session: T): T {
+  return { ...session, match: matchSummary(linkForSession(session.id)) };
+}
+
+/**
+ * The other half of one ride, for the merge case (WP-6.5).
+ *
+ * Not seeded, because two device sessions on the same day is the *exception* —
+ * seeding it would put a garage-door stop in every test of the log. A test
+ * that wants the merge control calls this first.
+ */
+export function seedMergeCandidate(): Schemas["SessionRead"] {
+  const half: Schemas["SessionRead"] = {
+    id: "0199a000-0000-7000-8000-000000000701",
+    local_date: "2026-08-05",
+    // Twelve minutes after the outdoor ride's 07:53 local finish: one ride,
+    // recorded as two files, well inside the six hours a merge will bridge.
+    start_time: "2026-08-05T08:05:00Z",
+    end_time: "2026-08-05T08:41:00Z",
+    timezone: "Europe/Zurich",
+    discipline: "cycling",
+    classification_source: "sport_field",
+    discipline_overridden: false,
+    recording_kind: "device",
+    status: "unmatched",
+    duration_s: 2160,
+    recording_time_s: 2160,
+    rpe: null,
+    notes: null,
+    load: null,
+    load_basis: null,
+    metrics: null,
+    recordings: [
+      {
+        id: "0199a000-0000-7000-8000-000000000702",
+        file_hash:
+          "5c1d8e02fa47b9635c1d8e02fa47b9635c1d8e02fa47b9635c1d8e02fa47b963",
+        file_sport_index: 0,
+        original_ext: "fit",
+        sport: "cycling",
+        elapsed_time_s: 2160,
+        recording_time_s: 2160,
+        recording_stops: [],
+        median_time_delta_s: 1,
+        moving_time_s: 2160,
+        power_source_candidates: ["Quarq DZero"],
+        power_source: "Quarq DZero",
+        power_source_rule: "only candidate",
+        hr_source_candidates: ["Garmin HRM-Pro"],
+        hr_source: "Garmin HRM-Pro",
+        hr_source_rule: "only candidate",
+        channels: ["power", "hr", "cadence", "speed"],
+        anomaly_count: 0,
+        created_at: "2026-08-05T08:45:00Z",
+      },
+    ],
+    logged_sets: [],
+    created_at: "2026-08-05T08:45:00Z",
+    updated_at: "2026-08-05T08:45:00Z",
+  };
+  ingestState().sessions.unshift(half);
+  return half;
 }

@@ -26,13 +26,13 @@ Build-plan invariant 4, in one place:
   anchors are in force now. It is a session planned today that happens to say
   what another one said, not a second view of the original.
 
-Two things this work package cannot yet do are represented as **explicit
-seams**, not as silence: whether a session has been matched (WP-6) and how a
-rescore is requested (WP-7). Both are module-level hooks with an MVP default
-and a setter, in the same spirit as
-`app.persistence.db.set_session_factory` — so the freeze machinery is
-complete and tested now, and the later work package supplies one function
-instead of rewriting this module.
+The freeze rule asks two questions this module does not own — has this session
+been matched (WP-6), and how is a rescore requested (WP-7) — and both are
+module-level hooks with a default and a setter, in the same spirit as
+`app.persistence.db.set_session_factory`. WP-6 has since filled the first with
+a real query (:func:`_has_a_match`); the seam stays because it is what lets a
+test drive the freeze rule without building a link, and because WP-7 still
+needs the second.
 """
 
 import datetime as dt
@@ -73,6 +73,7 @@ from app.domain.workout import (
 from app.domain.workout import referenced_anchor_types as body_anchors
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
+from app.persistence.matching import SessionMatchRepository
 from app.persistence.planned_sessions import (
     PlannedSessionIntentRow,
     PlannedSessionRepository,
@@ -123,16 +124,22 @@ type MatchProbe = Callable[[AsyncSession, uuid.UUID], Awaitable[bool]]
 type RescoreTrigger = Callable[[AsyncSession, uuid.UUID, int], Awaitable[None]]
 
 
-async def _no_matches_yet(
-    _session: AsyncSession, _planned_session_id: uuid.UUID
-) -> bool:
-    """MVP default: nothing is matched, because matching does not exist yet.
+async def _has_a_match(session: AsyncSession, planned_session_id: uuid.UUID) -> bool:
+    """Whether anything is linked to this planned session (WP-6).
 
-    **WP-6 replaces this** with a query against the match link table, via
-    :func:`set_match_probe`. Until it does, every edit is a pre-execution edit
-    — which is true, since no activity can be linked to a session yet.
+    The freeze rule's one external question, answered against
+    `session_matches`. A **pending** proposal counts: the athlete has not
+    confirmed it, but a recording is sitting against this session and an intent
+    edit made now is an edit made after the fact — the flag says
+    ``edited_post_hoc``, which is exactly what happened, and treating a
+    proposal as "not yet matched" would let a re-pin quietly rewrite the
+    prescription the ride is about to be judged against.
+
+    Still behind :func:`set_match_probe`, which tests use to drive the freeze
+    rule without building a link.
     """
-    return False
+    link = await SessionMatchRepository(session).for_planned_session(planned_session_id)
+    return link is not None
 
 
 async def _no_scores_yet(
@@ -180,14 +187,14 @@ class SessionResolution:
     predicted_volume: PredictedVolume | None
 
 
-_match_probe: MatchProbe = _no_matches_yet
+_match_probe: MatchProbe = _has_a_match
 _rescore_trigger: RescoreTrigger = _no_scores_yet
 
 
 def set_match_probe(probe: MatchProbe | None) -> None:
     """Install the "has this session been matched?" probe; ``None`` restores the default."""
     global _match_probe  # noqa: PLW0603
-    _match_probe = probe or _no_matches_yet
+    _match_probe = probe or _has_a_match
 
 
 def set_rescore_trigger(trigger: RescoreTrigger | None) -> None:
@@ -250,6 +257,16 @@ class PlannedSessionService:
         if row is None:
             raise NotFoundError(f"Planned session {planned_session_id} not found")
         return row
+
+    async def by_ids(
+        self, planned_session_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, PlannedSessionRow]:
+        """Several planned sessions by id, in one query.
+
+        For readers that join onto planned sessions rather than list them —
+        WP-6's proposal inbox names one per row.
+        """
+        return await self._repository.by_ids(planned_session_ids)
 
     async def intents(
         self, planned_session_id: uuid.UUID
@@ -330,6 +347,18 @@ class PlannedSessionService:
                 predicted_volume=volume,
             )
         return resolved
+
+    async def save(self, row: PlannedSessionRow) -> PlannedSessionRow:
+        """Persist a modified planned session without versioning anything.
+
+        The write half of "a status is not an intent" (see the module
+        docstring): WP-6 moves sessions between `planned`, `completed`,
+        `missed` and `displaced` as links come and go, and none of those is a
+        statement about what the session is *for*. It does not commit — the
+        use-case driving it owns the transaction, and a match moves two rows
+        and an audit entry that have to land together.
+        """
+        return await self._repository.add(row)
 
     def default_criteria(self, purpose: Purpose) -> Sequence[dict[str, Any]]:
         """Return the success criteria a session of ``purpose`` starts with.

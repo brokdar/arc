@@ -241,6 +241,9 @@ async def test_a_card_carries_what_a_calendar_renders(client: AsyncClient) -> No
         # under-estimate and the card says by how much.
         "predicted_load_coverage": pytest.approx(1_440 / RIDE_DURATION_S),
         "predicted_volume_load_kg": None,
+        # WP-6: nothing has been recorded against this session yet.
+        "matched_session_id": None,
+        "match_status": None,
     }
 
 

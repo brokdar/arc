@@ -25,6 +25,10 @@ from doing damage:
    **never deleted**. It is what a re-ingest would read, so it outranks every
    derived artefact in this system.
 8. **Session + recording rows**, then the parquet frame and one row per repair.
+9. After the commit, and only then: **metrics**, and then **matching** (WP-6),
+   which reads them. Both are per session inside their own ``try``, because the
+   file and the rows are already durable and neither a metric failure nor a
+   matching failure may un-ingest a ride.
 
 **Quarantine is the catch-all.** Any failure this module did not anticipate
 still ends with the file kept somewhere the athlete can find it and a record
@@ -104,6 +108,7 @@ from app.persistence.ingest_log import (
     QuarantineRecordRow,
     QuarantineRepository,
 )
+from app.services.matching import MatchingService
 
 logger = get_logger(__name__)
 
@@ -463,6 +468,7 @@ class IngestPipeline:
         )
         await commit(self._session)
         await self._compute_metrics(placement.created, actor=actor)
+        await self._match(placement.created, actor=actor)
         return report
 
     async def _compute_metrics(
@@ -485,6 +491,26 @@ class IngestPipeline:
                 )
             except Exception:  # noqa: BLE001 — see the docstring
                 logger.exception("metrics_failed", session_id=str(session_id))
+                await self._session.rollback()
+
+    async def _match(self, session_ids: Sequence[uuid.UUID], *, actor: Actor) -> None:
+        """Look for the planned session each new session answers to (WP-6).
+
+        **After the metrics**, because the intensity and structure terms read
+        the metric artefact — matching a session whose numbers do not exist yet
+        would score every ride on duration alone. Per session inside its own
+        ``try``, for the same reason the metric pass is: the session, the
+        recording and the file are durable already, and a matching failure
+        leaves an ingested ride nobody has proposed a link for, which
+        `POST /sessions/{id}/rematch` recovers by hand.
+        """
+        for session_id in session_ids:
+            try:
+                await MatchingService.from_session(self._session).match_session(
+                    session_id, actor=actor
+                )
+            except Exception:  # noqa: BLE001 — see the docstring
+                logger.exception("matching_failed", session_id=str(session_id))
                 await self._session.rollback()
 
     async def _known_file(

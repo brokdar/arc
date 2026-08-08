@@ -26,6 +26,11 @@ import {
 } from "@/lib/activity";
 import { $api } from "@/lib/api/client";
 import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
+import {
+  MATCH_LINK_LABELS,
+  MATCH_LINK_REASONS,
+  type MatchSummary,
+} from "@/lib/matching";
 import { LOAD_BASIS_LABELS } from "@/lib/metrics";
 
 /** How many rows one page of the log holds. */
@@ -217,7 +222,7 @@ export function SessionRow({ session, load }: SessionRowProps) {
         {RECORDING_KIND_LABELS[session.recording_kind]}
       </span>
 
-      <MatchBadge status={session.status} />
+      <MatchBadge status={session.status} link={session.match} />
     </Link>
   );
 }
@@ -251,11 +256,40 @@ function SessionLoad({ session }: { session: SessionListItem }) {
  * Takes the state as a prop and looks it up: today the API produces exactly
  * one member, and hard-coding "Unmatched" here would make WP-6's first matched
  * session render a lie rather than a compile error.
+ *
+ * The **link** is a second input because the session's own status does not
+ * carry the state that most needs an athlete: a pending proposal leaves the
+ * session `unmatched` on purpose (D140 — a proposal is a question, and nothing
+ * moves until it is answered), so a badge reading only the session would say
+ * "Unmatched" about the one row on the page that is waiting for a click. When
+ * a proposal is open the badge says so, in the accent, and every other state
+ * is the session's own.
  */
-export function MatchBadge({ status }: { status: SessionMatchStatus }) {
+export function MatchBadge({
+  status,
+  link,
+}: {
+  status: SessionMatchStatus;
+  /** The link the session carries, when it carries one. */
+  link?: MatchSummary | null;
+}) {
+  if (link?.status === "pending") {
+    return (
+      <span
+        title={MATCH_LINK_REASONS.pending}
+        className="justify-self-start rounded-badge border border-accent-border bg-accent-surface px-1.5 py-0.5 text-2xs text-accent"
+      >
+        {MATCH_LINK_LABELS.pending}
+      </span>
+    );
+  }
   return (
     <span
-      title={MATCH_STATUS_REASONS[status]}
+      title={
+        link
+          ? `${MATCH_STATUS_REASONS[status]} — ${MATCH_LINK_REASONS[link.status]}`
+          : MATCH_STATUS_REASONS[status]
+      }
       className="justify-self-start rounded-badge border border-hairline px-1.5 py-0.5 text-2xs text-ink-muted"
     >
       {MATCH_STATUS_LABELS[status]}

@@ -64,9 +64,10 @@ async def test_the_list_reads_newest_first_and_carries_the_badge_state(
         "2026-05-04",
     ]
     assert [item["discipline"] for item in listed["items"]] == ["strength", "cycling"]
-    # WP-6 owns the lifecycle; until then the badge is a constant the client
-    # takes as a prop rather than assumes.
-    assert {item["status"] for item in listed["items"]} == {"unmatched"}
+    # WP-6 matches on ingest. Nothing is planned here, so both sessions come
+    # out `unplanned` — decided, not undecided — and neither carries a link.
+    assert {item["status"] for item in listed["items"]} == {"unplanned"}
+    assert {item["match"] for item in listed["items"]} == {None}
     assert {item["recording_kind"] for item in listed["items"]} == {"device"}
 
 

@@ -9,8 +9,9 @@
   from a device file (WP-4) or typed in by hand. Its row is
   `app.persistence.activity.SessionRow` (table ``sessions``).
 
-WP-6 links the two. Nothing before it may assume a link exists, which is why
-:class:`SessionMatchStatus` ships with exactly one member.
+WP-6 links the two: `app.domain.matching` scores a recording against a
+prescription and :class:`SessionMatchStatus` is where the answer lands on this
+side of the link.
 
 What lives here is vocabulary — the enums the session, recording, quarantine
 and ingest-log rows are written in — plus the two calculations that are about
@@ -91,22 +92,33 @@ class RecordingKind(StrEnum):
 class SessionMatchStatus(StrEnum):
     """Where a completed session stands relative to the plan.
 
-    Reserved (addenda R-note on WP-6): the MVP produces ``UNMATCHED`` and
-    nothing else — WP-6 owns this lifecycle and adds its members then. The
-    column exists now so that arrival is code rather than a migration; every
-    member WP-6 needs (``matched``, ``unplanned``, ``displaced``) is no longer
-    than ``unmatched``, so it will not widen the column either (D81).
+    WP-6 fills the lifecycle the column was sized for (D81 — every member here
+    is at most as long as ``unmatched``, so no migration widened it).
+
+    ``UNMATCHED`` is the state every session is written in and the state a
+    **pending** proposal leaves it in: a proposal is a question, and a session
+    with an unanswered question about it has not been matched. ``UNPLANNED``
+    is an answer — nothing was planned that this could be, or the athlete said
+    so — and is what distinguishes "we have not decided" from "there is
+    nothing to decide". ``DISPLACED`` is the executed-instead-of case
+    (`app.domain.matching`): the athlete trained, deliberately not the thing on
+    the calendar, and the session is scored standalone.
     """
 
     UNMATCHED = "unmatched"
+    MATCHED = "matched"
+    UNPLANNED = "unplanned"
+    DISPLACED = "displaced"
 
 
 class SessionContext(StrEnum):
     """What kind of outing the session was (addenda R5).
 
-    **Reserved, no behavior.** The MVP writes ``TRAINING`` for every session;
-    WP-6 switches its scoring rubric on this, and the values exist now so that
-    switch is code rather than a migration.
+    **Reserved, no behavior.** The MVP writes ``TRAINING`` for every session.
+    WP-6 does not read it either: matching is a comparison of a recording with
+    a prescription, and nothing in that comparison changes with the context —
+    it is WP-7's *rubric* that switches on it (a group ride is not judged for
+    adherence), and WP-7 is where the values are first consumed.
     """
 
     TRAINING = "training"

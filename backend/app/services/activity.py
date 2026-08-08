@@ -47,6 +47,7 @@ from app.persistence.activity import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.services.exercises import ExerciseService
+from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService
 
 logger = get_logger(__name__)
@@ -352,7 +353,35 @@ class SessionService:
         )
         await commit(self._session)
         await self._session.refresh(row)
-        return await self._recompute_strength(row, actor=actor, reason=None)
+        row = await self._recompute_strength(row, actor=actor, reason=None)
+        return await self._match(row, actor=actor)
+
+    async def _match(self, row: SessionRow, *, actor: Actor) -> SessionRow:
+        """Look for the planned session a typed-in session answers to (WP-6).
+
+        A gym session the athlete typed in is a session like any other, and the
+        planned strength session it answers to is the whole point of having
+        typed it in — so matching runs here for the same reason it runs at the
+        end of the ingest pipeline, and **after** the metrics for the same
+        reason too: the score reads the artefact.
+
+        Isolated from the write that preceded it exactly as
+        :meth:`_recompute_strength` is, and for the same reason: the session is
+        already committed, so a matching failure must leave the athlete with a
+        stored session and no proposal rather than a 500 over work that
+        succeeded — and a retry of a failed `POST /manual-sessions` would
+        create a *second* session.
+        """
+        session_id = row.id
+        try:
+            outcome = await MatchingService.from_session(self._session).match_session(
+                session_id, actor=actor
+            )
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.exception("session_matching_failed", session_id=str(session_id))
+            await self._session.rollback()
+            return await self._repository.get(session_id) or row
+        return outcome.session
 
     async def _logged_set(self, entry: LoggedSetInput, index: int) -> LoggedSetRow:
         """Build one set row, resolving a catalogue reference to its name.

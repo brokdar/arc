@@ -4,21 +4,32 @@ import type { components, paths } from "@/generated/api/schema";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
 import {
   anchorVersionFixture,
+  applyLinkStatuses,
   contentHash,
   DETAILS,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
+  linkForPlanned,
+  linkForSession,
+  linkRecord,
+  MATCH_NOW,
+  matchRead,
+  matchSummary,
   mintId,
   plannedSessionFixture,
   planWeekFixture,
   purposeTemplateFixture,
   RIDE_METRICS,
   RIDE_STREAMS,
+  restoreLinkStatuses,
   SESSION_IDS,
+  statedBreakdown,
+  statedRematch,
   toListItem,
   WORKOUT_LABELS,
   WORKOUTS,
+  withMatch,
   workoutFixture,
 } from "@/tests/mocks/fixtures";
 
@@ -398,7 +409,10 @@ export const handlers = [
           (!start || session.local_date >= start) &&
           (!end || session.local_date <= end),
       )
-      .map(toListItem);
+      // The link is attached on the way out rather than stored on the row: it
+      // is a fact about two resources, and a copy on the session would go
+      // stale the moment a confirm or an unlink moved it.
+      .map((session) => withMatch(toListItem(session)));
     return response(200).json(
       page(rows, query.get("offset"), query.get("limit")),
     );
@@ -408,7 +422,7 @@ export const handlers = [
       (row) => row.id === params.session_id,
     );
     return session
-      ? response(200).json(session)
+      ? response(200).json(withMatch(session))
       : response(404).json({
           detail: `Session ${params.session_id} not found`,
         });
@@ -493,10 +507,414 @@ export const handlers = [
         session.local_date = statedLocalDate(session.start_time, body.timezone);
       }
       session.updated_at = NOW;
-      return response(200).json(session);
+      return response(200).json(withMatch(session));
+    },
+  ),
+
+  // --- the plan a recording is matched against ------------------------------
+  //
+  // The date range is honoured, because the picker's whole job is to ask for
+  // the days either side of one session: a handler that returned the plan
+  // whatever it was asked for could not fail when the component sent the
+  // wrong window.
+  http.get("/api/v1/planned-sessions", ({ query, response }) => {
+    const start = query.get("start");
+    const end = query.get("end");
+    const status = query.get("status");
+    const rows = ingestState()
+      .planned.filter(
+        (planned) =>
+          (!start || planned.date >= start) &&
+          (!end || planned.date <= end) &&
+          (!status || planned.status === status),
+      )
+      .map((planned) => ({
+        ...planned,
+        match: matchSummary(linkForPlanned(planned.id)),
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date));
+    return response(200).json(
+      page(rows, query.get("offset"), query.get("limit")),
+    );
+  }),
+
+  // --- matches (WP-6) -------------------------------------------------------
+  //
+  // Stateful for the same reason the quarantine handlers are: a confirm that
+  // answered with a canned `confirmed` link could not tell whether the page
+  // confirmed the right one, could not make the *next* GET agree with it, and
+  // could not produce the 409 the API gives when the same proposal is answered
+  // twice. Every status either side moves to is the table in
+  // `app.services.matching`'s docstring, applied by `applyLinkStatuses`.
+  http.get("/api/v1/matches", ({ query, response }) => {
+    const status = query.get("status");
+    const rows = ingestState()
+      .matches.filter((link) => !status || link.status === status)
+      .map((link) => matchRead(link));
+    return response(200).json(
+      page(rows, query.get("offset"), query.get("limit")),
+    );
+  }),
+  http.get("/api/v1/matches/{match_id}", ({ params, response }) => {
+    const link = ingestState().matches.find(
+      (row) => row.id === params.match_id,
+    );
+    return link
+      ? response(200).json(matchRead(link))
+      : response(404).json({ detail: `Match ${params.match_id} not found` });
+  }),
+  http.post("/api/v1/matches", async ({ request, response }) => {
+    const state = ingestState();
+    const body = await request.json();
+    const session = state.sessions.find((row) => row.id === body.session_id);
+    const planned = state.planned.find(
+      (row) => row.id === body.planned_session_id,
+    );
+    if (!session) {
+      return response(404).json({
+        detail: `Session ${body.session_id} not found`,
+      });
+    }
+    if (!planned) {
+      return response(404).json({
+        detail: `Planned session ${body.planned_session_id} not found`,
+      });
+    }
+    if (linkForSession(session.id)) {
+      return response(409).json({
+        detail:
+          `Session ${session.id} is already matched; unlink it or swap the ` +
+          "existing match to another planned session.",
+      });
+    }
+    if (linkForPlanned(planned.id)) {
+      return response(409).json({
+        detail:
+          `Planned session ${planned.id} is already matched to another ` +
+          "session; unlink that one first.",
+      });
+    }
+    if (session.discipline !== planned.discipline) {
+      return response(422).json({
+        detail:
+          `A ${session.discipline} session cannot answer to a ` +
+          `${planned.discipline} planned session`,
+      });
+    }
+    const link = linkRecord({
+      sessionId: session.id,
+      plannedSessionId: planned.id,
+      status: body.displaced ? "displaced" : "confirmed",
+      createdBy: "athlete",
+    });
+    state.matches.unshift(link);
+    applyLinkStatuses(link);
+    return response(201).json(matchRead(link));
+  }),
+  http.post("/api/v1/matches/{match_id}/confirm", ({ params, response }) => {
+    const link = ingestState().matches.find(
+      (row) => row.id === params.match_id,
+    );
+    if (!link) {
+      return response(404).json({
+        detail: `Match ${params.match_id} not found`,
+      });
+    }
+    if (link.status === "confirmed" || link.status === "displaced") {
+      return response(409).json({
+        detail: `Match ${link.id} is already confirmed`,
+      });
+    }
+    link.status = "confirmed";
+    link.confirmed_at = MATCH_NOW;
+    link.updated_at = MATCH_NOW;
+    applyLinkStatuses(link);
+    return response(200).json(matchRead(link));
+  }),
+  // Rejecting is not unlinking: the planned session goes back to what it was,
+  // and the session becomes `unplanned` — the athlete saying "that ride was
+  // not that session", which is an answer rather than an undo.
+  http.post("/api/v1/matches/{match_id}/reject", ({ params, response }) => {
+    const state = ingestState();
+    const link = state.matches.find((row) => row.id === params.match_id);
+    if (!link) {
+      return response(404).json({
+        detail: `Match ${params.match_id} not found`,
+      });
+    }
+    if (link.status === "confirmed" || link.status === "displaced") {
+      return response(409).json({
+        detail: `Match ${link.id} is your own; unlink it instead of rejecting it`,
+      });
+    }
+    restoreLinkStatuses(link);
+    state.matches = state.matches.filter((row) => row.id !== link.id);
+    const session = state.sessions.find((row) => row.id === link.session_id);
+    if (session) {
+      session.status = "unplanned";
+    }
+    return response(200).json({
+      session_id: link.session_id,
+      status: session?.status ?? "unplanned",
+      match: null,
+    });
+  }),
+  http.patch(
+    "/api/v1/matches/{match_id}",
+    async ({ params, request, response }) => {
+      const state = ingestState();
+      const link = state.matches.find((row) => row.id === params.match_id);
+      if (!link) {
+        return response(404).json({
+          detail: `Match ${params.match_id} not found`,
+        });
+      }
+      const body = await request.json();
+      const target = state.planned.find(
+        (row) => row.id === body.planned_session_id,
+      );
+      if (!target) {
+        return response(404).json({
+          detail: `Planned session ${body.planned_session_id} not found`,
+        });
+      }
+      const session = state.sessions.find((row) => row.id === link.session_id);
+      if (session && session.discipline !== target.discipline) {
+        return response(422).json({
+          detail:
+            `A ${session.discipline} session cannot answer to a ` +
+            `${target.discipline} planned session`,
+        });
+      }
+      const taken = linkForPlanned(target.id);
+      if (taken && taken.id !== link.id) {
+        return response(409).json({
+          detail:
+            `Planned session ${target.id} is already matched to another ` +
+            "session; unlink that one first.",
+        });
+      }
+      // The old planned session goes back to exactly what it was, and the new
+      // one records what *it* was, so a later unlink restores the right thing.
+      restoreLinkStatuses(link);
+      link.planned_session_id = target.id;
+      link.previous_planned_status = target.status;
+      link.similarity = statedBreakdown(link.session_id, target.id).score;
+      link.status = "confirmed";
+      link.confirmed_at = MATCH_NOW;
+      link.updated_at = MATCH_NOW;
+      applyLinkStatuses(link);
+      return response(200).json(matchRead(link));
+    },
+  ),
+  http.delete("/api/v1/matches/{match_id}", ({ params, response }) => {
+    const state = ingestState();
+    const link = state.matches.find((row) => row.id === params.match_id);
+    if (!link) {
+      return response(404).json({
+        detail: `Match ${params.match_id} not found`,
+      });
+    }
+    restoreLinkStatuses(link);
+    state.matches = state.matches.filter((row) => row.id !== link.id);
+    const session = state.sessions.find((row) => row.id === link.session_id);
+    return response(200).json({
+      session_id: link.session_id,
+      status: session?.status ?? link.previous_session_status,
+      match: null,
+    });
+  }),
+  http.post("/api/v1/sessions/{session_id}/rematch", ({ params, response }) => {
+    const state = ingestState();
+    const session = state.sessions.find((row) => row.id === params.session_id);
+    if (!session) {
+      return response(404).json({
+        detail: `Session ${params.session_id} not found`,
+      });
+    }
+    const candidates = state.planned.filter(
+      (planned) =>
+        Math.abs(dayDistance(planned.date, session.local_date)) <= 1 &&
+        planned.discipline === session.discipline,
+    ).length;
+    const existing = linkForSession(session.id);
+    // A link the athlete made is never revised by a re-run — that is what
+    // makes "I already told you what this was" hold (WP-6.6).
+    if (
+      existing &&
+      (existing.status === "confirmed" || existing.status === "displaced")
+    ) {
+      return response(200).json({
+        session_id: session.id,
+        status: session.status,
+        match: matchSummary(existing),
+        candidates,
+        sticky: true,
+      });
+    }
+    if (existing) {
+      restoreLinkStatuses(existing);
+      state.matches = state.matches.filter((row) => row.id !== existing.id);
+    }
+    const verdict = statedRematch(session.id);
+    if (verdict === null || linkForPlanned(verdict.planned)) {
+      session.status = "unplanned";
+      return response(200).json({
+        session_id: session.id,
+        status: session.status,
+        match: null,
+        candidates,
+        sticky: false,
+      });
+    }
+    const link = linkRecord({
+      sessionId: session.id,
+      plannedSessionId: verdict.planned,
+      status: verdict.status,
+      createdBy: "system",
+    });
+    state.matches.unshift(link);
+    applyLinkStatuses(link);
+    return response(200).json({
+      session_id: session.id,
+      status: session.status,
+      match: matchSummary(link),
+      candidates,
+      sticky: false,
+    });
+  }),
+  http.post(
+    "/api/v1/sessions/{session_id}/unplanned",
+    ({ params, response }) => {
+      const state = ingestState();
+      const session = state.sessions.find(
+        (row) => row.id === params.session_id,
+      );
+      if (!session) {
+        return response(404).json({
+          detail: `Session ${params.session_id} not found`,
+        });
+      }
+      const existing = linkForSession(session.id);
+      if (
+        existing &&
+        (existing.status === "confirmed" || existing.status === "displaced")
+      ) {
+        return response(409).json({
+          detail:
+            `Session ${session.id} is linked to a planned session by your ` +
+            "own confirmation; unlink it instead.",
+        });
+      }
+      if (existing) {
+        restoreLinkStatuses(existing);
+        state.matches = state.matches.filter((row) => row.id !== existing.id);
+      }
+      session.status = "unplanned";
+      return response(200).json({
+        session_id: session.id,
+        status: session.status,
+        match: null,
+      });
+    },
+  ),
+  // The merge is an edit to the session and answers with it — recordings
+  // re-parented, times widened, and the metrics recomputed over the joined
+  // stream, which is why the route does it rather than the service.
+  http.post(
+    "/api/v1/sessions/{session_id}/merge",
+    async ({ params, request, response }) => {
+      const state = ingestState();
+      const body = await request.json();
+      const survivor = state.sessions.find(
+        (row) => row.id === params.session_id,
+      );
+      const absorbed = state.sessions.find(
+        (row) => row.id === body.absorbed_session_id,
+      );
+      if (!survivor) {
+        return response(404).json({
+          detail: `Session ${params.session_id} not found`,
+        });
+      }
+      if (!absorbed) {
+        return response(404).json({
+          detail: `Session ${body.absorbed_session_id} not found`,
+        });
+      }
+      if (survivor.id === absorbed.id) {
+        return response(422).json({
+          detail: "A session cannot be merged into itself",
+        });
+      }
+      if (
+        survivor.recordings.length === 0 ||
+        absorbed.recordings.length === 0
+      ) {
+        return response(422).json({
+          detail:
+            "Merging joins two device recordings of one ride; a session " +
+            "typed in by hand has no recording to merge.",
+        });
+      }
+      if (survivor.discipline !== absorbed.discipline) {
+        return response(422).json({
+          detail:
+            `A ${survivor.discipline} session and a ${absorbed.discipline} ` +
+            "session are not two halves of one recording",
+        });
+      }
+      const gap = Math.max(
+        (Date.parse(absorbed.start_time) - Date.parse(survivor.end_time)) /
+          1000,
+        (Date.parse(survivor.start_time) - Date.parse(absorbed.end_time)) /
+          1000,
+      );
+      if (gap > MAX_MERGE_GAP_S) {
+        return response(422).json({
+          detail:
+            `These sessions are ${(gap / 3600).toFixed(1)} h apart, further ` +
+            `than the ${MAX_MERGE_GAP_S / 3600} h a merge will bridge. ` +
+            "Merging is for one ride recorded as two files, not for two rides.",
+        });
+      }
+      survivor.recordings = [...survivor.recordings, ...absorbed.recordings];
+      survivor.start_time =
+        Date.parse(absorbed.start_time) < Date.parse(survivor.start_time)
+          ? absorbed.start_time
+          : survivor.start_time;
+      survivor.end_time =
+        Date.parse(absorbed.end_time) > Date.parse(survivor.end_time)
+          ? absorbed.end_time
+          : survivor.end_time;
+      survivor.recording_time_s =
+        (survivor.recording_time_s ?? 0) + (absorbed.recording_time_s ?? 0);
+      survivor.duration_s = survivor.recording_time_s;
+      survivor.metrics = {
+        ...RIDE_METRICS,
+        version: (survivor.metrics?.version ?? 0) + 1,
+        computed_at: MATCH_NOW,
+        recompute_reason: "recordings merged into one session",
+      };
+      survivor.load = survivor.metrics.load.training_load ?? null;
+      survivor.load_basis = survivor.metrics.load.load_basis ?? null;
+      survivor.updated_at = MATCH_NOW;
+      state.sessions = state.sessions.filter((row) => row.id !== absorbed.id);
+      return response(200).json(withMatch(survivor));
     },
   ),
 ];
+
+/** `app.services.matching.MAX_MERGE_GAP_S` — six hours, in seconds. */
+const MAX_MERGE_GAP_S = 6 * 60 * 60;
+
+/** Whole days between two ISO dates, for the candidate window. */
+function dayDistance(left: string, right: string): number {
+  return Math.round(
+    (Date.parse(`${left}T00:00:00Z`) - Date.parse(`${right}T00:00:00Z`)) /
+      86_400_000,
+  );
+}
 
 /**
  * The zones this mock refuses, listed rather than decided.
