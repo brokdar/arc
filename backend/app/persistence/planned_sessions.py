@@ -223,6 +223,24 @@ class PlannedSessionRepository:
         )
         return list(result.scalars()), total or 0
 
+    async def by_ids(
+        self, planned_session_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, PlannedSessionRow]:
+        """Several planned sessions by id, in one query, with their intents.
+
+        For the pages that join *onto* planned sessions rather than list them:
+        WP-6's proposal inbox is a page of links, and each row names the
+        planned session its proposal is about.
+        """
+        if not planned_session_ids:
+            return {}
+        result = await self._session.execute(
+            select(PlannedSessionRow).where(
+                PlannedSessionRow.id.in_(planned_session_ids)
+            )
+        )
+        return {row.id: row for row in result.scalars()}
+
     async def add(self, row: PlannedSessionRow) -> PlannedSessionRow:
         """Persist a session (new or modified) and refresh generated fields.
 

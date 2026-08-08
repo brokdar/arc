@@ -118,3 +118,33 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "POST /api/v1/manual-sessions"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# WP-6 adds three write operations whose rules a JSON schema cannot express,
+# each pinned by a unit test (test_matching_api):
+#
+#   * a link joins a recording to a planned session of a discipline it could
+#     correspond to — a swim is not a strength session under any reading, and
+#     a recording classified `other` is not planned in any discipline at all;
+#   * a retarget must name a *different* planned session from the one the link
+#     already points at;
+#   * a merge joins two device recordings of one ride: not a session with
+#     itself, not one typed in by hand, and not two rides further apart than
+#     `MAX_MERGE_GAP_S`.
+#
+# The rest of the matching surface — confirm, reject, unlink, re-match, mark
+# unplanned — refuses only with 404 and 409 and needs no entry.
+
+[[operations]]
+include-name = "POST /api/v1/matches"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/matches/{match_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "POST /api/v1/sessions/{session_id}/merge"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

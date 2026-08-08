@@ -1401,6 +1401,424 @@
         "title": "ManualSessionCreate",
         "type": "object"
       },
+      "MatchBreakdownRead": {
+        "description": "How a similarity score was arrived at.",
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/MatchComponentRead"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "not_assessed": {
+            "items": {
+              "$ref": "#/components/schemas/MatchUnassessedRead"
+            },
+            "title": "Not Assessed",
+            "type": "array"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "weights": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/MatchComponent"
+            },
+            "title": "Weights",
+            "type": "object"
+          }
+        },
+        "required": ["score", "weights", "components", "not_assessed"],
+        "title": "MatchBreakdownRead",
+        "type": "object"
+      },
+      "MatchComponent": {
+        "description": "The three things a similarity score is made of.",
+        "enum": ["duration", "intensity", "structure"],
+        "title": "MatchComponent",
+        "type": "string"
+      },
+      "MatchComponentRead": {
+        "description": "One component of a similarity score, and what it compared.\n\nThe two raw numbers travel with the ratio because the ratio alone is not\nexplicable: 0.62 on duration means nothing until it reads \"90 min\nprescribed against 56 min ridden\".",
+        "properties": {
+          "actual": {
+            "title": "Actual",
+            "type": "number"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis"
+          },
+          "component": {
+            "$ref": "#/components/schemas/MatchComponent"
+          },
+          "nominal_weight": {
+            "title": "Nominal Weight",
+            "type": "number"
+          },
+          "planned": {
+            "title": "Planned",
+            "type": "number"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "component",
+          "score",
+          "weight",
+          "nominal_weight",
+          "planned",
+          "actual",
+          "basis"
+        ],
+        "title": "MatchComponentRead",
+        "type": "object"
+      },
+      "MatchCreate": {
+        "additionalProperties": false,
+        "description": "Payload for linking a session to a planned session by hand.",
+        "properties": {
+          "displaced": {
+            "default": false,
+            "title": "Displaced",
+            "type": "boolean"
+          },
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["session_id", "planned_session_id"],
+        "title": "MatchCreate",
+        "type": "object"
+      },
+      "MatchLinkStatus": {
+        "description": "What one link between a recording and a planned session claims.\n\n``AUTO_HIGH`` and ``PENDING`` are machine verdicts and re-running matching\nmay replace either. ``CONFIRMED`` and ``DISPLACED`` are the athlete's and\nare **sticky**: :data:`STICKY_STATUSES` is the set matching never touches,\nwhich is what makes \"I already told you what this was\" hold across every\nlater re-run (build plan WP-6.6).\n\n``DISPLACED`` is the executed-instead-of link (WP-6.4): the athlete trained\nand it was not this, so the planned session is neither missed nor\ncompleted, and the activity is scored standalone with no adherence axes.",
+        "enum": ["auto_high", "pending", "confirmed", "displaced"],
+        "title": "MatchLinkStatus",
+        "type": "string"
+      },
+      "MatchOutcomeRead": {
+        "description": "What one run of matching decided (`POST /sessions/{id}/rematch`).",
+        "properties": {
+          "candidates": {
+            "title": "Candidates",
+            "type": "integer"
+          },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          },
+          "sticky": {
+            "title": "Sticky",
+            "type": "boolean"
+          }
+        },
+        "required": ["session_id", "status", "match", "candidates", "sticky"],
+        "title": "MatchOutcomeRead",
+        "type": "object"
+      },
+      "MatchPlannedContext": {
+        "description": "Enough of the planned session to render a proposal row.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "discipline",
+          "purpose",
+          "status",
+          "intent_text"
+        ],
+        "title": "MatchPlannedContext",
+        "type": "object"
+      },
+      "MatchRead": {
+        "description": "One link as its own resource, with both sides and the whole breakdown.",
+        "properties": {
+          "breakdown": {
+            "$ref": "#/components/schemas/MatchBreakdownRead"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "planned_session": {
+            "$ref": "#/components/schemas/MatchPlannedContext"
+          },
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
+            "type": "string"
+          },
+          "previous_planned_status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "previous_session_status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          },
+          "session": {
+            "$ref": "#/components/schemas/MatchSessionContext"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MatchLinkStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "planned_session_id",
+          "status",
+          "similarity",
+          "confirmed_at",
+          "breakdown",
+          "created_by",
+          "previous_session_status",
+          "previous_planned_status",
+          "session",
+          "planned_session",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MatchRead",
+        "type": "object"
+      },
+      "MatchRetarget": {
+        "additionalProperties": false,
+        "description": "Payload for pointing an existing link at a different planned session.",
+        "properties": {
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["planned_session_id"],
+        "title": "MatchRetarget",
+        "type": "object"
+      },
+      "MatchSessionContext": {
+        "description": "Enough of the completed session to render a proposal row.",
+        "properties": {
+          "discipline": {
+            "$ref": "#/components/schemas/SessionDiscipline"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          }
+        },
+        "required": ["id", "local_date", "discipline", "status", "duration_s"],
+        "title": "MatchSessionContext",
+        "type": "object"
+      },
+      "MatchSummary": {
+        "description": "One link, as the two resources it joins carry it.",
+        "properties": {
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MatchLinkStatus"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "planned_session_id",
+          "status",
+          "similarity",
+          "confirmed_at"
+        ],
+        "title": "MatchSummary",
+        "type": "object"
+      },
+      "MatchUnassessedRead": {
+        "description": "One component that had nothing to compare, and why.\n\nNot an error and not a zero: the weights renormalise over what remains, so\nthis is the record of *what the score was made of*. A similarity of 0.9\nover two components is a different claim from the same number over three.",
+        "properties": {
+          "component": {
+            "$ref": "#/components/schemas/MatchComponent"
+          },
+          "nominal_weight": {
+            "title": "Nominal Weight",
+            "type": "number"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": ["component", "nominal_weight", "reason"],
+        "title": "MatchUnassessedRead",
+        "type": "object"
+      },
       "MetricExplanationRead": {
         "description": "Why a computed number is the number. Travels with it; not page copy.",
         "properties": {
@@ -1575,6 +1993,32 @@
         },
         "required": ["items", "total", "offset", "limit"],
         "title": "Page[IngestEventRead]",
+        "type": "object"
+      },
+      "Page_MatchRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MatchRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[MatchRead]",
         "type": "object"
       },
       "Page_PlannedSessionListItem_": {
@@ -2266,6 +2710,16 @@
             "title": "Intent Versions",
             "type": "integer"
           },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pinned_anchors": {
             "items": {
               "$ref": "#/components/schemas/PinnedAnchorRead"
@@ -2337,6 +2791,16 @@
           "intent_versions": {
             "title": "Intent Versions",
             "type": "integer"
+          },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pinned_anchors": {
             "items": {
@@ -3633,6 +4097,16 @@
             "title": "Local Date",
             "type": "string"
           },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recording_kind": {
             "$ref": "#/components/schemas/RecordingKind"
           },
@@ -3690,11 +4164,51 @@
         "title": "SessionListItem",
         "type": "object"
       },
+      "SessionMatchState": {
+        "description": "Where a completed session stands relative to the plan, after an edit.",
+        "properties": {
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionMatchStatus"
+          }
+        },
+        "required": ["session_id", "status", "match"],
+        "title": "SessionMatchState",
+        "type": "object"
+      },
       "SessionMatchStatus": {
-        "description": "Where a completed session stands relative to the plan.\n\nReserved (addenda R-note on WP-6): the MVP produces ``UNMATCHED`` and\nnothing else \u2014 WP-6 owns this lifecycle and adds its members then. The\ncolumn exists now so that arrival is code rather than a migration; every\nmember WP-6 needs (``matched``, ``unplanned``, ``displaced``) is no longer\nthan ``unmatched``, so it will not widen the column either (D81).",
-        "enum": ["unmatched"],
+        "description": "Where a completed session stands relative to the plan.\n\nWP-6 fills the lifecycle the column was sized for (D81 \u2014 every member here\nis at most as long as ``unmatched``, so no migration widened it).\n\n``UNMATCHED`` is the state every session is written in and the state a\n**pending** proposal leaves it in: a proposal is a question, and a session\nwith an unanswered question about it has not been matched. ``UNPLANNED``\nis an answer \u2014 nothing was planned that this could be, or the athlete said\nso \u2014 and is what distinguishes \"we have not decided\" from \"there is\nnothing to decide\". ``DISPLACED`` is the executed-instead-of case\n(`app.domain.matching`): the athlete trained, deliberately not the thing on\nthe calendar, and the session is scored standalone.",
+        "enum": ["unmatched", "matched", "unplanned", "displaced"],
         "title": "SessionMatchStatus",
         "type": "string"
+      },
+      "SessionMerge": {
+        "additionalProperties": false,
+        "description": "Payload for folding a second recording of one ride into this session.",
+        "properties": {
+          "absorbed_session_id": {
+            "format": "uuid",
+            "title": "Absorbed Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["absorbed_session_id"],
+        "title": "SessionMerge",
+        "type": "object"
       },
       "SessionMetricsRead": {
         "description": "One version of one session's metrics, with what it was computed from.",
@@ -3874,6 +4388,16 @@
             "title": "Logged Sets",
             "type": "array"
           },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "metrics": {
             "anyOf": [
               {
@@ -3978,7 +4502,7 @@
         "type": "string"
       },
       "SessionStreamsRead": {
-        "description": "The chart payload: every channel on one index-aligned grid.\n\nSeparate from `SessionRead` because it is 1-2 MB for a long ride. Every\ncolumn has exactly ``length`` entries by construction (A4.1), which is\nwhat lets a client index them together without checking.",
+        "description": "The chart payload: every channel on one index-aligned grid.\n\nSeparate from `SessionRead` because it is 1-2 MB for a long ride. Every\ncolumn has exactly ``length`` entries by construction (A4.1), which is\nwhat lets a client index them together without checking.\n\nFor a **merged** session (WP-6.5) this is the joined grid: the recordings\nlaid end to end from the earliest one's origin, with the gap between them\nleft as unrecorded rows and reported in ``recording_stops``. Every index\nhere addresses that grid.",
         "properties": {
           "anomalies": {
             "items": {
@@ -4003,6 +4527,14 @@
             "title": "Recording Id",
             "type": "string"
           },
+          "recording_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Recording Ids",
+            "type": "array"
+          },
           "recording_stops": {
             "items": {
               "$ref": "#/components/schemas/StreamStopRead"
@@ -4018,6 +4550,7 @@
         },
         "required": [
           "recording_id",
+          "recording_ids",
           "t0",
           "length",
           "channels",
@@ -4722,6 +5255,28 @@
             "title": "Intent Version",
             "type": "integer"
           },
+          "match_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchLinkStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matched_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Session Id"
+          },
           "planned_duration_s": {
             "anyOf": [
               {
@@ -4838,7 +5393,9 @@
           "predicted_load",
           "predicted_intensity_factor",
           "predicted_load_coverage",
-          "predicted_volume_load_kg"
+          "predicted_volume_load_kg",
+          "matched_session_id",
+          "match_status"
         ],
         "title": "WeekSessionRead",
         "type": "object"
@@ -6588,6 +7145,551 @@
         "tags": ["sessions"]
       }
     },
+    "/api/v1/matches": {
+      "get": {
+        "description": "List match links, newest first. `?status=pending` is the proposal inbox.\n\nEvery row carries both sides, so the inbox renders and is answered without\na request per proposal.",
+        "operationId": "matches-list_matches",
+        "parameters": [
+          {
+            "description": "Restrict to one link status; omit for all of them. The proposal inbox is `pending`.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchLinkStatus",
+              "description": "Restrict to one link status; omit for all of them. The proposal inbox is `pending`."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MatchRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Matches",
+        "tags": ["matches"]
+      },
+      "post": {
+        "description": "Link a session to a planned session by hand (build plan WP-6.6).\n\nAlways the athlete's own, and therefore **sticky**: no re-run of matching\nrevises or removes it. With `displaced` set it is the executed-instead-of\nlink \u2014 the planned session becomes `displaced` rather than completed, and\nthe activity is scored standalone.\n\nThe similarity is still computed and stored, however low: a deliberate link\nat 0.12 is worth being able to look at afterwards.",
+        "operationId": "matches-create_match",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Already linked, or already ruled on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The link violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Match",
+        "tags": ["matches"]
+      }
+    },
+    "/api/v1/matches/{match_id}": {
+      "delete": {
+        "description": "Unlink, putting both sides back exactly as they were (WP-6.8).\n\nExactly, not approximately: the link records the two statuses it displaced,\nso a session that was `displaced` before goes back to `displaced` and a\nplanned session that was `missed` goes back to `missed`.",
+        "operationId": "matches-delete_match",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMatchState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such match"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Match",
+        "tags": ["matches"]
+      },
+      "get": {
+        "description": "One link, its score and the whole breakdown behind it.",
+        "operationId": "matches-get_match",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such match"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Match",
+        "tags": ["matches"]
+      },
+      "patch": {
+        "description": "Point a link at a different planned session (the swap, WP-6.6).\n\nOne operation rather than an unlink and a link, because it is one decision:\nthe old planned session goes back to exactly what it was, the new one takes\nthe link, and the result is confirmed \u2014 a retarget is always the athlete's.",
+        "operationId": "matches-retarget_match",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchRetarget"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such match"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Already linked, or already ruled on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The link violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Retarget Match",
+        "tags": ["matches"]
+      }
+    },
+    "/api/v1/matches/{match_id}/confirm": {
+      "post": {
+        "description": "Accept a proposal (or an automatic link) as the athlete's own.\n\nThe session becomes `matched` and the planned session `completed`, and the\nlink stops being something matching may revise.",
+        "operationId": "matches-confirm_match",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such match"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Already linked, or already ruled on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Confirm Match",
+        "tags": ["matches"]
+      }
+    },
+    "/api/v1/matches/{match_id}/reject": {
+      "post": {
+        "description": "Refuse a proposal: drop the link and call the session unplanned.\n\nNot the same as unlinking. Unlinking restores exactly what was there\nbefore; rejecting is the athlete saying \"that ride was not that session\",\nwhich leaves the ride `unplanned` and the planned session open for\nsomething else.",
+        "operationId": "matches-reject_match",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Match Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMatchState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such match"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Already linked, or already ruled on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Reject Match",
+        "tags": ["matches"]
+      }
+    },
     "/api/v1/plan/week": {
       "get": {
         "description": "Get seven consecutive days of the plan, empty days included.\n\nEach session is summarized for a calendar card; its full detail \u2014 step\ntree, criteria, pins, intent history \u2014 stays at\n`GET /api/v1/planned-sessions/{id}`.",
@@ -7699,6 +8801,93 @@
         "tags": ["sessions"]
       }
     },
+    "/api/v1/sessions/{session_id}/merge": {
+      "post": {
+        "description": "Fold a second recording of one ride into this session (WP-6.5).\n\nThe garage-door case: a head unit stopped and restarted leaves two files,\ntwo sessions and half a ride each. **Both recordings are kept** and both\nmove onto this session, whose span widens to cover them; the other session\nrow is removed.\n\nA metric version is then appended over the **joined** stream \u2014 the two\ngrids laid end to end, with the gap between them left unrecorded and\nreported as a recording stop \u2014 so the numbers describe the whole ride\nrather than the first half of it. That recompute reads parquet, which is\nwhy it happens here rather than inside the merge itself.\n\nHere rather than under `/matches` because it is an edit to the session and\nit answers with the session.",
+        "operationId": "sessions-merge_sessions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionMerge"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The session violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Merge Sessions",
+        "tags": ["sessions"]
+      }
+    },
     "/api/v1/sessions/{session_id}/metrics/recompute": {
       "post": {
         "description": "Recompute one session's metrics against the anchors in force now.\n\nAppends version *n+1* and supersedes *n*; the old version stays readable\nwith the pins it was computed against (invariant 1). Appending a new FTP\nand recomputing therefore changes the **new** version's pin and leaves\nevery earlier one exactly as it was.",
@@ -7793,6 +8982,73 @@
         "tags": ["sessions"]
       }
     },
+    "/api/v1/sessions/{session_id}/rematch": {
+      "post": {
+        "description": "Run matching again for one session.\n\nIdempotent: over an unchanged session it reaches the same verdict and\nrewrites the same row. Being explicit, it **does** revise an open link and\nreconsider a session an earlier run called unplanned \u2014 and it never touches\na confirmed or displaced link, which comes back with `sticky` set and\nnothing changed.",
+        "operationId": "matches-rematch_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchOutcomeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Rematch Session",
+        "tags": ["matches"]
+      }
+    },
     "/api/v1/sessions/{session_id}/streams": {
       "get": {
         "description": "The per-second samples behind one session, for the charts.\n\nIts own resource because it is 1-2 MB for a long ride (A4.1: 14 400 rows\nper channel for four hours). Every channel is the **cleaned** column with\nits nulls intact \u2014 a recording stop is a break in the trace, not a run of\nzeros \u2014 and the anomaly regions come with it so the chart can mark what\nwas repaired (A4.2).\n\n404 for a session that has no recording: a gym session typed in by hand\nnever had samples, and the detail says so because that sentence is the\nempty state the page renders.",
@@ -7858,6 +9114,83 @@
         ],
         "summary": "Get Session Streams",
         "tags": ["sessions"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/unplanned": {
+      "post": {
+        "description": "Declare that a session answers to nothing on the calendar (WP-6.6).\n\nDrops an open proposal on the way, restoring the planned session. A link\nthe athlete already confirmed is a 409: two contradictory statements, and\nthe second one should be an unlink.",
+        "operationId": "matches-mark_session_unplanned",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMatchState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Already linked, or already ruled on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Mark Session Unplanned",
+        "tags": ["matches"]
       }
     },
     "/api/v1/workout-labels": {

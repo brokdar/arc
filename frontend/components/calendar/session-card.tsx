@@ -113,9 +113,23 @@ export function SessionCard({
 
       <span className="flex items-center justify-between gap-1 pt-0.5">
         <PurposeBadge purpose={session.purpose} />
-        {/* Steps are the shape of a *ride*; a strength session's lines are
-            already summarised by its set count above. */}
-        {session.discipline === "cycling" && session.step_count > 0 ? (
+        {/* The link, but only where the status dot cannot already say it. A
+            `completed` dot and a `displaced` dot are the *consequences* of a
+            confirmed link and of an executed-instead-of one, so repeating them
+            here would be saying the same thing twice; a **pending** proposal
+            changes neither status by design (D140), which makes it the one
+            link state a card is otherwise silent about. WP-7 owns the full
+            colour-coded week strip. */}
+        {session.match_status === "pending" ? (
+          <span
+            title="A proposal is waiting on you: open the session it came from to confirm or reject it"
+            className="whitespace-nowrap rounded-badge border border-accent-border bg-accent-surface px-1 py-px text-2xs text-accent"
+          >
+            Proposal
+          </span>
+        ) : session.discipline === "cycling" && session.step_count > 0 ? (
+          /* Steps are the shape of a *ride*; a strength session's lines are
+             already summarised by its set count above. */
           <span className="whitespace-nowrap font-mono text-2xs text-ink-faint">
             {session.step_count} steps
           </span>

@@ -393,6 +393,125 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/matches": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Matches
+     * @description List match links, newest first. `?status=pending` is the proposal inbox.
+     *
+     *     Every row carries both sides, so the inbox renders and is answered without
+     *     a request per proposal.
+     */
+    get: operations["matches-list_matches"];
+    put?: never;
+    /**
+     * Create Match
+     * @description Link a session to a planned session by hand (build plan WP-6.6).
+     *
+     *     Always the athlete's own, and therefore **sticky**: no re-run of matching
+     *     revises or removes it. With `displaced` set it is the executed-instead-of
+     *     link — the planned session becomes `displaced` rather than completed, and
+     *     the activity is scored standalone.
+     *
+     *     The similarity is still computed and stored, however low: a deliberate link
+     *     at 0.12 is worth being able to look at afterwards.
+     */
+    post: operations["matches-create_match"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/matches/{match_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Match
+     * @description One link, its score and the whole breakdown behind it.
+     */
+    get: operations["matches-get_match"];
+    put?: never;
+    post?: never;
+    /**
+     * Delete Match
+     * @description Unlink, putting both sides back exactly as they were (WP-6.8).
+     *
+     *     Exactly, not approximately: the link records the two statuses it displaced,
+     *     so a session that was `displaced` before goes back to `displaced` and a
+     *     planned session that was `missed` goes back to `missed`.
+     */
+    delete: operations["matches-delete_match"];
+    options?: never;
+    head?: never;
+    /**
+     * Retarget Match
+     * @description Point a link at a different planned session (the swap, WP-6.6).
+     *
+     *     One operation rather than an unlink and a link, because it is one decision:
+     *     the old planned session goes back to exactly what it was, the new one takes
+     *     the link, and the result is confirmed — a retarget is always the athlete's.
+     */
+    patch: operations["matches-retarget_match"];
+    trace?: never;
+  };
+  "/api/v1/matches/{match_id}/confirm": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Confirm Match
+     * @description Accept a proposal (or an automatic link) as the athlete's own.
+     *
+     *     The session becomes `matched` and the planned session `completed`, and the
+     *     link stops being something matching may revise.
+     */
+    post: operations["matches-confirm_match"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/matches/{match_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Match
+     * @description Refuse a proposal: drop the link and call the session unplanned.
+     *
+     *     Not the same as unlinking. Unlinking restores exactly what was there
+     *     before; rejecting is the athlete saying "that ride was not that session",
+     *     which leaves the ride `unplanned` and the planned session open for
+     *     something else.
+     */
+    post: operations["matches-reject_match"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/plan/week": {
     parameters: {
       query?: never;
@@ -673,6 +792,40 @@ export interface paths {
     patch: operations["sessions-update_session"];
     trace?: never;
   };
+  "/api/v1/sessions/{session_id}/merge": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Merge Sessions
+     * @description Fold a second recording of one ride into this session (WP-6.5).
+     *
+     *     The garage-door case: a head unit stopped and restarted leaves two files,
+     *     two sessions and half a ride each. **Both recordings are kept** and both
+     *     move onto this session, whose span widens to cover them; the other session
+     *     row is removed.
+     *
+     *     A metric version is then appended over the **joined** stream — the two
+     *     grids laid end to end, with the gap between them left unrecorded and
+     *     reported as a recording stop — so the numbers describe the whole ride
+     *     rather than the first half of it. That recompute reads parquet, which is
+     *     why it happens here rather than inside the merge itself.
+     *
+     *     Here rather than under `/matches` because it is an edit to the session and
+     *     it answers with the session.
+     */
+    post: operations["sessions-merge_sessions"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sessions/{session_id}/metrics/recompute": {
     parameters: {
       query?: never;
@@ -692,6 +845,32 @@ export interface paths {
      *     every earlier one exactly as it was.
      */
     post: operations["sessions-recompute_session_metrics"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/rematch": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rematch Session
+     * @description Run matching again for one session.
+     *
+     *     Idempotent: over an unchanged session it reaches the same verdict and
+     *     rewrites the same row. Being explicit, it **does** revise an open link and
+     *     reconsider a session an earlier run called unplanned — and it never touches
+     *     a confirmed or displaced link, which comes back with `sticky` set and
+     *     nothing changed.
+     */
+    post: operations["matches-rematch_session"];
     delete?: never;
     options?: never;
     head?: never;
@@ -722,6 +901,30 @@ export interface paths {
     get: operations["sessions-get_session_streams"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/unplanned": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Mark Session Unplanned
+     * @description Declare that a session answers to nothing on the calendar (WP-6.6).
+     *
+     *     Drops an open proposal on the way, restoring the planned session. A link
+     *     the athlete already confirmed is a 409: two contradictory statements, and
+     *     the second one should be an unlink.
+     */
+    post: operations["matches-mark_session_unplanned"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1530,6 +1733,241 @@ export interface components {
       timezone: string;
     };
     /**
+     * MatchBreakdownRead
+     * @description How a similarity score was arrived at.
+     */
+    MatchBreakdownRead: {
+      /** Components */
+      components: components["schemas"]["MatchComponentRead"][];
+      /** Not Assessed */
+      not_assessed: components["schemas"]["MatchUnassessedRead"][];
+      /** Score */
+      score: number | null;
+      /** Weights */
+      weights: {
+        [key: string]: number;
+      };
+    };
+    /**
+     * MatchComponent
+     * @description The three things a similarity score is made of.
+     * @enum {string}
+     */
+    MatchComponent: "duration" | "intensity" | "structure";
+    /**
+     * MatchComponentRead
+     * @description One component of a similarity score, and what it compared.
+     *
+     *     The two raw numbers travel with the ratio because the ratio alone is not
+     *     explicable: 0.62 on duration means nothing until it reads "90 min
+     *     prescribed against 56 min ridden".
+     */
+    MatchComponentRead: {
+      /** Actual */
+      actual: number;
+      /** Basis */
+      basis: string | null;
+      component: components["schemas"]["MatchComponent"];
+      /** Nominal Weight */
+      nominal_weight: number;
+      /** Planned */
+      planned: number;
+      /** Score */
+      score: number;
+      /** Weight */
+      weight: number;
+    };
+    /**
+     * MatchCreate
+     * @description Payload for linking a session to a planned session by hand.
+     */
+    MatchCreate: {
+      /**
+       * Displaced
+       * @default false
+       */
+      displaced: boolean;
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id: string;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+    };
+    /**
+     * MatchLinkStatus
+     * @description What one link between a recording and a planned session claims.
+     *
+     *     ``AUTO_HIGH`` and ``PENDING`` are machine verdicts and re-running matching
+     *     may replace either. ``CONFIRMED`` and ``DISPLACED`` are the athlete's and
+     *     are **sticky**: :data:`STICKY_STATUSES` is the set matching never touches,
+     *     which is what makes "I already told you what this was" hold across every
+     *     later re-run (build plan WP-6.6).
+     *
+     *     ``DISPLACED`` is the executed-instead-of link (WP-6.4): the athlete trained
+     *     and it was not this, so the planned session is neither missed nor
+     *     completed, and the activity is scored standalone with no adherence axes.
+     * @enum {string}
+     */
+    MatchLinkStatus: "auto_high" | "pending" | "confirmed" | "displaced";
+    /**
+     * MatchOutcomeRead
+     * @description What one run of matching decided (`POST /sessions/{id}/rematch`).
+     */
+    MatchOutcomeRead: {
+      /** Candidates */
+      candidates: number;
+      match: components["schemas"]["MatchSummary"] | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      status: components["schemas"]["SessionMatchStatus"];
+      /** Sticky */
+      sticky: boolean;
+    };
+    /**
+     * MatchPlannedContext
+     * @description Enough of the planned session to render a proposal row.
+     */
+    MatchPlannedContext: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Intent Text */
+      intent_text: string | null;
+      purpose: components["schemas"]["Purpose"];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+    };
+    /**
+     * MatchRead
+     * @description One link as its own resource, with both sides and the whole breakdown.
+     */
+    MatchRead: {
+      breakdown: components["schemas"]["MatchBreakdownRead"];
+      /** Confirmed At */
+      confirmed_at: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By */
+      created_by: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      planned_session: components["schemas"]["MatchPlannedContext"];
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id: string;
+      previous_planned_status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      previous_session_status: components["schemas"]["SessionMatchStatus"];
+      session: components["schemas"]["MatchSessionContext"];
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Similarity */
+      similarity: number | null;
+      status: components["schemas"]["MatchLinkStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * MatchRetarget
+     * @description Payload for pointing an existing link at a different planned session.
+     */
+    MatchRetarget: {
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id: string;
+    };
+    /**
+     * MatchSessionContext
+     * @description Enough of the completed session to render a proposal row.
+     */
+    MatchSessionContext: {
+      discipline: components["schemas"]["SessionDiscipline"];
+      /** Duration S */
+      duration_s: number;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      status: components["schemas"]["SessionMatchStatus"];
+    };
+    /**
+     * MatchSummary
+     * @description One link, as the two resources it joins carry it.
+     */
+    MatchSummary: {
+      /** Confirmed At */
+      confirmed_at: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id: string;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Similarity */
+      similarity: number | null;
+      status: components["schemas"]["MatchLinkStatus"];
+    };
+    /**
+     * MatchUnassessedRead
+     * @description One component that had nothing to compare, and why.
+     *
+     *     Not an error and not a zero: the weights renormalise over what remains, so
+     *     this is the record of *what the score was made of*. A similarity of 0.9
+     *     over two components is a different claim from the same number over three.
+     */
+    MatchUnassessedRead: {
+      component: components["schemas"]["MatchComponent"];
+      /** Nominal Weight */
+      nominal_weight: number;
+      /** Reason */
+      reason: string;
+    };
+    /**
      * MetricExplanationRead
      * @description Why a computed number is the number. Travels with it; not page copy.
      */
@@ -1601,6 +2039,17 @@ export interface components {
     Page_IngestEventRead_: {
       /** Items */
       items: components["schemas"]["IngestEventRead"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[MatchRead] */
+    Page_MatchRead_: {
+      /** Items */
+      items: components["schemas"]["MatchRead"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -1911,6 +2360,7 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      match?: components["schemas"]["MatchSummary"] | null;
       /** Pinned Anchors */
       pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
@@ -1959,6 +2409,7 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      match?: components["schemas"]["MatchSummary"] | null;
       /** Pinned Anchors */
       pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
       predicted_load: components["schemas"]["PredictedLoadRead"] | null;
@@ -2496,6 +2947,7 @@ export interface components {
        * Format: date
        */
       local_date: string;
+      match?: components["schemas"]["MatchSummary"] | null;
       recording_kind: components["schemas"]["RecordingKind"];
       /** Recording Time S */
       recording_time_s: number | null;
@@ -2511,17 +2963,47 @@ export interface components {
       timezone: string;
     };
     /**
+     * SessionMatchState
+     * @description Where a completed session stands relative to the plan, after an edit.
+     */
+    SessionMatchState: {
+      match: components["schemas"]["MatchSummary"] | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      status: components["schemas"]["SessionMatchStatus"];
+    };
+    /**
      * SessionMatchStatus
      * @description Where a completed session stands relative to the plan.
      *
-     *     Reserved (addenda R-note on WP-6): the MVP produces ``UNMATCHED`` and
-     *     nothing else — WP-6 owns this lifecycle and adds its members then. The
-     *     column exists now so that arrival is code rather than a migration; every
-     *     member WP-6 needs (``matched``, ``unplanned``, ``displaced``) is no longer
-     *     than ``unmatched``, so it will not widen the column either (D81).
+     *     WP-6 fills the lifecycle the column was sized for (D81 — every member here
+     *     is at most as long as ``unmatched``, so no migration widened it).
+     *
+     *     ``UNMATCHED`` is the state every session is written in and the state a
+     *     **pending** proposal leaves it in: a proposal is a question, and a session
+     *     with an unanswered question about it has not been matched. ``UNPLANNED``
+     *     is an answer — nothing was planned that this could be, or the athlete said
+     *     so — and is what distinguishes "we have not decided" from "there is
+     *     nothing to decide". ``DISPLACED`` is the executed-instead-of case
+     *     (`app.domain.matching`): the athlete trained, deliberately not the thing on
+     *     the calendar, and the session is scored standalone.
      * @enum {string}
      */
-    SessionMatchStatus: "unmatched";
+    SessionMatchStatus: "unmatched" | "matched" | "unplanned" | "displaced";
+    /**
+     * SessionMerge
+     * @description Payload for folding a second recording of one ride into this session.
+     */
+    SessionMerge: {
+      /**
+       * Absorbed Session Id
+       * Format: uuid
+       */
+      absorbed_session_id: string;
+    };
     /**
      * SessionMetricsRead
      * @description One version of one session's metrics, with what it was computed from.
@@ -2592,6 +3074,7 @@ export interface components {
       local_date: string;
       /** Logged Sets */
       logged_sets: components["schemas"]["LoggedSetRead"][];
+      match?: components["schemas"]["MatchSummary"] | null;
       metrics: components["schemas"]["SessionMetricsRead"] | null;
       /** Notes */
       notes: string | null;
@@ -2633,6 +3116,11 @@ export interface components {
      *     Separate from `SessionRead` because it is 1-2 MB for a long ride. Every
      *     column has exactly ``length`` entries by construction (A4.1), which is
      *     what lets a client index them together without checking.
+     *
+     *     For a **merged** session (WP-6.5) this is the joined grid: the recordings
+     *     laid end to end from the earliest one's origin, with the gap between them
+     *     left as unrecorded rows and reported in ``recording_stops``. Every index
+     *     here addresses that grid.
      */
     SessionStreamsRead: {
       /** Anomalies */
@@ -2646,6 +3134,8 @@ export interface components {
        * Format: uuid
        */
       recording_id: string;
+      /** Recording Ids */
+      recording_ids: string[];
       /** Recording Stops */
       recording_stops: components["schemas"]["StreamStopRead"][];
       /**
@@ -2971,6 +3461,9 @@ export interface components {
       intent_text: string | null;
       /** Intent Version */
       intent_version: number;
+      match_status: components["schemas"]["MatchLinkStatus"] | null;
+      /** Matched Session Id */
+      matched_session_id: string | null;
       /** Planned Duration S */
       planned_duration_s: number | null;
       /** Predicted Intensity Factor */
@@ -4108,6 +4601,403 @@ export interface operations {
       };
     };
   };
+  "matches-list_matches": {
+    parameters: {
+      query?: {
+        /** @description Restrict to one link status; omit for all of them. The proposal inbox is `pending`. */
+        status?: components["schemas"]["MatchLinkStatus"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_MatchRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "matches-create_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MatchCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatchRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The link violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "matches-get_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        match_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatchRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such match */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "matches-delete_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        match_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionMatchState"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such match */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "matches-retarget_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        match_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MatchRetarget"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatchRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such match */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The link violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "matches-confirm_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        match_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatchRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such match */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "matches-reject_match": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        match_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionMatchState"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such match */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "plan-get_plan_week": {
     parameters: {
       query?: {
@@ -4864,6 +5754,68 @@ export interface operations {
       };
     };
   };
+  "sessions-merge_sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SessionMerge"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The session violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "sessions-recompute_session_metrics": {
     parameters: {
       query?: never;
@@ -4926,6 +5878,55 @@ export interface operations {
       };
     };
   };
+  "matches-rematch_session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatchOutcomeRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "sessions-get_session_streams": {
     parameters: {
       query?: never;
@@ -4957,6 +5958,64 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "matches-mark_session_unplanned": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionMatchState"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Already linked, or already ruled on */
+      409: {
         headers: {
           [name: string]: unknown;
         };

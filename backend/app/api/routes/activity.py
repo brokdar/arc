@@ -32,6 +32,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
+from app.api.routes.matching import to_summary
 from app.api.schemas.activity import (
     LoggedSetRead,
     ManualSessionCreate,
@@ -42,6 +43,7 @@ from app.api.schemas.activity import (
     SessionsPage,
     SessionUpdate,
 )
+from app.api.schemas.matching import SessionMerge
 from app.api.schemas.metrics import (
     AnchorPinRead,
     MetricsRecompute,
@@ -60,11 +62,14 @@ from app.persistence.activity import (
     RecordingRepository,
     RecordingRow,
     SessionRow,
+    session_duration_s,
 )
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.db import SessionDep
+from app.persistence.matching import SessionMatchRow
 from app.persistence.metrics import SessionMetricsRow
 from app.services.activity import LoggedSetInput, SessionService
+from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -92,6 +97,11 @@ def get_metrics(session: SessionDep) -> SessionMetricsService:
     return SessionMetricsService.from_session(session)
 
 
+def get_matching(session: SessionDep) -> MatchingService:
+    """Bind the matching service to a request-scoped session."""
+    return MatchingService.from_session(session)
+
+
 def get_analyser(session: SessionDep) -> SessionAnalyser:
     """Bind the stream-reading analyser to a request-scoped session.
 
@@ -104,6 +114,7 @@ def get_analyser(session: SessionDep) -> SessionAnalyser:
 
 ServiceDep = Annotated[SessionService, Depends(get_service)]
 MetricsDep = Annotated[SessionMetricsService, Depends(get_metrics)]
+MatchingDep = Annotated[MatchingService, Depends(get_matching)]
 AnalyserDep = Annotated[SessionAnalyser, Depends(get_analyser)]
 
 # `SkipJsonSchema[None]`: optional by omission, never `null` — see
@@ -131,10 +142,8 @@ def _duration(row: SessionRow) -> tuple[float, float | None]:
     recording and therefore no pauses, so its wall-clock duration is both
     answers, and the second one is null to say there was nothing to subtract.
     """
-    if not row.recordings:
-        return row.duration_s, None
-    recording_time = sum(recording.recording_time_s for recording in row.recordings)
-    return recording_time, recording_time
+    duration = session_duration_s(row)
+    return duration, (duration if row.recordings else None)
 
 
 def _load(metrics: SessionMetricsRow | None) -> tuple[float | None, Any]:
@@ -156,12 +165,15 @@ def _load(metrics: SessionMetricsRow | None) -> tuple[float | None, Any]:
 
 
 def to_list_item(
-    row: SessionRow, metrics: SessionMetricsRow | None = None
+    row: SessionRow,
+    metrics: SessionMetricsRow | None = None,
+    link: SessionMatchRow | None = None,
 ) -> SessionListItem:
     """Project a stored session onto its list-row shape."""
     duration_s, recording_time_s = _duration(row)
     load, basis = _load(metrics)
     return SessionListItem(
+        match=to_summary(link) if link is not None else None,
         id=row.id,
         local_date=row.local_date,
         start_time=row.start_time,
@@ -253,6 +265,7 @@ def to_streams(streams: SessionStreams) -> SessionStreamsRead:
     """
     return SessionStreamsRead(
         recording_id=streams.recording_id,
+        recording_ids=list(streams.recording_ids),
         t0=streams.t0,
         length=streams.length,
         channels=[
@@ -287,10 +300,12 @@ def to_read(
     row: SessionRow,
     repairs: Mapping[uuid.UUID, int],
     metrics: SessionMetricsRead | None = None,
+    link: SessionMatchRow | None = None,
 ) -> SessionRead:
     """Project a stored session with the recordings behind it."""
     duration_s, recording_time_s = _duration(row)
     return SessionRead(
+        match=to_summary(link) if link is not None else None,
         id=row.id,
         local_date=row.local_date,
         start_time=row.start_time,
@@ -323,11 +338,17 @@ def to_read(
 
 
 async def one_to_read(
-    service: SessionService, metrics: SessionMetricsService, row: SessionRow
+    service: SessionService,
+    metrics: SessionMetricsService,
+    matching: MatchingService,
+    row: SessionRow,
 ) -> SessionRead:
-    """Resolve one session's repair counts and metric artefact, and project it."""
+    """Resolve one session's repairs, metrics and match link, and project it."""
     return to_read(
-        row, await service.repair_counts([row]), await current_metrics(metrics, row.id)
+        row,
+        await service.repair_counts([row]),
+        await current_metrics(metrics, row.id),
+        (await matching.for_sessions([row.id])).get(row.id),
     )
 
 
@@ -360,6 +381,7 @@ def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
 async def list_sessions(
     service: ServiceDep,
     metrics: MetricsDep,
+    matching: MatchingDep,
     page: PageParamsDep,
     start: StartFilter = None,
     end: EndFilter = None,
@@ -381,8 +403,12 @@ async def list_sessions(
     # One query for the whole page's artefacts, not one per row: the load
     # column is on every line, and a per-row lookup would scale with the page.
     current = await metrics.current_for_sessions(row.id for row in sessions)
+    links = await matching.for_sessions([row.id for row in sessions])
     return SessionsPage(
-        items=[to_list_item(session, current.get(session.id)) for session in sessions],
+        items=[
+            to_list_item(session, current.get(session.id), links.get(session.id))
+            for session in sessions
+        ],
         total=total,
         offset=page.offset,
         limit=page.limit,
@@ -391,20 +417,24 @@ async def list_sessions(
 
 @router.get("/{session_id}", responses=NOT_FOUND)
 async def get_session(
-    service: ServiceDep, metrics: MetricsDep, session_id: uuid.UUID
+    service: ServiceDep,
+    metrics: MetricsDep,
+    matching: MatchingDep,
+    session_id: uuid.UUID,
 ) -> SessionRead:
     """Get one completed session, its recordings' metadata and its metrics.
 
     Not the samples: those are 1-2 MB and live at
     `GET /sessions/{id}/streams`.
     """
-    return await one_to_read(service, metrics, await service.get(session_id))
+    return await one_to_read(service, metrics, matching, await service.get(session_id))
 
 
 @router.patch("/{session_id}", responses=NOT_FOUND | BAD_BODY | INVALID)
 async def update_session(
     service: ServiceDep,
     metrics: MetricsDep,
+    matching: MatchingDep,
     actor: ActorDep,
     session_id: uuid.UUID,
     payload: SessionUpdate,
@@ -419,7 +449,7 @@ async def update_session(
     row = await service.update(
         session_id, payload.model_dump(exclude_unset=True), actor=actor
     )
-    return await one_to_read(service, metrics, row)
+    return await one_to_read(service, metrics, matching, row)
 
 
 @manual_router.post(
@@ -428,6 +458,7 @@ async def update_session(
 async def create_manual_session(
     service: ServiceDep,
     metrics: MetricsDep,
+    matching: MatchingDep,
     actor: ActorDep,
     payload: ManualSessionCreate,
 ) -> SessionRead:
@@ -448,7 +479,7 @@ async def create_manual_session(
         notes=payload.notes,
         sets=_sets(payload),
     )
-    return await one_to_read(service, metrics, row)
+    return await one_to_read(service, metrics, matching, row)
 
 
 @router.get("/{session_id}/streams", responses=NOT_FOUND)
@@ -489,3 +520,38 @@ async def recompute_session_metrics(
     reason = (payload.reason if payload else None) or "recomputed on request"
     row = await analyser.compute(session_id, actor=actor, reason=reason)
     return to_metrics(row, (await metrics.pins([row])).get(row.id, []))
+
+
+@router.post("/{session_id}/merge", responses=NOT_FOUND | BAD_BODY | INVALID)
+async def merge_sessions(
+    service: ServiceDep,
+    metrics: MetricsDep,
+    matching: MatchingDep,
+    analyser: AnalyserDep,
+    actor: ActorDep,
+    session_id: uuid.UUID,
+    payload: SessionMerge,
+) -> SessionRead:
+    """Fold a second recording of one ride into this session (WP-6.5).
+
+    The garage-door case: a head unit stopped and restarted leaves two files,
+    two sessions and half a ride each. **Both recordings are kept** and both
+    move onto this session, whose span widens to cover them; the other session
+    row is removed.
+
+    A metric version is then appended over the **joined** stream — the two
+    grids laid end to end, with the gap between them left unrecorded and
+    reported as a recording stop — so the numbers describe the whole ride
+    rather than the first half of it. That recompute reads parquet, which is
+    why it happens here rather than inside the merge itself.
+
+    Here rather than under `/matches` because it is an edit to the session and
+    it answers with the session.
+    """
+    row = await matching.merge(
+        session_id, absorbed_session_id=payload.absorbed_session_id, actor=actor
+    )
+    await analyser.compute(
+        row.id, actor=actor, reason="recordings merged into one session"
+    )
+    return await one_to_read(service, metrics, matching, await service.get(row.id))

@@ -254,9 +254,19 @@ class SessionStreamsRead(BaseModel):
     Separate from `SessionRead` because it is 1-2 MB for a long ride. Every
     column has exactly ``length`` entries by construction (A4.1), which is
     what lets a client index them together without checking.
+
+    For a **merged** session (WP-6.5) this is the joined grid: the recordings
+    laid end to end from the earliest one's origin, with the gap between them
+    left as unrecorded rows and reported in ``recording_stops``. Every index
+    here addresses that grid.
     """
 
+    #: The first recording the samples came from, in time order — the only one
+    #: for every session the MVP ingests.
     recording_id: uuid.UUID
+    #: Every recording joined into this view, in time order. One entry unless
+    #: the session was merged.
+    recording_ids: list[uuid.UUID]
     #: The grid origin, aware UTC. Row ``i`` covers ``[t0 + i, t0 + i + 1)``.
     t0: dt.datetime
     #: Rows in the grid — the length of every channel's ``values``.

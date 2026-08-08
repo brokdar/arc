@@ -182,6 +182,43 @@ describe("CalendarWeek", () => {
     }
   });
 
+  it("marks the card of a session with a proposal waiting on it", async () => {
+    // A pending proposal changes neither status by design (D140), so the
+    // card's status dot cannot say it: the marker is the only thing on the
+    // week that shows a link the athlete has not answered. `completed` and
+    // `displaced` need no marker — the dot already carries both.
+    server.use(
+      http.get("/api/v1/plan/week", ({ query, response }) => {
+        const week = planWeekFixture(query.get("start") ?? start);
+        return response(200).json({
+          ...week,
+          days: week.days.map((day) => ({
+            ...day,
+            sessions: day.sessions.map((session) =>
+              session.id === SESSION_IDS.vo2
+                ? {
+                    ...session,
+                    match_status: "pending" as const,
+                    matched_session_id: SESSION_IDS.copy,
+                  }
+                : session,
+            ),
+          })),
+        });
+      }),
+    );
+    renderCalendar();
+
+    const card = await screen.findByRole("button", { name: /VO₂ 5×4′/ });
+    const marker = within(card).getByText("Proposal");
+    expect(marker).toHaveAttribute(
+      "title",
+      expect.stringContaining("waiting on you"),
+    );
+    // The other cards say nothing new.
+    expect(screen.getAllByText("Proposal")).toHaveLength(1);
+  });
+
   it("titles a card by its purpose when the session has none", async () => {
     renderCalendar();
 

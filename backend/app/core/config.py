@@ -98,6 +98,42 @@ class IngestSettings(BaseModel):
     """
 
 
+class MatchingSettings(BaseModel):
+    """WP-6: the athlete's own timezone, and how often the missed sweep runs."""
+
+    timezone: str = "UTC"
+    """The athlete's local timezone, for the missed-session rule (WP-6.7).
+
+    "No link by the end of day+1" is a statement about the athlete's own clock,
+    and this is the only place the application can learn what that is: a
+    *recording* carries the zone its device was in, but a planned session
+    carries a bare date and a plan with no rides in it carries nothing at all.
+
+    An IANA name (``Europe/Berlin``), a fixed offset (``UTC+02:00``) or ``UTC``
+    — the three forms `app.domain.activity.parse_timezone` accepts. Prefer the
+    IANA name: a fixed offset is wrong for half the year wherever there is
+    daylight saving, and being an hour out on a day boundary is exactly what
+    this setting exists to get right.
+    """
+
+    missed_scan_interval_seconds: int = 3600
+    """How often the missed-session sweep runs.
+
+    Hourly rather than daily: the sweep's job is to notice a day boundary
+    passing in the athlete's zone, and a daily job would have to be scheduled
+    *in* that zone to do it. An hourly idempotent sweep needs no such
+    agreement — it marks whatever has run out of grace since the last one.
+    """
+
+    missed_scan_batch: int = 200
+    """Most planned sessions one sweep will mark missed.
+
+    A bound rather than pagination: the sweep is idempotent and the next run is
+    an hour away, so a first run after a long absence catches up over a few
+    passes instead of loading the whole plan history into one transaction.
+    """
+
+
 class McpSettings(BaseModel):
     """MCP server settings.
 
@@ -143,6 +179,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = AuthSettings()
     data: DataSettings = DataSettings()
     ingest: IngestSettings = IngestSettings()
+    matching: MatchingSettings = MatchingSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()
 

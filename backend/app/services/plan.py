@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.activity import as_planned_discipline
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
+from app.domain.matching import MatchLinkStatus
 from app.domain.metrics import (
     ONE_CHANNEL_PER_SESSION_RULE,
     Measured,
@@ -55,7 +56,12 @@ from app.domain.purpose import Purpose
 from app.domain.sessions import SessionStatus
 from app.domain.strength import StrengthWorkout
 from app.domain.workout import WorkoutBody, workout_body_from_json
-from app.persistence.activity import SessionRepository, SessionRow
+from app.persistence.activity import (
+    SessionRepository,
+    SessionRow,
+    session_duration_s,
+)
+from app.persistence.matching import SessionMatchRepository, SessionMatchRow
 from app.persistence.planned_sessions import (
     PlannedSessionRepository,
     PlannedSessionRow,
@@ -120,6 +126,13 @@ class WeekSession:
     #: kilograms. Kilograms, **not** a load: never add this to
     #: `predicted_load` (spec v2 §5.4).
     predicted_volume_load_kg: float | None
+    #: The recorded session linked to this card (WP-6), when there is one.
+    #: ``None`` while nothing has been matched to it.
+    matched_session_id: uuid.UUID | None = None
+    #: What that link claims. A `pending` link is a **proposal**: `status`
+    #: above is still `planned` until the athlete answers it, and the card
+    #: renders a question rather than a completion.
+    match_status: MatchLinkStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +297,7 @@ class PlanService:
         anchors: AnchorService,
         completed: SessionRepository,
         metrics: SessionMetricsService,
+        matches: SessionMatchRepository,
     ) -> None:
         self._session = session
         self._sessions = sessions
@@ -291,6 +305,7 @@ class PlanService:
         self._anchors = anchors
         self._completed = completed
         self._metrics = metrics
+        self._matches = matches
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -302,6 +317,7 @@ class PlanService:
             AnchorService.from_session(session),
             SessionRepository(session),
             SessionMetricsService.from_session(session),
+            SessionMatchRepository(session),
         )
 
     async def week(self, start: dt.date | None = None) -> PlanWeek:
@@ -367,8 +383,10 @@ class PlanService:
             for session_pins in pins.values()
             for version_id in session_pins.values()
         )
+        links = await self._matches.for_planned_sessions([row.id for row in rows])
         cards = [
-            _card(row, titles, resolve_pins(pins[row.id], versions)) for row in rows
+            _card(row, titles, resolve_pins(pins[row.id], versions), links.get(row.id))
+            for row in rows
         ]
         done = await self._completed_sessions(first, dates[-1])
         loads = [
@@ -459,11 +477,10 @@ def _completed_duration(row: SessionRow) -> float:
     Recording time for a device session — elapsed with the pauses removed
     (A4.4), which is also the duration its load was computed over — and the
     wall-clock duration for one typed in, which has no pauses to remove. The
-    week and the log must not answer this differently.
+    week and the log must not answer this differently, which is why both go
+    through the one function that answers it.
     """
-    if not row.recordings:
-        return row.duration_s
-    return sum(recording.recording_time_s for recording in row.recordings)
+    return session_duration_s(row)
 
 
 def _day(
@@ -499,6 +516,7 @@ def _card(
     row: PlannedSessionRow,
     titles: dict[uuid.UUID, str],
     anchors: Mapping[AnchorType, PinnedAnchor],
+    link: SessionMatchRow | None = None,
 ) -> WeekSession:
     """Project one stored session onto its calendar card.
 
@@ -527,6 +545,8 @@ def _card(
         predicted_intensity_factor=factor,
         predicted_load_coverage=coverage,
         predicted_volume_load_kg=volume,
+        matched_session_id=link.session_id if link is not None else None,
+        match_status=link.status if link is not None else None,
     )
 
 

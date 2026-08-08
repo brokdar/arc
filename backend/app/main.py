@@ -18,6 +18,8 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.exercises import router as exercises_router
 from app.api.routes.health import router as health_router
 from app.api.routes.ingest import router as ingest_router
+from app.api.routes.matching import router as matches_router
+from app.api.routes.matching import session_router as session_matches_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
 from app.api.routes.purposes import router as purposes_router
@@ -29,6 +31,7 @@ from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
 from app.ingest.inbox import register_inbox_job
+from app.services.matching import register_missed_sessions_job
 from app.services.templates import verify_bundled_resources
 
 #: Runtime data tree created on startup, relative to `settings.data.root`.
@@ -57,6 +60,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # `create_scheduler`, which owns no jobs of its own: each work package
     # adds the job it needs.
     register_inbox_job(app.state.scheduler)
+    # The missed-session sweep (WP-6.7). Hourly, and idempotent, so it needs no
+    # agreement with the athlete's midnight beyond `MATCHING__TIMEZONE`.
+    register_missed_sessions_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)
@@ -133,6 +139,8 @@ def create_app() -> FastAPI:
     api.include_router(sessions_router)
     api.include_router(manual_sessions_router)
     api.include_router(ingest_router)
+    api.include_router(matches_router)
+    api.include_router(session_matches_router)
     app.include_router(api)
 
     return app

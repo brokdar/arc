@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from app.api.pagination import Page
+from app.api.schemas.matching import MatchSummary
 from app.api.schemas.metrics import SessionMetricsRead
 from app.api.validation import PostgresText
 from app.domain.activity import (
@@ -144,9 +145,14 @@ class SessionListItem(BaseModel):
     #: Whether the athlete corrected the discipline.
     discipline_overridden: bool
     recording_kind: RecordingKind
-    #: Reserved for WP-6: every session is ``unmatched`` until matching
-    #: exists. The badge takes this as a prop rather than assuming.
+    #: Where this session stands relative to the plan (WP-6). ``unmatched``
+    #: means undecided — including while a proposal is waiting on the athlete
+    #: — and ``unplanned`` means decided: there was nothing this could be.
     status: SessionMatchStatus
+    #: The link to a planned session, when one stands. A `pending` link is a
+    #: proposal the athlete has not answered, which is why it can be present
+    #: while ``status`` is still ``unmatched``.
+    match: MatchSummary | None = None
     #: What to render as the session's length: the recording time for a device
     #: session (pauses removed) and the wall-clock duration for a manual one.
     duration_s: float

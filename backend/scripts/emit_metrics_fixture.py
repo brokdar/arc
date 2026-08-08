@@ -200,6 +200,9 @@ def build() -> tuple[dict[str, Any], dict[str, Any]]:
     }
     streams = {
         "recording_id": str(RECORDING_ID),
+        # One recording, which is every session the MVP ingests; the list is
+        # what a merged session (WP-6.5) fills with more than one.
+        "recording_ids": [str(RECORDING_ID)],
         "t0": T0.isoformat().replace("+00:00", "Z"),
         "length": rows,
         "channels": [

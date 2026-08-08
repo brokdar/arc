@@ -39,7 +39,7 @@ from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.metrics import PerformedSet
 from app.domain.session_analysis import SessionInputs, analyse_session
-from app.domain.streams import StreamChannel
+from app.domain.streams import AnomalyKind, StreamChannel
 from app.ingest.parquet import (
     STREAMS_DIRNAME,
     StoredStreams,
@@ -60,11 +60,37 @@ logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class StreamAnomaly:
+    """One repaired region, addressed on the **joined** grid (A4.2).
+
+    A detached copy of `app.persistence.activity.StreamAnomalyRow` rather than
+    the row itself, because a merged session's second recording contributes its
+    regions shifted by wherever that recording begins in the joined grid — and
+    shifting the ORM row would mark it dirty and write the display offset back
+    into the database on the next commit.
+    """
+
+    channel: StreamChannel
+    start_index: int
+    end_index: int
+    kind: AnomalyKind
+    substituted_value: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class SessionStreams:
     """One session's stored samples, as the chart endpoint serves them.
 
+    For a merged session (WP-6.5) this is the **joined** view: the recordings
+    laid end to end on one 1 Hz grid anchored at the earliest one's origin,
+    with the gap between them left as unrecorded rows and reported as a
+    recording stop. Every index here — stops, anomalies — addresses that grid.
+
     Args:
-        recording_id: Which recording the samples came from.
+        recording_id: The first recording the samples came from, in time
+            order. Kept alongside `recording_ids` so a single-recording session
+            reads exactly as it always has.
+        recording_ids: Every recording joined into this view, in time order.
         t0: The grid origin, aware UTC. Row ``i`` covers ``[t0 + i, t0 + i+1)``.
         length: Rows in the grid — the same for every channel by construction
             (A4.1), which is what lets a client index them together.
@@ -72,17 +98,18 @@ class SessionStreams:
             a recording stop is a break in the trace, not a run of zeros.
         sources: Channel -> the label of the sensor that produced it (A4.3).
         recording_stops: ``[start, end)`` row ranges the recording was paused
-            for.
+            for, including the gap between two joined recordings.
         anomalies: The cleaner's repairs, so the chart can mark them (A4.2).
     """
 
     recording_id: uuid.UUID
+    recording_ids: tuple[uuid.UUID, ...]
     t0: dt.datetime
     length: int
     channels: Mapping[StreamChannel, tuple[float | None, ...]]
     sources: Mapping[StreamChannel, str]
     recording_stops: tuple[tuple[int, int], ...]
-    anomalies: Sequence[StreamAnomalyRow]
+    anomalies: Sequence[StreamAnomaly]
 
 
 def streams_root() -> Path:
@@ -107,47 +134,157 @@ def _read(path: Path) -> StoredStreams | None:
 async def load_streams(
     session_row: SessionRow, recordings: RecordingRepository
 ) -> SessionStreams:
-    """Load one session's stored samples for rendering.
+    """Load one session's stored samples for rendering, joined if there are several.
 
     Raises:
         NotFoundError: When the session has no recording (a manual session
-            never had a stream), or when its stream file is missing or
-            unreadable. The detail names which, because the empty state the UI
-            renders is the detail.
+            never had a stream), or when every one of its stream files is
+            missing or unreadable. The detail names which, because the empty
+            state the UI renders is the detail.
     """
-    recording = _sole_recording(session_row)
-    if recording is None:
+    segments = await _segments(session_row)
+    joined = _join(segments)
+    anomalies: list[StreamAnomaly] = []
+    for segment in segments:
+        anomalies.extend(
+            _shifted(anomaly, segment.offset)
+            for anomaly in await recordings.anomalies(segment.recording.id)
+        )
+    return SessionStreams(
+        recording_id=segments[0].recording.id,
+        recording_ids=tuple(segment.recording.id for segment in segments),
+        t0=segments[0].stored.t0,
+        length=joined.length,
+        channels=joined.channels,
+        sources=joined.sources,
+        recording_stops=joined.recording_stops,
+        anomalies=sorted(anomalies, key=lambda one: (one.start_index, one.end_index)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Segment:
+    """One recording placed on the joined grid."""
+
+    recording: RecordingRow
+    stored: StoredStreams
+    #: Row this recording's first sample occupies in the joined grid. Always 0
+    #: for a session with one recording, which is what keeps that path — every
+    #: session the MVP ingests — byte-for-byte what it was before WP-6.
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Durations:
+    """A4.4's three durations for a session, however many recordings it has.
+
+    Args:
+        recording_time_s: Elapsed minus every stop — **the duration term in
+            training load** (A5.1), summed across recordings.
+        elapsed_time_s: The recording's own elapsed span, or the session's
+            wall clock once more than one recording spans it.
+        moving_time_s: Display only, never a load input.
+    """
+
+    recording_time_s: float
+    elapsed_time_s: float
+    moving_time_s: float
+
+
+@dataclass(frozen=True, slots=True)
+class _Joined:
+    """Several recordings laid end to end on one 1 Hz grid."""
+
+    length: int
+    channels: Mapping[StreamChannel, tuple[float | None, ...]]
+    sources: Mapping[StreamChannel, str]
+    recording_stops: tuple[tuple[int, int], ...]
+
+
+async def _segments(session_row: SessionRow) -> list[_Segment]:
+    """Read every readable stream behind a session, in time order.
+
+    Ordered by the **stored grid origin** rather than by row order or id: a
+    recording row carries no start time of its own, and after a merge the
+    absorbed recording may well have been ingested first.
+
+    Raises:
+        NotFoundError: When the session has no recording at all, or when none
+            of its stream files can be read.
+    """
+    if not session_row.recordings:
         raise NotFoundError(
             f"Session {session_row.id} has no recorded stream: it was entered "
             "by hand, so there are no per-second samples to chart"
         )
-    path = stream_path(streams_root(), recording.id)
-    stored = await asyncio.to_thread(_read, path)
-    if stored is None:
+    read: list[tuple[RecordingRow, StoredStreams]] = []
+    for recording in session_row.recordings:
+        stored = await asyncio.to_thread(
+            _read, stream_path(streams_root(), recording.id)
+        )
+        if stored is not None:
+            read.append((recording, stored))
+    if not read:
         raise NotFoundError(
-            f"The stream file for recording {recording.id} is missing or "
+            f"The stream file(s) for session {session_row.id} are missing or "
             "unreadable; the original file is kept and can be re-ingested"
         )
-    return SessionStreams(
-        recording_id=recording.id,
-        t0=stored.t0,
-        length=stored.row_count,
-        channels=stored.fixed,
-        sources=stored.sources,
-        recording_stops=tuple(
-            (int(start), int(end)) for start, end in recording.recording_stops
-        ),
-        anomalies=await recordings.anomalies(recording.id),
+    read.sort(key=lambda pair: pair[1].t0)
+    origin = read[0][1].t0
+    segments: list[_Segment] = []
+    cursor = 0
+    for recording, stored in read:
+        offset = max(cursor, round((stored.t0 - origin).total_seconds()))
+        segments.append(_Segment(recording=recording, stored=stored, offset=offset))
+        cursor = offset + stored.row_count
+    return segments
+
+
+def _join(segments: Sequence[_Segment]) -> _Joined:
+    """Lay the segments on one grid, padding the gaps between them.
+
+    The gap between two recordings is filled with **unrecorded rows** and
+    reported as a recording stop, which is what it is: the athlete stopped the
+    head unit at the garage door. Nothing about the numbers changes as a
+    result — `app.domain.metrics` excludes rows with no reading rather than
+    reading them as zero, and the load's duration term is the recordings' own
+    recording time summed, never the length of this grid (A5.1).
+    """
+    length = segments[-1].offset + segments[-1].stored.row_count
+    channels: dict[StreamChannel, list[float | None]] = {}
+    sources: dict[StreamChannel, str] = {}
+    stops: list[tuple[int, int]] = []
+    previous_end = 0
+    for segment in segments:
+        if segment.offset > previous_end:
+            stops.append((previous_end, segment.offset))
+        previous_end = segment.offset + segment.stored.row_count
+        sources |= dict(segment.stored.sources)
+        for channel, values in segment.stored.fixed.items():
+            empty: list[float | None] = [None] * length
+            column = channels.setdefault(channel, empty)
+            column[segment.offset : segment.offset + len(values)] = values
+        stops.extend(
+            (int(start) + segment.offset, int(end) + segment.offset)
+            for start, end in segment.recording.recording_stops
+        )
+    return _Joined(
+        length=length,
+        channels={channel: tuple(values) for channel, values in channels.items()},
+        sources=sources,
+        recording_stops=tuple(sorted(stops)),
     )
 
 
-def _sole_recording(session_row: SessionRow) -> RecordingRow | None:
-    """The recording behind a session, or ``None`` for a manual one.
-
-    Exactly one today; WP-6 owns the merge case, and this is the one place
-    that will have to answer differently when it arrives.
-    """
-    return session_row.recordings[0] if session_row.recordings else None
+def _shifted(anomaly: StreamAnomalyRow, offset: int) -> StreamAnomaly:
+    """One stored repair, addressed on the joined grid instead of its own."""
+    return StreamAnomaly(
+        channel=anomaly.channel,
+        start_index=anomaly.start_index + offset,
+        end_index=anomaly.end_index + offset,
+        kind=anomaly.kind,
+        substituted_value=anomaly.substituted_value,
+    )
 
 
 class SessionAnalyser:
@@ -206,35 +343,14 @@ class SessionAnalyser:
 
         anchors = await self._metrics.current_anchors()
         sex = await self._metrics.athlete_sex()
-        recording = _sole_recording(session_row)
-        columns: dict[StreamChannel, tuple[float | None, ...]] = {}
-        if recording is not None:
-            stored = await asyncio.to_thread(
-                _read, stream_path(streams_root(), recording.id)
-            )
-            if stored is None:
-                logger.warning(
-                    "metrics_stream_missing",
-                    session_id=str(session_id),
-                    recording_id=str(recording.id),
-                )
-            else:
-                columns = dict(stored.fixed)
+        durations, columns = await self._recorded(session_row)
 
         analysis = analyse_session(
             SessionInputs(
                 discipline=session_row.discipline,
-                recording_time_s=(
-                    recording.recording_time_s if recording is not None else 0.0
-                ),
-                elapsed_time_s=(
-                    recording.elapsed_time_s
-                    if recording is not None
-                    else session_row.duration_s
-                ),
-                moving_time_s=(
-                    recording.moving_time_s if recording is not None else 0.0
-                ),
+                recording_time_s=durations.recording_time_s,
+                elapsed_time_s=durations.elapsed_time_s,
+                moving_time_s=durations.moving_time_s,
                 columns=columns,
                 sex=sex,
                 anchors={
@@ -256,4 +372,62 @@ class SessionAnalyser:
                 for anchor_type, (_, version_id) in anchors.items()
             },
             reason=reason,
+        )
+
+    async def _recorded(
+        self, session_row: SessionRow
+    ) -> tuple[_Durations, dict[StreamChannel, tuple[float | None, ...]]]:
+        """The A4.4 durations and the cleaned columns the metrics run over.
+
+        One recording is the ordinary case and answers with its own three
+        numbers unchanged. A **merged** session (WP-6.5) answers with the
+        joined grid and with the durations *summed* rather than re-derived
+        from it: recording time is elapsed minus every stop (A4.4), and the
+        gap between two files is a stop by definition — so summing the two
+        recordings' own numbers is the same answer, arrived at without asking
+        the join to remember what it padded.
+
+        A session with no recording, or whose stream files are all unreadable,
+        answers with no columns and the reasons the domain writes for them.
+        """
+        if not session_row.recordings:
+            return (
+                _Durations(
+                    recording_time_s=0.0,
+                    elapsed_time_s=session_row.duration_s,
+                    moving_time_s=0.0,
+                ),
+                {},
+            )
+        try:
+            segments = await _segments(session_row)
+        except NotFoundError:
+            logger.warning(
+                "metrics_stream_missing",
+                session_id=str(session_row.id),
+                recordings=[str(recording.id) for recording in session_row.recordings],
+            )
+            segments = []
+        columns = dict(_join(segments).channels) if segments else {}
+        recordings = (
+            [segment.recording for segment in segments]
+            if segments
+            else list(session_row.recordings)
+        )
+        return (
+            _Durations(
+                recording_time_s=sum(one.recording_time_s for one in recordings),
+                # Counted over the session's recordings, not the readable
+                # survivors: a merged session with one unreadable stream file
+                # still spans the whole ride, and taking the lone survivor's
+                # own span would describe half the ride while claiming to
+                # describe the session.
+                elapsed_time_s=(
+                    recordings[0].elapsed_time_s
+                    if len(session_row.recordings) == 1
+                    else session_row.duration_s
+                ),
+                moving_time_s=sum(one.moving_time_s for one in recordings),
+            ),
+            columns,
         )

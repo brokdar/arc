@@ -84,7 +84,9 @@ async def test_a_ride_becomes_a_session_a_recording_and_a_parquet_frame(
     assert session.classification_source is ClassificationSource.SPORT_FIELD
     assert session.timezone == "UTC+02:00"
     assert session.local_date == dt.date(2026, 5, 4)
-    assert session.status.value == "unmatched"
+    # WP-6 runs after the metrics: nothing is planned in this fixture, so the
+    # ride correctly stands as its own thing rather than waiting to be decided.
+    assert session.status.value == "unplanned"
 
     [recording] = await rows(db_session, RecordingRow)
     assert recording.file_hash == report.file_hash
@@ -125,11 +127,14 @@ async def test_the_ingest_is_logged_and_audited(
     assert event.session_id == report.session_ids[0]
     audit = await rows(db_session, AuditLogEntry)
     # WP-5: the metric artefact is computed after the ingest commits, and it
-    # audits itself. The order is the guarantee — the session is durable
-    # before anything derived from it is attempted (WP-5 B-2).
+    # audits itself. WP-6's matching runs after *that*, because its intensity
+    # and structure terms read the artefact. The order is the guarantee — the
+    # session is durable before anything derived from it is attempted, and
+    # each derived step before the one that reads it (WP-5 B-2, WP-6.1).
     assert [entry.action for entry in audit] == [
         "session.ingested",
         "session.metrics_computed",
+        "session.unplanned",
     ]
     assert audit[0].actor == "athlete"
 

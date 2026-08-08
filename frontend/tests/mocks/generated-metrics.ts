@@ -369,13 +369,24 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
       ],
       total_s: 1140.0,
       easy_s: 720.0,
-      moderate_s: 0.0,
-      hard_s: 420.0,
+      moderate_s: 142.0,
+      hard_s: 278.0,
       polarization_index: {
-        value: null,
-        explanation: null,
-        not_assessed:
-          "the polarization index needs time in all three bands; there was none in the moderate band",
+        value: 2.0921840966298157,
+        explanation: {
+          formula:
+            "PI = log10( (Z_easy / Z_moderate) \u00d7 Z_hard \u00d7 100 )",
+          inputs: {
+            easy: "63.2%",
+            moderate: "12.5%",
+            hard: "24.4%",
+          },
+          assumptions: [
+            "fractions are of the banded total, not of elapsed time",
+          ],
+          citation: "Treff et al., polarization index",
+        },
+        not_assessed: null,
       },
       explanation: {
         formula: "time in zone = one second per reading, banded by the model",
@@ -480,6 +491,7 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
 /** The 1 Hz stream payload the metrics above were computed from. */
 export const RIDE_STREAMS: Schemas["SessionStreamsRead"] = {
   recording_id: "0199a000-0000-7000-8000-0000000002a1",
+  recording_ids: ["0199a000-0000-7000-8000-0000000002a1"],
   t0: "2026-08-05T05:14:00Z",
   length: 1200,
   channels: [

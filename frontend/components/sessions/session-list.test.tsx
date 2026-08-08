@@ -83,10 +83,34 @@ describe("the session log", () => {
     renderList();
     await screen.findByText("1–3 of 3");
 
-    // One member exists today; the badge is a lookup, so WP-6's arrival is a
-    // compile error here rather than a row that renders a stale word.
-    const badge = within(rowFor(ACTIVITY_IDS.gym)).getByText("Unmatched");
-    expect(badge).toHaveAttribute("title", expect.stringContaining("WP-6"));
+    // The badge is a lookup keyed by the generated enum, which is what made
+    // WP-6's three new members a compile error rather than a row rendering a
+    // raw enum value.
+    const badge = within(rowFor(ACTIVITY_IDS.trainerRide)).getByText(
+      "Unmatched",
+    );
+    expect(badge).toHaveAttribute(
+      "title",
+      expect.stringContaining("Not yet linked"),
+    );
+  });
+
+  it("says a proposal is waiting, where the session's own status cannot", async () => {
+    renderList();
+    await screen.findByText("1–3 of 3");
+
+    // A pending proposal deliberately leaves the session `unmatched` (D140: a
+    // proposal is a question, and neither side moves until it is answered), so
+    // a badge reading the session alone would say "Unmatched" about exactly
+    // the rows that are waiting on a click.
+    const badge = within(rowFor(ACTIVITY_IDS.gym)).getByText("Proposed");
+    expect(badge).toHaveAttribute(
+      "title",
+      expect.stringContaining("waiting on you"),
+    );
+    expect(
+      within(rowFor(ACTIVITY_IDS.outdoorRide)).getByText("Proposed"),
+    ).toBeInTheDocument();
   });
 
   it("shows the load and the model it came from", async () => {
