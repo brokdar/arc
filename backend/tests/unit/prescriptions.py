@@ -71,3 +71,56 @@ LIFT: dict[str, Any] = {
         }
     ],
 }
+
+
+#: The same hour prescribed in **watts** rather than as a percentage. What it
+#: costs therefore depends entirely on which FTP version it is priced against
+#: — 100 TSS at an FTP of 200, 25 at an FTP of 400 — which is what makes it
+#: the document for testing the freeze rule's re-pin (WP-8 D185).
+WATT_HOUR: dict[str, Any] = {
+    "discipline": "cycling",
+    "steps": [
+        {
+            "kind": "steady",
+            "duration_s": 3_600,
+            "targets": {
+                "power": {"kind": "absolute", "low": 200, "high": 200, "unit": "W"}
+            },
+        }
+    ],
+}
+
+
+def unstructured(duration_s: int) -> dict[str, Any]:
+    """A ride of ``duration_s`` with no power target at all.
+
+    Nothing to predict on either side — no target means no TSS — so a pair of
+    these is how "the guard has no load to compare" is written down.
+    """
+    return {
+        "discipline": "cycling",
+        "steps": [{"kind": "steady", "duration_s": duration_s, "targets": {}}],
+    }
+
+
+def bodyweight(sets: int) -> dict[str, Any]:
+    """``sets`` sets of five push-ups: strength that weighs nothing.
+
+    A bodyweight prescription has no volume load on either side of a change,
+    so the sets are the only signal that says how much work it is.
+    """
+    return {
+        "discipline": "strength",
+        "groups": [
+            {
+                "items": [
+                    {
+                        "exercise_id": "push_up",
+                        "sets": sets,
+                        "reps": 5,
+                        "load": {"kind": "bodyweight"},
+                    }
+                ]
+            }
+        ],
+    }

@@ -12,7 +12,7 @@ agents and nobody else.
 
 import datetime as dt
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -47,13 +47,21 @@ from app.persistence.activity import SessionRow
 from app.persistence.audit import AuditLogEntry
 from app.persistence.proposals import PlanProposalRow
 from app.services.anchors import AnchorService
+from app.services.planned_sessions import set_match_probe
 from app.services.proposals import (
     EXPIRY_JOB_ID,
     ProposalOutcome,
     ProposalService,
     run_proposal_expiry,
 )
-from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE, LIFT
+from tests.unit.prescriptions import (
+    EASY_RIDE,
+    HARD_RIDE,
+    LIFT,
+    WATT_HOUR,
+    bodyweight,
+    unstructured,
+)
 
 PROPOSALS = "/api/v1/proposals"
 SESSIONS = "/api/v1/planned-sessions"
@@ -1348,3 +1356,582 @@ def test_no_plan_change_can_touch_an_anchor() -> None:
         for name in dir(AnchorService)
         if name in {"update", "delete", "revise", "amend", "remove"}
     ]
+
+
+# --- the diff is what accepting produces (D185) -----------------------------------
+
+
+@pytest.fixture
+def matched() -> Iterator[None]:
+    """Pretend WP-6 has linked a recording to every planned session."""
+
+    async def always(_session: AsyncSession, _planned_session_id: uuid.UUID) -> bool:
+        return True
+
+    set_match_probe(always)
+    yield
+    set_match_probe(None)
+
+
+async def load_of(client: AsyncClient, session_id: str) -> float:
+    """The predicted load a planned session reports right now."""
+    response = await client.get(f"{SESSIONS}/{session_id}")
+    assert response.status_code == 200, response.text
+    predicted = response.json()["predicted_load"]
+    assert predicted is not None
+    return predicted["load"]
+
+
+async def test_the_after_side_is_priced_against_the_pins_accept_will_write(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The load-bearing conservation property: the athlete answers the diff, so
+    # the diff has to be the outcome. An hour at 200 W costs 100 TSS against
+    # an FTP of 200 and 25 against an FTP of 400 — and revising a session
+    # nobody has ridden re-pins it to the FTP in force *now* (invariant 4), so
+    # even a text-only edit re-prices it. A diff priced against the old pins
+    # would promise 100 and deliver 25.
+    await append_ftp(client, 200)
+    session = await plan(client, structure=WATT_HOUR)
+    assert await load_of(client, session["id"]) == pytest.approx(100.0, abs=0.5)
+    await append_ftp(client, 400)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"intent_text": "keep it steady"},
+            )
+        ],
+    )
+
+    assert outcome.proposal is not None
+    [entry] = outcome.diff
+    assert entry["before"]["predicted_load"] == pytest.approx(100.0, abs=0.5)
+    assert entry["after"]["predicted_load"] == pytest.approx(25.0, abs=0.5)
+
+    accepted = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert accepted.status_code == 200, accepted.text
+    assert await load_of(client, session["id"]) == entry["after"]["predicted_load"]
+
+
+async def test_a_matched_session_is_priced_against_the_pins_it_kept(
+    client: AsyncClient, db_session: AsyncSession, matched: None
+) -> None:
+    # The other half of the freeze rule, and the reason the preview mirrors
+    # the branch rather than always re-pinning: a session the athlete has
+    # already ridden keeps the pins it was executed against, so the same
+    # text-only edit changes no number at all.
+    await append_ftp(client, 200)
+    session = await plan(client, structure=WATT_HOUR)
+    await append_ftp(client, 400)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"intent_text": "as executed"},
+            )
+        ],
+        dry_run=True,
+    )
+
+    [entry] = outcome.diff
+    assert entry["before"]["predicted_load"] == entry["after"]["predicted_load"]
+    assert entry["after"]["predicted_load"] == pytest.approx(100.0, abs=0.5)
+
+
+async def test_a_criteria_only_revision_is_a_visible_diff(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The empty-diff trap: rewriting how a session is judged touched no field
+    # the snapshot carried, so the inbox showed "nothing differs" above an
+    # enabled Accept button.
+    await append_ftp(client)
+    session = await plan(client)
+    criteria = [{"kind": "duration_floor", "min_seconds": 5_400}]
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"success_criteria": criteria},
+            )
+        ],
+    )
+
+    assert outcome.proposal is not None
+    [entry] = outcome.diff
+    assert entry["before"]["success_criteria"] != entry["after"]["success_criteria"]
+    assert entry["after"]["success_criteria"] == criteria
+
+    accepted = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert accepted.status_code == 200, accepted.text
+    stored_criteria = (await client.get(f"{SESSIONS}/{session['id']}")).json()[
+        "intent"
+    ]["success_criteria"]
+    assert stored_criteria == entry["after"]["success_criteria"]
+
+
+async def test_a_structure_only_revision_is_a_visible_diff(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"structure": HARD_RIDE},
+            )
+        ],
+        dry_run=True,
+    )
+
+    [entry] = outcome.diff
+    assert entry["before"]["structure"] != entry["after"]["structure"]
+    assert entry["before"]["duration_s"] == entry["after"]["duration_s"] == 3_600
+
+
+# --- the red flag refuses what it cannot show to be safe (D186) -------------------
+
+
+async def test_more_sets_are_refused_while_the_flag_is_up(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Bodyweight work prices at no kilograms on either side, so the old rule
+    # compared two nulls, found no increase and let it through. Three sets
+    # becoming thirty is obviously more work.
+    await append_ftp(client)
+    session = await plan(client, purpose="core", structure=bodyweight(3))
+    await raise_red_flag(client)
+
+    with pytest.raises(RedFlagError, match="prescribed sets from 3 to 30"):
+        await propose(
+            db_session,
+            [
+                UpdateChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                    updates={"structure": bodyweight(30)},
+                )
+            ],
+        )
+
+
+async def test_a_longer_unstructured_ride_is_refused_while_the_flag_is_up(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # No power target means no TSS on either side. Half an hour becoming six
+    # is still six hours.
+    await append_ftp(client)
+    session = await plan(client, purpose="unstructured", structure=unstructured(1_800))
+    await raise_red_flag(client)
+
+    with pytest.raises(RedFlagError, match="prescribed duration from 30 to 360"):
+        await propose(
+            db_session,
+            [
+                UpdateChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                    updates={"structure": unstructured(21_600)},
+                )
+            ],
+        )
+
+
+async def test_a_text_only_edit_that_re_pins_upward_is_refused_while_the_flag_is_up(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The re-pin bypass: the change names no structure and no purpose, but
+    # accepting it re-prices the hour against a lower FTP and quadruples what
+    # it costs the athlete. The guard sees that only because the diff does.
+    await append_ftp(client, 400)
+    session = await plan(client, structure=WATT_HOUR)
+    await append_ftp(client, 100)
+    await raise_red_flag(client)
+
+    with pytest.raises(RedFlagError, match="raises the predicted load"):
+        await propose(
+            db_session,
+            [
+                UpdateChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                    updates={"coach_notes": "same as before"},
+                )
+            ],
+        )
+
+
+async def test_a_shorter_ride_is_still_allowed_while_the_flag_is_up(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Failing closed must not mean refusing everything: an unpriceable ride
+    # that is plainly shorter is a reduction, and the athlete must stay able
+    # to have the plan lightened while unwell.
+    await append_ftp(client)
+    session = await plan(client, purpose="unstructured", structure=unstructured(21_600))
+    await raise_red_flag(client)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"structure": unstructured(1_800)},
+            )
+        ],
+    )
+
+    assert outcome.proposal is not None
+
+
+async def test_a_change_nothing_can_be_compared_on_is_refused_while_the_flag_is_up(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A distance-based ride has no duration and no load, so nothing about how
+    # much work it is can be compared. Under the flag that is a refusal, not a
+    # pass: "we could not compute it" is not evidence of a reduction.
+    await append_ftp(client)
+    session = await plan(client, purpose="unstructured", structure=unstructured(1_800))
+    await raise_red_flag(client)
+    distance_ride = {
+        "discipline": "cycling",
+        "steps": [{"kind": "steady", "distance_m": 90_000.0, "targets": {}}],
+    }
+
+    with pytest.raises(RedFlagError, match="cannot be shown not to add work"):
+        await propose(
+            db_session,
+            [
+                UpdateChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                    updates={"structure": distance_ride},
+                )
+            ],
+        )
+
+
+# --- a day the athlete has already trained (D188) ---------------------------------
+
+
+async def test_a_recording_a_day_off_still_resolves_the_proposal(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # WP-6 links a recording up to a day either side, so a ride on the 12th
+    # can answer a session planned for the 11th while a same-date test sees
+    # two different days. The link is the truest "this is already spent".
+    await append_ftp(client)
+    session = await plan(client, date="2026-08-11")
+    outcome = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 14),
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+
+    logged = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-08-12T09:00:00Z",
+            "timezone": "UTC",
+            "duration_s": 3_600,
+            "discipline": "cycling",
+        },
+    )
+
+    assert logged.status_code == 201, logged.text
+    linked = (await client.get(f"{SESSIONS}/{session['id']}")).json()["match"]
+    assert linked is not None, "WP-6 matched it; the proposal has to notice"
+    [row] = await stored(db_session)
+    assert row.status is ProposalStatus.RESOLVED_BY_REALITY
+
+
+async def test_accepting_a_change_to_a_matched_session_is_refused(
+    client: AsyncClient, db_session: AsyncSession, matched: None
+) -> None:
+    # The backstop: a proposal written before the ride, answered after it.
+    # The recording is already being scored against the prescription as it
+    # stands, and moving it now would rewrite what the ride is judged by.
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 12),
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+
+    response = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert response.status_code == 409, response.text
+    assert "matched" in response.json()["detail"]
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).json()["date"] == (
+        "2026-08-10"
+    )
+    [row] = await stored(db_session)
+    assert row.status is ProposalStatus.PENDING
+
+
+# --- the agent may not destroy testimony (D189) -----------------------------------
+
+
+async def test_deleting_a_session_the_athlete_executed_is_refused(
+    client: AsyncClient, db_session: AsyncSession, matched: None
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+
+    with pytest.raises(ValidationError, match="cannot be deleted by proposal"):
+        await propose(
+            db_session,
+            [
+                DeleteChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                )
+            ],
+        )
+    assert await stored(db_session) == []
+
+
+async def test_deleting_a_completed_session_is_refused_at_accept_too(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Written while the session was still a plain plan entry, answered after
+    # the athlete rode it: the second check is the one that matters.
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            DeleteChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+    completed = await client.patch(
+        f"{SESSIONS}/{session['id']}", json={"status": "completed"}
+    )
+    assert completed.status_code == 200, completed.text
+
+    response = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert response.status_code == 409, response.text
+    assert "destroy the record" in response.json()["detail"]
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).status_code == 200
+
+
+async def test_deleting_a_plain_planned_session_is_still_allowed(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            DeleteChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+
+    response = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert response.status_code == 200, response.text
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).status_code == 404
+
+
+# --- bounds on what an agent may write (D187) -------------------------------------
+
+
+async def test_an_expiry_beyond_the_horizon_is_refused(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A proposal dated past every sweep never drains from the pending set —
+    # which is scanned on every propose and every recorded session — and is
+    # not a question the athlete is being asked either.
+    await append_ftp(client)
+    session = await plan(client)
+    horizon = get_settings().proposals.max_horizon_days
+
+    with pytest.raises(ValidationError, match=f"within {horizon} days"):
+        await propose(
+            db_session,
+            [
+                DeleteChange(
+                    planned_session_id=uuid.UUID(session["id"]),
+                    expected_intent_version=1,
+                )
+            ],
+            hours=24 * (horizon + 1),
+        )
+    assert await stored(db_session) == []
+
+
+# --- the terminal states are terminal ---------------------------------------------
+
+
+async def test_the_sweep_leaves_a_rejected_proposal_alone(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 12),
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+    rejected = await client.post(
+        f"{PROPOSALS}/{outcome.proposal.id}/reject", json={"reason": "no"}
+    )
+    assert rejected.status_code == 200, rejected.text
+
+    lapsed = await ProposalService.from_session(db_session).expire(
+        actor=Actor.system(), now=dt.datetime.now(dt.UTC) + dt.timedelta(days=365)
+    )
+
+    assert lapsed == []
+    [row] = await stored(db_session)
+    assert row.status is ProposalStatus.REJECTED
+
+
+async def test_a_new_proposal_does_not_supersede_a_lapsed_one(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+    target = uuid.UUID(session["id"])
+    first = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=target,
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 12),
+            )
+        ],
+        hours=1,
+    )
+    assert first.proposal is not None
+    await ProposalService.from_session(db_session).expire(
+        actor=Actor.system(), now=dt.datetime.now(dt.UTC) + dt.timedelta(hours=2)
+    )
+
+    second = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=target,
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 13),
+            )
+        ],
+    )
+
+    assert second.superseded == ()
+    assert second.proposal is not None
+    assert second.proposal.supersedes_id is None
+    rows = {row.id: row.status for row in await stored(db_session)}
+    assert rows[first.proposal.id] is ProposalStatus.LAPSED
+
+
+async def test_a_supersede_chain_links_three_proposals(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await append_ftp(client)
+    session = await plan(client)
+    target = uuid.UUID(session["id"])
+    chain = []
+    for day in (12, 13, 14):
+        outcome = await propose(
+            db_session,
+            [
+                MoveChange(
+                    planned_session_id=target,
+                    expected_intent_version=1,
+                    date=dt.date(2026, 8, day),
+                )
+            ],
+        )
+        assert outcome.proposal is not None
+        chain.append(outcome.proposal.id)
+
+    rows = {row.id: row for row in await stored(db_session)}
+    first, second, third = chain
+    assert rows[first].status is ProposalStatus.SUPERSEDED
+    assert rows[first].superseded_by_id == second
+    assert rows[second].status is ProposalStatus.SUPERSEDED
+    assert rows[second].superseded_by_id == third
+    assert rows[second].supersedes_id == first
+    assert rows[third].status is ProposalStatus.PENDING
+
+
+async def test_a_date_only_revision_re_prices_nothing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # An `update` carrying only a date writes no intent version, so nothing is
+    # re-pinned and nothing is re-priced — the preview has to mirror that as
+    # exactly as it mirrors the re-pin. Otherwise a reschedule made after an
+    # FTP test would report a load change accepting it does not make.
+    await append_ftp(client, 200)
+    session = await plan(client, structure=WATT_HOUR)
+    await append_ftp(client, 400)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"date": "2026-08-12"},
+            )
+        ],
+    )
+
+    assert outcome.proposal is not None
+    [entry] = outcome.diff
+    assert entry["after"]["date"] == "2026-08-12"
+    assert entry["after"]["predicted_load"] == entry["before"]["predicted_load"]
+
+    accepted = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert accepted.status_code == 200, accepted.text
+    revised = (await client.get(f"{SESSIONS}/{session['id']}")).json()
+    assert revised["intent"]["version"] == 1, "a reschedule is not an intent edit"
+    assert await load_of(client, session["id"]) == entry["after"]["predicted_load"]

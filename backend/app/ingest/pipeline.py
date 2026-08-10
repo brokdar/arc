@@ -469,8 +469,11 @@ class IngestPipeline:
         )
         await commit(self._session)
         await self._compute_metrics(placement.created, actor=actor)
-        await self._resolve_proposals(placement.created, actor=actor)
+        # Matching before the proposal sweep: a link is one of the two things
+        # that resolve a pending proposal (D188), and it does not exist until
+        # the matcher has run.
         await self._match(placement.created, actor=actor)
+        await self._resolve_proposals(placement.created, actor=actor)
         return report
 
     async def _resolve_proposals(

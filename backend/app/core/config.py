@@ -175,6 +175,15 @@ class ProposalSettings(BaseModel):
     passes instead of in one transaction.
     """
 
+    max_horizon_days: int = 90
+    """Furthest ahead a proposal's `expires_at` may be set (D187).
+
+    Without a bound an agent can date a proposal past any sweep, and the
+    pending set — scanned on every propose and every recorded session — grows
+    without ever draining. Ninety days is well past the horizon a training
+    suggestion is meaningful over and far short of "never".
+    """
+
 
 class McpSettings(BaseModel):
     """MCP server and coaching-agent settings.

@@ -3166,6 +3166,15 @@ export interface components {
      *     an endurance session has a TSS-equivalent and no kilograms, a strength one
      *     has kilograms and no TSS. They are different quantities and must never be
      *     added or shown in one column.
+     *
+     *     **Every field a change can touch is here, on both sides** (D185). A
+     *     snapshot that carried only the cheap scalars let a revision of the success
+     *     criteria or of the prescription itself render as "no field differs" above
+     *     an enabled Accept button — the athlete answering a question the diff had
+     *     not asked. The two size fields are here for the same reason: a bodyweight
+     *     lift and an unstructured ride have no computable cost at all, and the
+     *     sets and the seconds are then the only honest way to say how much of it
+     *     there is.
      */
     ProposalSessionSnapshot: {
       /** Coach Notes */
@@ -3176,6 +3185,8 @@ export interface components {
        */
       date: string;
       discipline: components["schemas"]["Discipline"];
+      /** Duration S */
+      duration_s: number | null;
       /** Intent Text */
       intent_text: string | null;
       /** Predicted Load */
@@ -3184,6 +3195,16 @@ export interface components {
       predicted_volume_kg: number | null;
       purpose: components["schemas"]["Purpose"];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Structure */
+      structure: {
+        [key: string]: unknown;
+      };
+      /** Success Criteria */
+      success_criteria: {
+        [key: string]: unknown;
+      }[];
+      /** Total Sets */
+      total_sets: number | null;
       /** Workout Id */
       workout_id: string | null;
     };

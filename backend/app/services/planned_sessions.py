@@ -78,6 +78,7 @@ from app.domain.strength import StrengthWorkout
 from app.domain.versioning import FIRST_VERSION, next_version
 from app.domain.workout import (
     WorkoutBody,
+    total_duration_s,
     workout_body_from_json,
     workout_body_to_json,
 )
@@ -205,12 +206,19 @@ class SessionResolution:
             predicted.
         predicted_volume: The prescribed volume load of a strength session,
             with the sets it covers; ``None`` for an endurance one.
+        duration_s: Prescribed seconds, or ``None`` for a strength session and
+            for a ride any step of which is distance-based. See
+            :func:`_extent`.
+        total_sets: Prescribed working sets, or ``None`` for an endurance
+            session.
     """
 
     anchors: Mapping[AnchorType, PinnedAnchor]
     steps: tuple[ResolvedStep, ...]
     predicted_load: PredictedLoad | None
     predicted_volume: PredictedVolume | None
+    duration_s: int | None = None
+    total_sets: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +242,8 @@ class PrescriptionPreview:
             ``None`` (also ``None`` when it cannot honestly be predicted).
         predicted_volume: Kilograms for a strength prescription, else
             ``None``. Never add one to the other.
+        duration_s: Prescribed seconds, or ``None``. See :func:`_extent`.
+        total_sets: Prescribed working sets, or ``None``.
     """
 
     purpose: Purpose
@@ -244,6 +254,35 @@ class PrescriptionPreview:
     anchors: Mapping[AnchorType, PinnedAnchor]
     predicted_load: PredictedLoad | None
     predicted_volume: PredictedVolume | None
+    duration_s: int | None = None
+    total_sets: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionDraft:
+    """One intent revision resolved, but not written.
+
+    Everything :meth:`PlannedSessionService._revise_intent` decides before it
+    appends a row — including, crucially, **which anchor versions the new
+    intent will pin**, which is the freeze rule's whole substance and the one
+    thing a preview cannot guess (see :meth:`PlannedSessionService.preview_update`).
+
+    Args:
+        purpose: The purpose the revision would leave in force.
+        body: The prescription it would freeze.
+        workout_id: The library workout behind it, or ``None``.
+        criteria: The success criteria it would store.
+        pins: The anchor version ids it would pin, by type.
+        post_hoc: Whether a match already exists, i.e. whether the pins above
+            were kept rather than taken from what is in force now.
+    """
+
+    purpose: Purpose
+    body: WorkoutBody
+    workout_id: uuid.UUID | None
+    criteria: tuple[SuccessCriterion, ...]
+    pins: Mapping[AnchorType, uuid.UUID]
+    post_hoc: bool
 
 
 _match_probe: MatchProbe = _has_a_match
@@ -393,19 +432,27 @@ class PlannedSessionService:
         for row in rows:
             anchors = anchors_by_session[row.id]
             body = _body_of(row.current_intent)
-            load: PredictedLoad | None = None
-            volume: PredictedVolume | None = None
-            if isinstance(body, StrengthWorkout):
-                volume = predict_strength_volume(body)
-            else:
-                load = predict_endurance_load(body, anchors)
+            load, volume = _price(body, anchors)
+            duration_s, total_sets = _extent(body)
             resolved[row.id] = SessionResolution(
                 anchors=anchors,
                 steps=resolve_steps(body, anchors),
                 predicted_load=load,
                 predicted_volume=volume,
+                duration_s=duration_s,
+                total_sets=total_sets,
             )
         return resolved
+
+    async def is_matched(self, planned_session_id: uuid.UUID) -> bool:
+        """Whether a recording is linked to this planned session (WP-6).
+
+        The freeze rule's own probe, made public: WP-8 has to ask the same
+        question this module asks — a proposal about a session the athlete has
+        already ridden is not a question any more — and asking it through the
+        seam means a test that drives the freeze rule drives both.
+        """
+        return await _match_probe(self._session, planned_session_id)
 
     async def preview(
         self,
@@ -455,21 +502,61 @@ class PlannedSessionService:
             resolved = resolve_pins(pins, versions)
         else:
             resolved = anchors
-        load: PredictedLoad | None = None
-        volume: PredictedVolume | None = None
-        if isinstance(body, StrengthWorkout):
-            volume = predict_strength_volume(body)
-        else:
-            load = predict_endurance_load(body, resolved)
-        return PrescriptionPreview(
+        return _priced(
             purpose=purpose,
-            discipline=purpose_discipline(purpose),
             body=body,
             workout_id=resolved_workout_id,
             criteria=tuple(criteria),
             anchors=resolved,
-            predicted_load=load,
-            predicted_volume=volume,
+        )
+
+    async def preview_update(
+        self, row: PlannedSessionRow, updates: Mapping[str, Any]
+    ) -> PrescriptionPreview:
+        """Price the revision :meth:`stage_update` would write. Stores nothing.
+
+        The read-only half of :meth:`_revise_intent`, sharing its resolver
+        (:meth:`_resolve_revision`) rather than reproducing it — which is what
+        makes this a *prediction* of the write rather than a second opinion
+        about it.
+
+        The pins are the point. A revision of a session that has **not** been
+        matched re-pins to the anchor versions in force now (the freeze rule:
+        "frozen at creation or last pre-execution edit"), so a note-only edit
+        made after an FTP test genuinely re-prices the session — and a preview
+        that priced it against the old pins would tell the athlete a number
+        the accept is not going to produce. A revision of a matched session
+        keeps the pins it executed against, and this keeps them too.
+
+        A patch that touches no intent field at all — a bare reschedule — is
+        priced against the session exactly as it stands, because that is what
+        :meth:`stage_update` does with it: no intent version is written, so
+        nothing is re-pinned and nothing is re-priced. Moving a session is not
+        an edit to what it is for.
+
+        Raises:
+            Exactly what :meth:`stage_update` raises for the same patch: an
+            illegal prescription, an unknown workout, an anchor with no
+            version in force.
+        """
+        current = row.current_intent
+        if not set(updates) & set(INTENT_FIELDS):
+            with domain_rules():
+                return _priced(
+                    purpose=current.purpose,
+                    body=_body_of(current),
+                    workout_id=current.workout_id,
+                    criteria=tuple(criteria_from_json(current.success_criteria)),
+                    anchors=(await self.pins([row]))[row.id],
+                )
+        draft = await self._resolve_revision(row, updates)
+        versions = await self._anchors.by_ids(draft.pins.values())
+        return _priced(
+            purpose=draft.purpose,
+            body=draft.body,
+            workout_id=draft.workout_id,
+            criteria=draft.criteria,
+            anchors=resolve_pins(draft.pins, versions),
         )
 
     async def save(self, row: PlannedSessionRow) -> PlannedSessionRow:
@@ -850,10 +937,21 @@ class PlannedSessionService:
 
     # --- the freeze rule -----------------------------------------------------
 
-    async def _revise_intent(
-        self, row: PlannedSessionRow, updates: Mapping[str, Any], *, actor: Actor
-    ) -> PlannedSessionIntentRow:
-        """Append the next intent version, applying the freeze rule."""
+    async def _resolve_revision(
+        self, row: PlannedSessionRow, updates: Mapping[str, Any]
+    ) -> RevisionDraft:
+        """Work out what a revision would freeze, without writing anything.
+
+        Split out of :meth:`_revise_intent` for WP-8: the proposal diff has to
+        say what accepting would do, and the only honest way to say it is to
+        run the decision the accept will run — the same body, the same
+        criteria, and above all the same **pins**, which depend on whether the
+        session has been matched. Two implementations of the freeze rule would
+        be two answers to "what will this session cost", and the athlete reads
+        one of them and gets the other.
+
+        Read-only, so it is safe on the dry-run path that must not write.
+        """
         current = row.current_intent
         post_hoc = await _match_probe(self._session, row.id)
 
@@ -906,11 +1004,28 @@ class PlannedSessionService:
         else:
             pins = await self._pin_anchors(sources)
 
-        intent = self._build_intent(
+        return RevisionDraft(
             purpose=purpose,
             body=body,
-            criteria=criteria,
+            workout_id=workout_id,
+            criteria=tuple(criteria),
             pins=pins,
+            post_hoc=post_hoc,
+        )
+
+    async def _revise_intent(
+        self, row: PlannedSessionRow, updates: Mapping[str, Any], *, actor: Actor
+    ) -> PlannedSessionIntentRow:
+        """Append the next intent version, applying the freeze rule."""
+        current = row.current_intent
+        draft = await self._resolve_revision(row, updates)
+        post_hoc = draft.post_hoc
+
+        intent = self._build_intent(
+            purpose=draft.purpose,
+            body=draft.body,
+            criteria=draft.criteria,
+            pins=draft.pins,
             intent_text=updates.get("intent_text", current.intent_text),
             coach_notes=updates.get("coach_notes", current.coach_notes),
         )
@@ -924,7 +1039,7 @@ class PlannedSessionService:
                 planned_session_id=row.id,
                 version=version,
                 intent=intent,
-                workout_id=workout_id,
+                workout_id=draft.workout_id,
                 edited_post_hoc=post_hoc,
                 recompute_reason=(
                     REASON_EDITED_POST_HOC if post_hoc else REASON_EDITED
@@ -1041,6 +1156,56 @@ class PlannedSessionService:
                     _missing_anchor_message(anchor_type, sources[anchor_type])
                 ) from exc
         return pins
+
+
+def _price(
+    body: WorkoutBody, anchors: Mapping[AnchorType, PinnedAnchor]
+) -> tuple[PredictedLoad | None, PredictedVolume | None]:
+    """The two prediction axes for one prescription. Exactly one is populated."""
+    if isinstance(body, StrengthWorkout):
+        return None, predict_strength_volume(body)
+    return predict_endurance_load(body, anchors), None
+
+
+def _extent(body: WorkoutBody) -> tuple[int | None, int | None]:
+    """How much of it there is, on whichever axis the discipline has one.
+
+    Prescribed seconds for a ride, prescribed working sets for a lift. Both
+    are *sizes*, not costs: they survive the cases where the cost cannot be
+    computed at all — bodyweight or RPE strength has no kilograms and
+    unstructured riding has no TSS — which is exactly when WP-8's red-flag
+    rule would otherwise have nothing to compare (see
+    `app.domain.proposals.intensifies`). ``None`` for the axis the discipline
+    does not have, and for a ride any step of which is distance-based.
+    """
+    if isinstance(body, StrengthWorkout):
+        return None, body.total_sets
+    return total_duration_s(body), None
+
+
+def _priced(
+    *,
+    purpose: Purpose,
+    body: WorkoutBody,
+    workout_id: uuid.UUID | None,
+    criteria: tuple[SuccessCriterion, ...],
+    anchors: Mapping[AnchorType, PinnedAnchor],
+) -> PrescriptionPreview:
+    """Assemble a preview: everything derived from a body and its anchors."""
+    load, volume = _price(body, anchors)
+    duration_s, total_sets = _extent(body)
+    return PrescriptionPreview(
+        purpose=purpose,
+        discipline=purpose_discipline(purpose),
+        body=body,
+        workout_id=workout_id,
+        criteria=criteria,
+        anchors=anchors,
+        predicted_load=load,
+        predicted_volume=volume,
+        duration_s=duration_s,
+        total_sets=total_sets,
+    )
 
 
 #: What refers to an anchor, as :func:`_anchor_sources` labels it.

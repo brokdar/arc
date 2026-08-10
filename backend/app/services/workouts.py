@@ -33,6 +33,9 @@ from app.domain.workout import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.persistence.workouts import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_FOLDER_LENGTH,
+    MAX_NAME_LENGTH,
     MAX_TAG_LENGTH,
     WorkoutRepository,
     WorkoutRow,
@@ -189,9 +192,9 @@ class WorkoutService:
                 an illegal prescription, an unknown exercise, malformed tags.
         """
         return WorkoutDraft(
-            name=name,
-            description=description,
-            folder=folder,
+            name=_bounded("name", name, MAX_NAME_LENGTH),
+            description=_bounded("description", description, MAX_DESCRIPTION_LENGTH),
+            folder=_bounded("folder", folder, MAX_FOLDER_LENGTH),
             tags=tuple(_clean_tags(tags)),
             body=await self._parse(structure),
         )
@@ -272,9 +275,13 @@ class WorkoutService:
             body = await self._parse(updates["structure"])
             row.structure = workout_body_to_json(body)
             row.discipline = discipline_of(body)
-        for name in ("name", "description", "folder"):
+        for name, cap in (
+            ("name", MAX_NAME_LENGTH),
+            ("description", MAX_DESCRIPTION_LENGTH),
+            ("folder", MAX_FOLDER_LENGTH),
+        ):
             if name in updates:
-                setattr(row, name, updates[name])
+                setattr(row, name, _bounded(name, updates[name], cap))
         if "tags" in updates:
             self._repository.set_tags(row, _clean_tags(updates["tags"] or ()))
 
@@ -370,6 +377,29 @@ def step_count_of(row: WorkoutRow) -> int | None:
         return summarize(row).step_count
     except PARSE_FAILURES:
         return None
+
+
+def _bounded[T: str | None](field: str, value: T, cap: int) -> T:
+    """Refuse text longer than the column that has to hold it.
+
+    The API schemas bound these already, so this is for the callers that have
+    no schema in front of them: the MCP `create_workout` tool checked only its
+    tags, and an over-long name reached Postgres as a
+    `StringDataRightTruncation` — an agent-triggerable 500 where a 422 naming
+    the field belongs. The bounds are the column widths themselves, imported
+    rather than restated (D190).
+
+    Raises:
+        ValidationError: When ``value`` is over ``cap``.
+    """
+    if value is None:
+        return value
+    length = len(str(value))
+    if length > cap:
+        raise ValidationError(
+            f"A workout's {field} must be at most {cap} characters, got {length}"
+        )
+    return value
 
 
 def _clean_tags(tags: Sequence[str]) -> list[str]:

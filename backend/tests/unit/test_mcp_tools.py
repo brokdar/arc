@@ -19,7 +19,9 @@ Two things this file exists to pin that no other file can:
   rather than around them.
 """
 
+import ast
 import datetime as dt
+import inspect
 import uuid
 from typing import Any
 
@@ -31,10 +33,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.domain.athlete import Discipline
+from app.mcp.tools import register_tools
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
+from app.persistence.audit import AuditLogEntry
 from app.persistence.proposals import PlanProposalRow
-from app.persistence.workouts import WorkoutRow
+from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
 from tests.unit.mcp_harness import connected_as, server_for
 from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE
 
@@ -1103,3 +1107,126 @@ async def test_a_note_about_both_a_session_and_a_week_is_refused(
                 "plan_week": MONDAY.isoformat(),
             },
         )
+
+
+# --- what the trail says the agent did --------------------------------------------
+
+
+async def test_every_tool_asks_for_its_scope(session_factory: Any) -> None:
+    # `ping` is the only tool that answers without a key, and it answers
+    # nothing about the athlete. Everything else names the scope it needs, in
+    # its own body — an adapter-level assertion, because a tool that forgot to
+    # ask would still pass every service-level guardrail test, and the
+    # authorization it skipped is the only thing standing between a read key
+    # and the plan.
+    source = ast.parse(inspect.getsource(register_tools))
+    registered = {
+        node.name: node
+        for node in ast.walk(source)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and any(
+            isinstance(decorator, ast.Attribute) and decorator.attr == "tool"
+            for decorator in node.decorator_list
+        )
+    }
+
+    assert set(registered) == EXPECTED_TOOLS, "the sweep must cover every tool"
+    unguarded = [
+        name
+        for name, node in registered.items()
+        if name != "ping" and "require_scope" not in ast.unparse(node)
+    ]
+    assert unguarded == []
+
+
+async def test_two_agent_keys_are_distinguishable_in_the_audit_trail(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # The label is the agent's identity: `agent:<label>` is what the athlete
+    # reads when asking who suggested something, so two keys must not become
+    # one actor.
+    second = f"nightly:write:{('9f8e7d6c' * 4)}"
+    async with connected_as(server_for(COACH, second), COACH) as client:
+        await client.call_tool(
+            "annotate",
+            {
+                "text": "From the coach.",
+                "model_id": MODEL,
+                "plan_week": MONDAY.isoformat(),
+            },
+        )
+    async with connected_as(server_for(COACH, second), second) as client:
+        await client.call_tool(
+            "annotate",
+            {
+                "text": "From the nightly job.",
+                "model_id": MODEL,
+                "plan_week": MONDAY.isoformat(),
+            },
+        )
+
+    actors = sorted(row.actor for row in await rows(db_session, AuditLogEntry))
+
+    assert actors == ["agent:coach", "agent:nightly"]
+
+
+async def test_an_annotation_dry_run_writes_nothing(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    data = await call(
+        COACH,
+        "annotate",
+        {
+            "text": "Three weeks of threshold with no easy week.",
+            "model_id": MODEL,
+            "plan_week": MONDAY.isoformat(),
+            "dry_run": True,
+        },
+    )
+
+    assert data["dry_run"] is True
+    assert data["note"]["id"] is None
+    assert data["note"]["plan_week"] == MONDAY.isoformat()
+    assert await rows(db_session, AgentNoteRow) == []
+
+
+async def test_the_write_cap_binds_create_workout_too(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # The cap is a property of the agent surface, not of one tool: it is
+    # enforced in the service layer, so every write an agent can reach pays
+    # into the same budget.
+    settings = get_settings()
+    cap = settings.mcp.write_cap_per_hour
+    for index in range(cap):
+        await call(
+            COACH,
+            "create_workout",
+            {"name": f"Easy hour {index}", "structure": EASY_RIDE},
+        )
+
+    with pytest.raises(ToolError, match="rate_limited"):
+        await call(
+            COACH,
+            "create_workout",
+            {"name": "One too many", "structure": EASY_RIDE},
+        )
+
+    assert len(await rows(db_session, WorkoutRow)) == cap
+
+
+async def test_an_over_long_workout_name_is_a_refusal_not_a_crash(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # No schema stands between an agent and this service, so the bound has to
+    # be in the service: unbounded text reached Postgres as a truncation error
+    # — an agent-triggerable 500 where a named refusal belongs.
+    with pytest.raises(ToolError, match="invalid:") as excinfo:
+        await call(
+            COACH,
+            "create_workout",
+            {"name": "x" * (MAX_NAME_LENGTH + 1), "structure": EASY_RIDE},
+        )
+
+    assert "name" in str(excinfo.value)
+    assert await rows(db_session, WorkoutRow) == []

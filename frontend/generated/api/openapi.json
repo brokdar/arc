@@ -3795,7 +3795,7 @@
         "type": "object"
       },
       "ProposalSessionSnapshot": {
-        "description": "One planned session as it stands, or as a change would leave it.\n\nThe two prediction axes are both here and exactly one is ever populated:\nan endurance session has a TSS-equivalent and no kilograms, a strength one\nhas kilograms and no TSS. They are different quantities and must never be\nadded or shown in one column.",
+        "description": "One planned session as it stands, or as a change would leave it.\n\nThe two prediction axes are both here and exactly one is ever populated:\nan endurance session has a TSS-equivalent and no kilograms, a strength one\nhas kilograms and no TSS. They are different quantities and must never be\nadded or shown in one column.\n\n**Every field a change can touch is here, on both sides** (D185). A\nsnapshot that carried only the cheap scalars let a revision of the success\ncriteria or of the prescription itself render as \"no field differs\" above\nan enabled Accept button \u2014 the athlete answering a question the diff had\nnot asked. The two size fields are here for the same reason: a bodyweight\nlift and an unstructured ride have no computable cost at all, and the\nsets and the seconds are then the only honest way to say how much of it\nthere is.",
         "properties": {
           "coach_notes": {
             "anyOf": [
@@ -3815,6 +3815,17 @@
           },
           "discipline": {
             "$ref": "#/components/schemas/Discipline"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
           },
           "intent_text": {
             "anyOf": [
@@ -3855,6 +3866,30 @@
           "status": {
             "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
           },
+          "structure": {
+            "additionalProperties": true,
+            "title": "Structure",
+            "type": "object"
+          },
+          "success_criteria": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Success Criteria",
+            "type": "array"
+          },
+          "total_sets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Sets"
+          },
           "workout_id": {
             "anyOf": [
               {
@@ -3876,8 +3911,12 @@
           "intent_text",
           "coach_notes",
           "workout_id",
+          "success_criteria",
+          "structure",
           "predicted_load",
-          "predicted_volume_kg"
+          "predicted_volume_kg",
+          "duration_s",
+          "total_sets"
         ],
         "title": "ProposalSessionSnapshot",
         "type": "object"

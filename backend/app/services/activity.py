@@ -355,8 +355,13 @@ class SessionService:
         await commit(self._session)
         await self._session.refresh(row)
         row = await self._recompute_strength(row, actor=actor, reason=None)
-        row = await self._resolve_proposals(row, actor=actor)
-        return await self._match(row, actor=actor)
+        # Matching first, then the proposals: a link is one of the two things
+        # that resolve a pending proposal (D188), and WP-6 links a recording
+        # up to a day either side of the plan entry — so resolving before the
+        # matcher has run would miss exactly the cases the date test cannot
+        # see.
+        row = await self._match(row, actor=actor)
+        return await self._resolve_proposals(row, actor=actor)
 
     async def _resolve_proposals(self, row: SessionRow, *, actor: Actor) -> SessionRow:
         """Close pending plan-change proposals this session made moot (WP-8.2).

@@ -7,6 +7,7 @@ intensifies" rule is deterministic and says why.
 
 import datetime as dt
 import uuid
+from typing import Any
 
 import pytest
 
@@ -34,6 +35,7 @@ from app.domain.proposals import (
 )
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
+from app.domain.sessions import MAX_INTENT_CHARS
 
 SESSION_ID = uuid.UUID("018f0000-0000-7000-8000-000000000001")
 
@@ -343,8 +345,61 @@ def test_raising_the_purpose_intensifies() -> None:
 
 
 def test_lowering_the_purpose_does_not() -> None:
+    # A rank is a label, not an amount, so it clears nothing on its own: the
+    # session has to be shown to be no bigger as well (here, the same hour).
     assert (
-        intensifies(before_purpose=Purpose.VO2MAX, after_purpose=Purpose.RECOVERY)
+        intensifies(
+            before_purpose=Purpose.VO2MAX,
+            after_purpose=Purpose.RECOVERY,
+            before_duration_s=3_600,
+            after_duration_s=3_600,
+        )
+        is None
+    )
+
+
+def test_a_lower_purpose_alone_does_not_clear_a_change() -> None:
+    # D186: the flag is up, nothing about the amount of work can be compared,
+    # and a purpose named `recovery` is a promise rather than a measurement.
+    reason = intensifies(before_purpose=Purpose.VO2MAX, after_purpose=Purpose.RECOVERY)
+    assert reason is not None
+    assert "cannot be shown not to add work" in reason
+
+
+def test_more_sets_intensify_when_neither_side_has_kilograms() -> None:
+    # Bodyweight, RPE or %e1RM strength prices at no kilograms on either side.
+    # 3x5 becoming 30x5 is obviously more work, and the guard has to say so.
+    reason = intensifies(
+        before_purpose=Purpose.STRENGTH_ENDURANCE,
+        after_purpose=Purpose.STRENGTH_ENDURANCE,
+        before_sets=3,
+        after_sets=30,
+    )
+    assert reason is not None
+    assert "prescribed sets from 3 to 30" in reason
+
+
+def test_a_longer_ride_intensifies_when_neither_side_has_a_load() -> None:
+    # Unstructured riding carries no power target, so no TSS can be predicted
+    # on either side. Ten minutes becoming six hours is still six hours.
+    reason = intensifies(
+        before_purpose=Purpose.UNSTRUCTURED,
+        after_purpose=Purpose.UNSTRUCTURED,
+        before_duration_s=600,
+        after_duration_s=21_600,
+    )
+    assert reason is not None
+    assert "prescribed duration from 10 to 360 minutes" in reason
+
+
+def test_the_same_size_session_is_cleared() -> None:
+    assert (
+        intensifies(
+            before_purpose=Purpose.HYPERTROPHY,
+            after_purpose=Purpose.HYPERTROPHY,
+            before_sets=12,
+            after_sets=12,
+        )
         is None
     )
 
@@ -375,17 +430,39 @@ def test_the_same_purpose_with_less_load_does_not() -> None:
 @pytest.mark.parametrize(
     ("before_load", "after_load"), [(None, 500.0), (60.0, None), (None, None)]
 )
-def test_an_unpredictable_side_falls_back_to_the_purpose_rank(
+def test_an_unpredictable_side_is_refused_rather_than_waved_through(
     before_load: float | None, after_load: float | None
 ) -> None:
-    # "We could not compute it" is not evidence of an increase either way, so
-    # the rank decides alone — here it says the session got easier.
+    # D186, superseding D170's fail-open half: "we could not compute it" is
+    # not evidence of a reduction, and while the athlete is ill the benefit of
+    # that doubt goes to the athlete. The rank says the session got easier and
+    # that is not enough on its own.
+    reason = intensifies(
+        before_purpose=Purpose.THRESHOLD,
+        after_purpose=Purpose.RECOVERY,
+        before_load=before_load,
+        after_load=after_load,
+    )
+    assert reason is not None
+    assert "cannot be shown not to add work" in reason
+
+
+@pytest.mark.parametrize(
+    ("before_load", "after_load"), [(None, 500.0), (60.0, None), (None, None)]
+)
+def test_an_unpredictable_cost_still_clears_on_a_comparable_size(
+    before_load: float | None, after_load: float | None
+) -> None:
+    # The cost is the best signal, not the only one: a ride that cannot be
+    # priced can still be shown to be shorter.
     assert (
         intensifies(
             before_purpose=Purpose.THRESHOLD,
             after_purpose=Purpose.RECOVERY,
             before_load=before_load,
             after_load=after_load,
+            before_duration_s=7_200,
+            after_duration_s=1_800,
         )
         is None
     )
@@ -409,3 +486,66 @@ def test_swapping_discipline_intensifies_because_it_cannot_be_shown_not_to() -> 
     reason = intensifies(before_purpose=Purpose.VO2MAX, after_purpose=Purpose.MOBILITY)
     assert reason is not None
     assert "changes the discipline" in reason
+
+
+# --- bounds on the free text an agent may propose --------------------------------
+
+
+@pytest.mark.parametrize("field", ["intent_text", "coach_notes"])
+def test_an_over_long_revision_text_is_refused_when_the_change_is_built(
+    field: str,
+) -> None:
+    # The intent applies this cap when the change is *applied*, which is hours
+    # later: a proposal carrying 200 000 characters otherwise stores happily,
+    # sits in the inbox looking answerable, and refuses every accept until it
+    # lapses. The agent has to be told now, by its own call.
+    with pytest.raises(ValueError, match=f"{field} must be at most"):
+        UpdateChange(
+            planned_session_id=SESSION_ID,
+            expected_intent_version=1,
+            updates={field: "x" * (MAX_INTENT_CHARS + 1)},
+        )
+
+
+def test_an_over_long_create_text_is_refused_too() -> None:
+    too_long = "x" * (MAX_INTENT_CHARS + 1)
+    body: dict[str, Any] = {"discipline": "cycling", "steps": []}
+
+    with pytest.raises(ValueError, match="intent_text must be at most"):
+        CreateChange(
+            date=dt.date(2026, 8, 10),
+            purpose=Purpose.ENDURANCE,
+            structure=body,
+            intent_text=too_long,
+        )
+    with pytest.raises(ValueError, match="coach_notes must be at most"):
+        CreateChange(
+            date=dt.date(2026, 8, 10),
+            purpose=Purpose.ENDURANCE,
+            structure=body,
+            coach_notes=too_long,
+        )
+
+
+def test_text_at_exactly_the_cap_is_accepted() -> None:
+    change = UpdateChange(
+        planned_session_id=SESSION_ID,
+        expected_intent_version=1,
+        updates={"intent_text": "x" * MAX_INTENT_CHARS},
+    )
+
+    assert len(change.updates["intent_text"]) == MAX_INTENT_CHARS
+
+
+def test_an_over_long_text_is_refused_by_position_when_parsed_from_json() -> None:
+    with pytest.raises(ValueError, match="change 0"):
+        changes_from_json(
+            [
+                {
+                    "kind": "update",
+                    "planned_session_id": str(SESSION_ID),
+                    "expected_intent_version": 1,
+                    "updates": {"coach_notes": "x" * (MAX_INTENT_CHARS + 1)},
+                }
+            ]
+        )

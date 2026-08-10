@@ -41,6 +41,15 @@ class ProposalSessionSnapshot(BaseModel):
     an endurance session has a TSS-equivalent and no kilograms, a strength one
     has kilograms and no TSS. They are different quantities and must never be
     added or shown in one column.
+
+    **Every field a change can touch is here, on both sides** (D185). A
+    snapshot that carried only the cheap scalars let a revision of the success
+    criteria or of the prescription itself render as "no field differs" above
+    an enabled Accept button — the athlete answering a question the diff had
+    not asked. The two size fields are here for the same reason: a bodyweight
+    lift and an unstructured ride have no computable cost at all, and the
+    sets and the seconds are then the only honest way to say how much of it
+    there is.
     """
 
     date: dt.date
@@ -56,10 +65,21 @@ class ProposalSessionSnapshot(BaseModel):
     intent_text: str | None
     coach_notes: str | None
     workout_id: uuid.UUID | None
+    #: The criteria the session is judged by, as stored. A revision may
+    #: rewrite them without touching anything else on this snapshot.
+    success_criteria: list[dict[str, Any]]
+    #: The frozen prescription, as stored. Present on both sides so a
+    #: structure-only revision is visible as one.
+    structure: dict[str, Any]
     #: TSS-equivalent; null for strength and whenever it cannot be predicted.
     predicted_load: float | None
     #: Prescribed volume load in kilograms; null for endurance.
     predicted_volume_kg: float | None
+    #: Prescribed seconds; null for strength and for a ride with a
+    #: distance-based step.
+    duration_s: int | None
+    #: Prescribed working sets; null for endurance.
+    total_sets: int | None
 
 
 class ProposalChangeDiff(BaseModel):

@@ -40,6 +40,7 @@ from typing import Any
 from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
+from app.domain.sessions import MAX_INTENT_CHARS
 
 #: Longest rationale a proposal may carry. Generous: this is the agent
 #: explaining itself to a human, and a truncated explanation is worse than a
@@ -161,6 +162,21 @@ class CreateChange:
     intent_text: str | None = None
     coach_notes: str | None = None
     success_criteria: Sequence[Mapping[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        """Bound the free text at the size the intent will accept.
+
+        The same cap `app.domain.sessions.SessionIntent` applies, applied when
+        the change is *built* rather than when it is applied: a proposal
+        carrying 200 000 characters otherwise stores happily, sits in the
+        inbox looking answerable, and refuses every accept until it lapses.
+        A refusal the agent gets back from its own call is one it can fix.
+
+        Raises:
+            ValueError: When either free-text field is over the cap.
+        """
+        _check_intent_text("intent_text", self.intent_text)
+        _check_intent_text("coach_notes", self.coach_notes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +309,18 @@ def _as_text(value: Any, label: str) -> str:
     return value
 
 
+def _check_intent_text(label: str, value: str | None) -> None:
+    """Refuse free text longer than the intent column will ever accept.
+
+    Raises:
+        ValueError: When ``value`` is over :data:`MAX_INTENT_CHARS`.
+    """
+    if value is not None and len(value) > MAX_INTENT_CHARS:
+        raise ValueError(
+            f"{label} must be at most {MAX_INTENT_CHARS} characters, got {len(value)}"
+        )
+
+
 def _optional[T](
     document: Mapping[str, Any], key: str, read: Callable[[Any, str], T]
 ) -> T | None:
@@ -347,7 +375,9 @@ def _parse_update(key: str, value: Any) -> Any:
         case "success_criteria":
             return _as_object_list(value, key)
         case "intent_text" | "coach_notes":
-            return _as_text(value, key)
+            text = _as_text(value, key)
+            _check_intent_text(key, text)
+            return text
         case _:
             return value
 
@@ -629,14 +659,18 @@ def purpose_intensity(purpose: Purpose) -> int:
     return PURPOSE_INTENSITY[purpose]
 
 
-def intensifies(
+def intensifies(  # noqa: PLR0911 — one branch per signal, each with its own sentence
     *,
     before_purpose: Purpose,
     after_purpose: Purpose,
     before_load: float | None = None,
     after_load: float | None = None,
+    before_sets: int | None = None,
+    after_sets: int | None = None,
+    before_duration_s: int | None = None,
+    after_duration_s: int | None = None,
 ) -> str | None:
-    """Say whether a revision makes a planned session harder, and why.
+    """Say whether a revision could make a planned session harder, and why.
 
     The deterministic half of WP-8.4. While the athlete's red flag stands, the
     coaching agent may not propose anything that **adds or intensifies** work;
@@ -644,26 +678,40 @@ def intensifies(
     "intensifies" is answered here, for a revision of a session that already
     exists.
 
-    Two signals, in this order:
+    **The rule fails closed** (D186, superseding D170's fail-open half): while
+    the athlete is ill or injured, a change is refused unless it can be *shown*
+    not to add work. Two things follow from that.
+
+    First, an increase in any of four signals refuses:
 
     1. **Purpose rank.** :data:`PURPOSE_INTENSITY` orders the vocabulary
        within each discipline, and raising the rank intensifies. This is the
        signal that always works: a revision naming only a purpose still has
-       one, which is why the rule cannot rest on predicted load alone.
-    2. **Predicted load.** When *both* sides can be predicted — the change
-       carries a structure and the pinned anchors resolve, on both sides of
-       the same axis — an increase intensifies. When either side is
-       unpredictable the signal is simply absent and rank decides alone,
-       because "we could not compute it" is not evidence of a reduction.
+       one.
+    2. **Predicted load.** TSS-equivalent for a ride, kilograms for a lift —
+       whichever axis the discipline uses, when both sides carry it.
+    3. **Prescribed sets**, which is what a strength session has instead of a
+       load whenever it is bodyweight, RPE or %e1RM work: 3×5 becoming 30×5
+       is priced at no kilograms on either side and is obviously more work.
+    4. **Prescribed duration**, which is what an endurance session has instead
+       of a load whenever no step carries a power target: an unstructured ten
+       minutes becoming an unstructured six hours prices at no TSS on either
+       side and is obviously more work.
 
-    A revision that changes **discipline** intensifies by default: the two
-    rank scales are unrelated (see :data:`PURPOSE_INTENSITY`), so swapping a
-    ride for a lift cannot be *shown* to be a reduction, and the rule refuses
-    what it cannot show while the athlete is ill.
+    Second, a change none of the three *work* signals (load, sets, duration)
+    can be compared on is refused as well, naming that as the reason. A
+    purpose rank is a label, not an amount, so it clears nothing on its own;
+    "we could not compute it" is not evidence of a reduction, and while the
+    athlete is unwell the benefit of that doubt goes to the athlete.
 
-    Moves, deletes and reductions return ``None`` — the athlete stays free to
-    have the plan lightened, rearranged or cleared while unwell, which is
-    what the flag is for.
+    A revision that changes **discipline** intensifies by default for the same
+    reason: the two rank scales are unrelated (see :data:`PURPOSE_INTENSITY`)
+    and so are the two cost axes, so swapping a ride for a lift cannot be
+    shown to be a reduction.
+
+    Moves, deletes and genuine reductions return ``None`` — the athlete stays
+    free to have the plan lightened, rearranged or cleared while unwell, which
+    is what the flag is for.
 
     Args:
         before_purpose: The purpose in force.
@@ -672,11 +720,19 @@ def intensifies(
             discipline uses (TSS-equivalent or kilograms), or ``None``.
         after_load: The predicted cost the change would leave, on the **same**
             axis, or ``None``.
+        before_sets: Prescribed working sets in force, or ``None`` (an
+            endurance prescription has none).
+        after_sets: Prescribed working sets the change would leave.
+        before_duration_s: Prescribed duration in force, or ``None`` (a
+            strength prescription has none, and so does a ride with a
+            distance-based step).
+        after_duration_s: Prescribed duration the change would leave.
 
     Returns:
-        A sentence naming the increase, or ``None`` when the change does not
-        add intensity. The sentence is the refusal the agent is given: a rule
-        it cannot read is a rule it cannot plan around.
+        A sentence naming the increase — or naming what could not be compared
+        — and ``None`` only when the change is shown not to add work. The
+        sentence is the refusal the agent is given: a rule it cannot read is a
+        rule it cannot plan around.
     """
     before_discipline = purpose_discipline(before_purpose)
     after_discipline = purpose_discipline(after_purpose)
@@ -697,4 +753,34 @@ def intensifies(
             f"it raises the predicted load from {before_load:.1f} to "
             f"{after_load:.1f} {unit}"
         )
+    if before_sets is not None and after_sets is not None and after_sets > before_sets:
+        return f"it raises the prescribed sets from {before_sets} to {after_sets}"
+    if (
+        before_duration_s is not None
+        and after_duration_s is not None
+        and after_duration_s > before_duration_s
+    ):
+        return (
+            f"it raises the prescribed duration from "
+            f"{_minutes(before_duration_s)} to {_minutes(after_duration_s)} minutes"
+        )
+    if not _comparable(before_load, after_load) and not (
+        _comparable(before_sets, after_sets)
+        or _comparable(before_duration_s, after_duration_s)
+    ):
+        return (
+            "neither its predicted cost, its prescribed sets nor its "
+            "prescribed duration can be compared with the session as it "
+            "stands, so it cannot be shown not to add work"
+        )
     return None
+
+
+def _comparable(before: float | None, after: float | None) -> bool:
+    """Whether one signal has a value on both sides of the change."""
+    return before is not None and after is not None
+
+
+def _minutes(seconds: int) -> str:
+    """Render a prescribed duration in whole-ish minutes, for a refusal."""
+    return f"{seconds / 60:g}"

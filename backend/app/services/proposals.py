@@ -53,6 +53,7 @@ from app.core.logging import get_logger
 from app.domain.activity import SessionDiscipline, as_planned_discipline
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
+from app.domain.criteria import criteria_to_json
 from app.domain.prediction import PredictedLoad, PredictedVolume
 from app.domain.proposals import (
     MAX_CHANGES,
@@ -73,10 +74,13 @@ from app.domain.proposals import (
     target_of,
 )
 from app.domain.purpose import Purpose
+from app.domain.sessions import SessionStatus
+from app.domain.workout import workout_body_to_json
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit, session_scope
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.persistence.proposals import PlanProposalRepository, PlanProposalRow
+from app.persistence.scoring import SessionReasonsRepository
 from app.services.guardrails import check_write_cap, current_profile, is_agent
 from app.services.planned_sessions import (
     PlannedSessionService,
@@ -129,11 +133,13 @@ class ProposalService:
         repository: PlanProposalRepository,
         audit: AuditRepository,
         planned: PlannedSessionService,
+        reasons: SessionReasonsRepository,
     ) -> None:
         self._session = session
         self._repository = repository
         self._audit = audit
         self._planned = planned
+        self._reasons = reasons
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -143,6 +149,7 @@ class ProposalService:
             PlanProposalRepository(session),
             AuditRepository(session),
             PlannedSessionService.from_session(session),
+            SessionReasonsRepository(session),
         )
 
     # --- reads ---------------------------------------------------------------
@@ -324,7 +331,7 @@ class ProposalService:
         # refuses that when the proposal is written) — otherwise the second of
         # them would apply to a version it validated against but no longer has.
         for index, change in enumerate(changes):
-            await self._check_token(index, change)
+            await self._check_applies(index, change)
 
         for index, change in enumerate(changes):
             applied = await self._apply(change, actor=actor)
@@ -447,11 +454,19 @@ class ProposalService:
         session is about to be scored against, and asking about it at all
         implies the day is still open.
 
-        Matched on the athlete-local **date and discipline**, which is the
-        pairing WP-6 matches on and the pairing a plan entry is placed by. A
-        proposal counts as touching a day if any of its changes does, in
-        either direction: moving a session *off* Tuesday is as much about
-        Tuesday as moving one onto it.
+        Two things close a proposal here, and the second exists because the
+        first is not enough (D188):
+
+        * the recording lands on a **day and discipline** the proposal has
+          something to say about — the pairing a plan entry is placed by, in
+          either direction, since moving a session *off* Tuesday is as much
+          about Tuesday as moving one onto it;
+        * or one of its targets has since **acquired a match**. WP-6 links a
+          recording to a planned session up to a day either side
+          (``CANDIDATE_WINDOW_DAYS``), so a ride on the 12th can answer a
+          session planned for the 11th while this method's date test sees two
+          different days. A link is the truest form of "the athlete has
+          already trained this", and it is the thing scoring runs on.
 
         Changes no plan — like expiry, this is the committed plan standing.
 
@@ -461,7 +476,9 @@ class ProposalService:
         moment = dt.datetime.now(dt.UTC)
         resolved: ProposalRows = []
         for row in await self._repository.pending():
-            if (date, discipline) not in _touched_days(row.diff):
+            spent_day = (date, discipline) in _touched_days(row.diff)
+            matched = None if spent_day else await self._matched_target(row.diff)
+            if not spent_day and matched is None:
                 continue
             row.status = ProposalStatus.RESOLVED_BY_REALITY
             row.resolved_at = moment
@@ -476,12 +493,28 @@ class ProposalService:
                     "discipline": discipline.value,
                     "session_id": None if session_id is None else str(session_id),
                     "proposed_by": row.created_by,
+                    "matched_planned_session": (
+                        None if matched is None else str(matched)
+                    ),
                 },
             )
             resolved.append(row)
         if resolved:
             await commit(self._session)
         return resolved
+
+    async def _matched_target(
+        self, diff: Sequence[Mapping[str, Any]]
+    ) -> uuid.UUID | None:
+        """The first planned session in a diff that now carries a match.
+
+        One probe per target of each *pending* proposal, which is the set the
+        inbox shows the athlete and not a table scan.
+        """
+        for target in sorted(_targets(diff)):
+            if await self._planned.is_matched(target):
+                return target
+        return None
 
     # --- the diff ------------------------------------------------------------
 
@@ -526,12 +559,17 @@ class ProposalService:
                     "workout_id": (
                         None if preview.workout_id is None else str(preview.workout_id)
                     ),
+                    "success_criteria": criteria_to_json(preview.criteria),
+                    "structure": workout_body_to_json(preview.body),
                     **_costs(preview.predicted_load, preview.predicted_volume),
+                    **_sizes(preview.duration_s, preview.total_sets),
                 },
             }
 
         row = await self._planned.get(change.planned_session_id)
         await self._check_token_against(row, change)
+        if isinstance(change, DeleteChange):
+            await self._check_deletable(row)
         resolution = (await self._planned.resolutions([row]))[row.id]
         before = _snapshot(row, resolution)
         entry: dict[str, Any] = {
@@ -550,51 +588,39 @@ class ProposalService:
             entry["after"] = {**before, "date": change.date.isoformat()}
             return entry
 
-        after, preview = await self._preview_update(row, resolution, change)
+        after, preview = await self._preview_update(row, change)
         entry["after"] = after
-        entry["discipline"] = (
-            preview.discipline.value if preview is not None else row.discipline.value
-        )
+        entry["discipline"] = preview.discipline.value
         return entry
 
     async def _preview_update(
-        self,
-        row: PlannedSessionRow,
-        resolution: SessionResolution,
-        change: UpdateChange,
-    ) -> tuple[dict[str, Any], PrescriptionPreview | None]:
-        """Price a revision against the pins the session already froze.
+        self, row: PlannedSessionRow, change: UpdateChange
+    ) -> tuple[dict[str, Any], PrescriptionPreview]:
+        """Price a revision against the anchors **accepting it would pin**.
 
-        Against its own pins, not today's: invariant 4 says a prescription
-        freezes, and a before/after comparison run on two different anchor
-        versions would report an FTP test as a change to the workout.
+        Through `PlannedSessionService.preview_update`, which shares its
+        resolver with `stage_update`: same purpose, same body, same criteria,
+        same pins, so the stored diff is what the accept produces rather than
+        an approximation of it.
+
+        The pins are the subtle half, and getting them from the same place is
+        the whole fix (D185). Invariant 4 freezes a prescription at creation
+        **or last pre-execution edit**, so revising a session nobody has ridden
+        yet re-pins it to the anchors in force now: a note-only edit written
+        after an FTP test really does re-price the session, and the diff has to
+        say so or the athlete accepts one number and gets another. A session
+        that *has* been matched keeps the pins it was executed against, and the
+        preview keeps them too.
+
+        ``before`` is priced separately, as the session stands (:func:`_snapshot`)
+        — the two sides are a *this becomes that*, not two readings of one
+        prescription.
         """
         # The patch's field names and value types were checked when the change
         # was built (`UpdateChange.__post_init__`), so everything read here is
         # already in the types the plan service works in.
         current = row.current_intent
-        purpose = change.updates.get("purpose", current.purpose)
-        carries_body = "workout_id" in change.updates or "structure" in change.updates
-        preview = await self._planned.preview(
-            purpose=purpose,
-            workout_id=change.updates.get("workout_id") if carries_body else None,
-            structure=(
-                change.updates.get("structure")
-                if carries_body
-                else dict(current.structure)
-            ),
-            success_criteria=change.updates.get("success_criteria"),
-            anchors=resolution.anchors,
-        )
-        # The link survives a body-less revision, so the diff has to say so.
-        # Pricing an untouched prescription goes through the session's own
-        # frozen structure (above) rather than its library workout — resolving
-        # the workout again would price today's version of it against
-        # yesterday's pins — and `preview` answers about what it was handed,
-        # which is an inline document with no workout behind it. Reading that
-        # `None` back out would show the athlete a change `stage_update` is
-        # not going to make.
-        after_workout_id = preview.workout_id if carries_body else current.workout_id
+        preview = await self._planned.preview_update(row, change.updates)
         after = {
             "date": _as_date(change.updates.get("date", row.date)),
             "purpose": preview.purpose.value,
@@ -604,8 +630,16 @@ class ProposalService:
             "status": _as_text(row.status),
             "intent_text": change.updates.get("intent_text", current.intent_text),
             "coach_notes": change.updates.get("coach_notes", current.coach_notes),
-            "workout_id": None if after_workout_id is None else str(after_workout_id),
+            # The link survives a body-less revision — `stage_update` leaves it
+            # alone — and `preview_update` reports the same, so a note-only
+            # edit no longer reads as "the prescription is being thrown away".
+            "workout_id": (
+                None if preview.workout_id is None else str(preview.workout_id)
+            ),
+            "success_criteria": criteria_to_json(preview.criteria),
+            "structure": workout_body_to_json(preview.body),
             **_costs(preview.predicted_load, preview.predicted_volume),
+            **_sizes(preview.duration_s, preview.total_sets),
         }
         return after, preview
 
@@ -648,8 +682,19 @@ class ProposalService:
                 "move or a deletion, or wait until the flag is cleared."
             )
 
-    async def _check_token(self, index: int, change: PlanChange) -> None:
-        """Re-check one change's concurrency token at accept time."""
+    async def _check_applies(self, index: int, change: PlanChange) -> None:
+        """Re-check at accept time that one change may still be applied.
+
+        Three questions, all of them about the world having moved since the
+        proposal was written: does the target still exist, is its concurrency
+        token still in force, and — the one a token cannot answer — has the
+        athlete meanwhile *trained* it (D188). A match is the truest form of
+        "this day is spent": the recording is already being scored against the
+        prescription as it stands, and rewriting or moving that prescription
+        now would rewrite what the ride is judged by. A 409, because the
+        request is well formed and it is the state of the resource that
+        refuses it.
+        """
         if isinstance(change, CreateChange):
             return
         try:
@@ -661,6 +706,49 @@ class ProposalService:
                 "proposal stands; propose again against the plan as it is."
             ) from exc
         await self._check_token_against(row, change, index=index)
+        if await self._planned.is_matched(row.id):
+            raise ConflictError(
+                f"Change {index}: planned session {row.id} has since been "
+                "matched to a recorded session, so it is no longer a question "
+                "the athlete can be asked. The committed plan stands; the ride "
+                "is scored against the prescription it was executed under."
+            )
+        if isinstance(change, DeleteChange):
+            try:
+                await self._check_deletable(row)
+            except ValidationError as exc:
+                raise ConflictError(f"Change {index}: {exc.detail}") from exc
+
+    async def _check_deletable(self, row: PlannedSessionRow) -> None:
+        """Refuse a proposed deletion of a session the athlete has executed.
+
+        Deleting a planned session cascades: the match link goes, the reasons
+        the athlete wrote about it go, and the scores that named it are left
+        pointing at nothing (D189). None of that is a plan change, and none of
+        it is the agent's to make — the agent may argue with the plan and never
+        with the record of what happened. A plain unridden planned session
+        stays deletable, which is what the verb is for.
+
+        Checked when the proposal is written and again when it is accepted:
+        the session may be ridden in between.
+
+        Raises:
+            ValidationError: When the session is completed, matched, or
+                carries declared reasons. The message says which.
+        """
+        if row.status is SessionStatus.COMPLETED:
+            reason = "it is marked completed"
+        elif await self._planned.is_matched(row.id):
+            reason = "a recorded session is matched to it"
+        elif await self._reasons.for_planned_session(row.id):
+            reason = "the athlete has declared reasons against it"
+        else:
+            return
+        raise ValidationError(
+            f"Planned session {row.id} cannot be deleted by proposal because "
+            f"{reason}: deleting it would destroy the record of what the "
+            "athlete did. Propose a revision, or move it."
+        )
 
     async def _check_token_against(
         self,
@@ -814,12 +902,28 @@ def _costs(
     }
 
 
+def _sizes(duration_s: int | None, total_sets: int | None) -> dict[str, Any]:
+    """How much of it there is, as JSON. At most one is ever populated.
+
+    Seconds for a ride and working sets for a lift: the sizes that survive the
+    cases where neither cost axis can be computed, which is where a diff that
+    carried costs alone stopped being able to say anything at all — and where
+    the red-flag rule stopped being able to refuse (D186).
+    """
+    return {"duration_s": duration_s, "total_sets": total_sets}
+
+
 def _snapshot(row: PlannedSessionRow, resolution: SessionResolution) -> dict[str, Any]:
     """One planned session as the diff's ``before``.
 
     Carries its own ``discipline`` — the entry-level one is the discipline the
     change *leaves*, and a revision may change it, so a snapshot that borrowed
     it would report the wrong half of the story (see :func:`_touched_days`).
+
+    Every field a change may touch is here, on both sides, including the two
+    documents: a diff that omitted ``success_criteria`` and ``structure``
+    showed an athlete "nothing differs" above an enabled Accept button for a
+    change that rewrote how the session is judged (D185).
     """
     intent = row.current_intent
     return {
@@ -830,7 +934,10 @@ def _snapshot(row: PlannedSessionRow, resolution: SessionResolution) -> dict[str
         "intent_text": intent.intent_text,
         "coach_notes": intent.coach_notes,
         "workout_id": None if intent.workout_id is None else str(intent.workout_id),
+        "success_criteria": list(intent.success_criteria),
+        "structure": dict(intent.structure),
         **_costs(resolution.predicted_load, resolution.predicted_volume),
+        **_sizes(resolution.duration_s, resolution.total_sets),
     }
 
 
@@ -851,6 +958,10 @@ def _intensifies(entry: Mapping[str, Any]) -> str | None:
         after_purpose=Purpose(after["purpose"]),
         before_load=_axis(before),
         after_load=_axis(after),
+        before_sets=before.get("total_sets"),
+        after_sets=after.get("total_sets"),
+        before_duration_s=before.get("duration_s"),
+        after_duration_s=after.get("duration_s"),
     )
 
 
@@ -993,17 +1104,33 @@ def _clean_note(reason: str | None) -> str | None:
 
 
 def _check_expiry(expires_at: dt.datetime) -> None:
-    """Reject a deadline that is naive or already past.
+    """Reject a deadline that is naive, already past, or absurdly far off.
+
+    The horizon is not decoration (D187). Nothing pages
+    :meth:`PlanProposalRepository.pending`, and it is scanned on every propose
+    **and** on every recorded session, so a proposal dated year 9999 is a row
+    the expiry sweep never reaches and every later write pays for. It is also
+    not a suggestion any more: a question the athlete has ten thousand years to
+    answer is one the plan can never be said to have settled.
 
     Raises:
         ValidationError: When ``expires_at`` carries no timezone (the column
-            would refuse it as a 500) or does not lie in the future (a
-            proposal born lapsed asks a question nobody can answer).
+            would refuse it as a 500), does not lie in the future (a proposal
+            born lapsed asks a question nobody can answer), or lies beyond
+            `ProposalSettings.max_horizon_days`.
     """
     if expires_at.tzinfo is None:
         raise ValidationError("expires_at must carry a timezone")
-    if expires_at <= dt.datetime.now(dt.UTC):
+    now = dt.datetime.now(dt.UTC)
+    if expires_at <= now:
         raise ValidationError("expires_at must be in the future")
+    horizon_days = get_settings().proposals.max_horizon_days
+    if expires_at > now + dt.timedelta(days=horizon_days):
+        raise ValidationError(
+            f"expires_at must be within {horizon_days} days: a suggestion that "
+            "stands for longer than that is not one the athlete is being asked "
+            "to answer."
+        )
 
 
 # --- wiring ---------------------------------------------------------------------
