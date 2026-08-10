@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import type { WeekSession } from "@/components/calendar/session-card";
+import { RedFlagControl } from "@/components/coach/red-flag";
 import { AnchorProvenance } from "@/components/design/anchor-provenance";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
@@ -72,7 +73,8 @@ export function TodayView() {
         <span className="font-mono text-ink-muted text-sm">
           {weekdayLabel(today)} {formatDayMonthYear(today)}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <RedFlagControl />
           <Button size="sm" onClick={() => setPlanning(true)}>
             Plan a session
           </Button>

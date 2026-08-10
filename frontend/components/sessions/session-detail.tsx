@@ -5,6 +5,7 @@ import Link from "next/link";
 import type * as React from "react";
 import { useEffect, useId, useState } from "react";
 
+import { SessionCoachNotes } from "@/components/coach/coach-notes";
 import { Field } from "@/components/design/field";
 import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
@@ -65,9 +66,10 @@ export interface SessionDetailProps {
  *
  * The mockup's right-hand column is filled in by work package: WP-7's
  * execution axes and the verdict the athlete declares on them are the
- * `ScoringPanel` below the link, and the WP-8 coach evaluation is still
- * deliberately absent — a stubbed panel would be a claim about a session
- * nothing has evaluated.
+ * `ScoringPanel` below the link, and WP-8's coach evaluation is the
+ * `SessionCoachNotes` under that — which draws nothing at all when no agent
+ * has written about this session, because a stubbed panel would be a claim
+ * about a session nothing has evaluated.
  */
 export function SessionDetail({ sessionId }: SessionDetailProps) {
   const valid = isUuid(sessionId);
@@ -165,6 +167,12 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
             panel's own empty state is the sentence explaining that an
             unanswered proposal is a question rather than a link. */}
         <ScoringPanel session={session} />
+
+        {/* And directly under the judgement, because it is a *second opinion*
+            on it: the axes above are computed and the note below is written,
+            and the coach's purple is what says which is which. Absent when
+            the coach has said nothing (D183). */}
+        <SessionCoachNotes sessionId={session.id} />
 
         <section className="flex flex-col gap-2.5">
           <SectionLabel level={2}>Session</SectionLabel>

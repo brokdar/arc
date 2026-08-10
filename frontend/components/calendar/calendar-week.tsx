@@ -11,6 +11,7 @@ import {
 import { SessionSheet } from "@/components/calendar/session-sheet";
 import { WeekGrid } from "@/components/calendar/week-grid";
 import { WeekRail } from "@/components/calendar/week-rail";
+import { WeekCoachNotes } from "@/components/coach/coach-notes";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -415,6 +416,14 @@ export function CalendarWeek() {
             </div>
           </div>
         )}
+
+        {/* Under the week, not above it: the coach's reading of a block is
+            read *after* the block, and putting commentary between the athlete
+            and the seven days they came for would make the plan the smaller
+            half of its own page. */}
+        <div className="mt-5">
+          <WeekCoachNotes week={start} />
+        </div>
       </PageBody>
 
       <SessionSheet
