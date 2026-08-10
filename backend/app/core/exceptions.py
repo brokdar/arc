@@ -69,6 +69,18 @@ class ForbiddenError(AppError):
     status_code = status.HTTP_403_FORBIDDEN
 
 
+class RedFlagError(ForbiddenError):
+    """The athlete's illness/injury flag forbids this write (WP-8.4).
+
+    A subclass rather than a status of its own because it is the same
+    answer — "we know who you are, and this operation is not yours" — with a
+    different subject: not the actor's identity but the state of the athlete.
+    The coaching agent is refused *while the flag stands*, and the refusal has
+    to say which change tripped it and why, because "add or intensify" is a
+    rule the agent can plan around once it is told.
+    """
+
+
 class NotFoundError(AppError):
     """The requested resource does not exist."""
 
@@ -85,6 +97,18 @@ class ValidationError(AppError):
     """The request is semantically invalid beyond schema validation."""
 
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class RateLimitedError(AppError):
+    """The caller has spent its write budget for the period (WP-8.3).
+
+    The circuit breaker on the agent surface: a coaching agent in a loop can
+    rewrite a training plan faster than the athlete can read the inbox, and
+    the cap is what bounds the damage. 429 rather than 403 because it is
+    temporary and the remedy is to wait — the message says until when.
+    """
+
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
 
 
 class MethodNotAllowedError(AppError):

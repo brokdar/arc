@@ -34,6 +34,15 @@ query (:func:`_has_a_match`) and WP-7 the second with a real rescore
 (:func:`_rescore`); both seams stay, because they are what let a test drive the
 freeze rule without building a link and observe the rescore without building a
 score.
+
+**Every write verb comes in two.** ``create``/``update``/``move``/``delete``
+are the use-cases and they commit, as the convention says. ``stage_create`` and
+its three siblings are the same use-cases **without** the commit, for the one
+caller that needs several plan changes to land or fail together: WP-8's
+proposal accept (`app.services.proposals`). The public verb is its staged twin
+plus a commit — the versioning, the pinning and the audit rows are written once
+each — so an agent-applied change and an athlete-applied one cannot become
+different operations.
 """
 
 import datetime as dt
@@ -47,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.anchors import AnchorType
+from app.domain.athlete import Discipline
 from app.domain.criteria import (
     SuccessCriterion,
     criteria_from_json,
@@ -199,6 +209,39 @@ class SessionResolution:
 
     anchors: Mapping[AnchorType, PinnedAnchor]
     steps: tuple[ResolvedStep, ...]
+    predicted_load: PredictedLoad | None
+    predicted_volume: PredictedVolume | None
+
+
+@dataclass(frozen=True, slots=True)
+class PrescriptionPreview:
+    """A prescription checked and priced, but not stored.
+
+    What :meth:`PlannedSessionService.preview` answers with. It is the
+    read-only half of creating or revising a session: everything derived, and
+    nothing written — see that method for who needs it and why.
+
+    Args:
+        purpose: The purpose it was checked against.
+        discipline: The discipline that purpose belongs to.
+        body: The parsed prescription.
+        workout_id: The library workout it came from, or ``None`` for an
+            inline document.
+        criteria: The success criteria in force — supplied or from the
+            purpose template.
+        anchors: The anchor versions it resolved against.
+        predicted_load: TSS-equivalent for an endurance prescription, else
+            ``None`` (also ``None`` when it cannot honestly be predicted).
+        predicted_volume: Kilograms for a strength prescription, else
+            ``None``. Never add one to the other.
+    """
+
+    purpose: Purpose
+    discipline: Discipline
+    body: WorkoutBody
+    workout_id: uuid.UUID | None
+    criteria: tuple[SuccessCriterion, ...]
+    anchors: Mapping[AnchorType, PinnedAnchor]
     predicted_load: PredictedLoad | None
     predicted_volume: PredictedVolume | None
 
@@ -364,6 +407,71 @@ class PlannedSessionService:
             )
         return resolved
 
+    async def preview(
+        self,
+        *,
+        purpose: Purpose,
+        workout_id: uuid.UUID | None = None,
+        structure: Mapping[str, Any] | None = None,
+        success_criteria: Sequence[Mapping[str, Any]] | None = None,
+        anchors: Mapping[AnchorType, PinnedAnchor] | None = None,
+    ) -> PrescriptionPreview:
+        """Validate a prescription and say what it would cost, storing nothing.
+
+        Everything :meth:`stage_create` does up to the first ``INSERT``, and
+        that is the point: WP-8's dry run has to answer "would this be
+        accepted, and what would it do" without leaving a row behind, and its
+        red-flag rule has to predict the load of a prescription that may never
+        be stored. A second implementation of those checks would be a second
+        opinion on what a legal prescription is.
+
+        Args:
+            purpose: What the session would be for.
+            workout_id: A library workout, or ``None``.
+            structure: An inline prescription, or ``None``. Exactly one of the
+                two, as everywhere else.
+            success_criteria: Criteria to check, or ``None`` for the purpose
+                template's.
+            anchors: Resolve against **these** anchor versions instead of
+                pinning what is in force. This is how a revision is priced
+                against the pins the session already froze — comparing a new
+                prescription's cost with the old one's is only meaningful on
+                one set of anchors (invariant 4). ``None`` pins what is in
+                force now, which is what planning a new session does.
+
+        Raises:
+            ValidationError: When the prescription is illegal, names neither
+                or both sources, or (when ``anchors`` is ``None``) refers to an
+                anchor with no version in force.
+            NotFoundError: When ``workout_id`` names no library workout.
+        """
+        body, resolved_workout_id = await self.resolve_body(workout_id, structure)
+        criteria = await self._resolve_criteria(purpose, success_criteria)
+        with domain_rules():
+            check_prescription(purpose, body, criteria)
+        if anchors is None:
+            pins = await self._pin_anchors(_anchor_sources(body, criteria))
+            versions = await self._anchors.by_ids(pins.values())
+            resolved = resolve_pins(pins, versions)
+        else:
+            resolved = anchors
+        load: PredictedLoad | None = None
+        volume: PredictedVolume | None = None
+        if isinstance(body, StrengthWorkout):
+            volume = predict_strength_volume(body)
+        else:
+            load = predict_endurance_load(body, resolved)
+        return PrescriptionPreview(
+            purpose=purpose,
+            discipline=purpose_discipline(purpose),
+            body=body,
+            workout_id=resolved_workout_id,
+            criteria=tuple(criteria),
+            anchors=resolved,
+            predicted_load=load,
+            predicted_volume=volume,
+        )
+
     async def save(self, row: PlannedSessionRow) -> PlannedSessionRow:
         """Persist a modified planned session without versioning anything.
 
@@ -399,7 +507,7 @@ class PlannedSessionService:
         coach_notes: str | None = None,
         success_criteria: Sequence[Mapping[str, Any]] | None = None,
     ) -> PlannedSessionRow:
-        """Plan a session, freezing its prescription.
+        """Plan a session, freezing its prescription, and commit.
 
         The prescription comes from the library (``workout_id``) or inline
         (``structure``) — exactly one. Success criteria default to the
@@ -411,7 +519,34 @@ class PlannedSessionService:
                 an anchor with no version in force.
             NotFoundError: When ``workout_id`` names no library workout.
         """
-        body, resolved_workout_id = await self._resolve_body(workout_id, structure)
+        row = await self.stage_create(
+            actor=actor,
+            date=date,
+            purpose=purpose,
+            workout_id=workout_id,
+            structure=structure,
+            intent_text=intent_text,
+            coach_notes=coach_notes,
+            success_criteria=success_criteria,
+        )
+        await commit(self._session)
+        await self._session.refresh(row)
+        return row
+
+    async def stage_create(
+        self,
+        *,
+        actor: Actor,
+        date: dt.date,
+        purpose: Purpose,
+        workout_id: uuid.UUID | None = None,
+        structure: Mapping[str, Any] | None = None,
+        intent_text: str | None = None,
+        coach_notes: str | None = None,
+        success_criteria: Sequence[Mapping[str, Any]] | None = None,
+    ) -> PlannedSessionRow:
+        """:meth:`create` without the commit — see :meth:`stage_delete`."""
+        body, resolved_workout_id = await self.resolve_body(workout_id, structure)
         criteria = await self._resolve_criteria(purpose, success_criteria)
         # Shape first, pins second: resolving anchors is a round-trip per
         # anchor, and its error ("no FTP is in force") would otherwise mask
@@ -453,11 +588,31 @@ class PlannedSessionService:
             entity_id=row.id,
             payload=_payload(row, intent, version=FIRST_VERSION),
         )
+        return row
+
+    async def update(
+        self,
+        planned_session_id: uuid.UUID,
+        updates: Mapping[str, Any],
+        *,
+        actor: Actor,
+    ) -> PlannedSessionRow:
+        """Update a planned session, versioning its intent if intent changed, and commit.
+
+        See :meth:`stage_update` for the rules; this wraps it in a commit.
+
+        Raises:
+            NotFoundError: When the session (or a referenced workout) does not
+                exist.
+            ValidationError: When a field is unknown, empty, cleared or
+                illegal.
+        """
+        row = await self.stage_update(planned_session_id, updates, actor=actor)
         await commit(self._session)
         await self._session.refresh(row)
         return row
 
-    async def update(
+    async def stage_update(
         self,
         planned_session_id: uuid.UUID,
         updates: Mapping[str, Any],
@@ -525,11 +680,24 @@ class PlannedSessionService:
                     "intent_version": row.current_intent.version,
                 },
             )
+        return row
+
+    async def move(
+        self, planned_session_id: uuid.UUID, *, date: dt.date, actor: Actor
+    ) -> PlannedSessionRow:
+        """Move a planned session to another date, and commit.
+
+        See :meth:`stage_move`.
+
+        Raises:
+            NotFoundError: When no session has that id.
+        """
+        row = await self.stage_move(planned_session_id, date=date, actor=actor)
         await commit(self._session)
         await self._session.refresh(row)
         return row
 
-    async def move(
+    async def stage_move(
         self, planned_session_id: uuid.UUID, *, date: dt.date, actor: Actor
     ) -> PlannedSessionRow:
         """Move a planned session to another date.
@@ -559,8 +727,6 @@ class PlannedSessionService:
                 "intent_version": row.current_intent.version,
             },
         )
-        await commit(self._session)
-        await self._session.refresh(row)
         return row
 
     async def copy(
@@ -639,7 +805,29 @@ class PlannedSessionService:
         return row
 
     async def delete(self, planned_session_id: uuid.UUID, *, actor: Actor) -> None:
-        """Remove a planned session and its whole intent chain.
+        """Remove a planned session and its whole intent chain, and commit.
+
+        Raises:
+            NotFoundError: When no session has that id.
+        """
+        await self.stage_delete(planned_session_id, actor=actor)
+        await commit(self._session)
+
+    async def stage_delete(
+        self, planned_session_id: uuid.UUID, *, actor: Actor
+    ) -> None:
+        """Remove a planned session and its whole intent chain, without committing.
+
+        One of the four ``stage_*`` methods, and the reason they exist: WP-8's
+        proposals apply several plan changes as **one** transaction, so the
+        commit cannot live inside each change. The public verbs above are these
+        four plus a commit — they are the same use-case, and the audit rows,
+        the intent versioning and the freeze rule are written once, here, so
+        the two entry points can never drift apart on what a plan change is.
+
+        A ``stage_*`` caller owns the transaction and must commit (or let it
+        roll back); see `app.persistence.db` for why the commit belongs to the
+        use-case rather than to the session's teardown.
 
         Raises:
             NotFoundError: When no session has that id.
@@ -659,7 +847,6 @@ class PlannedSessionService:
             entity_id=planned_session_id,
             payload=payload,
         )
-        await commit(self._session)
 
     # --- the freeze rule -----------------------------------------------------
 
@@ -672,7 +859,7 @@ class PlannedSessionService:
 
         purpose = updates.get("purpose", current.purpose)
         if "workout_id" in updates or "structure" in updates:
-            body, workout_id = await self._resolve_body(
+            body, workout_id = await self.resolve_body(
                 updates.get("workout_id"), updates.get("structure")
             )
         else:
@@ -790,10 +977,15 @@ class PlannedSessionService:
                 coach_notes=coach_notes,
             )
 
-    async def _resolve_body(
+    async def resolve_body(
         self, workout_id: uuid.UUID | None, structure: Mapping[str, Any] | None
     ) -> tuple[WorkoutBody, uuid.UUID | None]:
         """Resolve the prescription from the library or from an inline document.
+
+        Read-only, and public because WP-8's red-flag rule needs it: deciding
+        whether a proposed revision *intensifies* means predicting the load of
+        a prescription that has not been stored, and this is the one place
+        that turns "a workout id or an inline document" into a domain body.
 
         Raises:
             ValidationError: When neither or both are given, or the inline

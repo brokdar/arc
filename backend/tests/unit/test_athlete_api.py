@@ -268,3 +268,85 @@ async def test_update_bootstraps_and_updates_in_one_transaction(
         "athlete.created",
         "athlete.updated",
     ]
+
+
+# --- the illness/injury red flag (WP-8.4) ---------------------------------------
+
+
+async def test_the_flag_is_down_on_a_fresh_profile(client: AsyncClient) -> None:
+    profile = (await client.get(ATHLETE)).json()
+
+    assert profile["red_flag_active"] is False
+    assert profile["red_flag_note"] is None
+    assert profile["red_flag_severity"] is None
+
+
+async def test_the_red_flag_round_trips_through_patch(client: AsyncClient) -> None:
+    response = await client.patch(
+        ATHLETE,
+        json={
+            "red_flag_active": True,
+            "red_flag_severity": "severe",
+            "red_flag_note": "torn calf, six weeks",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["red_flag_active"] is True
+    assert response.json()["red_flag_severity"] == "severe"
+    assert response.json()["red_flag_note"] == "torn calf, six weeks"
+    assert (await client.get(ATHLETE)).json() == response.json()
+
+
+async def test_raising_the_flag_without_a_severity_is_refused(
+    client: AsyncClient,
+) -> None:
+    # "Ill, severity unknown" is a state the coaching agent would have to
+    # guess about and the athlete would have to remember they left behind.
+    response = await client.patch(ATHLETE, json={"red_flag_active": True})
+
+    assert response.status_code == 422
+    assert "red_flag_severity is required" in response.json()["detail"]
+
+
+async def test_a_severity_without_an_active_flag_is_refused(
+    client: AsyncClient,
+) -> None:
+    response = await client.patch(ATHLETE, json={"red_flag_severity": "mild"})
+
+    assert response.status_code == 422
+    assert "only be set while red_flag_active is set" in response.json()["detail"]
+
+
+async def test_lowering_the_flag_retracts_the_note_and_the_severity(
+    client: AsyncClient,
+) -> None:
+    # One field is enough to say "I am better": last month's `severe` must
+    # never read as current, and the athlete should not have to tidy up.
+    await client.patch(
+        ATHLETE,
+        json={
+            "red_flag_active": True,
+            "red_flag_severity": "moderate",
+            "red_flag_note": "flu",
+        },
+    )
+
+    response = await client.patch(ATHLETE, json={"red_flag_active": False})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["red_flag_active"] is False
+    assert response.json()["red_flag_severity"] is None
+    assert response.json()["red_flag_note"] is None
+
+
+async def test_an_explicit_null_lowers_the_flag(client: AsyncClient) -> None:
+    await client.patch(
+        ATHLETE, json={"red_flag_active": True, "red_flag_severity": "mild"}
+    )
+
+    response = await client.patch(ATHLETE, json={"red_flag_active": None})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["red_flag_active"] is False
+    assert response.json()["red_flag_severity"] is None

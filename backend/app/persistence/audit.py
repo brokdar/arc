@@ -78,6 +78,29 @@ class AuditRepository:
         await flush(self._session)
         return entry
 
+    async def count_since(self, *, actor_prefix: str, since: dt.datetime) -> int:
+        """Count rows written at or after ``since`` by an actor with this prefix.
+
+        The trailing-window query behind WP-8.3's rate cap. It counts the
+        **audit log** rather than a counter table because the audit log is
+        already the record of every write the guardrail is trying to bound —
+        a separate counter could disagree with it, and the one that would be
+        believed is the one nobody is looking at.
+
+        ``actor_prefix`` is matched with ``LIKE 'prefix%'``, so ``agent:``
+        covers every key label at once. Both indexed columns
+        (``actor``, ``at``) are in the predicate.
+        """
+        total = await self._session.scalar(
+            select(func.count())
+            .select_from(AuditLogEntry)
+            .where(
+                AuditLogEntry.actor.startswith(actor_prefix),
+                AuditLogEntry.at >= since,
+            )
+        )
+        return total or 0
+
     async def list(
         self, *, offset: int = 0, limit: int = 50
     ) -> tuple[Sequence[AuditLogEntry], int]:

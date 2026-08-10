@@ -401,6 +401,31 @@
           "plan_state": {
             "$ref": "#/components/schemas/PlanState"
           },
+          "red_flag_active": {
+            "title": "Red Flag Active",
+            "type": "boolean"
+          },
+          "red_flag_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Red Flag Note"
+          },
+          "red_flag_severity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedFlagSeverity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sex": {
             "$ref": "#/components/schemas/Sex"
           },
@@ -417,6 +442,9 @@
           "height_cm",
           "capabilities",
           "plan_state",
+          "red_flag_active",
+          "red_flag_note",
+          "red_flag_severity",
           "created_at",
           "updated_at"
         ],
@@ -425,7 +453,7 @@
       },
       "AthleteUpdate": {
         "additionalProperties": false,
-        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex``, ``capabilities`` and ``plan_state``, \"clear\" means back to\n``unspecified``, ``{}`` and ``active`` \u2014 those three have an empty value\nrather than an absent one).",
+        "description": "Payload for partially updating the profile.\n\nOmitted fields are left unchanged; an explicit ``null`` clears a field\n(for ``sex``, ``capabilities``, ``plan_state`` and ``red_flag_active``,\n\"clear\" means back to ``unspecified``, ``{}``, ``active`` and ``false`` \u2014\nthose four have an empty value rather than an absent one).",
         "properties": {
           "capabilities": {
             "anyOf": [
@@ -482,6 +510,41 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/PlanState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "red_flag_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Red Flag Active"
+          },
+          "red_flag_note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Red Flag Note"
+          },
+          "red_flag_severity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedFlagSeverity"
               },
               {
                 "type": "null"
@@ -649,6 +712,12 @@
         "required": ["channel", "limit", "max_seconds_above"],
         "title": "CeilingSchema",
         "type": "object"
+      },
+      "ChangeKind": {
+        "description": "The four things a plan change can be.",
+        "enum": ["create", "update", "move", "delete"],
+        "title": "ChangeKind",
+        "type": "string"
       },
       "Channel": {
         "description": "A prescribable (and recordable) measurement channel.",
@@ -2282,6 +2351,32 @@
         "title": "Page[PlannedSessionListItem]",
         "type": "object"
       },
+      "Page_ProposalRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit"],
+        "title": "Page[ProposalRead]",
+        "type": "object"
+      },
       "Page_QuarantineRecordRead_": {
         "properties": {
           "items": {
@@ -3355,6 +3450,304 @@
         "title": "PredictedVolumeRead",
         "type": "object"
       },
+      "ProposalChangeDiff": {
+        "description": "What one change would do, computed when the proposal was written.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposalSessionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposalSessionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
+          "expected_intent_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Intent Version"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChangeKind"
+          },
+          "planned_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Session Id"
+          }
+        },
+        "required": [
+          "kind",
+          "planned_session_id",
+          "date",
+          "discipline",
+          "expected_intent_version",
+          "before",
+          "after"
+        ],
+        "title": "ProposalChangeDiff",
+        "type": "object"
+      },
+      "ProposalRead": {
+        "description": "A plan-change proposal as returned by the API.",
+        "properties": {
+          "changes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "diff": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalChangeDiff"
+            },
+            "title": "Diff",
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProposalStatus"
+          },
+          "superseded_by_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Id"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "rationale",
+          "changes",
+          "diff",
+          "expires_at",
+          "created_by",
+          "created_at",
+          "resolved_at",
+          "resolution_note",
+          "supersedes_id",
+          "superseded_by_id"
+        ],
+        "title": "ProposalRead",
+        "type": "object"
+      },
+      "ProposalReject": {
+        "additionalProperties": false,
+        "description": "Payload for declining a proposal.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ProposalReject",
+        "type": "object"
+      },
+      "ProposalSessionSnapshot": {
+        "description": "One planned session as it stands, or as a change would leave it.\n\nThe two prediction axes are both here and exactly one is ever populated:\nan endurance session has a TSS-equivalent and no kilograms, a strength one\nhas kilograms and no TSS. They are different quantities and must never be\nadded or shown in one column.",
+        "properties": {
+          "coach_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Notes"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "predicted_load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Load"
+          },
+          "predicted_volume_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Volume Kg"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "status": {
+            "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "workout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workout Id"
+          }
+        },
+        "required": [
+          "date",
+          "purpose",
+          "status",
+          "intent_text",
+          "coach_notes",
+          "workout_id",
+          "predicted_load",
+          "predicted_volume_kg"
+        ],
+        "title": "ProposalSessionSnapshot",
+        "type": "object"
+      },
+      "ProposalStatus": {
+        "description": "Where a plan-change proposal stands.\n\n``PENDING`` is the only non-terminal member; see the module docstring for\nwhat each of the five exits means.",
+        "enum": [
+          "pending",
+          "accepted",
+          "rejected",
+          "lapsed",
+          "superseded",
+          "resolved_by_reality"
+        ],
+        "title": "ProposalStatus",
+        "type": "string"
+      },
       "Provenance": {
         "description": "Where an anchor value came from \u2014 ordered weakest to strongest.\n\nThe order matters: it is what later work packages compare when deciding\nwhether a new value should displace the one in use.",
         "enum": ["assumed", "estimated", "athlete_reported", "tested"],
@@ -3936,6 +4329,12 @@
         "required": ["start_index", "end_index"],
         "title": "RecordingStopRead",
         "type": "object"
+      },
+      "RedFlagSeverity": {
+        "description": "How bad the illness or injury is (WP-8.4).\n\nThree grades and no numbers: the athlete is answering this on a phone\nwhile feeling unwell, and a scale finer than \"mild / moderate / severe\"\nwould be answered inconsistently and read as if it were not.\n\nThe MVP's safety rule is deterministic and reads the *boolean* only \u2014 a\nflag of any grade refuses every proposal that adds or intensifies work\n(`app.domain.proposals.intensifies`). The grade is carried so the coaching\nagent can say something useful about it, and so a later autonomy tier has\nsomething to graduate on; it is never the difference between allowed and\nrefused.",
+        "enum": ["mild", "moderate", "severe"],
+        "title": "RedFlagSeverity",
+        "type": "string"
       },
       "RepeatBlockSchema-Input": {
         "additionalProperties": false,
@@ -9360,6 +9759,328 @@
         ],
         "summary": "Answer Missed Session Prompt",
         "tags": ["scores"]
+      }
+    },
+    "/api/v1/proposals": {
+      "get": {
+        "description": "List proposals, newest first.\n\nNewest first because this is an inbox: the thing to answer is the thing\nthat just arrived. Filter with `?status=pending` for the ones still\nstanding.",
+        "operationId": "proposals-list_proposals",
+        "parameters": [
+          {
+            "description": "Restrict to one status; omit for all of them.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ProposalStatus",
+              "description": "Restrict to one status; omit for all of them."
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ProposalRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Proposals",
+        "tags": ["proposals"]
+      }
+    },
+    "/api/v1/proposals/{proposal_id}": {
+      "get": {
+        "description": "Get one proposal with its rationale and its computed diff.",
+        "operationId": "proposals-get_proposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such proposal"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Proposal",
+        "tags": ["proposals"]
+      }
+    },
+    "/api/v1/proposals/{proposal_id}/accept": {
+      "post": {
+        "description": "Apply every change in a proposal, atomically.\n\nThe concurrency tokens are re-checked first: a proposal can stand for days\nand the plan is the athlete's to edit meanwhile, so one whose session has\nbeen revised since is refused with a 409 and **stays pending** \u2014 it may\nstill be a good suggestion against the plan as it now stands.",
+        "operationId": "proposals-accept_proposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such proposal"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The proposal is no longer pending, has expired, or the plan has moved on since it was written"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Accept Proposal",
+        "tags": ["proposals"]
+      }
+    },
+    "/api/v1/proposals/{proposal_id}/reject": {
+      "post": {
+        "description": "Decline a proposal, optionally saying why. Changes no plan.",
+        "operationId": "proposals-reject_proposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalReject"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such proposal"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The proposal is no longer pending, has expired, or the plan has moved on since it was written"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The answer violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Reject Proposal",
+        "tags": ["proposals"]
       }
     },
     "/api/v1/purposes": {
