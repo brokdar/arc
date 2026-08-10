@@ -77,6 +77,12 @@ export function RedFlagBanner() {
   }
 
   const severity = athlete.red_flag_severity;
+  // "All better" is a write like any other, and it is the one write in the app
+  // with no form behind it to carry the refusal. A failed PATCH that printed
+  // nothing here left the banner standing with no explanation — which reads as
+  // a button that does not work, and the athlete's next move is to press it
+  // again.
+  const problems = apiErrorMessages(update.error);
 
   return (
     <>
@@ -118,6 +124,16 @@ export function RedFlagBanner() {
             {update.isPending ? "Clearing…" : "All better"}
           </Button>
         </span>
+        {problems.length > 0 ? (
+          <ul
+            role="alert"
+            className="flex w-full flex-col gap-0.5 text-destructive text-xs"
+          >
+            {problems.map((entry) => (
+              <li key={entry}>{entry}</li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       {editing ? <RedFlagDialog onClose={() => setEditing(false)} /> : null}
     </>

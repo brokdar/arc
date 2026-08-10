@@ -99,6 +99,14 @@ export const CHANGE_KIND_TONES: Readonly<Record<ChangeKind, string>> = {
  * has no before and a `delete` no after; both still list every field, because
  * "what would this add?" and "what would this take away?" are questions about
  * the whole session rather than about a difference.
+ *
+ * It is computed on the **raw** snapshot values and never on `before`/`after`,
+ * which are what the rows *render*: a workout id renders as its first eight
+ * characters and two uuid7s minted in the same minute share them, and both
+ * predictions are rounded to the figure a page prints. Comparing the rendered
+ * strings made a real swap of the prescription — the thing the accept would
+ * actually do — render as "no field differs", which is the diff lying about
+ * the change it exists to describe.
  */
 export interface FieldDiff {
   readonly key: keyof ProposalSnapshot;
@@ -206,10 +214,40 @@ export function changeFields(change: ProposalChangeDiff): FieldDiff[] {
       label: field.label,
       before,
       after,
-      changed: before !== after,
+      // Raw, not rendered (see `FieldDiff`). A missing snapshot makes every
+      // row of a `create` or a `delete` a change: there is no value on that
+      // side to be equal to, and `null === null` on two fields of two absent
+      // sessions is not agreement.
+      changed:
+        change.before === null ||
+        change.after === null ||
+        change.before[field.key] !== change.after[field.key],
     });
   }
   return rows;
+}
+
+/**
+ * The date a change's header carries.
+ *
+ * The API's entry-level `date` is the date the change is *about*: the target
+ * for a `create`, and the session's current date for everything else — so on
+ * a `move` it is where the session is now, and where it would go lives in
+ * `after.date` (`ProposalChangeDiff`). A header that printed only the former
+ * would headline a move with the one date the move is trying to get rid of,
+ * so a move shows the journey and every other kind shows its single date.
+ *
+ * Formatted, like every other date in the diff: the header and the Date row
+ * are the same date said twice, and printing one as `2026-08-12` beside the
+ * other as `12.08.2026` reads as two different facts.
+ */
+export function changeDateLabel(change: ProposalChangeDiff): string {
+  const from = formatDayMonthYear(change.date);
+  if (change.kind !== "move" || change.after === null) {
+    return from;
+  }
+  const to = formatDayMonthYear(change.after.date);
+  return to === from ? from : `${from} → ${to}`;
 }
 
 /**

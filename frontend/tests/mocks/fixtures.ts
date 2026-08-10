@@ -2834,9 +2834,13 @@ function pendingChanges(): Schemas["ProposalChangeDiff"][] {
       },
     },
     {
+      // The entry's `date` is where the session *is*, not where it would go:
+      // the backend fills it from the row it read and only `after.date`
+      // carries the target (`ProposalService._diff_one`). A fixture with
+      // the target in both places is a shape the API cannot produce.
       kind: "move",
       planned_session_id: SESSION_IDS.recovery,
-      date: "2026-08-11",
+      date: "2026-08-12",
       discipline: "cycling",
       expected_intent_version: 1,
       before: recoveryBefore,

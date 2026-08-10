@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { components } from "@/generated/api/schema";
 import {
   actorLabel,
+  changeDateLabel,
   changeFields,
   expiryLabel,
   type ProposalSnapshot,
@@ -51,15 +52,40 @@ describe("what one change actually changes", () => {
     expect(purpose).toMatchObject({ before: "VO₂max", after: "Threshold" });
   });
 
-  it("compares rendered values, not raw ones", () => {
-    // 84.4 and 84 are the same number once rounded to the TSS a page prints,
-    // and a diff that marked the row changed would ask the athlete to look at
-    // two identical figures and find the difference.
+  it("compares raw values, not the rendered ones", () => {
+    // Both predictions are rounded for display, so 84.4 and 84 print the same
+    // "84 TSS". The change is still real — it is what the accept would write —
+    // and a row that read as unchanged would hide it behind its own rounding.
     const rows = changeFields(
       change("update", BASE, { ...BASE, predicted_load: 84.4 }),
     );
 
-    expect(rows.filter((row) => row.changed)).toEqual([]);
+    expect(rows.filter((row) => row.changed).map((row) => row.key)).toEqual([
+      "predicted_load",
+    ]);
+  });
+
+  it("sees a workout swap between two ids that render alike", () => {
+    // uuid7s minted in the same minute share their first eight characters, and
+    // eight characters is all the Workout row prints. Two same-batch workouts
+    // are exactly the case a proposal swaps between, and comparing the printed
+    // form said "no field differs" about a swapped prescription.
+    const rows = changeFields(
+      change(
+        "update",
+        { ...BASE, workout_id: "0199a000-0000-7000-8000-00000000aaaa" },
+        {
+          ...BASE,
+          workout_id: "0199a000-0000-7000-8000-00000000bbbb",
+        },
+      ),
+    );
+
+    const workout = rows.find((row) => row.key === "workout_id");
+    expect(workout?.changed).toBe(true);
+    // Still rendered short on both sides: the fix is to the comparison, not to
+    // what the row prints.
+    expect(workout).toMatchObject({ before: "0199a000", after: "0199a000" });
   });
 
   it("reads a create as all addition", () => {
@@ -102,6 +128,29 @@ describe("what one change actually changes", () => {
       "intent_text",
       "predicted_load",
     ]);
+  });
+});
+
+describe("the date a change is headlined with", () => {
+  it("shows a move as the journey, because one date cannot say it", () => {
+    // The entry's own `date` is where the session is *now* (the backend fills
+    // it from the row), so a header printing only that would headline the move
+    // with the date it exists to change.
+    const label = changeDateLabel(
+      change(
+        "move",
+        { ...BASE, date: "2026-08-13" },
+        { ...BASE, date: "2026-08-11" },
+      ),
+    );
+
+    expect(label).toBe("13.08.2026 → 11.08.2026");
+  });
+
+  it("shows one formatted date for every other kind", () => {
+    expect(changeDateLabel(change("update", BASE, BASE))).toBe("13.08.2026");
+    expect(changeDateLabel(change("create", null, BASE))).toBe("13.08.2026");
+    expect(changeDateLabel(change("delete", BASE, null))).toBe("13.08.2026");
   });
 });
 

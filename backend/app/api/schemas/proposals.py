@@ -68,7 +68,9 @@ class ProposalChangeDiff(BaseModel):
     kind: ChangeKind
     #: The session the change addresses; null for a `create`.
     planned_session_id: uuid.UUID | None
-    #: The date the change is about — the target date for a create or a move.
+    #: The date the change is about — the target date for a `create`, and the
+    #: session's own date for every other kind. A move's target is therefore
+    #: `after.date`, not this: this is the date it would be moved off.
     date: dt.date
     discipline: Discipline
     #: The intent version the change was computed against; null for a

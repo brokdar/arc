@@ -1,22 +1,100 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ProposalInbox } from "@/components/coach/proposal-inbox";
-import { PROPOSAL_IDS, proposalById } from "@/tests/mocks/fixtures";
+import { SidebarNav } from "@/components/shell/sidebar-nav";
+import { $api } from "@/lib/api/client";
+import type { Proposal } from "@/lib/proposals";
+import {
+  PROPOSAL_IDS,
+  plannedSessionFixture,
+  proposalById,
+  SESSION_IDS,
+  WORKOUT_IDS,
+} from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
-function renderInbox() {
+vi.mock("next/navigation", () => ({ usePathname: () => "/proposals" }));
+
+vi.mock("next/link", () => ({
+  default: ({
+    href,
+    children,
+    ...props
+  }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  ),
+}));
+
+/**
+ * The inbox, optionally beside something else that reads the same cache.
+ *
+ * An accept rewrites the plan, and the surfaces that show the plan are not on
+ * this page — so what an accept invalidates can only be tested by mounting one
+ * of them next to it, sharing the one query client the app has.
+ */
+function renderInbox(beside?: React.ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <ProposalInbox />
+      {beside}
     </QueryClientProvider>,
   );
+}
+
+/**
+ * A stand-in for the two panels that read one planned session by id: Today's
+ * session panel and the calendar's session sheet. Both are showing exactly the
+ * prescription an accepted proposal rewrites, and neither shares a cache key
+ * with the week or with the list — `["get", "/api/v1/planned-sessions"]` is a
+ * different key, element for element, not a shorter one.
+ */
+function PlannedSessionProbe() {
+  $api.useQuery("get", "/api/v1/planned-sessions/{planned_session_id}", {
+    params: { path: { planned_session_id: SESSION_IDS.vo2 } },
+  });
+  return null;
+}
+
+/** The pending proposal as the fixtures hold it, or a loud failure. */
+function pendingFixture(): Proposal {
+  const proposal = proposalById(PROPOSAL_IDS.pending);
+  if (!proposal) {
+    throw new Error("no pending proposal in the fixtures");
+  }
+  return proposal;
+}
+
+/**
+ * The same proposal, with its `update` change swapping one workout for
+ * another out of the same batch — the case the shortened id cannot show.
+ */
+function swapWorkout(proposal: Proposal): Proposal {
+  const [update, ...rest] = proposal.diff;
+  const { before, after } = update;
+  if (before === null || after === null) {
+    throw new Error("the pending fixture no longer opens with an update");
+  }
+  return {
+    ...proposal,
+    diff: [
+      {
+        ...update,
+        before: { ...before, workout_id: WORKOUT_IDS.vo2 },
+        after: { ...after, workout_id: WORKOUT_IDS.long },
+      },
+      ...rest,
+    ],
+  };
 }
 
 /** The one pending proposal's card. */
@@ -165,6 +243,50 @@ describe("the diff", () => {
     expect(within(move).getByText("1 field differs")).toBeInTheDocument();
   });
 
+  it("headlines a move with both of its dates, formatted", async () => {
+    renderInbox();
+    const card = await pendingCard();
+    const move = within(card).getAllByTestId("proposal-change")[1];
+
+    // The change's own `date` is where the session is now — the target lives
+    // in `after` — so the header has to show the journey or it headlines the
+    // move with the date it exists to change. Formatted like the Date row
+    // below it, not the raw ISO the API sends.
+    expect(
+      within(move).getByText("12.08.2026 → 11.08.2026"),
+    ).toBeInTheDocument();
+  });
+
+  it("sees a workout swap whose shortened ids render alike", async () => {
+    // `WORKOUT_IDS` are uuid7s from one batch, so they share the first eight
+    // characters — which is all the Workout row prints. The card counting its
+    // changed rows off the rendered text called a swapped prescription "no
+    // field differs" and offered it for acceptance on that basis.
+    server.use(
+      http.get("/api/v1/proposals", ({ response }) =>
+        response(200).json({
+          items: [swapWorkout(pendingFixture())],
+          total: 1,
+          offset: 0,
+          limit: 25,
+        }),
+      ),
+    );
+    renderInbox();
+    const card = await pendingCard();
+    const update = within(card).getAllByTestId("proposal-change")[0];
+
+    expect(field(update, "workout_id").dataset.changed).toBe("true");
+    expect(within(update).getByText(/fields differ/)).toBeInTheDocument();
+    // Still drawn short on both sides: what was wrong was the comparison, not
+    // the rendering.
+    expect(
+      within(field(update, "workout_id")).getAllByText(
+        WORKOUT_IDS.vo2.slice(0, 8),
+      ),
+    ).toHaveLength(2);
+  });
+
   it("shows the concurrency token the accept will re-check", async () => {
     renderInbox();
     const card = await pendingCard();
@@ -201,6 +323,55 @@ describe("answering a proposal", () => {
       expect(screen.queryAllByTestId("proposal")).toHaveLength(0);
     });
     expect(proposalById(PROPOSAL_IDS.pending)?.status).toBe("accepted");
+  });
+
+  it("refetches the session a panel elsewhere is showing", async () => {
+    const user = userEvent.setup();
+    const fetched = vi.fn();
+    server.use(
+      http.get(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        ({ params, response }) => {
+          fetched(params.planned_session_id);
+          return response(200).json(
+            plannedSessionFixture(params.planned_session_id),
+          );
+        },
+      ),
+    );
+    renderInbox(<PlannedSessionProbe />);
+    const card = await pendingCard();
+    await waitFor(() => {
+      expect(fetched).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(within(card).getByRole("button", { name: "Accept" }));
+
+    // The accept rewrote this session's prescription. Today's panel and the
+    // session sheet read it by id and neither shares a key with the week, so
+    // without their own invalidation they go on showing the intent the accept
+    // replaced until something else happens to refetch it.
+    await waitFor(() => {
+      expect(fetched).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("drops the count in the sidebar with the proposal it counted", async () => {
+    const user = userEvent.setup();
+    renderInbox(<SidebarNav />);
+    const card = await pendingCard();
+    expect(await screen.findByTestId("pending-proposals")).toHaveTextContent(
+      "1",
+    );
+
+    await user.click(within(card).getByRole("button", { name: "Accept" }));
+
+    // The badge is the count of what is waiting on the athlete, read from its
+    // own one-item query — an accept that left it standing would say something
+    // is waiting on every page of the app.
+    await waitFor(() => {
+      expect(screen.queryByTestId("pending-proposals")).not.toBeInTheDocument();
+    });
   });
 
   it("sends the reason with a rejection, and shows it back", async () => {

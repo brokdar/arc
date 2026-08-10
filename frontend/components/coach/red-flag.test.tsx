@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
 import { RedFlagBanner, RedFlagControl } from "@/components/coach/red-flag";
@@ -145,6 +146,42 @@ describe("lowering the flag", () => {
       red_flag_severity: null,
       red_flag_note: null,
     });
+  });
+
+  it("says why the banner is still up when clearing it fails", async () => {
+    const user = userEvent.setup();
+    patchAthlete({
+      red_flag_active: true,
+      red_flag_severity: "severe",
+      red_flag_note: "Broken collarbone.",
+    });
+    renderRedFlag();
+    const banner = await screen.findByTestId("red-flag-banner");
+    // Overridden after the first load, so the banner is on screen with a flag
+    // that is genuinely up and only the clearing PATCH fails.
+    server.use(
+      // Untyped: an infrastructure failure has no schema to conform to.
+      http.untyped.patch("http://localhost:8000/api/v1/athlete", () =>
+        HttpResponse.json(
+          { detail: "The profile store is down." },
+          { status: 500 },
+        ),
+      ),
+    );
+
+    await user.click(
+      within(banner).getByRole("button", { name: "All better" }),
+    );
+
+    // The banner is the only surface this write has: no dialog, no form, so a
+    // swallowed refusal reads as a button that does nothing.
+    expect(await within(banner).findByRole("alert")).toHaveTextContent(
+      "The profile store is down.",
+    );
+    expect(screen.getByTestId("red-flag-banner")).toBeInTheDocument();
+    expect(
+      within(banner).getByRole("button", { name: "All better" }),
+    ).toBeEnabled();
   });
 
   it("empties the form's severity and note when the tick comes off", async () => {

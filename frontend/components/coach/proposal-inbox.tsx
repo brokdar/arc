@@ -21,6 +21,11 @@ import {
 } from "@/lib/api-errors";
 import { formatUtcStamp } from "@/lib/format";
 import {
+  PLAN_WEEK_QUERY_PREFIX,
+  PLANNED_SESSION_QUERY_PREFIX,
+  PLANNED_SESSIONS_QUERY_PREFIX,
+} from "@/lib/matching";
+import {
   actorLabel,
   expiryLabel,
   PROPOSAL_STATUS_LABELS,
@@ -216,9 +221,18 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
     {
       onSuccess: () => {
         // The plan moved: every week the accepted changes touch is stale, and
-        // so is the inbox that still lists this one as pending.
+        // so is the inbox that still lists this one as pending. The two
+        // planned-session keys are both here because they are separate caches
+        // and react-query matches a key element for element — the calendar
+        // reads the list, and Today's panel and the session sheet each read
+        // one session by id, so a week-only invalidation leaves the athlete
+        // looking at the prescription the accept just replaced.
+        queryClient.invalidateQueries({ queryKey: PLAN_WEEK_QUERY_PREFIX });
         queryClient.invalidateQueries({
-          queryKey: ["get", "/api/v1/plan/week"],
+          queryKey: PLANNED_SESSIONS_QUERY_PREFIX,
+        });
+        queryClient.invalidateQueries({
+          queryKey: PLANNED_SESSION_QUERY_PREFIX,
         });
         invalidate();
       },
@@ -386,10 +400,15 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
  *
  * Deliberately not phrased as an error, because nothing went wrong: the
  * athlete edited a session the proposal was written against, the concurrency
- * token no longer matches, and the proposal **stays pending** — it may well
- * still be a good suggestion against the plan as it now stands. The server's
- * own sentence is printed underneath rather than replaced, because it is the
- * half that names which session moved.
+ * token no longer matches, and the proposal **stays pending** — the suggestion
+ * may well still be a good one against the plan as it now stands. What it does
+ * *not* offer is a retry: the diff on the card was computed when the proposal
+ * was written and nothing here can recompute its before-side, so every further
+ * accept re-checks the same stale token and is refused again. The two ways out
+ * are a fresh proposal from the coach and a rejection, and the copy says so
+ * rather than inviting the athlete to press Accept until it works. The
+ * server's own sentence is printed underneath rather than replaced, because it
+ * is the half that names which session moved.
  */
 function StalePlan({ detail }: { detail?: string }) {
   return (
@@ -404,9 +423,10 @@ function StalePlan({ detail }: { detail?: string }) {
         <span className="text-ink-secondary text-sm">{detail}</span>
       ) : null}
       <span className="text-ink-muted text-xs">
-        Nothing was applied and the proposal is still waiting on you. Read the
-        diff against the session as it stands now, and accept it again if it
-        still makes sense.
+        Nothing was applied and the proposal is still waiting on you. The diff
+        above is the one that was computed when this was written, and it cannot
+        be recomputed against the session as it now stands — ask the coach for a
+        fresh proposal, or reject this one.
       </span>
     </div>
   );

@@ -156,6 +156,32 @@ describe("the dispute toggle", () => {
     expect(stored?.disputed_at).toBeNull();
   });
 
+  it("says a refused rating was refused, and leaves the toggle alone", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("/api/v1/agent-notes/{note_id}/dispute", ({ response }) =>
+        response(403).json({ detail: "This key may not write." }),
+      ),
+    );
+    renderWith(<SessionCoachNotes sessionId={ACTIVITY_IDS.outdoorRide} />);
+    const card = await noteCard(/held the tempo band/);
+
+    await user.click(within(card).getByRole("button", { name: "Useful" }));
+
+    expect(await within(card).findByRole("alert")).toHaveTextContent(
+      "This key may not write.",
+    );
+    // The pressed state is read off the note the server returns, so a refused
+    // tap that printed nothing would be indistinguishable from one the page
+    // never received.
+    expect(
+      within(card).getByRole("button", { name: "Useful" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      noteList().find((note) => note.id === NOTE_IDS.rideEvaluation)?.dispute,
+    ).toBeNull();
+  });
+
   it("swaps one thumb for the other rather than clearing", async () => {
     const user = userEvent.setup();
     renderWith(<SessionCoachNotes sessionId={ACTIVITY_IDS.outdoorRide} />);

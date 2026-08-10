@@ -5,6 +5,7 @@ import { DISCIPLINE_LABELS } from "@/lib/activity";
 import {
   CHANGE_KIND_LABELS,
   CHANGE_KIND_TONES,
+  changeDateLabel,
   changeFields,
   type FieldDiff,
   isMonoField,
@@ -82,7 +83,7 @@ function ChangeCard({ change }: { change: ProposalChangeDiff }) {
           {CHANGE_KIND_LABELS[change.kind]}
         </span>
         <span className="font-mono text-ink-secondary text-sm">
-          {change.date}
+          {changeDateLabel(change)}
         </span>
         <span className="text-ink-muted text-sm">
           {DISCIPLINE_LABELS[change.discipline]}

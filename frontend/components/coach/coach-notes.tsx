@@ -12,7 +12,7 @@ import {
   nextRating,
 } from "@/lib/agent-notes";
 import { $api } from "@/lib/api/client";
-import { loadFailureMessage } from "@/lib/api-errors";
+import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
 import { formatUtcStamp } from "@/lib/format";
 import { actorLabel } from "@/lib/proposals";
 import { cn } from "@/lib/utils";
@@ -125,6 +125,12 @@ function NoteCard({ note }: { note: AgentNote }) {
       body: { rating: nextRating(note.dispute, tapped) },
     });
 
+  // A rating that did not land has to say so. The button's pressed state comes
+  // from the note the server returns, so a refused tap leaves the toggle
+  // exactly as it was — indistinguishable, without this line, from a tap the
+  // page never received.
+  const problems = apiErrorMessages(dispute.error);
+
   return (
     <article
       data-testid="coach-note"
@@ -194,6 +200,12 @@ function NoteCard({ note }: { note: AgentNote }) {
           onRate={rate}
         />
       </div>
+
+      {problems.length > 0 ? (
+        <p role="alert" className="text-2xs text-destructive">
+          {problems.join(" ")}
+        </p>
+      ) : null}
     </article>
   );
 }
