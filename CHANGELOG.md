@@ -7,7 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### WP-7 — scoring engine, verdicts and reasons
+### WP-8 — agent layer: MCP tools, proposals, guardrails
+
+The coaching agent can now act — through thirteen MCP tools that delegate to
+the same services the API uses, with every write guarded in the service layer,
+never in the adapter. Decisions D166–D183.
+
+**Plan-change proposals (`plan_proposals`, migration `0009`)**
+
+- `propose_plan_change` records rationale, the changes as a tagged union
+  (create/update/move/delete — `status` is not proposable), the computed
+  per-entity diff, and an expiry. Accepting applies every change in **one**
+  transaction through `PlannedSessionService`'s new `stage_*` verbs; rejecting
+  takes a free-text reason; expiry lapses the proposal and the committed plan
+  stands. A new proposal about a session with an open one supersedes it
+  (linked both ways); a recorded activity on a proposed day and discipline
+  resolves it by reality, from ingest and manual entry alike.
+- Guardrails, all in services: a dry-run flag on every write (returns the
+  diff, writes nothing — not even audit); optimistic concurrency on the
+  intent-chain version, re-checked at accept (stale → 409, proposal stays
+  pending); a trailing-hour agent write cap (`MCP__WRITE_CAP_PER_HOUR`,
+  default 60) counted over the audit log; and the red-flag rule — while the
+  athlete's illness/injury flag is up, proposals that add or intensify are
+  refused with the reason, and every read carries the flag so the agent can
+  never claim ignorance.
+
+**MCP tool surface (`app/mcp/tools.py`)**
+
+- Reads: `get_athlete`, `get_anchors`, `get_plan_week`, `get_session_detail`,
+  `list_sessions`, `get_workout_library`, `search_history` (honest partial
+  weeks, refuses rather than truncates past its caps). Writes: `append_anchor`
+  (provenance required, `tested` demands a protocol), `create_workout`,
+  `propose_plan_change`, `write_session_evaluation`, `annotate`. No tool
+  touches recordings, streams, declared verdicts or reasons — the surface is
+  pinned by an exhaustive test. Refusals name the offending argument;
+  `docs/agent-setup.md` shows how to connect Claude.
+
+**Coach notes and the UI**
+
+- `agent_notes` (migration `0010`): interpretive text attributed to a model
+  and key label, citing artefact ids, one subject (session or plan week),
+  with an athlete-only 👍/👎 dispute. Rendered strictly in the reserved coach
+  purple on session detail and the calendar week.
+- New `/proposals` inbox: per-change diff view, accept/reject with reason, a
+  409 rendered as "the plan moved underneath this proposal", and a pending
+  count on the nav. The red flag gets a shell-wide banner and a control on
+  Today (severity required while active; lowering clears note and severity).
 
 A matched session is now scored against its frozen intent, given a suggested
 verdict the athlete rules on, and asked for reasons when it deviated.
