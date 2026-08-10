@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.deps import require_session
 from app.api.routes.activity import manual_router as manual_sessions_router
 from app.api.routes.activity import router as sessions_router
+from app.api.routes.agent_notes import router as agent_notes_router
 from app.api.routes.anchors import router as anchors_router
 from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
@@ -155,6 +156,7 @@ def create_app() -> FastAPI:
     api.include_router(workout_labels_router)
     api.include_router(planned_sessions_router)
     api.include_router(proposals_router)
+    api.include_router(agent_notes_router)
     api.include_router(plan_router)
     api.include_router(sessions_router)
     api.include_router(manual_sessions_router)

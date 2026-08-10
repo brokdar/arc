@@ -53,6 +53,7 @@ from app.services.proposals import (
     ProposalService,
     run_proposal_expiry,
 )
+from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE, LIFT
 
 PROPOSALS = "/api/v1/proposals"
 SESSIONS = "/api/v1/planned-sessions"
@@ -62,62 +63,6 @@ ATHLETE = "/api/v1/athlete"
 MANUAL = "/api/v1/manual-sessions"
 
 AGENT = Actor.agent("coach")
-
-#: A one-hour steady ride at 60-70% FTP. Cheap to predict and easy to make
-#: harder, which is what the red-flag tests need.
-EASY_RIDE: dict[str, Any] = {
-    "discipline": "cycling",
-    "steps": [
-        {
-            "kind": "steady",
-            "duration_s": 3_600,
-            "targets": {
-                "power": {
-                    "kind": "percent_of_anchor",
-                    "anchor_type": "ftp",
-                    "pct_low": 0.6,
-                    "pct_high": 0.7,
-                }
-            },
-        }
-    ],
-}
-
-#: The same hour at 95-105% FTP: same purpose, much more load.
-HARD_RIDE: dict[str, Any] = {
-    "discipline": "cycling",
-    "steps": [
-        {
-            "kind": "steady",
-            "duration_s": 3_600,
-            "targets": {
-                "power": {
-                    "kind": "percent_of_anchor",
-                    "anchor_type": "ftp",
-                    "pct_low": 0.95,
-                    "pct_high": 1.05,
-                }
-            },
-        }
-    ],
-}
-
-LIFT: dict[str, Any] = {
-    "discipline": "strength",
-    "groups": [
-        {
-            "items": [
-                {
-                    "exercise_id": "back_squat",
-                    "sets": 5,
-                    "reps": 3,
-                    "load": {"kind": "kg", "value": 100},
-                }
-            ]
-        }
-    ],
-}
-
 
 # --- helpers ---------------------------------------------------------------------
 

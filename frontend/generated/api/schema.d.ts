@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+  "/api/v1/agent-notes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Agent Notes
+     * @description List the notes about one session or one plan week, oldest first.
+     *
+     *     Oldest first because these are a conversation about a subject and read in
+     *     the order they were written — unlike the proposal inbox, which is a queue
+     *     of things to answer.
+     *
+     *     One of `session_id` and `week` is required, and never both: a note has one
+     *     subject, so a query with no subject has no answer and a query with two is
+     *     two queries.
+     */
+    get: operations["agent-notes-list_agent_notes"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-notes/{note_id}/dispute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Dispute Agent Note
+     * @description Rate a note up or down, or clear the rating with `null`.
+     *
+     *     Overwrites whatever was there: this is a toggle on a card, and an athlete
+     *     who cannot take a rating back will stop giving them. What actually
+     *     happened is kept in the audit log.
+     */
+    post: operations["agent-notes-dispute_agent_note"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/anchors": {
     parameters: {
       query?: never;
@@ -1371,6 +1423,60 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * AgentNoteDispute
+     * @description The athlete's one-tap answer to a note.
+     *
+     *     Genuinely nullable, unlike an optional query parameter: `null` is the
+     *     third state of the toggle — "I take that back" — and the athlete must be
+     *     able to say it, or they will stop giving ratings at all.
+     */
+    AgentNoteDispute: {
+      rating?: components["schemas"]["DisputeRating"] | null;
+    };
+    /**
+     * AgentNoteRead
+     * @description One note, as the athlete's client reads it.
+     */
+    AgentNoteRead: {
+      /** Cites */
+      cites: string[];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By */
+      created_by: string;
+      dispute: components["schemas"]["DisputeRating"] | null;
+      /** Disputed At */
+      disputed_at: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      kind: components["schemas"]["NoteKind"];
+      /** Model Id */
+      model_id: string;
+      /** Plan Week */
+      plan_week: string | null;
+      /** Session Id */
+      session_id: string | null;
+      /** Text */
+      text: string;
+    };
+    /**
+     * AgentNotesRead
+     * @description Every note about one subject, oldest first.
+     *
+     *     Unpaged: a note is written about one session or one week, and the number
+     *     of things worth saying about either is small.
+     */
+    AgentNotesRead: {
+      /** Items */
+      items: components["schemas"]["AgentNoteRead"][];
+    };
+    /**
      * AlignedStepRead
      * @description One planned work step paired with one detected effort.
      */
@@ -1782,6 +1888,17 @@ export interface components {
      * @enum {string}
      */
     Discipline: "cycling" | "strength";
+    /**
+     * DisputeRating
+     * @description The athlete's one-tap answer to a note.
+     *
+     *     Deliberately two values and no scale. This is a signal about coach
+     *     quality, gathered from someone who is reading their training log rather
+     *     than filling in a survey, and a five-point scale asked of a passer-by
+     *     collects noise rather than resolution.
+     * @enum {string}
+     */
+    DisputeRating: "up" | "down";
     /**
      * DurationFloorSchema
      * @description The session must last at least this long.
@@ -2451,6 +2568,22 @@ export interface components {
        */
       reasons: components["schemas"]["Reason"][];
     };
+    /**
+     * NoteKind
+     * @description What kind of interpretive text this is.
+     *
+     *     The two differ in what they are *about*, not in how much they are trusted:
+     *
+     *     ``EVALUATION`` is the coach's read of one session — what the athlete did
+     *     and what it means — and is the autonomy tier the build plan calls Tier 1,
+     *     written only against a session.
+     *
+     *     ``ANNOTATION`` is free commentary (Tier 0), and may hang off a session or
+     *     a plan week: "this block has been three weeks of threshold" is about the
+     *     week, not about any one ride.
+     * @enum {string}
+     */
+    NoteKind: "evaluation" | "annotation";
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -4510,6 +4643,111 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  "agent-notes-list_agent_notes": {
+    parameters: {
+      query?: {
+        /** @description Notes about this recorded session. */
+        session_id?: string;
+        /** @description Notes about this plan week, given as the Monday it starts on. Exactly one of `session_id` and `week` is required. */
+        week?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentNotesRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The subject is not exactly one, or the week is not a Monday */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "agent-notes-dispute_agent_note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        note_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AgentNoteDispute"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentNoteRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Only the athlete rates a note */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such note */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The subject is not exactly one, or the week is not a Monday */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "anchors-list_anchor_versions": {
     parameters: {
       query?: {

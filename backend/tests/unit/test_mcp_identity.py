@@ -1,48 +1,23 @@
-"""The MCP key's label and scope, as tools will consume them (WP-8).
+"""The MCP key's label and scope, as tools consume them (WP-8).
 
 The auth context is set the way `AuthContextMiddleware` sets it on a real
 request, and the tokens come from the real `StaticKeyVerifier`, so these
-exercise the actual lookup rather than a stubbed one.
+exercise the actual lookup rather than a stubbed one. Both come from
+`tests.unit.mcp_harness`, which `test_mcp_tools.py` also drives the whole tool
+surface through.
 """
-
-from collections.abc import Iterator
-from contextlib import contextmanager
 
 import pytest
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth.auth import AccessToken
-from mcp.server.auth.middleware.auth_context import auth_context_var
-from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 
 from app.domain.actor import Actor
-from app.mcp.auth import Scope, parse_api_keys
+from app.mcp.auth import Scope
 from app.mcp.identity import current_actor, require_scope
-from app.mcp.main import StaticKeyVerifier
+from tests.unit.mcp_harness import authenticated_as
+from tests.unit.mcp_harness import token_for as _token_for
 
 COACH_KEY = "a1b2c3d4" * 4
-
-
-@contextmanager
-def authenticated_as(token: AccessToken) -> Iterator[None]:
-    """Put ``token`` on the auth context, the way `AuthContextMiddleware` does.
-
-    A context manager rather than a fixture: a contextvar can only be reset
-    from the context that set it, and pytest-asyncio runs the test body in its
-    own task — a fixture teardown would raise instead of cleaning up.
-    """
-    reset = auth_context_var.set(AuthenticatedUser(token))
-    try:
-        yield
-    finally:
-        auth_context_var.reset(reset)
-
-
-async def _token_for(entry: str) -> AccessToken:
-    """The access token `app.mcp.main` really issues for a configured key."""
-    keys = parse_api_keys(entry)
-    token = await StaticKeyVerifier(keys).verify_token(keys[0].key)
-    assert token is not None
-    return token
 
 
 async def test_the_actor_is_the_key_label() -> None:

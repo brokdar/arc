@@ -49,6 +49,137 @@
         "title": "AbsoluteRangeSchema",
         "type": "object"
       },
+      "AgentNoteDispute": {
+        "description": "The athlete's one-tap answer to a note.\n\nGenuinely nullable, unlike an optional query parameter: `null` is the\nthird state of the toggle \u2014 \"I take that back\" \u2014 and the athlete must be\nable to say it, or they will stop giving ratings at all.",
+        "properties": {
+          "rating": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisputeRating"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "AgentNoteDispute",
+        "type": "object"
+      },
+      "AgentNoteRead": {
+        "description": "One note, as the athlete's client reads it.",
+        "properties": {
+          "cites": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Cites",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "dispute": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisputeRating"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disputed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disputed At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NoteKind"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "plan_week": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Week"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "plan_week",
+          "kind",
+          "text",
+          "model_id",
+          "created_by",
+          "created_at",
+          "cites",
+          "dispute",
+          "disputed_at"
+        ],
+        "title": "AgentNoteRead",
+        "type": "object"
+      },
+      "AgentNotesRead": {
+        "description": "Every note about one subject, oldest first.\n\nUnpaged: a note is written about one session or one week, and the number\nof things worth saying about either is small.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNoteRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "AgentNotesRead",
+        "type": "object"
+      },
       "AlignedStepRead": {
         "description": "One planned work step paired with one detected effort.",
         "properties": {
@@ -833,6 +964,12 @@
         "description": "The two disciplines the MVP trains.",
         "enum": ["cycling", "strength"],
         "title": "Discipline",
+        "type": "string"
+      },
+      "DisputeRating": {
+        "description": "The athlete's one-tap answer to a note.\n\nDeliberately two values and no scale. This is a signal about coach\nquality, gathered from someone who is reading their training log rather\nthan filling in a survey, and a five-point scale asked of a passer-by\ncollects noise rather than resolution.",
+        "enum": ["up", "down"],
+        "title": "DisputeRating",
         "type": "string"
       },
       "DurationFloorSchema": {
@@ -2220,6 +2357,12 @@
         "required": ["reasons"],
         "title": "MissedReasonsUpdate",
         "type": "object"
+      },
+      "NoteKind": {
+        "description": "What kind of interpretive text this is.\n\nThe two differ in what they are *about*, not in how much they are trusted:\n\n``EVALUATION`` is the coach's read of one session \u2014 what the athlete did\nand what it means \u2014 and is the autonomy tier the build plan calls Tier 1,\nwritten only against a session.\n\n``ANNOTATION`` is free commentary (Tier 0), and may hang off a session or\na plan week: \"this block has been three weeks of threshold\" is about the\nweek, not about any one ride.",
+        "enum": ["evaluation", "annotation"],
+        "title": "NoteKind",
+        "type": "string"
       },
       "Page_AnchorVersionRead_": {
         "properties": {
@@ -6997,6 +7140,164 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agent-notes": {
+      "get": {
+        "description": "List the notes about one session or one plan week, oldest first.\n\nOldest first because these are a conversation about a subject and read in\nthe order they were written \u2014 unlike the proposal inbox, which is a queue\nof things to answer.\n\nOne of `session_id` and `week` is required, and never both: a note has one\nsubject, so a query with no subject has no answer and a query with two is\ntwo queries.",
+        "operationId": "agent-notes-list_agent_notes",
+        "parameters": [
+          {
+            "description": "Notes about this recorded session.",
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "description": "Notes about this recorded session.",
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Notes about this plan week, given as the Monday it starts on. Exactly one of `session_id` and `week` is required.",
+            "in": "query",
+            "name": "week",
+            "required": false,
+            "schema": {
+              "description": "Notes about this plan week, given as the Monday it starts on. Exactly one of `session_id` and `week` is required.",
+              "format": "date",
+              "title": "Week",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentNotesRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The subject is not exactly one, or the week is not a Monday"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Agent Notes",
+        "tags": ["agent-notes"]
+      }
+    },
+    "/api/v1/agent-notes/{note_id}/dispute": {
+      "post": {
+        "description": "Rate a note up or down, or clear the rating with `null`.\n\nOverwrites whatever was there: this is a toggle on a card, and an athlete\nwho cannot take a rating back will stop giving them. What actually\nhappened is kept in the audit log.",
+        "operationId": "agent-notes-dispute_agent_note",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentNoteDispute"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentNoteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Only the athlete rates a note"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such note"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The subject is not exactly one, or the week is not a Monday"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Dispute Agent Note",
+        "tags": ["agent-notes"]
+      }
+    },
     "/api/v1/anchors": {
       "get": {
         "description": "List anchor versions, newest first, optionally for one anchor type.",

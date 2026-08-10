@@ -29,6 +29,7 @@ from app.domain.prediction import PinnedAnchor
 from app.persistence.anchors import AnchorRepository, AnchorVersionRow
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
+from app.services.guardrails import check_write_cap
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "anchor_version"
@@ -116,6 +117,64 @@ class AnchorService:
             )
         return next(row for version, row in pairs if version is in_force)
 
+    def preview(
+        self,
+        *,
+        anchor_type: AnchorType,
+        value: float,
+        provenance: Provenance,
+        source: AnchorSource,
+        effective_date: dt.date | None = None,
+        unit: AnchorUnit | None = None,
+        protocol: str | None = None,
+        ci_low: float | None = None,
+        ci_high: float | None = None,
+    ) -> AnchorVersion:
+        """Build and validate the version :meth:`append` would write.
+
+        The dry run of an append (WP-8.3), and a **separate read-only method
+        rather than a flag on the writer**. An append-only history is enforced
+        by this service having exactly one way to write and no way to unwrite;
+        giving that one writer a mode in which it does not write puts the
+        question "did this actually persist" inside the append path, where the
+        answer has to stay "always". A caller that wants the check without the
+        consequence asks for the check.
+
+        Every rule `append` applies is applied here — the reserved types, the
+        unit, and the domain invariants including *`tested` requires a
+        protocol* — because `append` calls this to build its row. There is no
+        second code path to disagree with.
+
+        Returns:
+            The domain version, unsaved and unrecorded.
+
+        Raises:
+            ValidationError: For exactly the reasons `append` would raise it.
+        """
+        # Enforced here as well as in the API schema: this service is the
+        # one path every adapter shares, and WP-8's MCP tools do not go
+        # through `AnchorVersionCreate`.
+        if anchor_type in RESERVED_ANCHOR_TYPES:
+            raise ValidationError(
+                f"{anchor_type.value} anchors are reserved for the "
+                "critical-power model (WP-5) and cannot be appended yet"
+            )
+        created_at = dt.datetime.now(dt.UTC)
+        with domain_rules():
+            return AnchorVersion(
+                anchor_type=anchor_type,
+                value=value,
+                unit=unit or ANCHOR_UNITS[anchor_type],
+                provenance=provenance,
+                protocol=protocol,
+                effective_date=effective_date or created_at.date(),
+                ci_low=ci_low,
+                ci_high=ci_high,
+                created_at=created_at,
+                source=source,
+                staleness_state=MVP_STALENESS_STATE,
+            )
+
     async def append(
         self,
         *,
@@ -150,30 +209,22 @@ class AnchorService:
         Raises:
             ValidationError: When the version breaks a domain rule, or when
                 ``anchor_type`` is reserved.
+            RateLimitedError: When an agent actor's trailing-hour write cap is
+                spent. Checked here rather than in the MCP tool, so it binds
+                every path an agent can reach this write through.
         """
-        # Enforced here as well as in the API schema: this service is the
-        # one path every adapter shares, and WP-8's MCP tools do not go
-        # through `AnchorVersionCreate`.
-        if anchor_type in RESERVED_ANCHOR_TYPES:
-            raise ValidationError(
-                f"{anchor_type.value} anchors are reserved for the "
-                "critical-power model (WP-5) and cannot be appended yet"
-            )
-        created_at = dt.datetime.now(dt.UTC)
-        with domain_rules():
-            version = AnchorVersion(
-                anchor_type=anchor_type,
-                value=value,
-                unit=unit or ANCHOR_UNITS[anchor_type],
-                provenance=provenance,
-                protocol=protocol,
-                effective_date=effective_date or created_at.date(),
-                ci_low=ci_low,
-                ci_high=ci_high,
-                created_at=created_at,
-                source=source,
-                staleness_state=MVP_STALENESS_STATE,
-            )
+        await check_write_cap(self._session, actor)
+        version = self.preview(
+            anchor_type=anchor_type,
+            value=value,
+            provenance=provenance,
+            source=source,
+            effective_date=effective_date,
+            unit=unit,
+            protocol=protocol,
+            ci_low=ci_low,
+            ci_high=ci_high,
+        )
 
         row = await self._repository.add(
             AnchorVersionRow(

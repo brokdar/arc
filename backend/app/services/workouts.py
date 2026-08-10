@@ -37,6 +37,7 @@ from app.persistence.workouts import (
     WorkoutRow,
 )
 from app.services.exercises import ExerciseService
+from app.services.guardrails import check_write_cap
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "workout"
@@ -148,7 +149,11 @@ class WorkoutService:
         Raises:
             ValidationError: When the structure is not a legal prescription,
                 references an unknown exercise, or the tags are malformed.
+            RateLimitedError: When an agent actor's trailing-hour write cap is
+                spent (WP-8.3). Here rather than in the MCP tool, so it binds
+                every path an agent can reach this write through.
         """
+        await check_write_cap(self._session, actor)
         body = await self._parse(structure)
         clean_tags = _clean_tags(tags)
         row = WorkoutRow(
