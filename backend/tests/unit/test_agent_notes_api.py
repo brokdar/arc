@@ -482,6 +482,20 @@ async def test_a_read_of_a_week_that_is_not_a_monday_is_refused(
     assert response.status_code == 422, response.text
 
 
+async def test_a_dispute_with_an_unparseable_body_returns_documented_400(
+    client: AsyncClient,
+) -> None:
+    """Found by Schemathesis: FastAPI answers 400, so the contract must say so."""
+    response = await client.post(
+        f"{NOTES}/{uuid.uuid4()}/dispute",
+        content=b"\x89\x1e=",
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert "detail" in response.json()
+
+
 async def test_notes_are_behind_the_session_guard(anon_client: AsyncClient) -> None:
     assert (await anon_client.get(NOTES)).status_code == 401
     assert (

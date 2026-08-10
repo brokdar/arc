@@ -33,6 +33,8 @@ router = APIRouter(prefix="/agent-notes", tags=["agent-notes"])
 
 type Responses = dict[int | str, dict[str, Any]]
 NOT_FOUND: Responses = {404: {"model": ErrorDetail, "description": "No such note"}}
+# FastAPI returns 400 (not 422) for bodies that fail to parse at all.
+BAD_BODY: Responses = {400: {"model": ErrorDetail, "description": "Malformed body"}}
 FORBIDDEN: Responses = {
     403: {"model": ErrorDetail, "description": "Only the athlete rates a note"}
 }
@@ -92,7 +94,7 @@ async def list_agent_notes(
     )
 
 
-@router.post("/{note_id}/dispute", responses=NOT_FOUND | FORBIDDEN | INVALID)
+@router.post("/{note_id}/dispute", responses=BAD_BODY | NOT_FOUND | FORBIDDEN | INVALID)
 async def dispute_agent_note(
     service: ServiceDep,
     actor: ActorDep,
