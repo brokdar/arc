@@ -2777,8 +2777,12 @@ function snapshot(
     purpose: "endurance",
     status: "planned",
     workout_id: null,
+    structure: {},
     intent_text: null,
+    success_criteria: [],
     coach_notes: null,
+    duration_s: null,
+    total_sets: null,
     predicted_load: null,
     predicted_volume_kg: null,
     ...overrides,
@@ -2904,7 +2908,12 @@ function requestOf(
   return diff.map((change) => ({
     kind: change.kind,
     planned_session_id: change.planned_session_id,
-    date: change.date,
+    // A move's request carries where the session should *go*; the diff entry's
+    // `date` is where it is now (the backend fills that from the row it read),
+    // so a request built off the entry date alone would ask to move a session
+    // to the day it already sits on — a no-op the API would never have written.
+    date:
+      change.kind === "move" && change.after ? change.after.date : change.date,
     expected_intent_version: change.expected_intent_version,
   }));
 }
@@ -3137,7 +3146,10 @@ export function athleteRecord(): Schemas["AthleteRead"] {
  * Two of them, and the mock honours both because a handler that did not would
  * let a form that never sends a severity pass: a flag that is up **must**
  * carry one, and lowering the flag clears the note and the severity — they
- * described an illness that is over.
+ * described an illness that is over. Clearing them means *omitting* them: a
+ * PATCH that lowers the flag while still sending a note or a severity is
+ * refused (422), because those two facts describe an illness the same request
+ * says is over (`app.domain.athlete`, `AthleteProfile`).
  */
 export function patchAthlete(
   body: Schemas["AthleteUpdate"],
@@ -3154,6 +3166,13 @@ export function patchAthlete(
     updated_at: AGENT_NOW,
   };
   if (!active) {
+    if (body.red_flag_note != null || body.red_flag_severity != null) {
+      return {
+        detail:
+          "red_flag_note and red_flag_severity may only be set while " +
+          "red_flag_active is set",
+      };
+    }
     next.red_flag_note = null;
     next.red_flag_severity = null;
   } else {

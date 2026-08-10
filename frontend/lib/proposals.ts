@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
-import { formatDayMonthYear } from "@/lib/format";
+import { DISCIPLINE_LABELS } from "@/lib/activity";
+import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
 import { purposeLabel, STATUS_TONES } from "@/lib/purpose";
 
 type Schemas = components["schemas"];
@@ -95,18 +96,21 @@ export const CHANGE_KIND_TONES: Readonly<Record<ChangeKind, string>> = {
  * One row of a change's diff: a field, what it was, and what it would become.
  *
  * `changed` is computed rather than asserted, so a proposal that touches one
- * field of a session cannot render as though it rewrote all nine. A `create`
+ * field of a session cannot render as though it rewrote every one. A `create`
  * has no before and a `delete` no after; both still list every field, because
  * "what would this add?" and "what would this take away?" are questions about
  * the whole session rather than about a difference.
  *
  * It is computed on the **raw** snapshot values and never on `before`/`after`,
- * which are what the rows *render*: a workout id renders as its first eight
- * characters and two uuid7s minted in the same minute share them, and both
- * predictions are rounded to the figure a page prints. Comparing the rendered
- * strings made a real swap of the prescription — the thing the accept would
- * actually do — render as "no field differs", which is the diff lying about
- * the change it exists to describe.
+ * which are what the rows *render*: both predictions are shown at a precision
+ * a page can read, so a sub-integer re-pin that the accept would actually write
+ * can print the same figure on both sides, and the structured fields render as
+ * a summary that two different bodies can share. Comparing the rendered strings
+ * made a real change of the prescription render as "no field differs", which is
+ * the diff lying about the change it exists to describe. The two JSON fields —
+ * `structure` and `success_criteria` — are compared by value (`same`), because
+ * the API mints a fresh object for each side and reference identity would call
+ * every one of them a change.
  */
 export interface FieldDiff {
   readonly key: keyof ProposalSnapshot;
@@ -116,6 +120,72 @@ export interface FieldDiff {
   readonly changed: boolean;
 }
 
+/**
+ * Whether two raw values of a field are equal by value.
+ *
+ * `structure` is a workout body and `success_criteria` a list of them, so a
+ * fresh object off the wire is `!==` an identical one and needs a structural
+ * comparison; every scalar field is compared with `===`.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    a === null ||
+    b === null
+  ) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    return a.every((item, index) => deepEqual(item, b[index]));
+  }
+  const aKeys = Object.keys(a as Record<string, unknown>);
+  const bKeys = Object.keys(b as Record<string, unknown>);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  return aKeys.every((key) =>
+    deepEqual(
+      (a as Record<string, unknown>)[key],
+      (b as Record<string, unknown>)[key],
+    ),
+  );
+}
+
+/** A load or volume figure at a precision a change of it survives (FIX-F3). */
+function formatMagnitude(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/**
+ * How many prescribed blocks a structure holds — steps for an endurance body,
+ * exercises across the groups for a strength one. Zero for an empty structure,
+ * which is what a session described only by a library id (or nothing) carries.
+ */
+function structureBlocks(structure: ProposalSnapshot["structure"]): number {
+  const body = structure as {
+    steps?: unknown[];
+    groups?: { items?: unknown[] }[];
+  };
+  if (Array.isArray(body.steps)) {
+    return body.steps.length;
+  }
+  if (Array.isArray(body.groups)) {
+    return body.groups.reduce(
+      (total, group) =>
+        total + (Array.isArray(group?.items) ? group.items.length : 0),
+      0,
+    );
+  }
+  return 0;
+}
+
 /** How each field of a snapshot is named and rendered. */
 const FIELDS: readonly {
   key: keyof ProposalSnapshot;
@@ -123,6 +193,8 @@ const FIELDS: readonly {
   format: (snapshot: ProposalSnapshot) => string | null;
   /** Numerals, dates and ids are mono; prose is not (UI convention 5). */
   mono: boolean;
+  /** How two raw values of this field are compared; `===` unless given. */
+  same?: (a: unknown, b: unknown) => boolean;
 }[] = [
   {
     key: "date",
@@ -137,6 +209,15 @@ const FIELDS: readonly {
     format: (s) => purposeLabel(s.purpose),
   },
   {
+    key: "discipline",
+    label: "Discipline",
+    mono: false,
+    // A cross-discipline change (a ride becomes a lift) otherwise repaints the
+    // card header silently: the header carries the change's *current*
+    // discipline, so only a row of its own shows the swap (FIX-F7).
+    format: (s) => DISCIPLINE_LABELS[s.discipline],
+  },
+  {
     key: "status",
     label: "Status",
     mono: false,
@@ -146,18 +227,63 @@ const FIELDS: readonly {
     key: "workout_id",
     label: "Workout",
     mono: true,
-    // The id, shortened the way a file hash is (`SessionDetail`): the proposal
-    // carries no name for it, and inventing one would be a claim. "Described
-    // inline" is the other real answer — a session prescribed by a structure
-    // of its own rather than out of the library.
-    format: (s) =>
-      s.workout_id === null ? "Described inline" : s.workout_id.slice(0, 8),
+    // The full id, not a prefix: two uuid7s minted in the same millisecond
+    // share their first several characters (the ms timestamp), and a
+    // batch-seeded library swaps between exactly those — a shortened id drew a
+    // real swap as `0199a000 → 0199a000` (FIX-F2). The proposal carries no
+    // name, and inventing one would be a claim; "Described inline" is the
+    // honest reading of a session prescribed by a body of its own.
+    format: (s) => (s.workout_id === null ? "Described inline" : s.workout_id),
+  },
+  {
+    key: "structure",
+    label: "Prescription",
+    mono: false,
+    same: deepEqual,
+    // A summary, not the body itself: enough that a change of the prescription
+    // shows (the block count moves with steps or exercises, the magnitude with
+    // the duration or the sets), so a structure-only revision is no longer a
+    // silent "no field differs" above an enabled Accept (FIX-F1). Absent when
+    // there is no body — a library-only or unstructured session — so the row
+    // does not print "— → —" on every ride.
+    format: (s) => {
+      const blocks = structureBlocks(s.structure);
+      if (blocks === 0) {
+        return null;
+      }
+      if (s.discipline === "strength") {
+        const sets =
+          s.total_sets === null
+            ? ""
+            : `, ${s.total_sets} set${s.total_sets === 1 ? "" : "s"}`;
+        return `${blocks} exercise${blocks === 1 ? "" : "s"}${sets}`;
+      }
+      const time =
+        s.duration_s === null ? "" : `, ${formatDurationHm(s.duration_s)}`;
+      return `${blocks} step${blocks === 1 ? "" : "s"}${time}`;
+    },
   },
   {
     key: "intent_text",
     label: "Intent",
     mono: false,
     format: (s) => s.intent_text,
+  },
+  {
+    key: "success_criteria",
+    label: "Success criteria",
+    mono: false,
+    same: deepEqual,
+    // Counted, for the same reason the structure is summarised: a criteria-only
+    // revision must move a row rather than pass as unchanged (FIX-F1). Absent
+    // when a session states none.
+    format: (s) => {
+      const count = s.success_criteria.length;
+      if (count === 0) {
+        return null;
+      }
+      return `${count} ${count === 1 ? "criterion" : "criteria"}`;
+    },
   },
   {
     key: "coach_notes",
@@ -171,9 +297,12 @@ const FIELDS: readonly {
     mono: true,
     // Absent rather than zero when the prescription has no power target: "0
     // TSS" would be a claim the arithmetic never made (the same rule the
-    // Today panel follows).
+    // Today panel follows). Shown to a decimal when it has one, so a re-pin
+    // that shifts the load below a whole point does not print twice the same.
     format: (s) =>
-      s.predicted_load === null ? null : `${Math.round(s.predicted_load)} TSS`,
+      s.predicted_load === null
+        ? null
+        : `${formatMagnitude(s.predicted_load)} TSS`,
   },
   {
     key: "predicted_volume_kg",
@@ -182,7 +311,7 @@ const FIELDS: readonly {
     format: (s) =>
       s.predicted_volume_kg === null
         ? null
-        : `${Math.round(s.predicted_volume_kg)} kg`,
+        : `${formatMagnitude(s.predicted_volume_kg)} kg`,
   },
 ];
 
@@ -209,6 +338,7 @@ export function changeFields(change: ProposalChangeDiff): FieldDiff[] {
     if (before === null && after === null) {
       continue;
     }
+    const equal = field.same ?? ((a, b) => a === b);
     rows.push({
       key: field.key,
       label: field.label,
@@ -221,7 +351,7 @@ export function changeFields(change: ProposalChangeDiff): FieldDiff[] {
       changed:
         change.before === null ||
         change.after === null ||
-        change.before[field.key] !== change.after[field.key],
+        !equal(change.before[field.key], change.after[field.key]),
     });
   }
   return rows;
@@ -231,11 +361,13 @@ export function changeFields(change: ProposalChangeDiff): FieldDiff[] {
  * The date a change's header carries.
  *
  * The API's entry-level `date` is the date the change is *about*: the target
- * for a `create`, and the session's current date for everything else — so on
- * a `move` it is where the session is now, and where it would go lives in
- * `after.date` (`ProposalChangeDiff`). A header that printed only the former
- * would headline a move with the one date the move is trying to get rid of,
- * so a move shows the journey and every other kind shows its single date.
+ * for a `create`, and the session's current date for everything else — so
+ * where the session is now, with where it would go living in `after.date`
+ * (`ProposalChangeDiff`). A header that printed only the former would headline
+ * a reschedule with the one date it is trying to get rid of, so any change
+ * whose `after` lands on a different day shows the journey — a `move`, but
+ * also an `update` that reschedules while it revises (FIX-F6) — and everything
+ * that stays put shows its single date.
  *
  * Formatted, like every other date in the diff: the header and the Date row
  * are the same date said twice, and printing one as `2026-08-12` beside the
@@ -243,11 +375,27 @@ export function changeFields(change: ProposalChangeDiff): FieldDiff[] {
  */
 export function changeDateLabel(change: ProposalChangeDiff): string {
   const from = formatDayMonthYear(change.date);
-  if (change.kind !== "move" || change.after === null) {
+  if (change.after === null) {
     return from;
   }
   const to = formatDayMonthYear(change.after.date);
   return to === from ? from : `${from} → ${to}`;
+}
+
+/**
+ * Whether a proposal can still be accepted or rejected right now.
+ *
+ * `pending` alone is not enough: expiry is enforced at accept time and the
+ * sweep that flips a lapsed one to `lapsed` runs on a schedule, so a proposal
+ * can read `pending` with its expiry already behind it. Offering Accept on it
+ * invites a click that the server answers 409 — the athlete is being asked to
+ * apply a plan change the plan will refuse (FIX-F4).
+ */
+export function isActionable(
+  proposal: Proposal,
+  now: number = Date.now(),
+): boolean {
+  return proposal.status === "pending" && Date.parse(proposal.expires_at) > now;
 }
 
 /**

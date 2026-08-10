@@ -5,7 +5,9 @@ import {
   ingestedSessionFixture,
   longQuarantineFixture,
   noteList,
+  patchAthlete,
   proposalList,
+  resetAgentState,
   sessionRunFixture,
 } from "@/tests/mocks/fixtures";
 
@@ -116,22 +118,26 @@ describe("the paged fixtures", () => {
 });
 
 describe("the coach's fixtures", () => {
-  it("keeps a diff's unchanged fields identical on both sides", () => {
+  it("gives every change at least one field it actually changes", () => {
     // The backend computes the after-snapshot by *applying* a change to the
     // before-snapshot, so a field a change does not touch is the same value
-    // twice. A fixture that wrote it out a second time — "VO2max" against
-    // "vo2max", 84 against 84.0 — would let a diff view that marks every row
-    // as changed pass, which is the one thing the diff view exists to get
-    // right.
+    // twice. Compared by value, not by reference: the snapshot now carries the
+    // structured body — `structure` and `success_criteria` — and a change that
+    // touches only the body (a criteria-only revision) is a real change the
+    // diff must show, so this counts it as touched rather than demanding a
+    // scalar column move (which projected such a change onto "no field
+    // differs" back when the body was not in the snapshot at all).
     for (const proposal of proposalList()) {
       for (const change of proposal.diff) {
         if (!change.before || !change.after) {
           continue;
         }
-        const touched = Object.keys(change.after).filter(
+        const before = change.before;
+        const after = change.after;
+        const touched = Object.keys(after).filter(
           (key) =>
-            change.after?.[key as keyof typeof change.after] !==
-            change.before?.[key as keyof typeof change.before],
+            JSON.stringify(after[key as keyof typeof after]) !==
+            JSON.stringify(before[key as keyof typeof before]),
         );
         expect(
           touched.length,
@@ -223,5 +229,30 @@ describe("the coach's fixtures", () => {
         expect(new Date(`${note.plan_week}T00:00:00Z`).getUTCDay()).toBe(1);
       }
     }
+  });
+
+  it("refuses a red flag lowered with a note or a severity still attached", () => {
+    // The backend keeps note and severity supplied in the patch and lets the
+    // domain refuse the pair while the flag is down — they describe an illness
+    // the same request says is over (`app.domain.athlete`). A handler that
+    // silently swallowed them would let a broken form pass.
+    resetAgentState();
+    const refusal = patchAthlete({
+      red_flag_active: false,
+      red_flag_severity: "severe",
+      red_flag_note: "Still sore.",
+    });
+    expect(refusal).toEqual({
+      detail:
+        "red_flag_note and red_flag_severity may only be set while " +
+        "red_flag_active is set",
+    });
+
+    // Lowering it on its own is honoured, and clears the pair.
+    const cleared = patchAthlete({ red_flag_active: false });
+    expect(cleared).toMatchObject({
+      athlete: { red_flag_active: false, red_flag_note: null },
+    });
+    resetAgentState();
   });
 });

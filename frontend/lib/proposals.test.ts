@@ -17,8 +17,22 @@ const BASE: ProposalSnapshot = {
   purpose: "vo2max",
   status: "planned",
   workout_id: null,
+  structure: {
+    discipline: "cycling",
+    steps: [
+      { kind: "steady", role: "warmup", duration_s: 600 },
+      { kind: "steady", role: "work", duration_s: 2400 },
+      { kind: "steady", role: "cooldown", duration_s: 600 },
+    ],
+  },
   intent_text: "Six by three at 118 %.",
+  success_criteria: [
+    { kind: "time_in_band", min_fraction: 0.75 },
+    { kind: "duration_floor", min_seconds: 3000 },
+  ],
   coach_notes: null,
+  duration_s: 3600,
+  total_sets: null,
   predicted_load: 84,
   predicted_volume_kg: null,
 };
@@ -52,40 +66,91 @@ describe("what one change actually changes", () => {
     expect(purpose).toMatchObject({ before: "VO₂max", after: "Threshold" });
   });
 
-  it("compares raw values, not the rendered ones", () => {
-    // Both predictions are rounded for display, so 84.4 and 84 print the same
-    // "84 TSS". The change is still real — it is what the accept would write —
-    // and a row that read as unchanged would hide it behind its own rounding.
+  it("prints a sub-integer load change rather than the same figure twice", () => {
+    // The load is shown to a decimal when it has one, so a re-pin that shifts
+    // it below a whole point — the thing the accept would actually write — does
+    // not print "84 TSS → 84 TSS" and read as though nothing moved (FIX-F3).
     const rows = changeFields(
       change("update", BASE, { ...BASE, predicted_load: 84.4 }),
     );
 
-    expect(rows.filter((row) => row.changed).map((row) => row.key)).toEqual([
-      "predicted_load",
-    ]);
+    const load = rows.find((row) => row.key === "predicted_load");
+    expect(load?.changed).toBe(true);
+    expect(load).toMatchObject({ before: "84 TSS", after: "84.4 TSS" });
   });
 
-  it("sees a workout swap between two ids that render alike", () => {
-    // uuid7s minted in the same minute share their first eight characters, and
-    // eight characters is all the Workout row prints. Two same-batch workouts
-    // are exactly the case a proposal swaps between, and comparing the printed
-    // form said "no field differs" about a swapped prescription.
+  it("sees a workout swap and prints the ids in full so it shows", () => {
+    // uuid7s minted in the same millisecond share their leading characters (the
+    // timestamp), and a batch-seeded library swaps between exactly those. The
+    // row now prints the whole id, so a swapped prescription is a visible
+    // before/after rather than `0199a000 → 0199a000` (FIX-F2).
+    const before = "0199a000-0000-7000-8000-00000000aaaa";
+    const after = "0199a000-0000-7000-8000-00000000bbbb";
     const rows = changeFields(
       change(
         "update",
-        { ...BASE, workout_id: "0199a000-0000-7000-8000-00000000aaaa" },
-        {
-          ...BASE,
-          workout_id: "0199a000-0000-7000-8000-00000000bbbb",
-        },
+        { ...BASE, workout_id: before },
+        { ...BASE, workout_id: after },
       ),
     );
 
     const workout = rows.find((row) => row.key === "workout_id");
     expect(workout?.changed).toBe(true);
-    // Still rendered short on both sides: the fix is to the comparison, not to
-    // what the row prints.
-    expect(workout).toMatchObject({ before: "0199a000", after: "0199a000" });
+    expect(workout).toMatchObject({ before, after });
+  });
+
+  it("marks a criteria-only change, and a structure-only one, as changed", () => {
+    // A revision that touches only the body — the success criteria or the
+    // prescription — used to project onto no visible field and render as "no
+    // field differs" above an enabled Accept. Both are diff rows now (FIX-F1).
+    const criteriaOnly = changeFields(
+      change("update", BASE, {
+        ...BASE,
+        success_criteria: [{ kind: "duration_floor", min_seconds: 3000 }],
+      }),
+    );
+    expect(
+      criteriaOnly.filter((row) => row.changed).map((row) => row.key),
+    ).toEqual(["success_criteria"]);
+    expect(
+      criteriaOnly.find((row) => row.key === "success_criteria"),
+    ).toMatchObject({ before: "2 criteria", after: "1 criterion" });
+
+    const structureOnly = changeFields(
+      change("update", BASE, {
+        ...BASE,
+        structure: {
+          discipline: "cycling",
+          steps: [{ kind: "steady", role: "work", duration_s: 3600 }],
+        },
+        duration_s: 3600,
+      }),
+    );
+    expect(
+      structureOnly.filter((row) => row.changed).map((row) => row.key),
+    ).toEqual(["structure"]);
+    expect(structureOnly.find((row) => row.key === "structure")).toMatchObject({
+      before: "3 steps, 1:00",
+      after: "1 step, 1:00",
+    });
+  });
+
+  it("does not mistake a fresh copy of an unchanged body for a change", () => {
+    // The API mints a new object for each side, so the two JSON fields are
+    // compared by value: a structure that was not touched is the same value on
+    // both sides even though it is not the same reference.
+    const rows = changeFields(
+      change("update", BASE, {
+        ...BASE,
+        purpose: "threshold",
+        structure: JSON.parse(JSON.stringify(BASE.structure)),
+        success_criteria: JSON.parse(JSON.stringify(BASE.success_criteria)),
+      }),
+    );
+
+    expect(rows.filter((row) => row.changed).map((row) => row.key)).toEqual([
+      "purpose",
+    ]);
   });
 
   it("reads a create as all addition", () => {
@@ -123,9 +188,12 @@ describe("what one change actually changes", () => {
 
     expect(rows.filter((row) => !row.changed).map((row) => row.key)).toEqual([
       "purpose",
+      "discipline",
       "status",
       "workout_id",
+      "structure",
       "intent_text",
+      "success_criteria",
       "predicted_load",
     ]);
   });
@@ -145,6 +213,25 @@ describe("the date a change is headlined with", () => {
     );
 
     expect(label).toBe("13.08.2026 → 11.08.2026");
+  });
+
+  it("shows the journey for an update that reschedules while it revises", () => {
+    // A reschedule need not be a `move`: an `update` can shift the date and
+    // rewrite the intent in one change, and the header has to show both dates
+    // or it headlines the change with the day it is leaving (FIX-F6).
+    const label = changeDateLabel(
+      change(
+        "update",
+        { ...BASE, date: "2026-08-13" },
+        {
+          ...BASE,
+          date: "2026-08-15",
+          intent_text: "Longer, and a day later.",
+        },
+      ),
+    );
+
+    expect(label).toBe("13.08.2026 → 15.08.2026");
   });
 
   it("shows one formatted date for every other kind", () => {

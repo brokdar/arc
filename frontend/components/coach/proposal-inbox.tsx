@@ -13,6 +13,7 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
+import { SESSIONS_QUERY_PREFIX } from "@/lib/activity";
 import { $api } from "@/lib/api/client";
 import {
   apiErrorMessages,
@@ -21,6 +22,8 @@ import {
 } from "@/lib/api-errors";
 import { formatUtcStamp } from "@/lib/format";
 import {
+  MATCH_QUERY_PREFIX,
+  MATCHES_QUERY_PREFIX,
   PLAN_WEEK_QUERY_PREFIX,
   PLANNED_SESSION_QUERY_PREFIX,
   PLANNED_SESSIONS_QUERY_PREFIX,
@@ -28,6 +31,7 @@ import {
 import {
   actorLabel,
   expiryLabel,
+  isActionable,
   PROPOSAL_STATUS_LABELS,
   PROPOSAL_STATUS_TONES,
   PROPOSAL_STATUSES,
@@ -234,6 +238,14 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
         queryClient.invalidateQueries({
           queryKey: PLANNED_SESSION_QUERY_PREFIX,
         });
+        // Accepting a delete cascades the planned session's `session_matches`
+        // and nulls the scores that hung off them (the same change class the
+        // match panel invalidates for), so an open session or match view goes
+        // on drawing a link to a planned session the accept just removed unless
+        // these three caches are dropped too (FIX-F5).
+        queryClient.invalidateQueries({ queryKey: MATCHES_QUERY_PREFIX });
+        queryClient.invalidateQueries({ queryKey: MATCH_QUERY_PREFIX });
+        queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_PREFIX });
         invalidate();
       },
     },
@@ -252,12 +264,14 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
 
   const busy = accept.isPending || reject.isPending;
   const path = { params: { path: { proposal_id: proposal.id } } };
-  const pending = proposal.status === "pending";
-  const stale = isConflict(accept.error);
+  // Not merely `pending`: an expired proposal reads pending until the sweep
+  // catches it, and offering Accept on one only earns a 409 (FIX-F4).
+  const actionable = isActionable(proposal);
+  const conflict = isConflict(accept.error);
   // A 409 is a state this card draws, not a message it prints — so it is kept
   // out of the generic problem list and rendered on its own below.
   const problems = [
-    ...(stale ? [] : apiErrorMessages(accept.error)),
+    ...(conflict ? [] : apiErrorMessages(accept.error)),
     ...apiErrorMessages(reject.error),
   ];
 
@@ -316,9 +330,11 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
         </p>
       ) : null}
 
-      {stale ? <StalePlan detail={apiErrorMessages(accept.error)[0]} /> : null}
+      {conflict ? (
+        <ConflictNotice message={apiErrorMessages(accept.error)[0]} />
+      ) : null}
 
-      {pending ? (
+      {actionable ? (
         <div className="flex flex-wrap items-center gap-2 border-hairline border-t pt-3">
           <Button size="sm" disabled={busy} onClick={() => accept.mutate(path)}>
             {accept.isPending ? "Applying…" : "Accept"}
@@ -396,38 +412,29 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
 }
 
 /**
- * The accept that was refused because the plan moved under it.
+ * The accept the server refused with a 409 — and *why*, in its own words.
  *
- * Deliberately not phrased as an error, because nothing went wrong: the
- * athlete edited a session the proposal was written against, the concurrency
- * token no longer matches, and the proposal **stays pending** — the suggestion
- * may well still be a good one against the plan as it now stands. What it does
- * *not* offer is a retry: the diff on the card was computed when the proposal
- * was written and nothing here can recompute its before-side, so every further
- * accept re-checks the same stale token and is refused again. The two ways out
- * are a fresh proposal from the coach and a rejection, and the copy says so
- * rather than inviting the athlete to press Accept until it works. The
- * server's own sentence is printed underneath rather than replaced, because it
- * is the half that names which session moved.
+ * Deliberately not phrased as a failure, because nothing went wrong on the
+ * athlete's side; the world moved between writing the proposal and accepting
+ * it. But the three ways it can move are different facts and must not read
+ * alike (FIX-F4): the plan was revised under the proposal (a stale intent
+ * version), the proposal expired before it was answered, or it is no longer
+ * pending at all. The server names which one in the message it sends, and each
+ * message carries its own remedy — "re-read the session and propose again",
+ * "the committed plan stands" — so the card prints that sentence rather than a
+ * single house phrase that would be wrong for two cases out of three. All that
+ * is added is the one reassurance every case shares: nothing was applied.
  */
-function StalePlan({ detail }: { detail?: string }) {
+function ConflictNotice({ message }: { message?: string }) {
   return (
     <div
       role="alert"
       className="flex flex-col gap-1 rounded-card border border-warn-border bg-warn-surface px-3.5 py-2.5"
     >
       <span className="font-medium text-sm text-status-under">
-        The plan moved underneath this proposal.
+        {message ?? "This proposal could not be accepted."}
       </span>
-      {detail ? (
-        <span className="text-ink-secondary text-sm">{detail}</span>
-      ) : null}
-      <span className="text-ink-muted text-xs">
-        Nothing was applied and the proposal is still waiting on you. The diff
-        above is the one that was computed when this was written, and it cannot
-        be recomputed against the session as it now stands — ask the coach for a
-        fresh proposal, or reject this one.
-      </span>
+      <span className="text-ink-muted text-xs">Nothing was applied.</span>
     </div>
   );
 }

@@ -65,6 +65,19 @@ function PlannedSessionProbe() {
   return null;
 }
 
+/**
+ * A stand-in for the match and session views. Accepting a `delete` cascades the
+ * planned session's `session_matches` and nulls the scores hung off them, so an
+ * open match list left uninvalidated goes on drawing a link to a session the
+ * accept just removed.
+ */
+function MatchesProbe() {
+  $api.useQuery("get", "/api/v1/matches", {
+    params: { query: { limit: 25 } },
+  });
+  return null;
+}
+
 /** The pending proposal as the fixtures hold it, or a loud failure. */
 function pendingFixture(): Proposal {
   const proposal = proposalById(PROPOSAL_IDS.pending);
@@ -91,6 +104,45 @@ function swapWorkout(proposal: Proposal): Proposal {
         ...update,
         before: { ...before, workout_id: WORKOUT_IDS.vo2 },
         after: { ...after, workout_id: WORKOUT_IDS.long },
+      },
+      ...rest,
+    ],
+  };
+}
+
+/**
+ * The same proposal, with its `update` change touching only the body — the
+ * success criteria — and nothing a scalar column would show. The case that
+ * used to render as "no field differs" above an enabled Accept.
+ */
+function reviseCriteria(proposal: Proposal): Proposal {
+  const [update, ...rest] = proposal.diff;
+  const { before, after } = update;
+  if (before === null || after === null) {
+    throw new Error("the pending fixture no longer opens with an update");
+  }
+  const body = { discipline: "cycling", steps: [] };
+  return {
+    ...proposal,
+    diff: [
+      {
+        ...update,
+        before: {
+          ...before,
+          purpose: after.purpose,
+          intent_text: after.intent_text,
+          predicted_load: after.predicted_load,
+          structure: body,
+          success_criteria: [
+            { kind: "time_in_band", min_fraction: 0.75 },
+            { kind: "duration_floor", min_seconds: 3000 },
+          ],
+        },
+        after: {
+          ...after,
+          structure: body,
+          success_criteria: [{ kind: "duration_floor", min_seconds: 3000 }],
+        },
       },
       ...rest,
     ],
@@ -257,11 +309,11 @@ describe("the diff", () => {
     ).toBeInTheDocument();
   });
 
-  it("sees a workout swap whose shortened ids render alike", async () => {
-    // `WORKOUT_IDS` are uuid7s from one batch, so they share the first eight
-    // characters — which is all the Workout row prints. The card counting its
-    // changed rows off the rendered text called a swapped prescription "no
-    // field differs" and offered it for acceptance on that basis.
+  it("sees a workout swap and prints both ids in full so it shows", async () => {
+    // `WORKOUT_IDS` are uuid7s from one batch, so they share their leading
+    // characters. The row prints the whole id now, so the swap is a visible
+    // before/after rather than the `0199a000 → 0199a000` a shortened id drew —
+    // which the card had counted as "no field differs" and offered for accept.
     server.use(
       http.get("/api/v1/proposals", ({ response }) =>
         response(200).json({
@@ -275,16 +327,39 @@ describe("the diff", () => {
     renderInbox();
     const card = await pendingCard();
     const update = within(card).getAllByTestId("proposal-change")[0];
+    const workout = field(update, "workout_id");
 
-    expect(field(update, "workout_id").dataset.changed).toBe("true");
+    expect(workout.dataset.changed).toBe("true");
     expect(within(update).getByText(/fields differ/)).toBeInTheDocument();
-    // Still drawn short on both sides: what was wrong was the comparison, not
-    // the rendering.
-    expect(
-      within(field(update, "workout_id")).getAllByText(
-        WORKOUT_IDS.vo2.slice(0, 8),
+    // Both full ids on the page, one struck through and one not — a swap the
+    // athlete can actually see, which a shared eight-character prefix hid.
+    expect(within(workout).getByText(WORKOUT_IDS.vo2)).toBeInTheDocument();
+    expect(within(workout).getByText(WORKOUT_IDS.long)).toBeInTheDocument();
+  });
+
+  it("shows a body-only revision as a changed field, not 'no field differs'", async () => {
+    // A revision that touches only the success criteria projects onto no
+    // scalar field; before the snapshot carried the body it rendered as "no
+    // field differs" above an enabled Accept. It is a diff row now (FIX-F1).
+    server.use(
+      http.get("/api/v1/proposals", ({ response }) =>
+        response(200).json({
+          items: [reviseCriteria(pendingFixture())],
+          total: 1,
+          offset: 0,
+          limit: 25,
+        }),
       ),
-    ).toHaveLength(2);
+    );
+    renderInbox();
+    const card = await pendingCard();
+    const update = within(card).getAllByTestId("proposal-change")[0];
+
+    expect(field(update, "success_criteria").dataset.changed).toBe("true");
+    expect(within(update).getByText(/differs?/)).toBeInTheDocument();
+    expect(
+      within(update).queryByText("no field differs"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the concurrency token the accept will re-check", async () => {
@@ -351,6 +426,36 @@ describe("answering a proposal", () => {
     // session sheet read it by id and neither shares a key with the week, so
     // without their own invalidation they go on showing the intent the accept
     // replaced until something else happens to refetch it.
+    await waitFor(() => {
+      expect(fetched).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("refetches the matches a panel elsewhere is showing", async () => {
+    const user = userEvent.setup();
+    const fetched = vi.fn();
+    server.use(
+      http.get("/api/v1/matches", ({ response }) => {
+        fetched();
+        return response(200).json({
+          items: [],
+          total: 0,
+          offset: 0,
+          limit: 25,
+        });
+      }),
+    );
+    renderInbox(<MatchesProbe />);
+    const card = await pendingCard();
+    await waitFor(() => {
+      expect(fetched).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(within(card).getByRole("button", { name: "Accept" }));
+
+    // Accepting a delete cascades `session_matches`; a match view that shares
+    // this query client would keep a link to a removed session without its own
+    // invalidation (FIX-F5).
     await waitFor(() => {
       expect(fetched).toHaveBeenCalledTimes(2);
     });
@@ -423,14 +528,26 @@ describe("answering a proposal", () => {
     expect(proposalById(PROPOSAL_IDS.pending)?.status).toBe("pending");
   });
 
-  it("draws a 409 as a state, and leaves the proposal waiting", async () => {
+  // The three ways an accept comes back 409, each with the sentence the server
+  // actually sends for it — they must not all read as "the plan moved" (FIX-F4).
+  it.each([
+    [
+      "the plan was revised under it",
+      "Change 0: planned session 0199a000 has moved on — this change was computed against intent version 3, but version 4 is in force. Re-read the session and propose again.",
+    ],
+    [
+      "it expired before it was answered",
+      "This proposal expired at 2026-08-07T06:30:00+00:00 and cannot be accepted. The committed plan stands.",
+    ],
+    [
+      "it is no longer pending",
+      "This proposal is already accepted; it cannot become accepted.",
+    ],
+  ])("renders the server's own words when %s", async (_why, detail) => {
     const user = userEvent.setup();
     server.use(
       http.post("/api/v1/proposals/{proposal_id}/accept", ({ response }) =>
-        response(409).json({
-          detail:
-            "Thursday's session has been revised since this proposal was written (intent v3 → v4).",
-        }),
+        response(409).json({ detail }),
       ),
     );
     renderInbox();
@@ -438,15 +555,45 @@ describe("answering a proposal", () => {
 
     await user.click(within(card).getByRole("button", { name: "Accept" }));
 
-    expect(
-      await within(card).findByText("The plan moved underneath this proposal."),
-    ).toBeInTheDocument();
-    // The server's own sentence, which is the half that names what moved.
-    expect(within(card).getByText(/intent v3 → v4/)).toBeInTheDocument();
-    // Still pending, still answerable: a 409 here is not a failed write, it is
-    // the world having moved.
+    // The distinct sentence, not a single house phrase that would be wrong for
+    // two of the three kinds.
+    expect(await within(card).findByText(detail)).toBeInTheDocument();
+    // Still pending and still on offer: a 409 here is not a failed write, it is
+    // the world having moved, and the proposal it was written against stands.
     expect(card.dataset.status).toBe("pending");
     expect(within(card).getByRole("button", { name: "Accept" })).toBeEnabled();
+  });
+
+  it("offers no Accept on a proposal whose expiry has already passed", async () => {
+    // Expiry is enforced at accept time and the sweep runs on a schedule, so a
+    // proposal can read `pending` with its expiry behind it. Offering Accept on
+    // it only earns a 409 — so the buttons come off (FIX-F4).
+    server.use(
+      http.get("/api/v1/proposals", ({ response }) =>
+        response(200).json({
+          items: [
+            {
+              ...pendingFixture(),
+              expires_at: "2026-08-01T06:30:00Z",
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 25,
+        }),
+      ),
+    );
+    renderInbox();
+    const card = await pendingCard();
+
+    expect(card.dataset.status).toBe("pending");
+    expect(within(card).getByText(/^expired ·/)).toBeInTheDocument();
+    expect(
+      within(card).queryByRole("button", { name: "Accept" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(card).queryByRole("button", { name: "Reject" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers no buttons on a proposal that is already resolved", async () => {
