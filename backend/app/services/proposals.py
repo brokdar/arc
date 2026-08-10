@@ -108,8 +108,11 @@ class ProposalOutcome:
         diff: What the changes would do, per entity, before and after. Always
             present — it is the whole answer on a dry run.
         proposal: The stored proposal, or ``None`` on a dry run.
-        superseded: The open proposals this one replaced; empty on a dry run
-            (which replaces nothing) and usually empty otherwise.
+        superseded: The open proposals this one replaced — or, on a dry run,
+            the ones it **would** replace, still pending and untouched. Usually
+            empty. A dry run that reported nothing here would be answering the
+            most consequential question about a proposal ("what does this
+            displace?") with a confident and wrong "nothing".
     """
 
     diff: list[dict[str, Any]]
@@ -228,7 +231,16 @@ class ProposalService:
         diff = await self._diff(changes)
         await self._check_red_flag(actor, diff)
         if dry_run:
-            return ProposalOutcome(diff=diff, proposal=None)
+            # The overlap is *read* on a dry run and only closed on a real
+            # one: what a proposal displaces is part of what it does, and a
+            # preview that always said "nothing" would hide the case the
+            # athlete most needs to see — a standing suggestion about the same
+            # session being thrown away by this one.
+            return ProposalOutcome(
+                diff=diff,
+                proposal=None,
+                superseded=tuple(await self._open_overlapping(diff)),
+            )
 
         superseded = await self._supersede(diff, actor=actor)
         row = await self._repository.add(
@@ -682,6 +694,25 @@ class ProposalService:
             "force. Re-read the session and propose again."
         )
 
+    async def _open_overlapping(
+        self, diff: Sequence[Mapping[str, Any]]
+    ) -> ProposalRows:
+        """The open proposals a diff would displace, oldest first. Writes nothing.
+
+        Split out of :meth:`_supersede` so the dry run and the real write
+        answer "what does this displace" from one query — the same reason
+        :meth:`_diff` is shared. Read-only, so it is safe on the path that
+        must not touch the database at all.
+        """
+        targets = _targets(diff)
+        if not targets:
+            return []
+        return [
+            row
+            for row in await self._repository.pending()
+            if targets & _targets(row.diff)
+        ]
+
     async def _supersede(
         self, diff: Sequence[Mapping[str, Any]], *, actor: Actor
     ) -> ProposalRows:
@@ -696,19 +727,11 @@ class ProposalService:
         overlaps: a proposal is one argument, and applying half of it applies
         an argument nobody made.
         """
-        targets = {
-            uuid.UUID(entry["planned_session_id"])
-            for entry in diff
-            if entry["planned_session_id"] is not None
-        }
-        if not targets:
-            return []
         moment = dt.datetime.now(dt.UTC)
+        targets = _targets(diff)
         superseded: ProposalRows = []
-        for row in await self._repository.pending():
+        for row in await self._open_overlapping(diff):
             overlap = targets & _targets(row.diff)
-            if not overlap:
-                continue
             row.status = ProposalStatus.SUPERSEDED
             row.resolved_at = moment
             await self._repository.add(row)

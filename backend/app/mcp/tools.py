@@ -53,7 +53,6 @@ from app.domain.agent_notes import NoteKind
 from app.domain.anchors import AnchorSource, AnchorType, AnchorUnit, Provenance
 from app.domain.athlete import Discipline
 from app.domain.proposals import changes_from_json
-from app.domain.workout import discipline_of
 from app.mcp import views
 from app.mcp.auth import Scope
 from app.mcp.identity import require_scope
@@ -68,7 +67,7 @@ from app.services.metrics import SessionMetricsService, summarise
 from app.services.plan import PlanService
 from app.services.proposals import ProposalService
 from app.services.scoring import ScoringService
-from app.services.workouts import WorkoutService, WorkoutSummary, summarize
+from app.services.workouts import WorkoutService, step_count_of
 
 logger = get_logger(__name__)
 
@@ -127,15 +126,31 @@ def tool_errors() -> Iterator[None]:
     except Exception as exc:
         logger.exception("mcp_tool_failed")
         raise ToolError(
-            "The server failed to handle this call. It has been logged; "
-            "nothing was written. Try again, or ask the athlete to check the "
-            "server log."
+            "The server failed after this call was validated. It has been "
+            "logged. If this was a write, re-read before retrying: the write "
+            "may have landed and the failure be in rendering the answer."
         ) from exc
 
 
 def _limit(limit: int) -> int:
     """Clamp a caller-supplied page size into what the surface will serve."""
     return max(1, min(limit, MAX_LIMIT))
+
+
+def _offset(offset: int) -> int:
+    """Check a caller-supplied page offset.
+
+    Clamped nowhere and refused instead: a negative offset means the caller is
+    paging with arithmetic that has gone wrong, and silently serving them page
+    one would hide it behind rows they have already seen.
+
+    Raises:
+        ValueError: When it is negative. Named, like every other malformed
+            argument on this surface.
+    """
+    if offset < 0:
+        raise ValueError(f"offset must be zero or more, got {offset}")
+    return offset
 
 
 def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per tool
@@ -183,7 +198,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
     @mcp.tool
     async def get_anchors(
-        anchor_type: AnchorType | None = None, limit: int = 50
+        anchor_type: AnchorType | None = None, limit: int = 50, offset: int = 0
     ) -> dict[str, Any]:
         """Read the athlete's physiological anchors, newest version first.
 
@@ -204,6 +219,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             anchor_type: Restrict to one anchor (`ftp`, `lthr`, `max_hr`,
                 `resting_hr`); omit for all of them.
             limit: How many versions to return, newest first.
+            offset: How many to skip. With `total` in the answer, this is how
+                you read past the first page.
 
         Requires a `read` key.
         """
@@ -211,13 +228,16 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         with tool_errors():
             async with session_scope() as session:
                 rows, total = await AnchorService.from_session(session).list(
-                    anchor_type=anchor_type, offset=0, limit=_limit(limit)
+                    anchor_type=anchor_type,
+                    offset=_offset(offset),
+                    limit=_limit(limit),
                 )
                 return {
                     **views.page(
                         [views.anchor(row) for row in rows],
                         total=total,
                         limit=_limit(limit),
+                        offset=_offset(offset),
                     ),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
@@ -313,6 +333,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         end: str | None = None,
         discipline: SessionDiscipline | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """List recorded sessions, newest first.
 
@@ -328,6 +349,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             end: Latest local date, `YYYY-MM-DD`, inclusive.
             discipline: `cycling`, `strength` or `other`.
             limit: How many to return, newest first.
+            offset: How many to skip. `total` says how many the filters
+                matched, so `offset + limit < total` means there is more.
 
         Requires a `read` key.
         """
@@ -340,7 +363,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     else views.as_date(start, field="start"),
                     end=None if end is None else views.as_date(end, field="end"),
                     discipline=discipline,
-                    offset=0,
+                    offset=_offset(offset),
                     limit=_limit(limit),
                 )
                 metrics_service = SessionMetricsService.from_session(session)
@@ -355,7 +378,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     for row in rows
                 ]
                 return {
-                    **views.page(items, total=total, limit=_limit(limit)),
+                    **views.page(
+                        items,
+                        total=total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -366,6 +394,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         tag: str | None = None,
         discipline: Discipline | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Browse the athlete's saved workouts, newest first.
 
@@ -376,7 +405,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         The prescription document itself is not returned — only the name,
         folder, tags and step count. To plan one, reference its `id` in a
-        `create` change.
+        `create` change. A `step_count` of null means that workout's stored
+        document no longer parses; the rest of the page is unaffected.
 
         Args:
             query: Free-text match on the name.
@@ -384,6 +414,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             tag: Restrict to one tag.
             discipline: `cycling` or `strength`.
             limit: How many to return.
+            offset: How many to skip, for reading past the first page.
 
         Requires a `read` key.
         """
@@ -395,12 +426,19 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     folder=folder,
                     tag=tag,
                     discipline=discipline,
-                    offset=0,
+                    offset=_offset(offset),
                     limit=_limit(limit),
                 )
-                items = [views.workout(row, step_count=_steps(row)) for row in rows]
+                items = [
+                    views.workout(row, step_count=step_count_of(row)) for row in rows
+                ]
                 return {
-                    **views.page(items, total=total, limit=_limit(limit)),
+                    **views.page(
+                        items,
+                        total=total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -414,6 +452,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         the athlete's **declared** verdicts, overall and per discipline.
         Weeks with nothing in them are included: a fortnight off is a fact
         about a block.
+
+        A week the range only partly covers reports the **days it covers** as
+        its `start` and `end` — ask from a Wednesday and the first week runs
+        Wednesday to Sunday. Its totals are over those days alone, so a
+        partial week is not a light week, and its bounds say which it is.
 
         `load` is summed over the sessions that could be priced;
         `load_sessions_uncounted` says how many could not, and a total with
@@ -557,7 +600,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             folder: A folder to file it under.
             tags: Short labels for searching.
             dry_run: Validate the structure and tags without writing, costing
-                no rate-cap budget. Returns no `id`, because nothing was made.
+                no rate-cap budget. Returns no `id`, because nothing was made
+                — and returns the **normalized** tags, which is what a real
+                call would store.
 
         Requires a `write` key.
         """
@@ -566,23 +611,19 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             async with session_scope() as session:
                 service = WorkoutService.from_session(session)
                 if dry_run:
-                    # Parsing the structure is the whole of what could fail,
-                    # and the service exposes it because the athlete's own
-                    # editor validates the same way. Running it without the
-                    # write is therefore the honest preview, computed by the
-                    # code the real write would have used.
-                    body = await service.parse_structure(structure)
-                    return {
-                        "dry_run": True,
-                        "workout": {
-                            "name": name,
-                            "description": description,
-                            "discipline": discipline_of(body).value,
-                            "folder": folder,
-                            "tags": list(tags or ()),
-                            "step_count": WorkoutSummary(body).step_count,
-                        },
-                    }
+                    # Pure delegation: `create` builds its row from this same
+                    # method, so the dry run cannot validate less than the
+                    # write does. It used to parse the structure here and let
+                    # the tags through untouched, which passed calls the real
+                    # write refused and echoed tags the real write rewrote.
+                    draft = await service.preview(
+                        name=name,
+                        structure=structure,
+                        description=description,
+                        folder=folder,
+                        tags=tags or (),
+                    )
+                    return {"dry_run": True, "workout": views.workout_draft(draft)}
                 row = await service.create(
                     actor=actor,
                     name=name,
@@ -593,7 +634,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 )
                 return {
                     "dry_run": False,
-                    "workout": views.workout(row, step_count=_steps(row)),
+                    "workout": views.workout(row, step_count=step_count_of(row)),
                 }
 
     @mcp.tool
@@ -612,7 +653,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         **Dry-run first whenever more than one session is involved.** The dry
         run computes and returns the same diff the stored proposal would carry
         — every target resolved, every concurrency token checked, the red-flag
-        rule applied — and writes nothing.
+        rule applied — and writes nothing. `superseded` on a dry run lists the
+        open proposals the real call would displace, so you can see what a
+        write would throw away before writing it.
 
         Each entry in `changes` is one of four shapes:
 
@@ -775,15 +818,3 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     dry_run=dry_run,
                 )
                 return {"dry_run": dry_run, "note": views.note(row)}
-
-
-def _steps(row: Any) -> int | None:
-    """The step count of a stored workout, or None if it no longer parses.
-
-    A library the agent cannot list because one old document went stale is
-    worse than a list with a null in it.
-    """
-    try:
-        return summarize(row).step_count
-    except ValueError:
-        return None

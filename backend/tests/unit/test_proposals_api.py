@@ -403,6 +403,40 @@ async def test_a_second_proposal_about_one_session_supersedes_the_first(
     assert "plan_proposal.superseded" in await audit_actions(db_session)
 
 
+async def test_a_dry_run_reports_what_it_would_supersede_without_closing_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Supersession used to be computed after the dry-run return, so a preview
+    # of a proposal that displaces a standing one reported `superseded: []`.
+    await append_ftp(client)
+    session = await plan(client)
+    target = uuid.UUID(session["id"])
+    standing = await propose(
+        db_session,
+        [
+            MoveChange(
+                planned_session_id=target,
+                expected_intent_version=1,
+                date=dt.date(2026, 8, 12),
+            )
+        ],
+    )
+    before = await audit_actions(db_session)
+
+    outcome = await propose(
+        db_session,
+        [DeleteChange(planned_session_id=target, expected_intent_version=1)],
+        dry_run=True,
+    )
+
+    assert standing.proposal is not None
+    assert outcome.proposal is None
+    assert [row.id for row in outcome.superseded] == [standing.proposal.id]
+    # Reported, not closed — and nothing was written to say so.
+    assert [row.status for row in await stored(db_session)] == [ProposalStatus.PENDING]
+    assert await audit_actions(db_session) == before
+
+
 async def test_a_proposal_about_another_session_supersedes_nothing(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -519,6 +553,42 @@ async def test_accepting_applies_every_change_and_audits_each_one(
     assert "planned_session.moved" in actions
     assert "planned_session.intent_revised" in actions
     assert "plan_proposal.accepted" in actions
+
+
+async def test_accepting_a_wrong_typed_change_is_a_422_not_a_500(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # `changes` is a JSON column with no create endpoint in front of it, so a
+    # wrong-typed field arrives from an older writer or a hand-edited row —
+    # and the domain has to refuse it by name rather than raise a TypeError
+    # nobody catches, which reaches the client as a 500.
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            DeleteChange(
+                planned_session_id=uuid.UUID(session["id"]), expected_intent_version=1
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+    outcome.proposal.changes = [
+        {
+            "kind": "create",
+            "date": "2026-08-12",
+            "purpose": "endurance",
+            "success_criteria": [1, 2],
+        }
+    ]
+    await db_session.commit()
+
+    response = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "change 0" in detail
+    assert "success_criteria" in detail
 
 
 async def test_accepting_credits_the_athlete_and_records_who_suggested_it(

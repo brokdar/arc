@@ -44,6 +44,7 @@ from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary
 from app.services.plan import PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
+from app.services.workouts import WorkoutDraft
 
 
 def red_flag(profile: AthleteProfile) -> dict[str, Any]:
@@ -333,6 +334,24 @@ def workout(row: WorkoutRow, *, step_count: int | None) -> dict[str, Any]:
     }
 
 
+def workout_draft(draft: WorkoutDraft) -> dict[str, Any]:
+    """The workout a create *would* add — the dry run's answer.
+
+    No `id`, for the reason :func:`anchor_draft` has none: nothing was written.
+    ``tags`` are the normalized ones the write would store, not the ones the
+    caller sent, so a dry run and the call after it agree about what is in the
+    library.
+    """
+    return {
+        "name": draft.name,
+        "description": draft.description,
+        "discipline": draft.discipline.value,
+        "folder": draft.folder,
+        "tags": list(draft.tags),
+        "step_count": draft.step_count,
+    }
+
+
 def history_week(week: HistoryWeek) -> dict[str, Any]:
     """One week of the training history summary."""
     return {
@@ -409,6 +428,10 @@ def proposal_outcome(outcome: ProposalOutcome, *, dry_run: bool) -> dict[str, An
     ``proposal`` is null on a dry run and the diff is the whole answer — the
     same diff the stored proposal would have carried, computed by the same
     code path, which is what makes dry-running worth doing.
+
+    ``superseded`` reads the same way: on a dry run it is what the real call
+    *would* displace, still pending and untouched. Same key either way, because
+    ``dry_run`` already says which of the two this is.
     """
     return {
         "dry_run": dry_run,
@@ -419,14 +442,21 @@ def proposal_outcome(outcome: ProposalOutcome, *, dry_run: bool) -> dict[str, An
 
 
 def page(
-    items: Sequence[Mapping[str, Any]], *, total: int, limit: int
+    items: Sequence[Mapping[str, Any]], *, total: int, limit: int, offset: int = 0
 ) -> dict[str, Any]:
-    """A page of results, with the total so the caller knows what it is missing."""
+    """A page of results, with enough around it to ask for the next one.
+
+    ``total`` is what the filters matched and ``offset`` is where this page
+    starts, so a caller can tell that there is more *and* say what to skip to
+    get it. A total on its own tells an agent it is missing rows and gives it
+    no way to read them.
+    """
     return {
         "items": list(items),
         "total": total,
         "returned": len(items),
         "limit": limit,
+        "offset": offset,
     }
 
 

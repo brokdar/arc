@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.domain.athlete import Discipline
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.proposals import PlanProposalRow
@@ -358,6 +359,32 @@ async def test_the_workout_library_lists_without_the_structure(
     assert "structure" not in workout
 
 
+async def test_one_unparseable_workout_does_not_cost_the_whole_page(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # A library the agent cannot list because one old document went stale is
+    # worse than a list with a null in it — and the failure kinds a stored
+    # document can produce are not only `ValueError`.
+    await call(COACH, "create_workout", {"name": "Easy hour", "structure": EASY_RIDE})
+    db_session.add(
+        WorkoutRow(
+            name="Stale",
+            description=None,
+            discipline=Discipline.CYCLING,
+            structure={"discipline": "cycling", "steps": [{"kind": "nonsense"}]},
+            folder=None,
+        )
+    )
+    await db_session.commit()
+
+    data = await call(READER, "get_workout_library")
+
+    assert {item["name"]: item["step_count"] for item in data["items"]} == {
+        "Easy hour": 1,
+        "Stale": None,
+    }
+
+
 async def test_search_history_folds_sessions_into_weeks(client: AsyncClient) -> None:
     await record(client)
     await record(
@@ -380,6 +407,58 @@ async def test_search_history_folds_sessions_into_weeks(client: AsyncClient) -> 
     # week is reported, not skipped.
     assert [week["session_count"] for week in history["weeks"]] == [1, 0, 1]
     assert history["verdicts"] == {"undeclared": 2}
+
+
+async def test_search_history_clips_a_partial_week_to_the_range(
+    client: AsyncClient,
+) -> None:
+    # Asking from a Wednesday used to report the first bucket as the whole
+    # Monday-to-Sunday week, so five days of training read as a full week's.
+    wednesday = MONDAY + dt.timedelta(days=2)
+    await record(client, start_time=f"{wednesday.isoformat()}T17:00:00Z")
+
+    data = await call(
+        READER,
+        "search_history",
+        {
+            "start": wednesday.isoformat(),
+            "end": (MONDAY + dt.timedelta(days=9)).isoformat(),
+        },
+    )
+
+    first, second = data["history"]["weeks"]
+    assert first["start"] == wednesday.isoformat()
+    assert first["end"] == (MONDAY + dt.timedelta(days=6)).isoformat()
+    # The tail is clipped the same way, and a whole week in between would not be.
+    assert second["start"] == (MONDAY + dt.timedelta(days=7)).isoformat()
+    assert second["end"] == (MONDAY + dt.timedelta(days=9)).isoformat()
+    assert first["session_count"] == 1
+
+
+async def test_a_read_can_page_past_the_first_page(client: AsyncClient) -> None:
+    # `total` on its own tells an agent it is missing rows and gives it no way
+    # to read them.
+    for day in range(3):
+        await record(
+            client,
+            start_time=f"{(MONDAY + dt.timedelta(days=day)).isoformat()}T17:00:00Z",
+        )
+
+    first = await call(READER, "list_sessions", {"limit": 2})
+    second = await call(READER, "list_sessions", {"limit": 2, "offset": 2})
+
+    assert first["total"] == second["total"] == 3
+    assert first["offset"] == 0
+    assert second["offset"] == 2
+    assert [item["id"] for item in first["items"]] != [
+        item["id"] for item in second["items"]
+    ]
+    assert len(second["items"]) == 1
+
+
+async def test_a_negative_offset_is_refused_by_name(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="invalid: offset"):
+        await call(READER, "get_workout_library", {"offset": -1})
 
 
 async def test_search_history_refuses_an_inverted_range(session_factory: Any) -> None:
@@ -514,6 +593,43 @@ async def test_an_unparseable_structure_is_refused(session_factory: Any) -> None
         )
 
 
+async def test_a_workout_dry_run_refuses_what_the_write_refuses(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # The dry run used to validate the structure and let the tags straight
+    # through, so a preview could say yes to a call the write then refused —
+    # which is the one thing a dry run must never do.
+    request = {"name": "Easy hour", "structure": EASY_RIDE, "tags": ["   ", "a" * 400]}
+
+    with pytest.raises(ToolError) as previewed:
+        await call(COACH, "create_workout", request | {"dry_run": True})
+    with pytest.raises(ToolError) as written:
+        await call(COACH, "create_workout", request)
+
+    assert str(previewed.value).startswith("invalid:")
+    assert str(previewed.value) == str(written.value), (
+        "the dry run must refuse for the same stated reason as the write"
+    )
+    assert await rows(db_session, WorkoutRow) == []
+
+
+async def test_a_workout_dry_run_reports_the_tags_the_write_would_store(
+    session_factory: Any,
+) -> None:
+    # Tags are normalized on write — stripped, lowercased, deduplicated — so a
+    # preview that echoed the request back would describe a library entry that
+    # is not the one about to be created.
+    request = {"name": "Easy hour", "structure": EASY_RIDE, "tags": ["ZZ", "zz"]}
+
+    previewed = await call(COACH, "create_workout", request | {"dry_run": True})
+    written = await call(COACH, "create_workout", request)
+
+    assert previewed["workout"]["tags"] == ["zz"]
+    assert previewed["workout"]["tags"] == written["workout"]["tags"]
+    assert previewed["workout"]["step_count"] == written["workout"]["step_count"]
+    assert previewed["workout"]["discipline"] == written["workout"]["discipline"]
+
+
 # --- propose_plan_change -----------------------------------------------------------
 
 
@@ -582,7 +698,94 @@ async def test_a_proposal_dry_run_writes_nothing(
     assert data["dry_run"] is True
     assert data["proposal"] is None
     assert data["diff"], "the diff is the whole answer on a dry run"
+    assert data["superseded"] == [], "there was nothing open to displace"
     assert await rows(db_session, PlanProposalRow) == []
+
+
+async def test_a_dry_run_reports_what_the_write_would_supersede(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Supersession used to be computed after the dry-run return, so a preview
+    # said `superseded: []` while the real call was about to throw away a
+    # standing suggestion about the same session. What a proposal displaces is
+    # part of what it does.
+    await append_ftp(client)
+    planned = await plan(client)
+    standing = await call(
+        COACH,
+        "propose_plan_change",
+        {
+            "changes": [
+                {
+                    "kind": "move",
+                    "planned_session_id": planned["id"],
+                    "expected_intent_version": planned["intent"]["version"],
+                    "date": (MONDAY + dt.timedelta(days=2)).isoformat(),
+                }
+            ],
+            "rationale": "Tuesday is quieter.",
+            "expires_at": expires(),
+        },
+    )
+
+    data = await call(
+        COACH,
+        "propose_plan_change",
+        {
+            "changes": [
+                {
+                    "kind": "delete",
+                    "planned_session_id": planned["id"],
+                    "expected_intent_version": planned["intent"]["version"],
+                }
+            ],
+            "rationale": "You are away that week.",
+            "expires_at": expires(),
+            "dry_run": True,
+        },
+    )
+
+    assert data["dry_run"] is True
+    assert [row["id"] for row in data["superseded"]] == [standing["proposal"]["id"]]
+    # Reported, not closed: the dry run still wrote nothing.
+    assert [row.status.value for row in await rows(db_session, PlanProposalRow)] == [
+        "pending"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("structure", 5), ("success_criteria", [1, 2])],
+)
+async def test_a_wrong_typed_change_field_is_a_named_refusal(
+    session_factory: Any, field: str, value: Any
+) -> None:
+    # These used to raise TypeError out of the domain, which the generic
+    # handler reported as "the server failed" — telling the agent to retry a
+    # call that can never work. It has to be told which change and which field.
+    with pytest.raises(ToolError) as excinfo:
+        await call(
+            COACH,
+            "propose_plan_change",
+            {
+                "changes": [
+                    {
+                        "kind": "create",
+                        "date": MONDAY.isoformat(),
+                        "purpose": "endurance",
+                        field: value,
+                    }
+                ],
+                "rationale": "Adding an easy hour.",
+                "expires_at": expires(),
+            },
+        )
+
+    message = str(excinfo.value)
+    assert message.startswith("invalid:")
+    assert "change 0" in message
+    assert field in message
+    assert "server failed" not in message
 
 
 async def test_a_stale_concurrency_token_is_a_readable_conflict(

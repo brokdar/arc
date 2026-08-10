@@ -13,6 +13,7 @@ feeding a renderer or a scorer something the model no longer allows.
 
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +69,34 @@ class WorkoutSummary:
             self.step_count = len(flatten(body))
             self.total_duration_s = total_duration_s(body)
             self.total_sets = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkoutDraft:
+    """The workout :meth:`WorkoutService.create` would write, unsaved.
+
+    Everything on it has been through the same checks the write applies, so
+    ``tags`` are the *normalized* tags — stripped, lowercased, deduplicated and
+    sorted — and not the ones the caller sent. That is the point: a dry run
+    that echoed the request back would agree with the caller about a request
+    the real call is going to refuse or rewrite.
+    """
+
+    name: str
+    description: str | None
+    folder: str | None
+    tags: tuple[str, ...]
+    body: WorkoutBody
+
+    @property
+    def discipline(self) -> Discipline:
+        """Which discipline the parsed prescription belongs to."""
+        return discipline_of(self.body)
+
+    @property
+    def step_count(self) -> int:
+        """How many steps the prescription flattens to."""
+        return WorkoutSummary(self.body).step_count
 
 
 class WorkoutService:
@@ -134,6 +163,39 @@ class WorkoutService:
         """Return every tag in use."""
         return await self._repository.tags()
 
+    async def preview(
+        self,
+        *,
+        name: str,
+        structure: Mapping[str, Any],
+        description: str | None = None,
+        folder: str | None = None,
+        tags: Sequence[str] = (),
+    ) -> WorkoutDraft:
+        """Build and validate the workout :meth:`create` would write.
+
+        The dry run of a create, and a **separate read-only method rather than
+        a flag on the writer** — the shape `AnchorService.preview` established
+        (D178). Every rule `create` applies is applied here, because `create`
+        calls this to build its row: there is no second code path to disagree
+        with, and a dry run that ran only *some* of the validation would tell
+        an agent its call is fine and then refuse it.
+
+        Returns:
+            The draft, unsaved and unrecorded. Its tags are normalized.
+
+        Raises:
+            ValidationError: For exactly the reasons `create` would raise it —
+                an illegal prescription, an unknown exercise, malformed tags.
+        """
+        return WorkoutDraft(
+            name=name,
+            description=description,
+            folder=folder,
+            tags=tuple(_clean_tags(tags)),
+            body=await self._parse(structure),
+        )
+
     async def create(
         self,
         *,
@@ -154,16 +216,21 @@ class WorkoutService:
                 every path an agent can reach this write through.
         """
         await check_write_cap(self._session, actor)
-        body = await self._parse(structure)
-        clean_tags = _clean_tags(tags)
-        row = WorkoutRow(
+        draft = await self.preview(
             name=name,
+            structure=structure,
             description=description,
-            discipline=discipline_of(body),
-            structure=workout_body_to_json(body),
             folder=folder,
+            tags=tags,
         )
-        self._repository.set_tags(row, clean_tags)
+        row = WorkoutRow(
+            name=draft.name,
+            description=draft.description,
+            discipline=draft.discipline,
+            structure=workout_body_to_json(draft.body),
+            folder=draft.folder,
+        )
+        self._repository.set_tags(row, list(draft.tags))
         row = await self._repository.add(row)
         await self._audit.record(
             actor=actor,
@@ -280,6 +347,31 @@ def summarize(row: WorkoutRow) -> WorkoutSummary:
     return WorkoutSummary(body_of(row))
 
 
+#: How a *stored* structure can fail to parse. The domain's decoders raise
+#: `ValueError` for everything they anticipate, but this reads a JSON column
+#: that a caller wrote, a migration rewrote, or an older version of the model
+#: accepted — so a document shaped nothing like a prescription can still reach
+#: an attribute lookup or an index on the way to being rejected.
+#:
+#: Named and shared rather than repeated as a bare `except ValueError`, because
+#: the callers are all *list* projections: one stale document must cost its own
+#: row a step count, not cost the caller the whole page.
+PARSE_FAILURES = (ValueError, TypeError, LookupError, AttributeError, RecursionError)
+
+
+def step_count_of(row: WorkoutRow) -> int | None:
+    """How many steps a stored structure flattens to, or None if it no longer parses.
+
+    ``None`` rather than an exception: a library the athlete (or the agent)
+    cannot list because one old document went stale is worse than a list with
+    a null in it, and the null is visible where a swallowed error would not be.
+    """
+    try:
+        return summarize(row).step_count
+    except PARSE_FAILURES:
+        return None
+
+
 def _clean_tags(tags: Sequence[str]) -> list[str]:
     """Normalize and check a tag list.
 
@@ -317,13 +409,5 @@ def _payload(row: WorkoutRow) -> dict[str, Any]:
         "discipline": row.discipline.value,
         "folder": row.folder,
         "tags": row.tag_names,
-        "step_count": _step_count(row),
+        "step_count": step_count_of(row),
     }
-
-
-def _step_count(row: WorkoutRow) -> int | None:
-    """How many steps the stored structure flattens to, if it still parses."""
-    try:
-        return summarize(row).step_count
-    except ValueError:
-        return None

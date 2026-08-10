@@ -78,7 +78,17 @@ class DisciplineTotals:
 
 @dataclass(frozen=True, slots=True)
 class HistoryWeek:
-    """One Monday-to-Sunday week of recorded training."""
+    """One week of recorded training, bucketed Monday to Sunday.
+
+    ``start`` and ``end`` are the week **intersected with the requested
+    range**, not the calendar week: a summary from a Wednesday reports its
+    first week as Wednesday-to-Sunday, because Monday and Tuesday were never
+    looked at and the totals below do not include them. A partial week is
+    therefore visibly partial — its bounds are not a Monday and a Sunday, and
+    a reader comparing week loads can see which ones are not comparable.
+    Stamping the full calendar week on it would have claimed five days of
+    training were a whole week of it.
+    """
 
     start: dt.date
     end: dt.date
@@ -172,7 +182,9 @@ class HistoryService:
         for row in rows:
             by_week.setdefault(week_start(row.local_date), []).append(row)
         weeks = tuple(
-            _fold_week(monday, by_week.get(monday, []), loads, verdicts)
+            _fold_week(
+                monday, by_week.get(monday, []), loads, verdicts, window=(start, end)
+            )
             for monday in _mondays(start, end)
         )
         totals = _totals(rows, loads)
@@ -244,8 +256,21 @@ def _fold_week(
     rows: Sequence[SessionRow],
     loads: Mapping[uuid.UUID, float | None],
     verdicts: Mapping[uuid.UUID, str],
+    *,
+    window: tuple[dt.date, dt.date],
 ) -> HistoryWeek:
-    """One week's totals, overall and per discipline."""
+    """One week's totals, overall and per discipline.
+
+    Args:
+        monday: The Monday the bucket is keyed by.
+        rows: The sessions that fell in it.
+        loads: Training load per session id.
+        verdicts: Declared verdict per session id.
+        window: The requested range. The reported bounds are clipped to it,
+            because the totals are: the query never saw a day outside it, so
+            a week stamped Monday-to-Sunday would be claiming days nothing was
+            counted over (see :class:`HistoryWeek`).
+    """
     totals = _totals(rows, loads)
     by_discipline: list[DisciplineTotals] = []
     for discipline in SessionDiscipline:
@@ -264,8 +289,8 @@ def _fold_week(
             )
         )
     return HistoryWeek(
-        start=monday,
-        end=monday + dt.timedelta(days=6),
+        start=max(monday, window[0]),
+        end=min(monday + dt.timedelta(days=6), window[1]),
         session_count=len(rows),
         duration_s=totals.duration_s,
         load=totals.load,

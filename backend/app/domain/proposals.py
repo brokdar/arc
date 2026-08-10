@@ -31,7 +31,7 @@ the version check has nowhere to live in it.
 
 import datetime as dt
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -252,6 +252,55 @@ UPDATE_FIELDS: tuple[str, ...] = (
 )
 
 
+# --- typed reads of a loosely-typed document ------------------------------------
+#
+# Every field below arrives as "whatever was in the JSON": from an MCP tool
+# call the model composed, or from a `changes` column written when the union
+# looked different. The naive conversions these replace — `dict(value)`,
+# `[dict(item) for item in value]` — raise `TypeError` on the wrong type, and a
+# `TypeError` out of here is not a refusal anybody catches: the MCP adapter
+# reports it as "the server failed", which tells the agent to retry the same
+# malformed call forever. So every loosely-typed field is checked here, in the
+# domain, and a wrong type leaves as a `ValueError` naming the field — which
+# `changes_from_json` prefixes with the change's index and the services turn
+# into a 422.
+#
+# `dict(value)` also *succeeds* on some wrong types: `dict(["ab"])` is
+# `{"a": "b"}`. Silently accepting a two-character string as a prescription is
+# worse than the TypeError, which is the other half of why these exist.
+
+
+def _as_object(value: Any, label: str) -> dict[str, Any]:
+    """Read a JSON object, or refuse by name."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be an object, got {type(value).__name__}")
+    return dict(value)
+
+
+def _as_object_list(value: Any, label: str) -> list[dict[str, Any]]:
+    """Read a JSON array of objects, or refuse by name and position."""
+    if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, Sequence):
+        raise ValueError(
+            f"{label} must be a list of objects, got {type(value).__name__}"
+        )
+    return [_as_object(item, f"{label}[{index}]") for index, item in enumerate(value)]
+
+
+def _as_text(value: Any, label: str) -> str:
+    """Read a JSON string, or refuse by name."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _optional[T](
+    document: Mapping[str, Any], key: str, read: Callable[[Any, str], T]
+) -> T | None:
+    """Apply ``read`` to a field unless it is absent or null."""
+    raw = document.get(key)
+    return None if raw is None else read(raw, key)
+
+
 def _parse_updates(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Coerce a stored patch document to the types the plan service works in."""
     unknown = set(raw) - set(UPDATE_FIELDS)
@@ -263,8 +312,12 @@ def _parse_updates(raw: Mapping[str, Any]) -> dict[str, Any]:
             "derived from what the athlete did, not from what anyone suggests"
         )
     if unknown:
+        # `str(...)` before sorting: a JSON object always has string keys, but
+        # this parses whatever a caller handed it, and a non-string key would
+        # otherwise make the *refusal* raise a TypeError of its own.
         raise ValueError(
-            f"unknown planned-session field(s): {', '.join(sorted(unknown))}"
+            f"unknown planned-session field(s): "
+            f"{', '.join(sorted(str(name) for name in unknown))}"
         )
     if not raw:
         raise ValueError("an update change needs a non-empty updates object")
@@ -290,9 +343,11 @@ def _parse_update(key: str, value: Any) -> Any:
         case "workout_id":
             return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
         case "structure":
-            return dict(value)
+            return _as_object(value, key)
         case "success_criteria":
-            return [dict(criterion) for criterion in value]
+            return _as_object_list(value, key)
+        case "intent_text" | "coach_notes":
+            return _as_text(value, key)
         case _:
             return value
 
@@ -426,7 +481,9 @@ def _date(document: Mapping[str, Any], key: str) -> dt.date:
             return dt.date.fromisoformat(raw)
         except ValueError as exc:
             raise ValueError(f"{key} is not an ISO date: {raw!r}") from exc
-    raise ValueError(f"a change of this kind needs {key}")
+    if raw is None:
+        raise ValueError(f"a change of this kind needs {key}")
+    raise ValueError(f"{key} must be an ISO date, got {type(raw).__name__}")
 
 
 def _version(document: Mapping[str, Any]) -> int:
@@ -444,9 +501,13 @@ def change_from_json(document: Mapping[str, Any]) -> PlanChange:
     """Parse one stored change document back into the domain.
 
     Raises:
-        ValueError: When the tag is unknown or a field the kind needs is
-            missing or malformed.
+        ValueError: When the document is not an object, the tag is unknown, or
+            a field the kind needs is missing or of the wrong type. Always a
+            ``ValueError`` naming the field — see the note above
+            :func:`_as_object`.
     """
+    if not isinstance(document, Mapping):
+        raise ValueError(f"a change must be an object, got {type(document).__name__}")
     raw_kind = document.get("kind")
     try:
         kind = ChangeKind(raw_kind)
@@ -462,18 +523,14 @@ def change_from_json(document: Mapping[str, Any]) -> PlanChange:
             purpose = Purpose(raw_purpose)
         except ValueError as exc:
             raise ValueError(f"unknown purpose {raw_purpose!r}") from exc
-        criteria = document.get("success_criteria")
-        structure = document.get("structure")
         return CreateChange(
             date=_date(document, "date"),
             purpose=purpose,
             workout_id=_uuid(document, "workout_id", required=False),
-            structure=None if structure is None else dict(structure),
-            intent_text=document.get("intent_text"),
-            coach_notes=document.get("coach_notes"),
-            success_criteria=(
-                None if criteria is None else [dict(item) for item in criteria]
-            ),
+            structure=_optional(document, "structure", _as_object),
+            intent_text=_optional(document, "intent_text", _as_text),
+            coach_notes=_optional(document, "coach_notes", _as_text),
+            success_criteria=_optional(document, "success_criteria", _as_object_list),
         )
 
     # The three targeted kinds. `_uuid(..., required=True)` never returns None.

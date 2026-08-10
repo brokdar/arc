@@ -178,6 +178,127 @@ def test_the_position_of_a_bad_change_is_named() -> None:
         )
 
 
+#: Every loosely-typed field in the union, with a value of the wrong kind.
+#: These used to reach `dict(...)` or a comprehension over a non-iterable and
+#: leave as `TypeError` — which no caller catches, so the MCP adapter reported
+#: "the server failed" and the agent retried a call that can never work.
+WRONG_TYPES: tuple[tuple[dict[str, object], str], ...] = (
+    (
+        {
+            "kind": "create",
+            "date": "2026-08-12",
+            "purpose": "endurance",
+            "structure": 5,
+        },
+        "structure",
+    ),
+    (
+        {
+            "kind": "create",
+            "date": "2026-08-12",
+            "purpose": "endurance",
+            "success_criteria": [1, 2],
+        },
+        "success_criteria",
+    ),
+    (
+        {
+            "kind": "create",
+            "date": "2026-08-12",
+            "purpose": "endurance",
+            "intent_text": ["a"],
+        },
+        "intent_text",
+    ),
+    (
+        {
+            "kind": "create",
+            "date": "2026-08-12",
+            "purpose": "endurance",
+            "coach_notes": 7,
+        },
+        "coach_notes",
+    ),
+    ({"kind": "create", "date": 5, "purpose": "endurance"}, "date"),
+    (
+        {
+            "kind": "update",
+            "planned_session_id": str(SESSION_ID),
+            "expected_intent_version": 1,
+            "updates": {"structure": 5},
+        },
+        "structure",
+    ),
+    (
+        {
+            "kind": "update",
+            "planned_session_id": str(SESSION_ID),
+            "expected_intent_version": 1,
+            "updates": {"success_criteria": "nope"},
+        },
+        "success_criteria",
+    ),
+)
+
+
+@pytest.mark.parametrize(("document", "field"), WRONG_TYPES)
+def test_a_wrong_typed_field_is_refused_by_name(
+    document: dict[str, object], field: str
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        change_from_json(document)
+
+
+def test_a_wrong_typed_field_names_its_change() -> None:
+    # The whole point of the ValueError: an agent that sent five changes has
+    # to be told which one, and which field of it, before it can fix anything.
+    with pytest.raises(ValueError, match="change 1: structure must be an object"):
+        changes_from_json(
+            [
+                {"kind": "create", "date": "2026-08-12", "purpose": "endurance"},
+                {
+                    "kind": "create",
+                    "date": "2026-08-12",
+                    "purpose": "endurance",
+                    "structure": 5,
+                },
+            ]
+        )
+
+
+def test_a_two_character_string_is_not_a_prescription() -> None:
+    # `dict("ab")` raises, but `dict(["ab"])` is `{"a": "b"}` — the wrong type
+    # that silently *succeeds*, which is worse than the one that raises.
+    with pytest.raises(ValueError, match="structure must be an object"):
+        change_from_json(
+            {
+                "kind": "create",
+                "date": "2026-08-12",
+                "purpose": "endurance",
+                "structure": ["ab"],
+            }
+        )
+
+
+def test_a_change_that_is_not_an_object_is_refused() -> None:
+    with pytest.raises(ValueError, match="change 0: a change must be an object"):
+        changes_from_json([5])  # pyrefly: ignore[bad-argument-type]
+
+
+def test_a_non_string_update_key_is_refused_rather_than_crashing() -> None:
+    # The refusal itself used to raise: `', '.join(sorted(unknown))` is a
+    # TypeError when a key is not a string.
+    with pytest.raises(ValueError, match="unknown planned-session field"):
+        change_from_json(
+            {
+                "kind": "update",
+                "planned_session_id": str(SESSION_ID),
+                "expected_intent_version": 1,
+                "updates": {1: "x"},
+            }
+        )
+
+
 def test_a_proposal_with_no_changes_is_not_a_proposal() -> None:
     with pytest.raises(ValueError, match="at least one change"):
         changes_from_json([])
