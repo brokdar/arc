@@ -40,7 +40,6 @@ from typing import Any
 from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.purpose import discipline_of as purpose_discipline
-from app.domain.sessions import SessionStatus
 
 #: Longest rationale a proposal may carry. Generous: this is the agent
 #: explaining itself to a human, and a truncated explanation is worse than a
@@ -227,10 +226,21 @@ class DeleteChange:
     expected_intent_version: int
 
 
-#: Fields an `update` change may carry — `PlannedSessionService.UPDATABLE_FIELDS`,
-#: which the domain cannot import (services are an outer layer). The service's
-#: own check still stands; this one exists so a malformed patch is refused when
-#: the change is *built*, not when it is applied hours later.
+#: Fields an `update` change may carry — `PlannedSessionService.UPDATABLE_FIELDS`
+#: (which the domain cannot import: services are an outer layer) **minus
+#: `status`**. The service's own check still stands; this one exists so a
+#: malformed patch is refused when the change is *built*, not when it is
+#: applied hours later.
+#:
+#: `status` is deliberately absent (D174). A planned session's status is
+#: derived from reality — WP-6 moves it between `planned`, `completed`,
+#: `missed` and `displaced` as matches come and go — so it is not a statement
+#: anyone can *suggest*: proposing `completed` would be proposing that the
+#: athlete has already trained. The red-flag rule cannot catch it either
+#: (`intensifies` reads purpose and load, and a status carries neither), so an
+#: agent could mark an unridden session complete with the flag up. The
+#: athlete's own `PATCH` still accepts it; only the proposal vocabulary does
+#: not.
 UPDATE_FIELDS: tuple[str, ...] = (
     "purpose",
     "intent_text",
@@ -239,13 +249,19 @@ UPDATE_FIELDS: tuple[str, ...] = (
     "workout_id",
     "structure",
     "date",
-    "status",
 )
 
 
 def _parse_updates(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Coerce a stored patch document to the types the plan service works in."""
     unknown = set(raw) - set(UPDATE_FIELDS)
+    if "status" in unknown:
+        # Named rather than lumped in with the typos: it *is* a planned-session
+        # field, it is simply not one anybody proposes (see UPDATE_FIELDS).
+        raise ValueError(
+            "status is not a proposable field: a planned session's status is "
+            "derived from what the athlete did, not from what anyone suggests"
+        )
     if unknown:
         raise ValueError(
             f"unknown planned-session field(s): {', '.join(sorted(unknown))}"
@@ -269,8 +285,6 @@ def _parse_update(key: str, value: Any) -> Any:
     match key:
         case "purpose":
             return value if isinstance(value, Purpose) else Purpose(value)
-        case "status":
-            return value if isinstance(value, SessionStatus) else SessionStatus(value)
         case "date":
             return value if isinstance(value, dt.date) else dt.date.fromisoformat(value)
         case "workout_id":

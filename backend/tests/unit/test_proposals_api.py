@@ -43,6 +43,7 @@ from app.domain.proposals import (
 )
 from app.domain.purpose import Purpose
 from app.main import create_app
+from app.persistence.activity import SessionRow
 from app.persistence.audit import AuditLogEntry
 from app.persistence.proposals import PlanProposalRow
 from app.services.anchors import AnchorService
@@ -255,6 +256,60 @@ async def test_a_proposal_targeting_a_session_that_does_not_exist_is_a_404(
         )
 
 
+async def test_two_changes_about_one_session_are_refused(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The token is checked once per change against the plan as it stands, so
+    # two changes on one session both validate against the version in force
+    # and the second lands on a version it was never computed against. The
+    # shape is refused rather than the outcome patched up.
+    await append_ftp(client)
+    session = await plan(client)
+    target = uuid.UUID(session["id"])
+
+    def revision(note: str) -> UpdateChange:
+        return UpdateChange(
+            planned_session_id=target,
+            expected_intent_version=1,
+            updates={"coach_notes": note},
+        )
+
+    with pytest.raises(ValidationError, match="changes 0 and 1 both target"):
+        await propose(db_session, [revision("spin easy"), revision("or don't")])
+    assert await stored(db_session) == []
+
+
+async def test_two_changes_about_two_sessions_are_fine(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The distinctness rule bites on duplicate targets and nothing else: a
+    # multi-entity proposal is the ordinary case.
+    await append_ftp(client)
+    monday = await plan(client)
+    tuesday = await plan(client, date="2026-08-11")
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(monday["id"]),
+                expected_intent_version=1,
+                updates={"coach_notes": "spin easy"},
+            ),
+            DeleteChange(
+                planned_session_id=uuid.UUID(tuesday["id"]), expected_intent_version=1
+            ),
+        ],
+    )
+    assert outcome.proposal is not None
+
+    response = await client.post(f"{PROPOSALS}/{outcome.proposal.id}/accept")
+
+    assert response.status_code == 200, response.text
+    revised = await client.get(f"{SESSIONS}/{monday['id']}")
+    assert revised.json()["intent"]["coach_notes"] == "spin easy"
+    assert (await client.get(f"{SESSIONS}/{tuesday['id']}")).status_code == 404
+
+
 async def test_a_stale_token_is_refused_when_the_proposal_is_written(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -327,6 +382,44 @@ async def test_a_dry_run_does_not_bootstrap_the_athlete_profile(
     )
 
     assert "athlete.created" not in await audit_actions(db_session)
+
+
+# --- the diff --------------------------------------------------------------------
+
+
+async def test_an_update_that_touches_nothing_else_reports_nothing_else(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A note-only revision keeps the library workout the session was
+    # prescribed from — `stage_update` never touches it — so a diff showing
+    # `after.workout_id = null` would be telling the athlete the prescription
+    # is about to be thrown away.
+    await append_ftp(client)
+    library = await client.post(
+        WORKOUTS, json={"name": "Easy hour", "structure": EASY_RIDE}
+    )
+    assert library.status_code == 201, library.text
+    workout_id = library.json()["id"]
+    session = await plan(client, structure=None, workout_id=workout_id)
+
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=session["intent"]["version"],
+                updates={"coach_notes": "spin easy"},
+            )
+        ],
+        dry_run=True,
+    )
+
+    [entry] = outcome.diff
+    assert entry["before"]["workout_id"] == workout_id
+    assert entry["after"]["workout_id"] == workout_id
+    # Everything the change does not name is carried through unchanged, the
+    # predicted load included: it is priced against the session's own pins.
+    assert entry["after"] == {**entry["before"], "coach_notes": "spin easy"}
 
 
 # --- supersede -------------------------------------------------------------------
@@ -856,6 +949,68 @@ async def test_a_session_on_the_proposed_day_resolves_the_proposal(
     assert "plan_proposal.resolved_by_reality" in await audit_actions(db_session)
 
 
+async def test_a_failing_resolution_still_answers_the_manual_entry(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The session is committed before the hook runs, so a failure in it must
+    # cost the athlete a stale inbox row and nothing else. The rollback that
+    # follows expires every instance in the session, so the caller has to be
+    # handed a freshly loaded row — matching runs next, and reading even
+    # `row.id` off an expired handle is a lazy read (`MissingGreenlet`, 500).
+    async def explode(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("the proposal service fell over")
+
+    monkeypatch.setattr("app.services.activity.resolve_proposals_for_session", explode)
+
+    logged = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-08-10T17:00:00Z",
+            "timezone": "UTC",
+            "duration_s": 3_600,
+            "discipline": "strength",
+        },
+    )
+
+    assert logged.status_code == 201, logged.text
+    db_session.expire_all()
+    sessions = (await db_session.execute(select(SessionRow))).scalars().all()
+    assert len(sessions) == 1, "a retry of a 500 would have made a second one"
+    assert str(sessions[0].id) == logged.json()["id"]
+
+
+async def test_a_discipline_changing_update_is_resolved_by_the_old_discipline(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Turning Monday's ride into a lift is a statement about Monday's *ride*
+    # too: an athlete who rides that Monday has answered the question, and
+    # matching on the after discipline alone would leave the proposal standing
+    # over a day that is already spent.
+    await append_ftp(client)
+    session = await plan(client)
+    outcome = await propose(
+        db_session,
+        [
+            UpdateChange(
+                planned_session_id=uuid.UUID(session["id"]),
+                expected_intent_version=1,
+                updates={"purpose": "max_strength", "structure": LIFT},
+            )
+        ],
+    )
+    assert outcome.proposal is not None
+    [entry] = outcome.diff
+    assert entry["before"]["discipline"] == "cycling"
+    assert entry["after"]["discipline"] == "strength"
+
+    resolved = await ProposalService.from_session(db_session).resolve_by_reality(
+        actor=Actor.system(), date=dt.date(2026, 8, 10), discipline=Discipline.CYCLING
+    )
+
+    assert [row.id for row in resolved] == [outcome.proposal.id]
+    assert resolved[0].status is ProposalStatus.RESOLVED_BY_REALITY
+
+
 async def test_another_day_resolves_nothing(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -1144,6 +1299,28 @@ async def test_the_scheduled_sweep_lapses_through_its_own_session(
 
 
 # --- what the agent surface still cannot reach -----------------------------------
+
+
+async def test_no_proposal_can_declare_a_session_completed(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # D174: a planned session's status is derived from what the athlete did.
+    # The red flag cannot catch this one either — a status carries neither a
+    # purpose nor a load — so the vocabulary refuses it instead.
+    await append_ftp(client)
+    session = await plan(client)
+    await raise_red_flag(client)
+
+    with pytest.raises(ValueError, match="status is not a proposable field"):
+        UpdateChange(
+            planned_session_id=uuid.UUID(session["id"]),
+            expected_intent_version=1,
+            updates={"status": "completed"},
+        )
+    assert (await client.get(f"{SESSIONS}/{session['id']}")).json()["status"] == (
+        "planned"
+    )
+    assert await stored(db_session) == []
 
 
 def test_no_plan_change_can_touch_an_anchor() -> None:

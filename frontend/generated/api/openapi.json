@@ -3670,6 +3670,9 @@
             "title": "Date",
             "type": "string"
           },
+          "discipline": {
+            "$ref": "#/components/schemas/Discipline"
+          },
           "intent_text": {
             "anyOf": [
               {
@@ -3725,6 +3728,7 @@
         "required": [
           "date",
           "purpose",
+          "discipline",
           "status",
           "intent_text",
           "coach_notes",

@@ -355,10 +355,10 @@ class SessionService:
         await commit(self._session)
         await self._session.refresh(row)
         row = await self._recompute_strength(row, actor=actor, reason=None)
-        await self._resolve_proposals(row, actor=actor)
+        row = await self._resolve_proposals(row, actor=actor)
         return await self._match(row, actor=actor)
 
-    async def _resolve_proposals(self, row: SessionRow, *, actor: Actor) -> None:
+    async def _resolve_proposals(self, row: SessionRow, *, actor: Actor) -> SessionRow:
         """Close pending plan-change proposals this session made moot (WP-8.2).
 
         The athlete trained. A proposal still asking what to do with that day
@@ -371,6 +371,14 @@ class SessionService:
         leave the athlete with a stored session and a stale inbox row rather
         than a 500 over work that succeeded — and the hourly expiry sweep will
         clear the row anyway.
+
+        Returns the session row the caller should carry on with, for the reason
+        :meth:`_recompute_strength` does: the rollback in the ``except``
+        **expires every instance** in the session, so the handle passed in is
+        unusable afterwards — even reading ``row.id`` off it is a lazy database
+        read, and the next step (`_match`) does exactly that. Hence the id is
+        taken before the attempt and a freshly loaded row is the only usable
+        answer after a rollback.
         """
         session_id = row.id
         try:
@@ -383,6 +391,8 @@ class SessionService:
         except Exception:  # noqa: BLE001 — see the docstring
             logger.exception("proposal_resolution_failed", session_id=str(session_id))
             await self._session.rollback()
+            return await self._repository.get(session_id) or row
+        return row
 
     async def _match(self, row: SessionRow, *, actor: Actor) -> SessionRow:
         """Look for the planned session a typed-in session answers to (WP-6).

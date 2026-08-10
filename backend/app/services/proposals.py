@@ -70,6 +70,7 @@ from app.domain.proposals import (
     check_transition,
     intensifies,
     kind_of,
+    target_of,
 )
 from app.domain.purpose import Purpose
 from app.persistence.audit import AuditRepository
@@ -179,10 +180,11 @@ class ProposalService:
 
         The order of the checks is the order of their costs to the athlete:
         the rate cap first (a capped agent is answered without touching the
-        plan at all), then the shape of the request, then the changes against
-        current state — every target must exist and every concurrency token
-        must match — then the red-flag rule, which needs the computed diff to
-        decide whether anything is being added or intensified.
+        plan at all), then the shape of the request — including **one change
+        per planned session**, see :func:`_check_distinct_targets` — then the
+        changes against current state — every target must exist and every
+        concurrency token must match — then the red-flag rule, which needs the
+        computed diff to decide whether anything is being added or intensified.
 
         Args:
             actor: Who is proposing. Agent actors are rate-capped and
@@ -221,6 +223,7 @@ class ProposalService:
                 f"A proposal may carry at most {MAX_CHANGES} changes, got "
                 f"{len(changes)}"
             )
+        _check_distinct_targets(changes)
 
         diff = await self._diff(changes)
         await self._check_red_flag(actor, diff)
@@ -305,6 +308,9 @@ class ProposalService:
             changes = changes_from_json(row.changes)
         # Every token first, then every change: a proposal is accepted whole,
         # so the second change must not have landed when the third is refused.
+        # Sound because no two changes share a target (`_check_distinct_targets`
+        # refuses that when the proposal is written) — otherwise the second of
+        # them would apply to a version it validated against but no longer has.
         for index, change in enumerate(changes):
             await self._check_token(index, change)
 
@@ -501,6 +507,7 @@ class ProposalService:
                 "after": {
                     "date": change.date.isoformat(),
                     "purpose": preview.purpose.value,
+                    "discipline": preview.discipline.value,
                     "status": "planned",
                     "intent_text": change.intent_text,
                     "coach_notes": change.coach_notes,
@@ -567,15 +574,25 @@ class ProposalService:
             success_criteria=change.updates.get("success_criteria"),
             anchors=resolution.anchors,
         )
+        # The link survives a body-less revision, so the diff has to say so.
+        # Pricing an untouched prescription goes through the session's own
+        # frozen structure (above) rather than its library workout — resolving
+        # the workout again would price today's version of it against
+        # yesterday's pins — and `preview` answers about what it was handed,
+        # which is an inline document with no workout behind it. Reading that
+        # `None` back out would show the athlete a change `stage_update` is
+        # not going to make.
+        after_workout_id = preview.workout_id if carries_body else current.workout_id
         after = {
             "date": _as_date(change.updates.get("date", row.date)),
             "purpose": preview.purpose.value,
-            "status": _as_text(change.updates.get("status", row.status)),
+            "discipline": preview.discipline.value,
+            # Not proposable (D174): a session's status is derived from what
+            # the athlete actually did, so it passes through untouched.
+            "status": _as_text(row.status),
             "intent_text": change.updates.get("intent_text", current.intent_text),
             "coach_notes": change.updates.get("coach_notes", current.coach_notes),
-            "workout_id": (
-                None if preview.workout_id is None else str(preview.workout_id)
-            ),
+            "workout_id": None if after_workout_id is None else str(after_workout_id),
             **_costs(preview.predicted_load, preview.predicted_volume),
         }
         return after, preview
@@ -775,11 +792,17 @@ def _costs(
 
 
 def _snapshot(row: PlannedSessionRow, resolution: SessionResolution) -> dict[str, Any]:
-    """One planned session as the diff's ``before``."""
+    """One planned session as the diff's ``before``.
+
+    Carries its own ``discipline`` — the entry-level one is the discipline the
+    change *leaves*, and a revision may change it, so a snapshot that borrowed
+    it would report the wrong half of the story (see :func:`_touched_days`).
+    """
     intent = row.current_intent
     return {
         "date": row.date.isoformat(),
         "purpose": intent.purpose.value,
+        "discipline": row.discipline.value,
         "status": row.status.value,
         "intent_text": intent.intent_text,
         "coach_notes": intent.coach_notes,
@@ -831,21 +854,29 @@ def _targets(diff: Sequence[Mapping[str, Any]]) -> set[uuid.UUID]:
 def _touched_days(diff: Sequence[Mapping[str, Any]]) -> set[tuple[dt.date, Discipline]]:
     """Every (date, discipline) a stored diff has anything to say about.
 
-    Both ends of a move, because a move is a statement about the day it
-    leaves as much as the day it arrives on.
+    Both ends of every change, in both senses. Both **days**, because a move
+    is a statement about the day it leaves as much as the day it arrives on;
+    and both **disciplines**, because a revision that turns Tuesday's ride
+    into a lift is a statement about Tuesday's ride — an athlete who rides
+    that Tuesday instead has answered the question, and a match on the after
+    discipline alone would leave the proposal standing over a day that is
+    already spent.
     """
     days: set[tuple[dt.date, Discipline]] = set()
     for entry in diff:
-        try:
-            discipline = Discipline(entry["discipline"])
-        except ValueError:  # pragma: no cover — a stored value the enum lost
-            continue
         for source in (entry, entry.get("before"), entry.get("after")):
             if not isinstance(source, Mapping):
                 continue
             raw = source.get("date")
-            if isinstance(raw, str):
-                days.add((dt.date.fromisoformat(raw), discipline))
+            if not isinstance(raw, str):
+                continue
+            try:
+                # A snapshot carries its own discipline; the entry-level one
+                # is the fallback for anything written without it.
+                discipline = Discipline(source.get("discipline", entry["discipline"]))
+            except ValueError:  # pragma: no cover — a stored value the enum lost
+                continue
+            days.add((dt.date.fromisoformat(raw), discipline))
     return days
 
 
@@ -882,6 +913,45 @@ def _clean_rationale(rationale: str) -> str:
             f"The rationale must be at most {MAX_RATIONALE_CHARS} characters"
         )
     return text
+
+
+def _check_distinct_targets(changes: Sequence[PlanChange]) -> None:
+    """Refuse a proposal that says two things about one planned session.
+
+    The concurrency token is what makes a proposal safe to hold for days, and
+    it is checked **once per change against the plan as it stands** — every
+    token first, then every change (see :meth:`ProposalService.accept`). Two
+    changes aimed at the same session both validate against the version in
+    force before either applies, so the second lands on a version it was never
+    computed against: the first change moved the intent chain on, and the
+    stored diff — computed the same way, one change at a time against the
+    pre-apply state — describes neither of the two outcomes.
+
+    Refusing the shape is the root fix. Making accept re-check between changes
+    would only turn it into a conflict the agent cannot avoid, and merging the
+    two changes here would be this service guessing at an intention nobody
+    stated. One session, one change, one token, one before-and-after the
+    athlete can read.
+
+    Raises:
+        ValidationError: When two changes target the same planned session. The
+            message names the session and both positions, because the agent's
+            next move is to combine them or drop one.
+    """
+    seen: dict[uuid.UUID, int] = {}
+    for index, change in enumerate(changes):
+        target = target_of(change)
+        if target is None:
+            continue
+        first = seen.setdefault(target, index)
+        if first != index:
+            raise ValidationError(
+                f"A proposal may carry at most one change per planned session, "
+                f"but changes {first} and {index} both target planned session "
+                f"{target}. Combine them into a single change, or propose them "
+                "separately so each is answered against the plan it was "
+                "computed on."
+            )
 
 
 def _clean_note(reason: str | None) -> str | None:

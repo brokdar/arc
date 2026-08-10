@@ -16,6 +16,7 @@ from app.domain.proposals import (
     MAX_CHANGES,
     PURPOSE_INTENSITY,
     TERMINAL_STATUSES,
+    UPDATE_FIELDS,
     ChangeKind,
     CreateChange,
     DeleteChange,
@@ -147,6 +148,22 @@ def test_an_update_with_no_fields_is_refused() -> None:
                 "planned_session_id": str(SESSION_ID),
                 "expected_intent_version": 1,
                 "updates": {},
+            }
+        )
+
+
+def test_an_update_may_not_carry_a_status() -> None:
+    # D174: a planned session's status is derived from what the athlete did,
+    # so it is not something anyone proposes — and it is named rather than
+    # lumped in with the typos, because it *is* a planned-session field.
+    assert "status" not in UPDATE_FIELDS
+    with pytest.raises(ValueError, match="status is not a proposable field"):
+        change_from_json(
+            {
+                "kind": "update",
+                "planned_session_id": str(SESSION_ID),
+                "expected_intent_version": 1,
+                "updates": {"status": "completed"},
             }
         )
 

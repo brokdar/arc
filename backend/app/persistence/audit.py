@@ -88,8 +88,12 @@ class AuditRepository:
         believed is the one nobody is looking at.
 
         ``actor_prefix`` is matched with ``LIKE 'prefix%'``, so ``agent:``
-        covers every key label at once. Both indexed columns
-        (``actor``, ``at``) are in the predicate.
+        covers every key label at once. Do not read the index on ``actor`` as
+        a promise here: a plain btree under a non-C collation does not serve a
+        ``LIKE`` prefix on Postgres (that needs `text_pattern_ops`), so this
+        may well be a scan filtered by ``at``. At single-athlete scale — one
+        agent, a trailing hour, an audit log measured in thousands of rows —
+        that is fine, and it is cheaper than carrying an index for it.
         """
         total = await self._session.scalar(
             select(func.count())

@@ -3042,6 +3042,7 @@ export interface components {
        * Format: date
        */
       date: string;
+      discipline: components["schemas"]["Discipline"];
       /** Intent Text */
       intent_text: string | null;
       /** Predicted Load */

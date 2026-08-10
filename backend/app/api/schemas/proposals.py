@@ -45,6 +45,13 @@ class ProposalSessionSnapshot(BaseModel):
 
     date: dt.date
     purpose: Purpose
+    #: The discipline of *this* side of the change. On the entry it is the
+    #: discipline the change leaves; a revision may change it, and both halves
+    #: are what decide whether a recording settles the question
+    #: (`resolved_by_reality`).
+    discipline: Discipline
+    #: Derived from reality, never proposed (D174): an `update` change may not
+    #: carry it, so it is the same on both sides of every diff.
     status: SessionStatus
     intent_text: str | None
     coach_notes: str | None
