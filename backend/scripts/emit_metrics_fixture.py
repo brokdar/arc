@@ -122,6 +122,16 @@ STANDSTILL = (400, 425)
 FREEWHEEL = (1_130, 1_170)
 
 
+#: How far ahead of its own speed column the fixture's odometer runs.
+#:
+#: A head unit integrates wheel revolutions far faster than the once-a-second
+#: speed it writes, so its cumulative `distance` field is a percent or two
+#: above anything reconstructed from that column — 1.5 % on the real ride this
+#: system was checked against (D197). The fixture carries the gap so that a
+#: component rendering "distance" is rendering the odometer's kilometres,
+#: which is what the API now serves, and not the speed integral it used to.
+ODOMETER_RATIO = 1.015
+
 #: Decimal places every emitted sample is rounded to.
 #:
 #: The rounding happens **before** the analysis, not on the way out. A stream
@@ -148,8 +158,10 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
     heart_rate: list[float | None] = []
     cadence: list[float | None] = []
     speed: list[float | None] = []
+    odometer: list[float | None] = []
     elevation: list[float | None] = []
     temperature: list[float | None] = []
+    travelled = 0.0
     second = 0
     for duration, watts, bpm, rpm in BLOCKS:
         for _ in range(duration):
@@ -174,13 +186,18 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
                 if standing or freewheeling
                 else _sample(rpm + _wobble(second, 4))
             )
-            speed.append(
+            metres_per_s = (
                 None
                 if paused
                 else 0.0
                 if standing
                 else _sample(9.0 + _wobble(second, 1.5))
             )
+            speed.append(metres_per_s)
+            # Cumulative, and it does not advance through the pause — a device
+            # that stopped recording did not roll anywhere.
+            travelled += (metres_per_s or 0.0) * ODOMETER_RATIO
+            odometer.append(None if paused else _sample(travelled))
             elevation.append(
                 None
                 if paused
@@ -199,6 +216,7 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
         StreamChannel.HR: tuple(heart_rate),
         StreamChannel.CADENCE: tuple(cadence),
         StreamChannel.SPEED: tuple(speed),
+        StreamChannel.DISTANCE: tuple(odometer),
         StreamChannel.ELEVATION: tuple(elevation),
         StreamChannel.TEMP: tuple(temperature),
     }

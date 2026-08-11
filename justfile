@@ -141,6 +141,26 @@ scoring-fixture:
 	cd backend && uv run python scripts/emit_scoring_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-scoring.ts
 
+# --- Maintenance -------------------------------------------------------------
+
+# Re-parse every original under data/originals/, rewrite its stream file and
+# recording row, then append a metric version for each session that changed.
+# The path for "the parser learned something new": recompute alone reads the
+# stored parquet, so a stream written before a channel existed can never gain
+# that channel without this. Originals are read-only and are never moved.
+# Pass --no-recompute to rewrite streams only, or --recording <uuid> for one.
+#
+# ORDERING: deploy the new image FIRST, rebuild SECOND, and never roll the
+# image back after a rebuild. A rebuilt parquet carries the new parser's
+# channels; an older image has no enum member for a channel it predates, so it
+# reads the file as missing and every rebuilt session loses its chart and its
+# stream metrics until the newer image is back. Nothing is destroyed (the
+# originals are untouched), but a rollback after this is an outage.
+
+# Rebuild stored streams from the original files: just rebuild-streams [args]
+rebuild-streams *args:
+	cd backend && POSTGRES__HOST=localhost uv run python scripts/rebuild_streams.py {{args}}
+
 # --- API contract ------------------------------------------------------------
 
 # Regenerate the OpenAPI schema and frontend API types

@@ -79,9 +79,16 @@ RECORD_FIELDS: Mapping[StreamChannel, tuple[str, ...]] = {
     StreamChannel.HR: ("heart_rate",),
     StreamChannel.CADENCE: ("cadence",),
     StreamChannel.SPEED: ("enhanced_speed", "speed"),
+    StreamChannel.DISTANCE: ("distance",),
     StreamChannel.ELEVATION: ("enhanced_altitude", "altitude"),
     StreamChannel.TEMP: ("temperature",),
 }
+
+#: What the odometer's source label says when the FIT records carried one.
+#: There is no device to name: `record.distance` is written by the head unit
+#: itself, from whatever wheel or GPS source it decided to trust, and the file
+#: says nothing more than that.
+DISTANCE_SOURCE = "record.distance"
 
 
 def parse_fit(path: Path) -> Sequence[ParsedActivity]:
@@ -293,6 +300,9 @@ def _activity(
         hr_source_candidates=hr_all,
         hr_source=hr_source,
         hr_source_rule=hr_rule,
+        distance_source=(
+            DISTANCE_SOURCE if StreamChannel.DISTANCE in present else None
+        ),
     )
 
 

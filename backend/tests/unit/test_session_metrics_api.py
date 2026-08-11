@@ -152,10 +152,10 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
     """Distance, speed, temperature and standing time, over the wire.
 
     They come from the same golden file the load does, so this also pins the
-    relationship between them: the distance is what the speed channel
-    integrates to, and the average speed is that distance over the moving time
-    the same artefact reports (D194) — not over its recording time, which is
-    longer.
+    relationship between them: the distance is the **odometer** channel that
+    file carries, differenced end to end (D197), and the average speed is that
+    distance over the moving time the same artefact reports (D194) — not over
+    its recording time, which is longer.
     """
     await full_anchor_set(client)
     session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
@@ -164,13 +164,14 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
     streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
     metrics = session["metrics"]
 
-    [speed] = [
-        channel["values"]
-        for channel in streams["channels"]
-        if channel["channel"] == "speed"
-    ]
-    expected_km = sum(value for value in speed if value is not None) / 1000
+    columns = {channel["channel"]: channel["values"] for channel in streams["channels"]}
+    odometer = [value for value in columns["distance"] if value is not None]
+    expected_km = (odometer[-1] - odometer[0]) / 1000
+    integrated_km = sum(v for v in columns["speed"] if v is not None) / 1000
     assert metrics["speed"]["distance_km"]["value"] == pytest.approx(expected_km)
+    # And it is the odometer's number, not the speed column's: the golden file
+    # is built so the two differ by more than any rounding could explain.
+    assert expected_km > integrated_km * 1.01
     assert metrics["speed"]["average_speed_kmh"]["value"] == pytest.approx(
         expected_km / (metrics["moving_time_s"] / 3600)
     )

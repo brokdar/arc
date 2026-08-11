@@ -54,6 +54,15 @@ class StreamChannel(StrEnum):
     HR = "hr"
     CADENCE = "cadence"
     SPEED = "speed"
+    #: The device's own **cumulative** odometer, in metres from the start of
+    #: the recording. The one channel here that is not an instantaneous
+    #: reading, and the reason it is worth storing separately from ``SPEED``:
+    #: a head unit integrates wheel revolutions internally at a far higher
+    #: rate than the once-a-second speed it writes out, so differencing this
+    #: column end to end reproduces the distance the device, Strava and
+    #: intervals.icu all report, while integrating the speed column reads
+    #: about 1.5 % short (D197, `app.domain.metrics.distance_km`).
+    DISTANCE = "distance"
     ELEVATION = "elevation"
     TEMP = "temp"
     LAT = "lat"
@@ -64,8 +73,13 @@ class FillRule(StrEnum):
     """How a channel's value is carried across a sub-threshold gap.
 
     ``INTERPOLATE`` for the channels that describe a *position* — latitude,
-    longitude, altitude — where the intermediate values genuinely lay between
-    the two ends and a straight line is the best available account of them.
+    longitude, altitude, and the odometer, which is a position along the route
+    — where the intermediate values genuinely lay between the two ends and a
+    straight line is the best available account of them. For the odometer that
+    rule is also the only one that keeps the column **non-decreasing**, which
+    is the property `app.domain.metrics.distance_km` differences it on:
+    holding the previous reading across a hole and then jumping would still be
+    monotonic, but it would place every missing metre at one instant.
 
     ``HOLD`` for the channels that describe an *instantaneous rate* — power,
     heart rate, cadence, speed, temperature. Interpolating a rate invents a
@@ -85,6 +99,7 @@ FILL_RULE: Mapping[StreamChannel, FillRule] = MappingProxyType(
         StreamChannel.CADENCE: FillRule.HOLD,
         StreamChannel.SPEED: FillRule.HOLD,
         StreamChannel.TEMP: FillRule.HOLD,
+        StreamChannel.DISTANCE: FillRule.INTERPOLATE,
         StreamChannel.ELEVATION: FillRule.INTERPOLATE,
         StreamChannel.LAT: FillRule.INTERPOLATE,
         StreamChannel.LON: FillRule.INTERPOLATE,
@@ -117,12 +132,21 @@ MOVING_SPEED_MS = 1000 / 3600
 #: speed are the build plan's (WP-4.1); the rest are typo guards of the same
 #: kind, wide enough that no real recording touches them — a value outside one
 #: of these is a sensor fault or a unit error, never a hard effort.
+#:
+#: The odometer's top is 1 000 km, which no single recording reaches: 24 hours
+#: at 40 km/h is under a thousand. Note what a range **cannot** check for a
+#: cumulative channel — that it never goes backwards. A device that reset its
+#: odometer mid-ride writes perfectly plausible metres in a nonsensical order,
+#: and no per-value bound sees it; :func:`clean` therefore does not try, and
+#: `app.domain.metrics.distance_km` tests the ordering itself before it
+#: differences the column (D197).
 PLAUSIBLE_RANGE: Mapping[StreamChannel, tuple[float, float]] = MappingProxyType(
     {
         StreamChannel.POWER: (0.0, 2500.0),
         StreamChannel.HR: (25.0, 230.0),
         StreamChannel.CADENCE: (0.0, 250.0),
         StreamChannel.SPEED: (0.0, 35.0),
+        StreamChannel.DISTANCE: (0.0, 1_000_000.0),
         StreamChannel.ELEVATION: (-500.0, 9000.0),
         StreamChannel.TEMP: (-40.0, 60.0),
         StreamChannel.LAT: (-90.0, 90.0),
@@ -187,6 +211,12 @@ class ParsedActivity:
         hr_source_candidates: The same, for heart rate (strap vs. wrist).
         hr_source: The heart-rate field used.
         hr_source_rule: Why.
+        distance_source: Which field the cumulative ``distance`` channel was
+            read from, when the file carried one. There is no candidate list
+            and no tie-break: unlike power and heart rate, a file writes at
+            most one odometer, so the only question is *which field* — and
+            that is worth recording because differencing it is where the
+            ride's distance comes from (D197).
     """
 
     file_sport_index: int
@@ -201,6 +231,7 @@ class ParsedActivity:
     hr_source_candidates: Sequence[str] = ()
     hr_source: str | None = None
     hr_source_rule: str | None = None
+    distance_source: str | None = None
 
 
 def channels_present(samples: Sequence[RawSample]) -> frozenset[StreamChannel]:
@@ -633,6 +664,18 @@ def clean(
 
     The raw columns are returned untouched — the spike stays in ``power``, and
     ``power_fixed`` is what a metric reads.
+
+    **The cumulative channel is not special-cased**, and that is a decision
+    rather than an omission (D197). Every repair above happens to preserve a
+    non-decreasing ``distance`` column — the positional fill rule draws a
+    straight line between two readings, and a clipped spike holds the earlier
+    one — so nothing here needs to know the channel counts upwards. What no
+    per-value rule can catch is an odometer that *resets*: its metres are all
+    plausible and only their order is wrong. Detecting that here would mean
+    inventing a repair for it, and there is no honest one — the missing
+    distance is unknowable. So the ordering is checked where the column is
+    read, by `app.domain.metrics.distance_km`, which degrades to integrating
+    speed and says so.
 
     Args:
         frame: The resampled grid.

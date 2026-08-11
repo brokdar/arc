@@ -198,10 +198,10 @@ class IngestPaths:
 
 
 @dataclass(frozen=True, slots=True)
-class _Prepared:
+class PreparedActivity:
     """Everything about one activity that no database or disk was needed for.
 
-    Computed in one pass off the event loop (:func:`_prepare`) and then used
+    Computed in one pass off the event loop (:func:`prepare`) and then used
     twice: the discipline decides which existing sessions the overlap check may
     compare against, and the frames become the rows and the parquet file. Doing
     it once is also why a plan carries it — resampling a four-hour ride twice
@@ -224,7 +224,7 @@ class _Plan:
     detail: str | None = None
     suspected_session_id: uuid.UUID | None = None
     existing_session_id: uuid.UUID | None = None
-    prepared: _Prepared | None = None
+    prepared: PreparedActivity | None = None
 
     @property
     def ingestible(self) -> bool:
@@ -634,7 +634,7 @@ class IngestPipeline:
         ):
             return _Plan(activity, reason=verdict.reason, detail=verdict.detail)
 
-        prepared = await asyncio.to_thread(_prepare, activity)
+        prepared = await asyncio.to_thread(prepare, activity)
         if overlap:
             twin = await self._overlapping_session(
                 activity, discipline=prepared.discipline
@@ -829,7 +829,7 @@ class IngestPipeline:
                 reports the winner rather than a failure.
         """
         activity = plan.activity
-        prepared = plan.prepared or await asyncio.to_thread(_prepare, activity)
+        prepared = plan.prepared or await asyncio.to_thread(prepare, activity)
         resampled = prepared.resampled
         cleaned = prepared.cleaned
         channels = prepared.channels
@@ -863,7 +863,7 @@ class IngestPipeline:
             stream_path(self._paths.streams, recording.id),
             frame=resampled.frame,
             cleaned=cleaned,
-            sources=_source_labels(activity),
+            sources=source_labels(activity),
         )
         await self._recordings.add_anomalies(
             [_anomaly_row(recording.id, anomaly) for anomaly in cleaned.anomalies]
@@ -1114,7 +1114,7 @@ class IngestPipeline:
 # --- the pure pass ------------------------------------------------------------
 
 
-def _prepare(activity: ParsedActivity) -> _Prepared:
+def prepare(activity: ParsedActivity) -> PreparedActivity:
     """Resample, clean and classify one activity. No I/O, no database.
 
     Run in a worker thread: this is the part of the pipeline that costs real
@@ -1137,7 +1137,7 @@ def _prepare(activity: ParsedActivity) -> _Prepared:
         has_gps=StreamChannel.LAT in channels,
         duration_s=resampled.recording_time_s,
     )
-    return _Prepared(
+    return PreparedActivity(
         resampled=resampled,
         cleaned=cleaned,
         channels=channels,
@@ -1205,13 +1205,21 @@ def _anomaly_row(recording_id: uuid.UUID, anomaly: Anomaly) -> StreamAnomalyRow:
     )
 
 
-def _source_labels(activity: ParsedActivity) -> dict[StreamChannel, str]:
-    """The per-channel source labels written into the parquet metadata."""
+def source_labels(activity: ParsedActivity) -> dict[StreamChannel, str]:
+    """The per-channel source labels written into the parquet metadata.
+
+    Power and heart rate name a *device*, because more than one could have
+    produced them and A4.3's whole point is that the file does not say which.
+    The odometer names a *field*: a file writes at most one, so there is no
+    tie-break to record, only which field of which format it came out of
+    (D197).
+    """
     return {
         channel: source
         for channel, source in (
             (StreamChannel.POWER, activity.power_source),
             (StreamChannel.HR, activity.hr_source),
+            (StreamChannel.DISTANCE, activity.distance_source),
         )
         if source is not None
     }
