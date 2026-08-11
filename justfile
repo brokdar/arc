@@ -164,6 +164,23 @@ scoring-fixture:
 rebuild-streams *args:
 	docker compose exec api /app/.venv/bin/python /app/scripts/rebuild_streams.py {{args}}
 
+# --- Deployment images -------------------------------------------------------
+# The release workflow publishes multi-arch images on version tags; these two
+# recipes are the path for UNRELEASED builds: cross-build locally (buildx +
+# QEMU, both preinstalled in the devcontainer's docker), then ship the tarball
+# straight to a docker host over ssh — no registry, no tag required. A small
+# ARM server must pull or receive images, never build them.
+
+# Cross-build the three images: just images [tag] [platform]
+images tag="dev" platform="linux/arm64":
+	docker buildx build --platform {{platform}} --load -t ghcr.io/brokdar/arc/api:{{tag}} backend
+	docker buildx build --platform {{platform}} --load -t ghcr.io/brokdar/arc/mcp:{{tag}} backend
+	docker buildx build --platform {{platform}} --load -t ghcr.io/brokdar/arc/frontend:{{tag}} --build-arg NEXT_PUBLIC_API_BASE_URL="" frontend
+
+# Ship built images to a docker host over ssh: just ship-images <ssh-host> [tag]
+ship-images host tag="dev":
+	docker save ghcr.io/brokdar/arc/api:{{tag}} ghcr.io/brokdar/arc/mcp:{{tag}} ghcr.io/brokdar/arc/frontend:{{tag}} | ssh {{host}} docker load
+
 # --- API contract ------------------------------------------------------------
 
 # Regenerate the OpenAPI schema and frontend API types
