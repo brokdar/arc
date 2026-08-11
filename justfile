@@ -158,8 +158,11 @@ scoring-fixture:
 # originals are untouched), but a rollback after this is an outage.
 
 # Rebuild stored streams from the original files: just rebuild-streams [args]
+# Runs inside the api container: the recording rows store originals-relative
+# paths resolved against /app, and data/ belongs to the container's uid — a
+# host-side run fails on both. Deploy new code BEFORE rebuilding (D201).
 rebuild-streams *args:
-	cd backend && POSTGRES__HOST=localhost uv run python scripts/rebuild_streams.py {{args}}
+	docker compose exec api /app/.venv/bin/python /app/scripts/rebuild_streams.py {{args}}
 
 # --- API contract ------------------------------------------------------------
 
