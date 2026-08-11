@@ -81,7 +81,14 @@ export function Explained({
 }
 
 export interface MetricValueProps {
-  readonly metric: Metric;
+  /**
+   * The slot to render. Nullable because a **block** of the artefact can be
+   * absent as well as a number inside it: an artefact written before a metric
+   * existed carries no key for it, so the generated type makes the block
+   * optional. `resolve` already answers for that case with a reason, and this
+   * accepting it is what keeps the header free of `?? {}` at every slot.
+   */
+  readonly metric: Metric | null | undefined;
   /** How the number is written once it exists. */
   readonly format?: (value: number) => string;
   readonly className?: string;

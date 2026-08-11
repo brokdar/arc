@@ -105,6 +105,22 @@ BLOCKS: list[tuple[int, float, float, float]] = [
 #: to get right, which is drawing a hole as a break rather than as zero watts.
 STOP = (700, 760)
 
+#: A traffic light in the middle of a recovery, as a `[start, end)` row range.
+#: Twenty-five seconds — under `GAP_THRESHOLD_S`, so the head unit kept
+#: recording through it and it is **not** a recording stop. That is the whole
+#: point of it: it is the difference between recording time and moving time
+#: (D194), so a fixture without one cannot tell an average over the first from
+#: an average over the second, and the header's stopped-time slot would have
+#: nothing but the pause above to show.
+STANDSTILL = (400, 425)
+
+#: Freewheeling down the last hill, as a `[start, end)` row range: still
+#: travelling, no watts. Coasting and standing still are different facts about
+#: a ride and the header now shows both, so the fixture has to contain both —
+#: with only a traffic light in it, the two slots could be swapped and every
+#: test would still pass.
+FREEWHEEL = (1_130, 1_170)
+
 
 #: Decimal places every emitted sample is rounded to.
 #:
@@ -133,20 +149,49 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
     cadence: list[float | None] = []
     speed: list[float | None] = []
     elevation: list[float | None] = []
+    temperature: list[float | None] = []
     second = 0
     for duration, watts, bpm, rpm in BLOCKS:
         for _ in range(duration):
             paused = STOP[0] <= second < STOP[1]
+            # Standing at the light: no watts, no cadence, no speed — and a
+            # heart rate, because the athlete is still there and the strap is
+            # still recording. Zero, not null: the device recorded these rows.
+            standing = STANDSTILL[0] <= second < STANDSTILL[1]
+            freewheeling = FREEWHEEL[0] <= second < FREEWHEEL[1]
             power.append(
-                None if paused else _sample(max(0.0, watts + _wobble(second, 18)))
+                None
+                if paused
+                else 0.0
+                if standing or freewheeling
+                else _sample(max(0.0, watts + _wobble(second, 18)))
             )
             heart_rate.append(None if paused else _sample(bpm + _wobble(second, 2)))
-            cadence.append(None if paused else _sample(rpm + _wobble(second, 4)))
-            speed.append(None if paused else _sample(9.0 + _wobble(second, 1.5)))
+            cadence.append(
+                None
+                if paused
+                else 0.0
+                if standing or freewheeling
+                else _sample(rpm + _wobble(second, 4))
+            )
+            speed.append(
+                None
+                if paused
+                else 0.0
+                if standing
+                else _sample(9.0 + _wobble(second, 1.5))
+            )
             elevation.append(
                 None
                 if paused
                 else _sample(412.0 + 24 * math.sin(second / 260) + _wobble(second, 0.4))
+            )
+            # A morning ride warming up from 14 °C to about 19 °C, as the
+            # device's own sensor would read it.
+            temperature.append(
+                None
+                if paused
+                else _sample(14.0 + 5 * second / 1200 + _wobble(second, 0.3))
             )
             second += 1
     return {
@@ -155,6 +200,7 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
         StreamChannel.CADENCE: tuple(cadence),
         StreamChannel.SPEED: tuple(speed),
         StreamChannel.ELEVATION: tuple(elevation),
+        StreamChannel.TEMP: tuple(temperature),
     }
 
 
@@ -172,7 +218,6 @@ def build() -> tuple[dict[str, Any], dict[str, Any]]:
             # makes the fixture's load agree with the duration beside it.
             recording_time_s=float(rows - stopped),
             elapsed_time_s=float(rows),
-            moving_time_s=float(rows - stopped),
             columns=columns,
             sex=Sex.MALE,
             anchors=anchors,

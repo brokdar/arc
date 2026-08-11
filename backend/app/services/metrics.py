@@ -333,7 +333,6 @@ def _strength_inputs(
         discipline=session_row.discipline,
         recording_time_s=0.0,
         elapsed_time_s=session_row.duration_s,
-        moving_time_s=0.0,
         columns={},
         sex=sex,
         anchors={anchor_type: version for anchor_type, (version, _) in anchors.items()},
@@ -376,6 +375,10 @@ class MetricSummary:
             recorded. WP-6's intensity term compares it against the planned NP.
         average_hr: Recorded average heart rate, the fallback that term uses
             when there is no power on either side.
+        distance_km: How far the ride went, off the artefact's speed block, or
+            ``None`` for a session with no speed channel **and** for one whose
+            artefact predates the block — the log row keeps its slot either
+            way, and neither case is a zero.
         interval_count: How many work intervals the detector found
             (`app.domain.alignment.detect_work_intervals`, stored with the
             artefact). ``None`` when the artefact carries no interval block at
@@ -395,6 +398,7 @@ class MetricSummary:
     zone_channel: LoadBasis | None
     normalized_power: float | None = None
     average_hr: float | None = None
+    distance_km: float | None = None
     interval_count: int | None = None
 
 
@@ -448,5 +452,6 @@ def summarise(row: SessionMetricsRow) -> MetricSummary:
         zone_channel=channel,
         normalized_power=_number(_block(payload, "power", "normalized_power"), "value"),
         average_hr=_number(_block(payload, "heart_rate", "average_hr"), "value"),
+        distance_km=_number(_block(payload, "speed", "distance_km"), "value"),
         interval_count=len(intervals) if isinstance(intervals, list) else None,
     )

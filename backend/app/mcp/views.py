@@ -224,6 +224,7 @@ def metrics(summary: MetricSummary | None, row: SessionMetricsRow | None) -> Any
         "hard_s": summary.hard_s,
         "normalized_power": summary.normalized_power,
         "average_hr": summary.average_hr,
+        "distance_km": summary.distance_km,
         "interval_count": summary.interval_count,
         "computed_at": row.as_of.isoformat(),
     }

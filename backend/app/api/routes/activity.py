@@ -70,7 +70,7 @@ from app.persistence.matching import SessionMatchRow
 from app.persistence.metrics import SessionMetricsRow
 from app.services.activity import LoggedSetInput, SessionService
 from app.services.matching import MatchingService
-from app.services.metrics import SessionMetricsService
+from app.services.metrics import SessionMetricsService, summarise
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 #: Manual entry, outside the id namespace — see the module docstring.
@@ -146,22 +146,25 @@ def _duration(row: SessionRow) -> tuple[float, float | None]:
     return duration, (duration if row.recordings else None)
 
 
-def _load(metrics: SessionMetricsRow | None) -> tuple[float | None, Any]:
-    """The selected load and its basis, from an artefact that may not exist.
+def _row_numbers(
+    metrics: SessionMetricsRow | None,
+) -> tuple[float | None, Any, float | None]:
+    """A list row's three numbers, from an artefact that may not exist.
 
-    Three states collapse to ``(None, None)`` on a list row and they are not
-    the same thing: no artefact yet, an artefact whose load block is
-    `not_assessed`, and a load of zero (which cannot happen). The row keeps
-    its slot for all of them and the detail endpoint carries the reason —
-    a list is not where an explanation fits.
+    Read through `app.services.metrics.summarise`, which is the one reader of
+    the stored payload's keys — spelling ``training_load`` at a fourth call
+    site is a fourth place to spell it wrong, and it is tolerant of an artefact
+    written before a key existed.
+
+    Several states collapse to ``None`` here and they are not the same thing:
+    no artefact yet, a block that is `not_assessed`, a recording with no speed
+    channel. The row keeps its slot for all of them and the detail endpoint
+    carries the reason — a list is not where an explanation fits.
     """
     if metrics is None:
-        return None, None
-    load = metrics.payload.get("load")
-    if not isinstance(load, dict):
-        return None, None
-    value = load.get("training_load")
-    return (value if isinstance(value, float | int) else None), load.get("load_basis")
+        return None, None, None
+    summary = summarise(metrics)
+    return summary.training_load, summary.load_basis, summary.distance_km
 
 
 def to_list_item(
@@ -171,7 +174,7 @@ def to_list_item(
 ) -> SessionListItem:
     """Project a stored session onto its list-row shape."""
     duration_s, recording_time_s = _duration(row)
-    load, basis = _load(metrics)
+    load, basis, distance_km = _row_numbers(metrics)
     return SessionListItem(
         match=to_summary(link) if link is not None else None,
         id=row.id,
@@ -188,6 +191,7 @@ def to_list_item(
         rpe=row.rpe,
         load=load,
         load_basis=basis,
+        distance_km=distance_km,
     )
 
 
@@ -323,6 +327,7 @@ def to_read(
         # already carries — so a row and the page it opens cannot disagree.
         load=metrics.load.training_load if metrics is not None else None,
         load_basis=metrics.load.load_basis if metrics is not None else None,
+        distance_km=(metrics.speed.distance_km.value if metrics is not None else None),
         notes=row.notes,
         recordings=[
             to_recording(recording, anomaly_count=repairs.get(recording.id, 0))

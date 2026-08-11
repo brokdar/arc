@@ -15,7 +15,11 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 
+from app.api.schemas.metrics import SessionMetricsRead
+from app.domain.activity import SessionDiscipline
 from app.domain.metrics import intensity_factor, normalized_power, training_load
+from app.domain.session_analysis import SessionInputs, analyse_session, analysis_to_json
+from app.domain.streams import MOVING_SPEED_MS
 from tests.unit.golden_fit import golden
 
 SESSIONS = "/api/v1/sessions"
@@ -142,6 +146,164 @@ async def test_every_metric_slot_answers_exactly_once(
         assert (slot["value"] is None) != (slot["not_assessed"] is None), path
 
 
+async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """Distance, speed, temperature and standing time, over the wire.
+
+    They come from the same golden file the load does, so this also pins the
+    relationship between them: the distance is what the speed channel
+    integrates to, and the average speed is that distance over the moving time
+    the same artefact reports (D194) — not over its recording time, which is
+    longer.
+    """
+    await full_anchor_set(client)
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    session = (await client.get(f"{SESSIONS}/{session_id}")).json()
+    streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
+    metrics = session["metrics"]
+
+    [speed] = [
+        channel["values"]
+        for channel in streams["channels"]
+        if channel["channel"] == "speed"
+    ]
+    expected_km = sum(value for value in speed if value is not None) / 1000
+    assert metrics["speed"]["distance_km"]["value"] == pytest.approx(expected_km)
+    assert metrics["speed"]["average_speed_kmh"]["value"] == pytest.approx(
+        expected_km / (metrics["moving_time_s"] / 3600)
+    )
+    assert metrics["speed"]["max_speed_kmh"]["value"] > 0
+    assert metrics["temperature"]["average_temp_c"]["value"] == pytest.approx(17.0)
+    # Elapsed minus moving, derived server-side so no client has to choose
+    # which pair of durations to subtract.
+    assert metrics["stopped_time_s"]["value"] == pytest.approx(
+        metrics["elapsed_time_s"] - metrics["moving_time_s"]
+    )
+    # And the row in the log carries the distance, off the same artefact.
+    [row] = [
+        item
+        for item in (await client.get(SESSIONS)).json()["items"]
+        if item["id"] == session_id
+    ]
+    assert row["distance_km"] == pytest.approx(expected_km)
+
+
+async def test_average_power_is_divided_by_moving_time_not_recording_time(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """D194 and D196, re-derived from the stream the same session serves.
+
+    Which divisor was used is half of it; the other half is that the sum above
+    the divisor covers **exactly** the seconds the divisor counted (D196). Both
+    are recomputed here from the cleaned speed and power columns the streams
+    endpoint returns — the same grid the artefact was computed over — so a
+    numerator and a denominator that came to describe different stretches of
+    the ride would show up here rather than in an athlete's support question.
+    """
+    await full_anchor_set(client)
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    session = (await client.get(f"{SESSIONS}/{session_id}")).json()
+    streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
+    metrics = session["metrics"]
+    columns = {channel["channel"]: channel["values"] for channel in streams["channels"]}
+
+    moving = [
+        index
+        for index, value in enumerate(columns["speed"])
+        if value is not None and value >= MOVING_SPEED_MS
+    ]
+    joules = sum(
+        watts for index in moving if (watts := columns["power"][index]) is not None
+    )
+    assert moving
+    assert metrics["moving_time_s"] == pytest.approx(len(moving))
+    assert metrics["moving_time_s"] != metrics["recording_time_s"]
+    assert metrics["power"]["average_power"]["value"] == pytest.approx(
+        joules / len(moving)
+    )
+    # The load did not follow it: its duration term is still recording time.
+    assert any(
+        "recording time" in note
+        for note in metrics["load"]["explanation"]["assumptions"]
+    )
+
+
+async def test_the_variability_index_is_a_ratio_over_one_series(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """D196: VI cannot mix the moving-time average with an NP over every row.
+
+    Its two terms are statistics of the same recorded series, which is what
+    puts it at or above 1; the average power beside it on the page is a
+    different number over a different divisor, and the artefact says so.
+    """
+    await full_anchor_set(client)
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    metrics = (await client.get(f"{SESSIONS}/{session_id}")).json()["metrics"]
+    streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
+
+    [watts] = [
+        channel["values"]
+        for channel in streams["channels"]
+        if channel["channel"] == "power"
+    ]
+    recorded = [value for value in watts if value is not None]
+    power = metrics["power"]
+    assert power["variability_index"]["value"] >= 1.0
+    assert power["variability_index"]["value"] == pytest.approx(
+        power["normalized_power"]["value"] / (sum(recorded) / len(recorded))
+    )
+    assert "recorded rows" in power["variability_index"]["explanation"]["formula"]
+
+
+def test_an_artefact_written_before_these_numbers_holds_their_slots() -> None:
+    """An older payload has no key for a metric added later.
+
+    It must still validate — the version chain is append-only and every
+    artefact already written stays readable — and the slot must carry a reason
+    naming the remedy, not a null the page would render as a gap or a zero.
+    """
+    payload = analysis_to_json(
+        analyse_session(
+            SessionInputs(
+                discipline=SessionDiscipline.CYCLING,
+                recording_time_s=0.0,
+                elapsed_time_s=0.0,
+                columns={},
+            )
+        )
+    )
+    for key in ("speed", "temperature", "stopped_time_s"):
+        del payload[key]
+
+    read = SessionMetricsRead.model_validate(
+        payload
+        | {
+            "version": 1,
+            "computed_at": dt.datetime(2026, 8, 5, tzinfo=dt.UTC),
+            "recompute_reason": None,
+            "pins": [],
+            "power_zone_model": None,
+            "hr_zone_model": None,
+        }
+    )
+
+    for slot in (
+        read.speed.distance_km,
+        read.speed.average_speed_kmh,
+        read.speed.max_speed_kmh,
+        read.temperature.average_temp_c,
+        read.stopped_time_s,
+    ):
+        assert slot.value is None
+        assert slot.not_assessed is not None
+        assert "recompute" in slot.not_assessed
+
+
 async def test_a_ride_with_no_anchors_still_gets_an_artefact(
     data_root: Path, client: AsyncClient
 ) -> None:
@@ -202,6 +364,11 @@ async def test_recompute_supersedes_and_the_old_version_stays_readable(
     assert current["power"]["normalized_power"]["value"] == pytest.approx(
         first["power"]["normalized_power"]["value"]
     )
+    # And a recompute is how a session written by an earlier metric set gains
+    # a number added since: the new version is computed by the current domain
+    # over the same stored stream, so the whole set is there.
+    assert current["speed"]["distance_km"]["value"] > 0
+    assert current["stopped_time_s"]["value"] is not None
 
 
 async def test_a_new_ftp_moves_the_new_versions_pin_and_not_the_old_ones(

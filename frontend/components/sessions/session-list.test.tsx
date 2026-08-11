@@ -128,6 +128,24 @@ describe("the session log", () => {
     expect(row.getByText("power")).toBeInTheDocument();
   });
 
+  it("shows how far the ride went, and holds the column when it cannot", async () => {
+    renderList();
+    await screen.findByText("1–3 of 3");
+
+    // Off the same artefact the load comes from, so the row and the session
+    // page cannot disagree about the distance either.
+    const kilometres = RIDE_METRICS.speed?.distance_km?.value ?? 0;
+    expect(kilometres).toBeGreaterThan(0);
+    const row = within(rowFor(ACTIVITY_IDS.outdoorRide));
+    expect(row.getByText(kilometres.toFixed(1))).toBeInTheDocument();
+    // A strength session never had a speed channel; the slot stays and says so.
+    expect(
+      within(rowFor(ACTIVITY_IDS.gym)).getByRole("img", {
+        name: /Not assessed: No distance/,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("holds the load column open when there is nothing to put in it", async () => {
     renderList();
     await screen.findByText("1–3 of 3");

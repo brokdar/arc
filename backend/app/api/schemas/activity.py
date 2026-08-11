@@ -168,6 +168,11 @@ class SessionListItem(BaseModel):
     load: float | None
     #: Which model produced ``load``. Null exactly when ``load`` is.
     load_basis: LoadBasis | None
+    #: How far the session went, from its current metric artefact. Null when
+    #: nothing has been computed, when the recording carried no speed channel,
+    #: and for a session with no recording at all — the row holds the slot in
+    #: every one of those cases rather than printing a zero.
+    distance_km: float | None = None
 
 
 class SessionRead(SessionListItem):

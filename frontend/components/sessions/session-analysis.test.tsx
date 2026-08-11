@@ -11,6 +11,7 @@ import {
   StrengthCard,
 } from "@/components/sessions/session-analysis";
 import type { PlannedBand } from "@/components/sessions/stream-charts";
+import { formatDurationClock } from "@/lib/format";
 import type { SessionMetrics } from "@/lib/metrics";
 import { normalizedPower, selectionStats } from "@/lib/metrics";
 import {
@@ -33,6 +34,22 @@ function without(patch: Partial<SessionMetrics>): SessionMetrics {
   return { ...RIDE_METRICS, ...patch };
 }
 
+/**
+ * The slot the API sends for a metric an older artefact was written before.
+ *
+ * Word for word what `predates()` in `backend/app/api/schemas/metrics.py`
+ * fills the missing key with, because that is what a client actually receives:
+ * the block is never absent, it is present and full of reasons that name the
+ * remedy.
+ */
+function predates(metric: string) {
+  return {
+    value: null,
+    explanation: null,
+    not_assessed: `these metrics were computed before ${metric} was — recompute this session to add it`,
+  };
+}
+
 describe("the metric header", () => {
   it("renders every number with the explanation it came with", () => {
     render(<MetricHeader metrics={RIDE_METRICS} />);
@@ -44,9 +61,84 @@ describe("the metric header", () => {
     expect(np).toHaveTextContent(
       String(Math.round(RIDE_METRICS.power.normalized_power.value ?? 0)),
     );
-    // Average power carries its own caveat, because it is not the average the
-    // head unit displays.
-    expect(screen.getByLabelText(/head unit/)).toBeInTheDocument();
+    // Average power carries the caveat that matters most about it: the
+    // divisor is moving time, and the load beside it still uses recording
+    // time (D194). Both sentences travel on the number itself.
+    const average = screen.getByLabelText(/average power = Σ P × Δt/);
+    expect(average.getAttribute("aria-label")).toMatch(/moving time/);
+    expect(average.getAttribute("aria-label")).toMatch(/recording time/);
+  });
+
+  it("shows what the ride was, not only what it cost", () => {
+    render(<MetricHeader metrics={RIDE_METRICS} />);
+
+    // The basics every other training application leads with, and this one
+    // omitted: distance, speed, climbing, cadence, standing time, weather.
+    const distance = RIDE_METRICS.speed?.distance_km?.value ?? 0;
+    const averageSpeed = RIDE_METRICS.speed?.average_speed_kmh?.value ?? 0;
+    const maxSpeed = RIDE_METRICS.speed?.max_speed_kmh?.value ?? 0;
+    expect(distance).toBeGreaterThan(0);
+    expect(screen.getByText(distance.toFixed(1))).toBeInTheDocument();
+    expect(screen.getByText(averageSpeed.toFixed(1))).toBeInTheDocument();
+    expect(screen.getByText(maxSpeed.toFixed(1))).toBeInTheDocument();
+    // Addressed through their own explanations rather than by text: this
+    // ride's climbing and its load happen to round to the same integer, and a
+    // bare text match would pass while pointing at the wrong slot.
+    expect(screen.getByLabelText(/elevation gain = Σ rises/)).toHaveTextContent(
+      String(Math.round(RIDE_METRICS.elevation_gain_m.value ?? 0)),
+    );
+    expect(screen.getByLabelText(/average temperature =/)).toHaveTextContent(
+      String(Math.round(RIDE_METRICS.temperature?.average_temp_c?.value ?? 0)),
+    );
+  });
+
+  it("shows standing still and freewheeling as the different things they are", () => {
+    render(<MetricHeader metrics={RIDE_METRICS} />);
+
+    // Stopped time is elapsed − moving; coasting is time moving without
+    // pedalling. The fixture's ride contains both, so a header that had
+    // swapped them would fail here rather than read plausibly.
+    const stopped = RIDE_METRICS.stopped_time_s?.value ?? 0;
+    const coasting = RIDE_METRICS.power.coasting_time_s.value ?? 0;
+    expect(stopped).toBeGreaterThan(0);
+    expect(coasting).toBeGreaterThan(0);
+    expect(stopped).not.toBe(coasting);
+    expect(screen.getByText(formatDurationClock(stopped))).toBeInTheDocument();
+    expect(screen.getByText(formatDurationClock(coasting))).toBeInTheDocument();
+  });
+
+  it("holds the ride-log slots for an artefact written before they existed", () => {
+    // The version chain is append-only, so an artefact computed by an earlier
+    // metric set has no key for a number added later — and the API fills the
+    // gap on the way out (`predates()` in app/api/schemas/metrics.py), so what
+    // reaches a client is never a missing block: it is every slot carrying the
+    // reason and the remedy. That is the payload built here; a fixture with
+    // `speed: undefined` in it would be testing a response the API cannot
+    // send, and would pass whatever the recompute wording became.
+    const metrics = without({
+      speed: {
+        distance_km: predates("distance"),
+        average_speed_kmh: predates("average speed"),
+        max_speed_kmh: predates("max speed"),
+      },
+      temperature: {
+        average_temp_c: predates("temperature"),
+        min_temp_c: predates("temperature"),
+        max_temp_c: predates("temperature"),
+      },
+      stopped_time_s: predates("stopped time"),
+    });
+
+    render(<MetricHeader metrics={metrics} />);
+
+    // UI convention 3: an empty state names the action that fills it, and the
+    // action — the recompute button already on this page — has to reach a
+    // screen reader, not only a hovering mouse.
+    const held = screen.getAllByRole("img", { name: /recompute this session/ });
+    expect(held.length).toBeGreaterThanOrEqual(7);
+    expect(screen.getByText("Distance")).toBeInTheDocument();
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
   });
 
   it("names the FTP version an intensity factor was computed against", () => {
