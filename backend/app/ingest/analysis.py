@@ -118,16 +118,29 @@ def streams_root() -> Path:
 
 
 def _read(path: Path) -> StoredStreams | None:
-    """Read one stream file, or ``None`` when it is not there.
+    """Read one stream file, or ``None`` when it is not there or not readable.
 
     A missing file is not an exception here on purpose: the row saying it
     should exist is committed before the artefact is computed, and a metric
     run that raised would leave the athlete with an ingested session and an
     error instead of an ingested session and a reason.
+
+    A file that is *there* but cannot be understood is the same outcome for the
+    caller and a very different event for the operator, so it is logged. The
+    case it exists for is a **rollback**: a parquet written by a newer image
+    carries a column this one has no `app.domain.streams.StreamChannel` for,
+    `app.ingest.parquet.read_streams` raises ``ValueError`` naming it, and
+    without this line a whole store of good streams would read as "the stream
+    file is missing" with nothing anywhere saying why (see D201's ordering
+    note). Degrading rather than raising is still right — one unreadable file
+    must not take the metric run down — but it must not be silent.
     """
     try:
         return read_streams(path)
-    except FileNotFoundError, ValueError:
+    except FileNotFoundError:
+        return None
+    except ValueError as error:
+        logger.warning("stream_file_unreadable", path=str(path), error=str(error))
         return None
 
 
@@ -198,12 +211,26 @@ class _Durations:
 
 @dataclass(frozen=True, slots=True)
 class _Joined:
-    """Several recordings laid end to end on one 1 Hz grid."""
+    """Several recordings laid end to end on one 1 Hz grid.
+
+    Args:
+        length: Rows in the joined grid.
+        channels: Channel -> the joined cleaned column.
+        sources: Channel -> the sensor label that produced it.
+        recording_stops: ``[start, end)`` ranges the recording was paused for,
+            including the gaps this join padded.
+        segments: ``[start, end)`` row range of each recording, in order.
+            Carried because a **cumulative** channel cannot be read off the
+            joined column without them (D202): every recording's odometer
+            counts from its own zero, so a session's distance is the sum of
+            each segment's own span, and only the join knows where they are.
+    """
 
     length: int
     channels: Mapping[StreamChannel, tuple[float | None, ...]]
     sources: Mapping[StreamChannel, str]
     recording_stops: tuple[tuple[int, int], ...]
+    segments: tuple[tuple[int, int], ...]
 
 
 async def _segments(session_row: SessionRow) -> list[_Segment]:
@@ -254,6 +281,17 @@ def _join(segments: Sequence[_Segment]) -> _Joined:
     result — `app.domain.metrics` excludes rows with no reading rather than
     reading them as zero, and the load's duration term is the recordings' own
     recording time summed, never the length of this grid (A5.1).
+
+    With one exception, and it is why :attr:`_Joined.segments` exists (D202).
+    That reasoning holds for every channel that is an *instantaneous reading*
+    and for none that is cumulative. Each recording's odometer counts from its
+    own zero, so laying two of them on one grid produces a column that runs
+    0 → 40 950, gap, 0 → 30 000 — non-monotone, and read end to end it either
+    trips `app.domain.metrics.distance_km`'s reset guard (telling the athlete
+    their device corrupted a file arc itself joined) or, when the second
+    recording's odometer happens to start above the first's last reading,
+    returns a monotone number for a ride nobody rode. So the boundaries travel
+    with the columns and the domain differences each segment separately.
     """
     length = segments[-1].offset + segments[-1].stored.row_count
     channels: dict[StreamChannel, list[float | None]] = {}
@@ -278,6 +316,10 @@ def _join(segments: Sequence[_Segment]) -> _Joined:
         channels={channel: tuple(values) for channel, values in channels.items()},
         sources=sources,
         recording_stops=tuple(sorted(stops)),
+        segments=tuple(
+            (segment.offset, segment.offset + segment.stored.row_count)
+            for segment in segments
+        ),
     )
 
 
@@ -348,7 +390,7 @@ class SessionAnalyser:
 
         anchors = await self._metrics.current_anchors()
         sex = await self._metrics.athlete_sex()
-        durations, columns = await self._recorded(session_row)
+        durations, columns, segments = await self._recorded(session_row)
 
         analysis = analyse_session(
             SessionInputs(
@@ -356,6 +398,7 @@ class SessionAnalyser:
                 recording_time_s=durations.recording_time_s,
                 elapsed_time_s=durations.elapsed_time_s,
                 columns=columns,
+                segments=segments,
                 sex=sex,
                 anchors={
                     anchor_type: version
@@ -380,8 +423,12 @@ class SessionAnalyser:
 
     async def _recorded(
         self, session_row: SessionRow
-    ) -> tuple[_Durations, dict[StreamChannel, tuple[float | None, ...]]]:
-        """The A4.4 durations and the cleaned columns the metrics run over.
+    ) -> tuple[
+        _Durations,
+        dict[StreamChannel, tuple[float | None, ...]],
+        tuple[tuple[int, int], ...],
+    ]:
+        """The A4.4 durations, the cleaned columns and the recording boundaries.
 
         One recording is the ordinary case and answers with its own three
         numbers unchanged. A **merged** session (WP-6.5) answers with the
@@ -390,6 +437,9 @@ class SessionAnalyser:
         gap between two files is a stop by definition — so summing the two
         recordings' own numbers is the same answer, arrived at without asking
         the join to remember what it padded.
+
+        The boundaries come back beside the columns because the odometer is
+        cumulative and the join is what breaks it (D202); see :func:`_join`.
 
         A session with no recording, or whose stream files are all unreadable,
         answers with no columns and the reasons the domain writes for them.
@@ -401,6 +451,7 @@ class SessionAnalyser:
                     elapsed_time_s=session_row.duration_s,
                 ),
                 {},
+                (),
             )
         try:
             segments = await _segments(session_row)
@@ -411,7 +462,8 @@ class SessionAnalyser:
                 recordings=[str(recording.id) for recording in session_row.recordings],
             )
             segments = []
-        columns = dict(_join(segments).channels) if segments else {}
+        joined = _join(segments) if segments else None
+        columns = dict(joined.channels) if joined else {}
         recordings = (
             [segment.recording for segment in segments]
             if segments
@@ -432,4 +484,5 @@ class SessionAnalyser:
                 ),
             ),
             columns,
+            joined.segments if joined else (),
         )

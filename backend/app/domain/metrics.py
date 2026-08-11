@@ -762,6 +762,24 @@ SPEED_INTEGRATION_NOTE = (
     "so this reads roughly 1-2 % under the odometer it would have shown"
 )
 
+#: The source sentence for a session merged from several recordings, every one
+#: of which had an odometer of its own (D202).
+MERGED_ODOMETER_NOTE = (
+    "the distance is each recording's own odometer span — the device's "
+    "cumulative distance field, differenced from that recording's first "
+    "reading to its last — summed over the {recordings} recordings this "
+    "session was merged from, because each of them counts from its own zero"
+)
+
+#: And the source sentence for a merge only some of whose recordings carried
+#: one, where the two kinds of kilometre are added together and must say so.
+MIXED_SOURCE_NOTE = (
+    "the distance is the sum of what each of this session's {recordings} "
+    "recordings could report: {odometer} of them from the device's own "
+    "odometer channel, and {speed} integrated from the 1 Hz speed channel "
+    "because {reason}"
+)
+
 #: Why a stream has no odometer to difference. Named because it is the answer
 #: for every file ingested before the channel existed, and the athlete reading
 #: it should be told that recomputing alone will not change it.
@@ -771,20 +789,98 @@ NO_ODOMETER_REASON = (
     "rebuilding it from the original file supplies it"
 )
 
+#: How much of a recording's own recorded seconds its odometer has to cover
+#: before the span of that odometer may stand for the whole of it (D202).
+#:
+#: The mirror of :data:`SPEED_COVERAGE_FLOOR`, and it exists for the same
+#: shape of failure. A cumulative channel that stops halfway through a ride —
+#: a sensor that dies, a device that stops writing the field — still yields a
+#: perfectly monotone column whose span is a real number of metres, just not
+#: this ride's: a 10 km ride whose odometer gave up at 60 % reports 6.08 km,
+#: with no reading out of range and nothing for `app.domain.streams.clean` to
+#: have caught. Under this line the odometer is not *worse*, it is answering a
+#: different question, so the metric falls back to integrating speed and names
+#: the fraction that made it.
+#:
+#: The yardstick is the **speed column's own coverage of the same rows**, not
+#: the grid length, for two reasons: the rows a device paused for hold no
+#: reading in either channel and must not count against the odometer, and a
+#: merged session's padding gap is exactly such a run. Where the recording
+#: carried no speed at all the row count is used instead, which is the only
+#: yardstick left.
+ODOMETER_COVERAGE_FLOOR = 0.9
 
-def _odometer_span(distance_fixed: Sequence[float | None]) -> tuple[float, int] | str:
+#: Consecutive readings below the running maximum that are read as a glitch
+#: rather than as a reset (D202).
+#:
+#: A cumulative channel must not go backwards, but a *reading* of one may: a
+#: sensor that reports a garbled packet, or a device that corrects its own
+#: wheel-circumference estimate, puts one or two readings below where it had
+#: already been and then carries on from where it was. Refusing the whole
+#: column for that discards a thousand good readings over a hundred metres of
+#: self-correcting noise. A genuine reset does not recover — the column
+#: restarts near zero and stays there — so "how long it stays below" separates
+#: the two exactly, and five readings is comfortably longer than any glitch
+#: and far shorter than any reset.
+ODOMETER_DIP_SAMPLES = 5
+
+
+@dataclass(frozen=True, slots=True)
+class _Leg:
+    """One recording's contribution to a session's distance, and its source.
+
+    A merged session is several recordings laid on one grid (WP-6.5), and each
+    one's odometer counts from **its own** zero — so the session's distance is
+    the sum of the parts and never the span of the joined column. See
+    :func:`distance_km`.
+
+    Args:
+        metres: What this recording contributed.
+        readings: Rows that produced it — odometer readings for an odometer
+            leg, speed readings for an integrated one.
+        coverage: Fraction of this recording's recorded seconds the odometer
+            covered. Zero for a leg that fell back.
+        from_odometer: Which of the two it is.
+        reason: Why it is not the odometer, for a leg that fell back. ``None``
+            for an odometer leg.
+    """
+
+    metres: float
+    readings: int
+    coverage: float
+    from_odometer: bool
+    reason: str | None
+
+
+def _odometer_span(
+    distance_fixed: Sequence[float | None], *, recorded_rows: int
+) -> tuple[float, int, float] | str:
     """Metres between the odometer's first and last reading, or why not.
 
-    Returns ``(metres, readings)`` when the column can be differenced, and
-    otherwise the sentence explaining why it cannot — which the caller states
-    rather than swallowing.
+    Returns ``(metres, readings, coverage)`` when the column can be
+    differenced, and otherwise the sentence explaining why it cannot — which
+    the caller states rather than swallowing.
 
-    The one check worth making is **ordering**. An odometer counts upwards
-    forever; a column that goes backwards has been reset by a device, corrupted
-    in transit, or joined out of order, and the metres it lost are not
-    recoverable from it. Every such column still holds perfectly plausible
-    numbers, so nothing upstream can have caught it (see
-    `app.domain.streams.PLAUSIBLE_RANGE`).
+    Two checks, and they catch different things.
+
+    **Ordering.** An odometer counts upwards forever; a column that goes
+    backwards *and stays there* has been reset by a device or corrupted in
+    transit, and the metres it lost are not recoverable from it. Every such
+    column still holds perfectly plausible numbers, so nothing upstream can
+    have caught it (see `app.domain.streams.PLAUSIBLE_RANGE`). An isolated dip
+    that recovers within :data:`ODOMETER_DIP_SAMPLES` readings is a glitch and
+    is ridden over, with the span taken from the running maximum rather than
+    from the last row so a dip at the very end cannot shorten the ride.
+
+    **Coverage.** A monotone column that covers 60 % of the ride reports 60 %
+    of the ride, with nothing about the number saying so — see
+    :data:`ODOMETER_COVERAGE_FLOOR`.
+
+    Args:
+        distance_fixed: The cleaned odometer column of **one recording**, in
+            cumulative metres.
+        recorded_rows: How many seconds of that recording carry a reading at
+            all — the yardstick coverage is measured against.
     """
     present = _present(distance_fixed)
     if not present:
@@ -794,22 +890,96 @@ def _odometer_span(distance_fixed: Sequence[float | None]) -> tuple[float, int] 
             "the odometer channel carries a single reading, so there is "
             "nothing to difference"
         )
-    for earlier, later in zip(present, present[1:], strict=False):
-        if later < earlier:
-            return (
-                f"the odometer channel goes backwards ({earlier:.0f} m then "
-                f"{later:.0f} m), which means it was reset or corrupted rather "
-                "than merely noisy"
-            )
-    span = present[-1] - present[0]
+    high = present[0]
+    below = 0
+    for value in present[1:]:
+        if value < high:
+            below += 1
+            if below > ODOMETER_DIP_SAMPLES:
+                return (
+                    f"the odometer channel goes backwards and stays there "
+                    f"({high:.0f} m, then {value:.0f} m for more than "
+                    f"{ODOMETER_DIP_SAMPLES} readings), which means this "
+                    "device reset it or the column was corrupted rather than "
+                    "merely glitching"
+                )
+        else:
+            high = value
+            below = 0
+    span = high - present[0]
     if span <= 0:
         return "the odometer channel never advanced"
-    return span, len(present)
+    coverage = min(len(present) / recorded_rows, 1.0) if recorded_rows > 0 else 1.0
+    if coverage < ODOMETER_COVERAGE_FLOOR:
+        return (
+            f"the odometer channel covers only {coverage:.0%} of the seconds "
+            "this recording holds a reading for, so its span would report "
+            "part of the ride as the whole of it"
+        )
+    return span, len(present), coverage
+
+
+def _leg(
+    speed_fixed: Sequence[float | None], distance_fixed: Sequence[float | None]
+) -> _Leg:
+    """One recording's distance: its own odometer where it has one, speed else.
+
+    The fallback is **per recording** rather than per session, because that is
+    the unit the odometer is a fact about: a session merged from a ride with an
+    odometer and one without must report the first from its device and the
+    second from its speed column, not throw the good one away.
+    """
+    present = _present(speed_fixed)
+    recorded_rows = len(present) or len(speed_fixed) or len(distance_fixed)
+    odometer = _odometer_span(distance_fixed, recorded_rows=recorded_rows)
+    if not isinstance(odometer, str):
+        metres, readings, coverage = odometer
+        return _Leg(
+            metres=metres,
+            readings=readings,
+            coverage=coverage,
+            from_odometer=True,
+            reason=None,
+        )
+    return _Leg(
+        metres=sum(present),
+        readings=len(present),
+        coverage=0.0,
+        from_odometer=False,
+        reason=odometer,
+    )
+
+
+def _odometer_coverage_note(legs: Sequence[_Leg]) -> str:
+    """What the odometer legs were actually verified to cover.
+
+    The assumption this replaces claimed the odometer "covers the whole
+    recording" unconditionally, which was a promise about a column nothing had
+    measured — and false for the very first real file this was run against,
+    whose odometer starts 29 rows in. Now the sentence states what
+    :func:`_odometer_span` checked.
+    """
+    coverage = min(leg.coverage for leg in legs)
+    subject = "this recording holds" if len(legs) == 1 else "these recordings hold"
+    if coverage >= 1.0:
+        return (
+            f"the odometer covers every second {subject} a reading for, "
+            f"including the metres rolled below {MOVING_SPEED_MS * MS_TO_KMH:g} "
+            "km/h that moving time does not count"
+        )
+    return (
+        f"the odometer covers {coverage:.0%} of the seconds {subject} a "
+        "reading for — a cumulative reading spans the gaps inside it, so only "
+        "metres rolled before its first reading or after its last are missing "
+        "here"
+    )
 
 
 def distance_km(
     speed_fixed: Sequence[float | None],
     distance_fixed: Sequence[float | None] = (),
+    *,
+    segments: Sequence[tuple[int, int]] = (),
 ) -> Assessment:
     """How far the ride went — the odometer where there is one, speed otherwise.
 
@@ -823,16 +993,30 @@ def distance_km(
     gap far too large to be quantisation and exactly the size that makes an
     athlete distrust every other number on the page.
 
+    **Differenced per recording, then summed** (D202). A merged session lays
+    several recordings on one 1 Hz grid (`app.ingest.analysis`), and each
+    device's odometer counts from **its own** zero — so the joined column runs
+    0 → 40 950, gap, 0 → 30 000. Differencing *that* end to end is not a
+    smaller number, it is a different ride: at best the join trips the
+    backwards guard and the athlete is told their hardware reset itself, and at
+    worst the second file's odometer happens to start above the first's end and
+    a silently wrong monotone number comes out. Each recording's own span is
+    the only honest reading, and each one falls back on its own terms, so a
+    merge of one file with an odometer and one without reports the sum rather
+    than the first file's distance for the whole session.
+
     Neither reading is taken from the latitude/longitude track. That
     disagreement is not noise either: a GPS trace through a tunnel or under a
     plane-tree avenue draws a straight line the athlete did not ride, and a
     trace sampled every four seconds cuts every corner.
 
     **Falling back is normal, not exceptional.** A GPX file has no odometer, an
-    indoor session may have none, and every stream stored before this channel
-    existed has none — so speed integration stays a first-class path and the
-    explanation names which one produced the number and why. That sentence is
-    always :attr:`MetricExplanation.assumptions`'s first entry (see
+    indoor session may have none, every stream stored before this channel
+    existed has none, and a channel that covers too little of its recording is
+    refused outright (:data:`ODOMETER_COVERAGE_FLOOR`) — so speed integration
+    stays a first-class path and the explanation names which one produced the
+    number and why. That sentence is always
+    :attr:`MetricExplanation.assumptions`'s first entry (see
     :data:`ODOMETER_NOTE`).
 
     Δt is one second by construction (A4.1's grid), so summing the speed column
@@ -844,61 +1028,106 @@ def distance_km(
         distance_fixed: The cleaned odometer column, in cumulative metres.
             Empty for a file that carried none, which is the ordinary case for
             GPX and for anything ingested before D197.
+        segments: ``[start, end)`` row ranges, one per recording on the joined
+            grid, in order. Empty — the ordinary single-recording case — means
+            one segment spanning everything.
     """
-    odometer = _odometer_span(distance_fixed)
-    if not isinstance(odometer, str):
-        metres, readings = odometer
-        return Measured(
-            value=metres / 1000,
-            explanation=MetricExplanation(
-                formula="distance = last odometer reading − first, / 1000",
-                inputs=MappingProxyType(
-                    {
-                        "odometer": f"{metres:.0f} m over {readings} readings at 1 Hz",
-                    }
-                ),
-                assumptions=(
-                    ODOMETER_NOTE,
-                    (
-                        "it covers the whole recording, including the metres "
-                        f"rolled below {MOVING_SPEED_MS * MS_TO_KMH:g} km/h that "
-                        "moving time does not count"
-                    ),
-                    (
-                        "a device that paused does not advance its odometer, so "
-                        "a recording stop costs no distance"
-                    ),
-                ),
-            ),
-        )
-
-    present = _present(speed_fixed)
-    if not present:
+    spans = tuple(segments) or ((0, max(len(speed_fixed), len(distance_fixed))),)
+    legs = [
+        _leg(speed_fixed[start:end], distance_fixed[start:end]) for start, end in spans
+    ]
+    if not any(leg.readings for leg in legs):
         return _absent("speed")
+
+    from_odometer = [leg for leg in legs if leg.from_odometer]
+    integrated = [leg for leg in legs if not leg.from_odometer and leg.readings]
+    metres = sum(leg.metres for leg in legs)
+    inputs: dict[str, str] = {}
+    if from_odometer:
+        odometer_m = sum(leg.metres for leg in from_odometer)
+        readings = sum(leg.readings for leg in from_odometer)
+        inputs["odometer"] = f"{odometer_m:.0f} m over {readings} readings" + (
+            f" in {len(from_odometer)} recordings" if len(from_odometer) > 1 else ""
+        )
+    if integrated:
+        samples = sum(leg.readings for leg in integrated)
+        speed_m = sum(leg.metres for leg in integrated)
+        inputs["speed"] = f"{speed_m:.0f} m over {samples} speed readings at 1 Hz"
+
     return Measured(
-        value=sum(present) / 1000,
+        value=metres / 1000,
         explanation=MetricExplanation(
-            formula="distance = Σ v × Δt / 1000, with Δt = 1 s",
-            inputs=MappingProxyType(
-                {"samples": f"{len(present)} speed readings at 1 Hz"}
-            ),
-            assumptions=(
-                SPEED_INTEGRATION_NOTE.format(reason=odometer),
-                "rows with no speed reading contribute no distance",
-                (
-                    "every reading counts, including the metres rolled below "
-                    f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h that moving time "
-                    "does not — a head unit's odometer counts those too"
-                ),
-                (
-                    "a reading the cleaner carried forward over a dropout (up "
-                    "to 29 s at the last good speed) contributes distance the "
-                    "wheel may not have turned; the repaired regions are "
-                    "listed on the stream itself"
-                ),
-            ),
+            formula=_distance_formula(from_odometer, integrated),
+            inputs=MappingProxyType(inputs),
+            assumptions=_distance_assumptions(legs, from_odometer, integrated),
         ),
     )
+
+
+def _distance_formula(from_odometer: Sequence[_Leg], integrated: Sequence[_Leg]) -> str:
+    """The arithmetic that produced the distance, written for a human."""
+    if from_odometer and integrated:
+        return (
+            "distance = Σ over the recordings of (last odometer reading − "
+            "first, where there is one, else Σ v × Δt) / 1000"
+        )
+    if from_odometer:
+        if len(from_odometer) > 1:
+            return (
+                "distance = Σ over the recordings of (last odometer reading − "
+                "first) / 1000"
+            )
+        return "distance = last odometer reading − first, / 1000"
+    return "distance = Σ v × Δt / 1000, with Δt = 1 s"
+
+
+def _distance_assumptions(
+    legs: Sequence[_Leg],
+    from_odometer: Sequence[_Leg],
+    integrated: Sequence[_Leg],
+) -> tuple[str, ...]:
+    """What the distance had to assume, source sentence first (D197, D202)."""
+    notes: list[str] = []
+    if from_odometer and integrated:
+        notes.append(
+            MIXED_SOURCE_NOTE.format(
+                recordings=len(legs),
+                odometer=len(from_odometer),
+                speed=len(integrated),
+                reason=integrated[0].reason,
+            )
+        )
+    elif len(from_odometer) > 1:
+        notes.append(MERGED_ODOMETER_NOTE.format(recordings=len(from_odometer)))
+    elif from_odometer:
+        notes.append(ODOMETER_NOTE)
+    else:
+        notes.append(SPEED_INTEGRATION_NOTE.format(reason=integrated[0].reason))
+
+    if from_odometer:
+        notes += [
+            _odometer_coverage_note(from_odometer),
+            (
+                "a device that paused does not advance its odometer, so a "
+                "recording stop costs no distance"
+            ),
+        ]
+    if integrated:
+        notes += [
+            "rows with no speed reading contribute no distance",
+            (
+                "every reading counts, including the metres rolled below "
+                f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h that moving time "
+                "does not — a head unit's odometer counts those too"
+            ),
+            (
+                "a reading the cleaner carried forward over a dropout (up "
+                "to 29 s at the last good speed) contributes distance the "
+                "wheel may not have turned; the repaired regions are "
+                "listed on the stream itself"
+            ),
+        ]
+    return tuple(notes)
 
 
 def average_speed_kmh(
@@ -962,11 +1191,25 @@ def average_speed_kmh(
                 # a reader has to go and look up.
                 *distance.explanation.assumptions[:1],
                 basis.assumption,
+                # Gated, because the sentence is only true of a moving-time
+                # divisor and the basis falls back for every indoor ride
+                # (`AveragingBasis`): printing it there told the athlete their
+                # average read *higher* than distance ÷ elapsed time directly
+                # under an assumption saying the divisor **was** recording
+                # time. Two assumptions on one number that contradict each
+                # other are worse than either alone.
                 (
                     "the distance covers the whole recording while the divisor "
                     "counts only the seconds spent moving — the convention a "
                     "head unit's average speed uses, and the reason this reads "
                     "higher than distance ÷ elapsed time"
+                )
+                if basis.from_moving_time
+                else (
+                    "the distance covers the whole recording and so does the "
+                    "divisor — there was no moving time to divide by, so this "
+                    "is distance ÷ recording time, which reads lower than the "
+                    "average speed a head unit displays"
                 ),
             ),
         ),
@@ -1094,11 +1337,11 @@ def average_cadence(cadence_fixed: Sequence[float | None]) -> Assessment:
 
     Zero-rpm rows are coasting, and every head unit, Strava and intervals.icu
     leave them out of the average — so arc does too. The difference is not
-    small and it is not a rounding argument: on the reference ride, 354 of
-    5 738 recorded seconds were spent freewheeling, which drags a mean-over-
-    everything down to 77.7 rpm against the 82.8 the athlete's own screen and
-    every platform showed. A number nobody else produces is read as a wrong
-    number, however carefully it is defined.
+    small and it is not a rounding argument: on the reference ride, 356 of the
+    5 738 recorded seconds were spent freewheeling — leaving 5 382 pedalling —
+    which drags a mean-over-everything down to 77.7 rpm against the 82.8 the
+    athlete's own screen and every platform showed. A number nobody else
+    produces is read as a wrong number, however carefully it is defined.
 
     What makes it honest rather than merely conventional is that the excluded
     seconds are **reported**: the explanation carries how many rows sat at
@@ -1190,22 +1433,39 @@ def channel_minimum(label: str, values: Sequence[float | None]) -> Assessment:
 def _centred_mean(values: Sequence[float], window: int) -> list[float]:
     """Each value replaced by the mean of the ``window`` rows centred on it.
 
-    The window shrinks at the two ends rather than padding: there is no data
-    beyond them to average with, and repeating the endpoint would flatten the
-    first and last quarter-minute of every ride by inventing readings.
+    The two ends are **reflected through the endpoint** rather than truncated:
+    the row ``k`` before the start is read as ``2·v[0] − v[k]``, and the row
+    ``k`` after the end as ``2·v[-1] − v[k-from-end]``. That extension is
+    antisymmetric, so it continues the trace's own slope instead of inventing a
+    plateau, and it is exactly what makes the smoothing *unbiased* at the ends:
+    over any straight run the reflected window's mean is the row's own value,
+    so a ride that begins or ends mid-climb loses nothing.
+
+    Shrinking the window instead — the shape this had — quietly costs about
+    ``half_window × slope / 2`` metres at each end, because the first row's
+    "centred" mean is really the mean of the half-window *above* it. On a
+    100 m climb sampled at a metre a second that is 3.5 m at each end, 7 % of
+    the climb, and it is invisible in any test whose trace starts and ends on
+    the flat. Repeating the endpoint (an even reflection) would be worse still:
+    it flattens the ends deliberately, which is the effect this replaced.
     """
     if window <= 1 or len(values) <= 1:
         return list(values)
     half = window // 2
+    length = len(values)
+    first, last = values[0], values[-1]
+    padded = (
+        [2 * first - values[min(k, length - 1)] for k in range(half, 0, -1)]
+        + list(values)
+        + [2 * last - values[max(length - 1 - k, 0)] for k in range(1, half + 1)]
+    )
     prefix = [0.0]
-    for value in values:
+    for value in padded:
         prefix.append(prefix[-1] + value)
-    smoothed: list[float] = []
-    for index in range(len(values)):
-        low = max(0, index - half)
-        high = min(len(values), index + half + 1)
-        smoothed.append((prefix[high] - prefix[low]) / (high - low))
-    return smoothed
+    span = 2 * half + 1
+    return [
+        (prefix[index + span] - prefix[index]) / span for index in range(len(values))
+    ]
 
 
 def elevation_gain_m(
@@ -1223,7 +1483,9 @@ def elevation_gain_m(
 
     1. **Averaged** over a centred :data:`ELEVATION_SMOOTHING_S` window, which
        removes the high-frequency part of the wander. Terrain does not change
-       in a second; pressure does.
+       in a second; pressure does. The two ends of the trace are reflected
+       rather than truncated (:func:`_centred_mean`), so a ride that starts or
+       finishes mid-climb is not charged half a window of it.
     2. **Banked by climb, not by step.** The trace is walked keeping the
        running valley and the running peak. A climb becomes real once the peak
        stands ``hysteresis_m`` above the valley, and it is banked **in full** —
@@ -1303,7 +1565,9 @@ def elevation_gain_m(
                     f"the trace is averaged over a centred {smoothing_s} s "
                     "window first, so a one-second pressure blip is not a hill; "
                     "the cost is that a sharp summit reads about a metre lower "
-                    "than the raw trace"
+                    "than the raw trace, and it is the only one — the ends of "
+                    "the trace are reflected rather than truncated, so a ride "
+                    "that begins or ends mid-climb keeps those metres"
                 ),
                 (
                     "a climb is banked in full once it clears the threshold, so "

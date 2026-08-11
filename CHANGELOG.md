@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Metric accuracy against the head unit (D197–D201)
+### Metric accuracy against the head unit (D197–D203)
 
 Three numbers computed differently from the athlete's own device, checked
 against one real Wahoo ELEMNT BOLT V2 ride and the same ride on Strava and
@@ -18,23 +18,30 @@ intervals.icu.
   faster than the once-a-second speed it writes out. It is now a stream channel
   of its own, and `distance_km` differences it end to end: 40.95 km on the
   reference ride, matching the device, Strava and intervals.icu, where
-  integrating the speed column gave 40.32. Files with no odometer, an odometer
-  that resets, or a stream stored before this existed fall back to integrating
-  speed and say so on the number. Average speed keeps its definition — the
-  whole ride's distance over moving time — and now states that asymmetry.
-- **Average cadence excludes coasting.** 354 freewheeling seconds were dragging
+  integrating the speed column gave 40.32. It is differenced **per recording**
+  and summed, because every device counts from its own zero and a merged
+  session lays several on one grid (D202). Files with no odometer, an odometer
+  that resets, one that covers less than 90 % of its recording, or a stream
+  stored before this existed fall back to integrating speed — per recording —
+  and say so on the number. Average speed keeps its definition — the whole
+  ride's distance over moving time — and now states that asymmetry, in the
+  direction that is actually true of the divisor it got.
+- **Average cadence excludes coasting.** 356 freewheeling seconds were dragging
   the reference ride's 82.8 rpm down to 77.7. The zero share travels with the
   number, so the exclusion is visible rather than assumed.
 - **Elevation gain smooths before it thresholds.** The altitude trace is
-  averaged over a centred 15 s window and climbs are banked whole once they
-  clear 3 m (GoldenCheetah's default). 82.5 m on the reference ride, between
-  the device's 78 and intervals.icu's 84, where the old 2 m band counted
-  barometric noise up to 88.6.
+  averaged over a centred 15 s window — reflected at the two ends, so a ride
+  that starts or finishes mid-climb keeps those metres (D203) — and climbs are
+  banked whole once they clear 3 m (GoldenCheetah's default). 82.5 m on the
+  reference ride, between the device's 78 and intervals.icu's 84, where the old
+  2 m band counted barometric noise up to 88.6.
 - **`just rebuild-streams`** re-parses the original files, rewrites their
   stream stores and recording rows, and recomputes the metrics of every session
   that changed. Recomputation alone reads the stored parquet, so an
   already-ingested session can only gain a new channel this way. Originals are
-  read-only; the regeneration is audited.
+  read-only; the regeneration is audited. Deploy the new image first and
+  rebuild second: an older image cannot read a channel it predates, so a
+  rollback after a rebuild is an outage until it is undone.
 
 ### Settings — the anchors page (D193)
 

@@ -110,6 +110,13 @@ class SessionInputs:
         anchors: Anchor type -> the version in force at computation time.
             Missing entries are what the guards report.
         sets: The logged sets of a strength session, empty for a ride.
+        segments: ``[start, end)`` row ranges of ``columns``, one per recording
+            the session was merged from, in order. Empty for the ordinary
+            single-recording session, which is one segment spanning
+            everything. Only the **cumulative** channel needs them (D202): a
+            merged session's odometer counts from each recording's own zero, so
+            the joined column has to be differenced per segment and summed,
+            and no per-row metric can tell that from the column alone.
     """
 
     discipline: SessionDiscipline
@@ -119,6 +126,7 @@ class SessionInputs:
     sex: Sex = Sex.UNSPECIFIED
     anchors: dict[AnchorType, AnchorVersion] | None = None
     sets: Sequence[PerformedSet] = ()
+    segments: tuple[tuple[int, int], ...] = ()
 
     def column(self, channel: StreamChannel) -> tuple[float | None, ...]:
         """One channel's cleaned column, empty when it was not recorded."""
@@ -176,10 +184,11 @@ class SpeedMetrics:
     basis it was taken over (D194).
 
     "The same channel" is now approximate: since D197 the distance prefers the
-    device's own odometer where the file carried one, and only falls back to
-    integrating speed. The block stays together because the *average* is still
-    distance ÷ the speed-derived basis, so the three numbers still have to be
-    read as one claim.
+    device's own odometer where the file carried one — differenced per
+    recording and summed (D202) — and only falls back to integrating speed. The
+    block stays together because the *average* is still distance ÷ the
+    speed-derived basis, so the three numbers still have to be read as one
+    claim.
     """
 
     distance_km: Assessment
@@ -378,7 +387,10 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     basis = averaging_basis(speed, recording_time_s=inputs.recording_time_s)
     average = average_power(power, basis)
     average_beats = channel_average("heart rate", heart_rate)
-    distance = distance_km(speed, odometer)
+    # Per recording, then summed (D202): the odometer is the one cumulative
+    # channel here, and a joined grid lays several of them — each counting from
+    # its own zero — end to end.
+    distance = distance_km(speed, odometer, segments=inputs.segments)
 
     factor, power_load = _power_load(np_watts, ftp, inputs.recording_time_s)
     hr_load = hrss(

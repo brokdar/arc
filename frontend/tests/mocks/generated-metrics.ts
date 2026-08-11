@@ -260,11 +260,11 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
       explanation: {
         formula: "distance = last odometer reading \u2212 first, / 1000",
         inputs: {
-          odometer: "10183 m over 1140 readings at 1 Hz",
+          odometer: "10183 m over 1140 readings",
         },
         assumptions: [
           "the distance is the device's own odometer channel \u2014 its cumulative distance field \u2014 differenced from its first reading to its last, which is the number the head unit displayed and the number every platform reading this file reports",
-          "it covers the whole recording, including the metres rolled below 1 km/h that moving time does not count",
+          "the odometer covers every second this recording holds a reading for, including the metres rolled below 1 km/h that moving time does not count",
           "a device that paused does not advance its odometer, so a recording stop costs no distance",
         ],
         citation: null,
@@ -348,7 +348,7 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
     },
   },
   elevation_gain_m: {
-    value: 23.66491666666775,
+    value: 24.038666666667837,
     explanation: {
       formula:
         "elevation gain = \u03a3 (peak \u2212 valley) over the climbs that gain at least 3 m",
@@ -359,7 +359,7 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
       },
       assumptions: [
         "climbs smaller than 3 m are not counted \u2014 a barometric altimeter wanders by that much while standing still, and counting the wander is how a flat ride grows hundreds of metres of ascent",
-        "the trace is averaged over a centred 15 s window first, so a one-second pressure blip is not a hill; the cost is that a sharp summit reads about a metre lower than the raw trace",
+        "the trace is averaged over a centred 15 s window first, so a one-second pressure blip is not a hill; the cost is that a sharp summit reads about a metre lower than the raw trace, and it is the only one \u2014 the ends of the trace are reflected rather than truncated, so a ride that begins or ends mid-climb keeps those metres",
         "a climb is banked in full once it clears the threshold, so a long drag is not charged the threshold once per wobble",
       ],
       citation:
