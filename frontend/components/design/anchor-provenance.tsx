@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 
 import type { components } from "@/generated/api/schema";
-import { formatDayMonthYear } from "@/lib/format";
+import { formatAnchorValue, formatDayMonthYear } from "@/lib/format";
 import { anchorLabel } from "@/lib/targets";
 import { cn } from "@/lib/utils";
 
@@ -110,7 +110,7 @@ export function AnchorProvenance({
         <Fragment key={anchor.anchor_version_id}>
           {index > 0 ? <span aria-hidden>·</span> : null}
           <span className="font-mono text-ink-muted">
-            {anchorLabel(anchor.anchor_type)} {roundTenth(anchor.value)}{" "}
+            {anchorLabel(anchor.anchor_type)} {formatAnchorValue(anchor.value)}{" "}
             {anchor.unit}
           </span>
           <span aria-hidden>·</span>
@@ -123,8 +123,4 @@ export function AnchorProvenance({
       ))}
     </p>
   );
-}
-
-function roundTenth(value: number): number {
-  return Math.round(value * 10) / 10;
 }

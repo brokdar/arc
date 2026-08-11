@@ -58,10 +58,10 @@ const FTP_WATTS = 250;
 /**
  * The FTP a session **pinned**, deliberately different from the one in force.
  *
- * 250 W and merely *estimated*, where `anchorVersionFixture` hands out a
- * tested 265 W: any screen that resolves a planned session against "now"
- * instead of against its pins renders visibly different numbers, and says
- * "tested" about a value that was guessed.
+ * 250 W and merely *estimated*, where the anchor history's current version is
+ * a tested 265 W (`seedAnchorVersions`): any screen that resolves a planned
+ * session against "now" instead of against its pins renders visibly different
+ * numbers, and says "tested" about a value that was guessed.
  */
 const PINNED_FTP: Schemas["PinnedAnchorRead"] = {
   anchor_type: "ftp",
@@ -1037,50 +1037,308 @@ const STRENGTH_PURPOSES = new Set<Schemas["Purpose"]>([
   "conditioning",
 ]);
 
+// --- WP-1: the anchor history the settings page reads and writes -------------
+
 /**
- * The anchor version **in force**, which is deliberately not the one any
- * planned session pinned.
+ * Every anchor version the mock holds, oldest first.
  *
- * 265 W and tested, against the sessions' pinned 250 W estimate. Nothing in
- * the application should reach for this to render a planned session; the
- * fixture exists so a test can prove that it doesn't.
+ * Two things are true of this seed at once, and both are load-bearing:
+ *
+ * * the version **in force** for FTP is a *tested* 265 W, while every planned
+ *   session pins an *estimated* 250 W. A screen that resolves a prescription
+ *   against "now" instead of against its pins therefore renders visibly
+ *   different numbers and says "tested" about a value that was guessed — the
+ *   fixture exists so a test can prove no screen does that (D49);
+ * * the 250 W estimate is *in the history*, as the version the 265 W test
+ *   corrected. That is what makes this a history rather than a list of
+ *   current values: the pinned version is still there, still readable, still
+ *   explaining the watts on a session that was planned against it.
+ *
+ * `resting_hr` is deliberately absent. It is writable (D114) and nothing has
+ * ever entered one, which is the state the settings page's empty slot and the
+ * "no zones yet" panel are about.
  */
-export function anchorVersionFixture(
-  anchorType: Schemas["AnchorType"],
-): Schemas["AnchorVersionRead"] {
-  const values: Partial<
-    Record<
-      Schemas["AnchorType"],
-      [number, Schemas["AnchorUnit"], Schemas["Provenance"], string | null]
-    >
-  > = {
-    // A `tested` version without a protocol is refused by the domain: a
-    // tested value that cannot say how it was tested cannot be compared with
-    // the next test.
-    ftp: [265, "W", "tested", "20 min × 0.95"],
-    lthr: [162, "bpm", "athlete_reported", null],
-    max_hr: [188, "bpm", "estimated", null],
-  };
-  const [value, unit, provenance, protocol] = values[anchorType] ?? [
-    265,
-    "W",
-    "estimated",
-    null,
+function seedAnchorVersions(): Schemas["AnchorVersionRead"][] {
+  return [
+    {
+      // The version every cycling fixture's percentages resolve against.
+      id: FTP_VERSION_ID,
+      anchor_type: "ftp",
+      value: FTP_WATTS,
+      unit: "W",
+      provenance: "estimated",
+      protocol: null,
+      effective_date: "2026-06-01",
+      ci_low: null,
+      ci_high: null,
+      source: "athlete",
+      staleness_state: "fresh",
+      created_at: "2026-06-01T09:00:00Z",
+    },
+    {
+      id: "0199a000-0000-7000-8000-0000000000f2",
+      anchor_type: "ftp",
+      value: 265,
+      unit: "W",
+      provenance: "tested",
+      // A `tested` version without a protocol is refused by the domain: a
+      // tested value that cannot say how it was tested cannot be compared
+      // with the next test.
+      protocol: "20 min × 0.95",
+      effective_date: "2026-07-15",
+      ci_low: 258,
+      ci_high: 272,
+      source: "athlete",
+      staleness_state: "fresh",
+      created_at: "2026-07-15T09:00:00Z",
+    },
+    {
+      id: "0199a000-0000-7000-8000-0000000000f3",
+      anchor_type: "lthr",
+      value: 162,
+      unit: "bpm",
+      provenance: "athlete_reported",
+      protocol: null,
+      effective_date: "2026-07-15",
+      ci_low: null,
+      ci_high: null,
+      source: "athlete",
+      staleness_state: "fresh",
+      created_at: "2026-07-15T09:00:00Z",
+    },
+    {
+      id: "0199a000-0000-7000-8000-0000000000f4",
+      anchor_type: "max_hr",
+      value: 188,
+      unit: "bpm",
+      provenance: "estimated",
+      protocol: null,
+      effective_date: "2026-07-15",
+      ci_low: null,
+      ci_high: null,
+      source: "athlete",
+      staleness_state: "fresh",
+      created_at: "2026-07-15T09:00:00Z",
+    },
   ];
-  return {
-    id: "0199a000-0000-7000-8000-0000000000f2",
-    anchor_type: anchorType,
-    value,
+}
+
+let anchorVersions: Schemas["AnchorVersionRead"][] | null = null;
+
+function anchors(): Schemas["AnchorVersionRead"][] {
+  anchorVersions ??= seedAnchorVersions();
+  return anchorVersions;
+}
+
+/** Put the anchor history back to its seed. */
+export function resetAnchorState(): void {
+  anchorVersions = null;
+}
+
+/** The unit the API stamps on each anchor type (`ANCHOR_UNITS`). */
+const ANCHOR_UNITS: Readonly<
+  Record<Schemas["AnchorType"], Schemas["AnchorUnit"]>
+> = {
+  ftp: "W",
+  lthr: "bpm",
+  max_hr: "bpm",
+  resting_hr: "bpm",
+  cp: "W",
+  w_prime: "J",
+};
+
+/** Plausibility bounds per type (`app.domain.anchors.ANCHOR_BOUNDS`). */
+const ANCHOR_BOUNDS: Readonly<
+  Record<Schemas["AnchorVersionCreate"]["anchor_type"], [number, number]>
+> = {
+  ftp: [30, 700],
+  lthr: [60, 220],
+  max_hr: [80, 240],
+  resting_hr: [25, 120],
+};
+
+/**
+ * The history, newest first — the order `AnchorRepository.list` answers in.
+ *
+ * "Newest" is `(effective_date, created_at)` descending, and it is not the
+ * same question as "in force": a future-dated version sorts first here and is
+ * not in force yet.
+ */
+export function anchorHistory(
+  anchorType?: Schemas["AnchorType"] | null,
+): Schemas["AnchorVersionRead"][] {
+  return anchors()
+    .filter((version) => !anchorType || version.anchor_type === anchorType)
+    .sort(
+      (left, right) =>
+        right.effective_date.localeCompare(left.effective_date) ||
+        right.created_at.localeCompare(left.created_at),
+    );
+}
+
+/**
+ * The version in force now, by the domain's rule rather than by "the last one
+ * added" (`app.domain.anchors.anchor_as_of`).
+ *
+ * Effective on or before today, appended on or before now, and the latest of
+ * those by `(effective_date, created_at)`. The mock honours it because the
+ * settings page's whole append form is about back-dating: a handler that
+ * answered with the most recently *created* version would let a correction
+ * dated last month silently become the current value.
+ */
+export function currentAnchor(
+  anchorType: Schemas["AnchorType"],
+  now: Date = new Date(),
+): Schemas["AnchorVersionRead"] | undefined {
+  const today = todayIsoDate(now);
+  const instant = now.toISOString();
+  const inForce = anchors().filter(
+    (version) =>
+      version.anchor_type === anchorType &&
+      version.effective_date <= today &&
+      version.created_at <= instant,
+  );
+  return anchorHistory(anchorType).find((version) => inForce.includes(version));
+}
+
+/**
+ * Append a version the way the service does, refusals included.
+ *
+ * The refusals are the point. A handler that accepted anything and echoed it
+ * back could not fail when the form omits the protocol on a tested value or
+ * sends a typo'd 2650 W, and those are exactly the two things the form is
+ * responsible for not doing.
+ */
+export function appendAnchorVersion(
+  body: Schemas["AnchorVersionCreate"],
+): { version: Schemas["AnchorVersionRead"] } | { detail: string } {
+  const unit = ANCHOR_UNITS[body.anchor_type];
+  if (body.unit && body.unit !== unit) {
+    return {
+      detail: `${body.anchor_type} is measured in ${unit}, not ${body.unit}`,
+    };
+  }
+  const [low, high] = ANCHOR_BOUNDS[body.anchor_type];
+  if (body.value < low || body.value > high) {
+    return {
+      detail: `${body.anchor_type} value must be between ${low} and ${high} ${unit}, got ${body.value}`,
+    };
+  }
+  if (body.provenance === "tested" && !body.protocol?.trim()) {
+    return {
+      detail:
+        "a tested anchor must state its protocol; without it the result " +
+        "cannot be compared with the next test",
+    };
+  }
+  if (body.ci_low != null && body.ci_low > body.value) {
+    return { detail: `ci_low ${body.ci_low} is above the value ${body.value}` };
+  }
+  if (body.ci_high != null && body.ci_high < body.value) {
+    return {
+      detail: `ci_high ${body.ci_high} is below the value ${body.value}`,
+    };
+  }
+  const createdAt = new Date();
+  const version: Schemas["AnchorVersionRead"] = {
+    id: mintId(),
+    anchor_type: body.anchor_type,
+    value: body.value,
     unit,
-    provenance,
+    provenance: body.provenance,
+    protocol: body.protocol ?? null,
+    // Today when omitted — the service's own default.
+    effective_date: body.effective_date ?? todayIsoDate(createdAt),
+    ci_low: body.ci_low ?? null,
+    ci_high: body.ci_high ?? null,
+    // The athlete is the only writer with an HTTP session; the agent writes
+    // through MCP (`append_anchor_version`).
     source: "athlete",
     staleness_state: "fresh",
-    effective_date: "2026-07-15",
-    protocol,
-    ci_low: null,
-    ci_high: null,
-    created_at: "2026-07-15T09:00:00Z",
+    created_at: createdAt.toISOString(),
   };
+  anchors().push(version);
+  return { version };
+}
+
+/**
+ * The zone schemes, transcribed from `app.domain.zones._ZONE_SCHEMES`.
+ *
+ * `(name, lower bound as a fraction)`, ascending; each zone's upper bound is
+ * the next one's lower bound, and the last is open-ended. Transcribed rather
+ * than typed out as absolute watts because the numbers the page renders have
+ * to be the numbers the API would compute from whatever anchor is in force —
+ * including one a test has just appended.
+ */
+const ZONE_SCHEMES: Readonly<
+  Record<Schemas["ZoneModel"], readonly (readonly [string, number])[]>
+> = {
+  coggan_7: [
+    ["Active Recovery", 0],
+    ["Endurance", 0.55],
+    ["Tempo", 0.75],
+    ["Threshold", 0.9],
+    ["VO2max", 1.05],
+    ["Anaerobic Capacity", 1.2],
+    ["Neuromuscular Power", 1.5],
+  ],
+  lthr_5: [
+    ["Recovery", 0],
+    ["Aerobic", 0.81],
+    ["Tempo", 0.9],
+    ["SubThreshold", 0.94],
+    ["SuperThreshold", 1.0],
+  ],
+};
+
+/** Which anchor type each model derives from (`ZONE_MODEL_ANCHOR`). */
+const ZONE_MODEL_ANCHOR: Readonly<
+  Record<Schemas["ZoneModel"], Schemas["AnchorType"]>
+> = { coggan_7: "ftp", lthr_5: "lthr" };
+
+/**
+ * The zones one version produces, computed exactly as `zones_for` computes
+ * them: `lower_pct * value`, unrounded, with the top band open-ended.
+ */
+export function zonesFixture(
+  version: Schemas["AnchorVersionRead"],
+  model: Schemas["ZoneModel"],
+): Schemas["ZonesRead"] {
+  const scheme = ZONE_SCHEMES[model];
+  return {
+    anchor_version: version,
+    model,
+    zones: scheme.map(([name, lowerPct], index) => {
+      const next = scheme[index + 1];
+      const upperPct = next ? next[1] : null;
+      return {
+        index: index + 1,
+        name,
+        lower_pct: lowerPct,
+        upper_pct: upperPct,
+        lower: lowerPct * version.value,
+        upper: upperPct === null ? null : upperPct * version.value,
+        unit: version.unit,
+      };
+    }),
+  };
+}
+
+/** The model that derives from an anchor type, or none (`default_zone_model`). */
+export function defaultZoneModel(
+  anchorType: Schemas["AnchorType"],
+): Schemas["ZoneModel"] | undefined {
+  return (Object.keys(ZONE_SCHEMES) as Schemas["ZoneModel"][]).find(
+    (model) => ZONE_MODEL_ANCHOR[model] === anchorType,
+  );
+}
+
+/** Whether `model` derives from `anchorType` — the pairing `zones_for` checks. */
+export function zoneModelMatches(
+  model: Schemas["ZoneModel"],
+  anchorType: Schemas["AnchorType"],
+): boolean {
+  return ZONE_MODEL_ANCHOR[model] === anchorType;
 }
 
 /** One library workout, by id — the editor's GET. */
@@ -1583,6 +1841,7 @@ export function resetMockState(): void {
   state = seededState();
   resetScoringState();
   resetAgentState();
+  resetAnchorState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -3150,15 +3409,48 @@ export function athleteRecord(): Schemas["AthleteRead"] {
  * PATCH that lowers the flag while still sending a note or a severity is
  * refused (422), because those two facts describe an illness the same request
  * says is over (`app.domain.athlete`, `AthleteProfile`).
+ *
+ * The height guard is the schema's rather than the service's, so it is
+ * refused in the *shape* FastAPI refuses a schema violation in — a list of
+ * `{loc, msg}` rather than a sentence. The two shapes reach the UI through
+ * different branches of `apiErrorMessages`, and a mock that only ever sent
+ * one of them would leave the other untested.
  */
 export function patchAthlete(
   body: Schemas["AthleteUpdate"],
-): { athlete: Schemas["AthleteRead"] } | { detail: string } {
+): { athlete: Schemas["AthleteRead"] } | { detail: string | unknown[] } {
+  if (
+    body.height_cm != null &&
+    (body.height_cm < 100 || body.height_cm > 250)
+  ) {
+    return {
+      detail: [
+        {
+          loc: ["body", "height_cm"],
+          msg:
+            body.height_cm < 100
+              ? "Input should be greater than or equal to 100"
+              : "Input should be less than or equal to 250",
+          type: "value_error",
+        },
+      ],
+    };
+  }
   const current = agent().athlete;
   const active = body.red_flag_active ?? current.red_flag_active;
   const next: Schemas["AthleteRead"] = {
     ...current,
+    // Omitted leaves the field alone; an explicit `null` clears it. The
+    // settings form depends on the difference — it sends all four profile
+    // fields on every save precisely because that is how a name is erased.
     ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.date_of_birth !== undefined
+      ? { date_of_birth: body.date_of_birth }
+      : {}),
+    // `sex`, `capabilities` and `plan_state` have an empty value rather than
+    // an absent one, so a null on any of them means "back to the default".
+    ...(body.sex !== undefined ? { sex: body.sex ?? "unspecified" } : {}),
+    ...(body.height_cm !== undefined ? { height_cm: body.height_cm } : {}),
     ...(body.plan_state !== undefined && body.plan_state !== null
       ? { plan_state: body.plan_state }
       : {}),

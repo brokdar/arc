@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useId, useRef, useState } from "react";
 
 import { ConfirmButton, InlineConfirm } from "@/components/design/confirm";
+import { Td, Th } from "@/components/design/data-table";
+import { Pager } from "@/components/design/pager";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -146,68 +148,6 @@ export function Inbox() {
         />
       </PageBody>
     </>
-  );
-}
-
-/**
- * The heading of a paged band: what it holds, where in it you are, and the
- * two steps.
- *
- * Shared by the queue and the log because they page identically, and because
- * two hand-rolled copies of `Math.min(offset + items.length, total)` is two
- * chances to get the last page's range wrong.
- *
- * The buttons read "Newer" and "Older" but are *named* for what they page —
- * "Newer quarantine records", "Newer ingest log rows". Two pagers on one page
- * whose controls are both called "Newer" are two controls a screen reader
- * cannot tell apart, and the visible word stays inside the spoken name
- * (WCAG 2.5.3), so nothing is said that is not also shown.
- */
-function Pager({
-  heading,
-  subject,
-  offset,
-  onPage,
-  total,
-  pageSize,
-  onOffsetChange,
-}: {
-  heading: string;
-  subject: string;
-  offset: number;
-  onPage: number;
-  total: number;
-  pageSize: number;
-  onOffsetChange: (offset: number) => void;
-}) {
-  const last = Math.min(offset + onPage, total);
-  return (
-    <div className="flex items-baseline gap-2.5">
-      <SectionLabel level={2}>{heading}</SectionLabel>
-      <span className="font-mono text-2xs text-ink-faint">
-        {total === 0 ? "" : `${offset + 1}–${last} of ${total}`}
-      </span>
-      <span className="ml-auto flex items-center gap-1.5">
-        <Button
-          size="xs"
-          variant="secondary"
-          aria-label={`Newer ${subject}`}
-          disabled={offset === 0}
-          onClick={() => onOffsetChange(Math.max(0, offset - pageSize))}
-        >
-          Newer
-        </Button>
-        <Button
-          size="xs"
-          variant="secondary"
-          aria-label={`Older ${subject}`}
-          disabled={last >= total}
-          onClick={() => onOffsetChange(offset + pageSize)}
-        >
-          Older
-        </Button>
-      </span>
-    </div>
   );
 }
 
@@ -591,29 +531,6 @@ function IngestLog({
         </Panel>
       )}
     </section>
-  );
-}
-
-function Th({ className, children }: { className?: string; children: string }) {
-  return (
-    <th
-      scope="col"
-      className={`px-3.5 py-2 font-semibold text-ink-faint text-label uppercase tracking-[0.09em] ${className ?? ""}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  className,
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <td className={`px-3.5 py-2 align-top ${className ?? ""}`}>{children}</td>
   );
 }
 
