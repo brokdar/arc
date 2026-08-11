@@ -4,8 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { ProposalDiff } from "@/components/coach/proposal-diff";
+import { Pager } from "@/components/design/pager";
 import { Panel } from "@/components/design/panel";
-import { SectionLabel } from "@/components/design/section-label";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,7 +72,6 @@ export function ProposalInbox() {
 
   const items = proposals.data?.items ?? [];
   const total = proposals.data?.total ?? 0;
-  const last = Math.min(offset + items.length, total);
 
   return (
     <>
@@ -81,7 +80,29 @@ export function ProposalInbox() {
         <span className="font-mono text-ink-muted text-sm">
           {proposals.data ? `${total} ${statusWord(status)}` : ""}
         </span>
-        <div className="ml-auto flex items-center gap-2">
+      </Toolbar>
+
+      <PageBody className="flex flex-col gap-3.5">
+        <p className="max-w-[72ch] text-ink-muted text-base">
+          A coaching agent proposes changes to the plan; nothing it suggests
+          takes effect until you accept it. A proposal you never answer lapses
+          at its expiry and the committed plan stands.
+        </p>
+
+        {/* The filter sits in the band it filters rather than in the toolbar:
+            the heading says which slice is on screen and the range counts that
+            slice, so the control that chooses it belongs on the same line. */}
+        <Pager
+          heading={
+            status === "" ? "Every proposal" : PROPOSAL_STATUS_LABELS[status]
+          }
+          subject="proposals"
+          offset={offset}
+          onPage={items.length}
+          total={total}
+          pageSize={PAGE}
+          onOffsetChange={setOffset}
+        >
           <label htmlFor={filterId} className="text-ink-muted text-xs">
             Show
           </label>
@@ -91,6 +112,8 @@ export function ProposalInbox() {
             value={status}
             onChange={(event) => {
               setStatus(event.target.value as ProposalStatus | "");
+              // Back to the first page: an offset means nothing once the list
+              // under it is a different list.
               setOffset(0);
             }}
           >
@@ -101,46 +124,7 @@ export function ProposalInbox() {
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        </div>
-      </Toolbar>
-
-      <PageBody className="flex flex-col gap-3.5">
-        <p className="max-w-[72ch] text-ink-muted text-base">
-          A coaching agent proposes changes to the plan; nothing it suggests
-          takes effect until you accept it. A proposal you never answer lapses
-          at its expiry and the committed plan stands.
-        </p>
-
-        {total > PAGE ? (
-          <div className="flex items-baseline gap-2.5">
-            <SectionLabel level={2}>
-              {PROPOSAL_STATUS_LABELS[status === "" ? "pending" : status]}
-            </SectionLabel>
-            <span className="font-mono text-2xs text-ink-faint">
-              {`${offset + 1}–${last} of ${total}`}
-            </span>
-            <span className="ml-auto flex items-center gap-1.5">
-              <Button
-                size="xs"
-                variant="secondary"
-                aria-label="Newer proposals"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - PAGE))}
-              >
-                Newer
-              </Button>
-              <Button
-                size="xs"
-                variant="secondary"
-                aria-label="Older proposals"
-                disabled={last >= total}
-                onClick={() => setOffset(offset + PAGE)}
-              >
-                Older
-              </Button>
-            </span>
-          </div>
-        ) : null}
+        </Pager>
 
         {proposals.isPending ? (
           <p className="text-ink-muted text-sm">Loading the proposals…</p>
