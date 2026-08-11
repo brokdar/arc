@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+  "/api/v1/agent-notes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Agent Notes
+     * @description List the notes about one session or one plan week, oldest first.
+     *
+     *     Oldest first because these are a conversation about a subject and read in
+     *     the order they were written — unlike the proposal inbox, which is a queue
+     *     of things to answer.
+     *
+     *     One of `session_id` and `week` is required, and never both: a note has one
+     *     subject, so a query with no subject has no answer and a query with two is
+     *     two queries.
+     */
+    get: operations["agent-notes-list_agent_notes"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-notes/{note_id}/dispute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Dispute Agent Note
+     * @description Rate a note up or down, or clear the rating with `null`.
+     *
+     *     Overwrites whatever was there: this is a toggle on a card, and an athlete
+     *     who cannot take a rating back will stop giving them. What actually
+     *     happened is kept in the audit log.
+     */
+    post: operations["agent-notes-dispute_agent_note"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/anchors": {
     parameters: {
       query?: never;
@@ -723,6 +775,95 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/proposals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Proposals
+     * @description List proposals, newest first.
+     *
+     *     Newest first because this is an inbox: the thing to answer is the thing
+     *     that just arrived. Filter with `?status=pending` for the ones still
+     *     standing.
+     */
+    get: operations["proposals-list_proposals"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/proposals/{proposal_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Proposal
+     * @description Get one proposal with its rationale and its computed diff.
+     */
+    get: operations["proposals-get_proposal"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/proposals/{proposal_id}/accept": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Accept Proposal
+     * @description Apply every change in a proposal, atomically.
+     *
+     *     The concurrency tokens are re-checked first: a proposal can stand for days
+     *     and the plan is the athlete's to edit meanwhile, so one whose session has
+     *     been revised since is refused with a 409 and **stays pending** — it may
+     *     still be a good suggestion against the plan as it now stands.
+     */
+    post: operations["proposals-accept_proposal"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/proposals/{proposal_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Proposal
+     * @description Decline a proposal, optionally saying why. Changes no plan.
+     */
+    post: operations["proposals-reject_proposal"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/purposes": {
     parameters: {
       query?: never;
@@ -1282,6 +1423,60 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * AgentNoteDispute
+     * @description The athlete's one-tap answer to a note.
+     *
+     *     Genuinely nullable, unlike an optional query parameter: `null` is the
+     *     third state of the toggle — "I take that back" — and the athlete must be
+     *     able to say it, or they will stop giving ratings at all.
+     */
+    AgentNoteDispute: {
+      rating?: components["schemas"]["DisputeRating"] | null;
+    };
+    /**
+     * AgentNoteRead
+     * @description One note, as the athlete's client reads it.
+     */
+    AgentNoteRead: {
+      /** Cites */
+      cites: string[];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By */
+      created_by: string;
+      dispute: components["schemas"]["DisputeRating"] | null;
+      /** Disputed At */
+      disputed_at: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      kind: components["schemas"]["NoteKind"];
+      /** Model Id */
+      model_id: string;
+      /** Plan Week */
+      plan_week: string | null;
+      /** Session Id */
+      session_id: string | null;
+      /** Text */
+      text: string;
+    };
+    /**
+     * AgentNotesRead
+     * @description Every note about one subject, oldest first.
+     *
+     *     Unpaged: a note is written about one session or one week, and the number
+     *     of things worth saying about either is small.
+     */
+    AgentNotesRead: {
+      /** Items */
+      items: components["schemas"]["AgentNoteRead"][];
+    };
+    /**
      * AlignedStepRead
      * @description One planned work step paired with one detected effort.
      */
@@ -1479,6 +1674,11 @@ export interface components {
       /** Name */
       name: string | null;
       plan_state: components["schemas"]["PlanState"];
+      /** Red Flag Active */
+      red_flag_active: boolean;
+      /** Red Flag Note */
+      red_flag_note: string | null;
+      red_flag_severity: components["schemas"]["RedFlagSeverity"] | null;
       sex: components["schemas"]["Sex"];
       /**
        * Updated At
@@ -1491,9 +1691,9 @@ export interface components {
      * @description Payload for partially updating the profile.
      *
      *     Omitted fields are left unchanged; an explicit ``null`` clears a field
-     *     (for ``sex``, ``capabilities`` and ``plan_state``, "clear" means back to
-     *     ``unspecified``, ``{}`` and ``active`` — those three have an empty value
-     *     rather than an absent one).
+     *     (for ``sex``, ``capabilities``, ``plan_state`` and ``red_flag_active``,
+     *     "clear" means back to ``unspecified``, ``{}``, ``active`` and ``false`` —
+     *     those four have an empty value rather than an absent one).
      */
     AthleteUpdate: {
       /** Capabilities */
@@ -1507,6 +1707,11 @@ export interface components {
       /** Name */
       name?: string | null;
       plan_state?: components["schemas"]["PlanState"] | null;
+      /** Red Flag Active */
+      red_flag_active?: boolean | null;
+      /** Red Flag Note */
+      red_flag_note?: string | null;
+      red_flag_severity?: components["schemas"]["RedFlagSeverity"] | null;
       sex?: components["schemas"]["Sex"] | null;
     };
     /**
@@ -1584,6 +1789,12 @@ export interface components {
        */
       smoothing_s: number;
     };
+    /**
+     * ChangeKind
+     * @description The four things a plan change can be.
+     * @enum {string}
+     */
+    ChangeKind: "create" | "update" | "move" | "delete";
     /**
      * Channel
      * @description A prescribable (and recordable) measurement channel.
@@ -1677,6 +1888,17 @@ export interface components {
      * @enum {string}
      */
     Discipline: "cycling" | "strength";
+    /**
+     * DisputeRating
+     * @description The athlete's one-tap answer to a note.
+     *
+     *     Deliberately two values and no scale. This is a signal about coach
+     *     quality, gathered from someone who is reading their training log rather
+     *     than filling in a survey, and a five-point scale asked of a passer-by
+     *     collects noise rather than resolution.
+     * @enum {string}
+     */
+    DisputeRating: "up" | "down";
     /**
      * DurationFloorSchema
      * @description The session must last at least this long.
@@ -2346,6 +2568,22 @@ export interface components {
        */
       reasons: components["schemas"]["Reason"][];
     };
+    /**
+     * NoteKind
+     * @description What kind of interpretive text this is.
+     *
+     *     The two differ in what they are *about*, not in how much they are trusted:
+     *
+     *     ``EVALUATION`` is the coach's read of one session — what the athlete did
+     *     and what it means — and is the autonomy tier the build plan calls Tier 1,
+     *     written only against a session.
+     *
+     *     ``ANNOTATION`` is free commentary (Tier 0), and may hang off a session or
+     *     a plan week: "this block has been three weeks of threshold" is about the
+     *     week, not about any one ride.
+     * @enum {string}
+     */
+    NoteKind: "evaluation" | "annotation";
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -2394,6 +2632,17 @@ export interface components {
     Page_PlannedSessionListItem_: {
       /** Items */
       items: components["schemas"]["PlannedSessionListItem"][];
+      /** Limit */
+      limit: number;
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /** Page[ProposalRead] */
+    Page_ProposalRead_: {
+      /** Items */
+      items: components["schemas"]["ProposalRead"][];
       /** Limit */
       limit: number;
       /** Offset */
@@ -2843,6 +3092,138 @@ export interface components {
       volume_load_kg: number | null;
     };
     /**
+     * ProposalChangeDiff
+     * @description What one change would do, computed when the proposal was written.
+     */
+    ProposalChangeDiff: {
+      after: components["schemas"]["ProposalSessionSnapshot"] | null;
+      before: components["schemas"]["ProposalSessionSnapshot"] | null;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /** Expected Intent Version */
+      expected_intent_version: number | null;
+      kind: components["schemas"]["ChangeKind"];
+      /** Planned Session Id */
+      planned_session_id: string | null;
+    };
+    /**
+     * ProposalRead
+     * @description A plan-change proposal as returned by the API.
+     */
+    ProposalRead: {
+      /** Changes */
+      changes: {
+        [key: string]: unknown;
+      }[];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Created By */
+      created_by: string;
+      /** Diff */
+      diff: components["schemas"]["ProposalChangeDiff"][];
+      /**
+       * Expires At
+       * Format: date-time
+       */
+      expires_at: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Rationale */
+      rationale: string;
+      /** Resolution Note */
+      resolution_note: string | null;
+      /** Resolved At */
+      resolved_at: string | null;
+      status: components["schemas"]["ProposalStatus"];
+      /** Superseded By Id */
+      superseded_by_id: string | null;
+      /** Supersedes Id */
+      supersedes_id: string | null;
+    };
+    /**
+     * ProposalReject
+     * @description Payload for declining a proposal.
+     */
+    ProposalReject: {
+      /** Reason */
+      reason?: string | null;
+    };
+    /**
+     * ProposalSessionSnapshot
+     * @description One planned session as it stands, or as a change would leave it.
+     *
+     *     The two prediction axes are both here and exactly one is ever populated:
+     *     an endurance session has a TSS-equivalent and no kilograms, a strength one
+     *     has kilograms and no TSS. They are different quantities and must never be
+     *     added or shown in one column.
+     *
+     *     **Every field a change can touch is here, on both sides** (D185). A
+     *     snapshot that carried only the cheap scalars let a revision of the success
+     *     criteria or of the prescription itself render as "no field differs" above
+     *     an enabled Accept button — the athlete answering a question the diff had
+     *     not asked. The two size fields are here for the same reason: a bodyweight
+     *     lift and an unstructured ride have no computable cost at all, and the
+     *     sets and the seconds are then the only honest way to say how much of it
+     *     there is.
+     */
+    ProposalSessionSnapshot: {
+      /** Coach Notes */
+      coach_notes: string | null;
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      discipline: components["schemas"]["Discipline"];
+      /** Duration S */
+      duration_s: number | null;
+      /** Intent Text */
+      intent_text: string | null;
+      /** Predicted Load */
+      predicted_load: number | null;
+      /** Predicted Volume Kg */
+      predicted_volume_kg: number | null;
+      purpose: components["schemas"]["Purpose"];
+      status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Structure */
+      structure: {
+        [key: string]: unknown;
+      };
+      /** Success Criteria */
+      success_criteria: {
+        [key: string]: unknown;
+      }[];
+      /** Total Sets */
+      total_sets: number | null;
+      /** Workout Id */
+      workout_id: string | null;
+    };
+    /**
+     * ProposalStatus
+     * @description Where a plan-change proposal stands.
+     *
+     *     ``PENDING`` is the only non-terminal member; see the module docstring for
+     *     what each of the five exits means.
+     * @enum {string}
+     */
+    ProposalStatus:
+      | "pending"
+      | "accepted"
+      | "rejected"
+      | "lapsed"
+      | "superseded"
+      | "resolved_by_reality";
+    /**
      * Provenance
      * @description Where an anchor value came from — ordered weakest to strongest.
      *
@@ -3132,6 +3513,23 @@ export interface components {
       /** Start Index */
       start_index: number;
     };
+    /**
+     * RedFlagSeverity
+     * @description How bad the illness or injury is (WP-8.4).
+     *
+     *     Three grades and no numbers: the athlete is answering this on a phone
+     *     while feeling unwell, and a scale finer than "mild / moderate / severe"
+     *     would be answered inconsistently and read as if it were not.
+     *
+     *     The MVP's safety rule is deterministic and reads the *boolean* only — a
+     *     flag of any grade refuses every proposal that adds or intensifies work
+     *     (`app.domain.proposals.intensifies`). The grade is carried so the coaching
+     *     agent can say something useful about it, and so a later autonomy tier has
+     *     something to graduate on; it is never the difference between allowed and
+     *     refused.
+     * @enum {string}
+     */
+    RedFlagSeverity: "mild" | "moderate" | "severe";
     /**
      * RepeatBlockSchema
      * @description Perform ``children`` ``times`` over.
@@ -4266,6 +4664,120 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  "agent-notes-list_agent_notes": {
+    parameters: {
+      query?: {
+        /** @description Notes about this recorded session. */
+        session_id?: string;
+        /** @description Notes about this plan week, given as the Monday it starts on. Exactly one of `session_id` and `week` is required. */
+        week?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentNotesRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The subject is not exactly one, or the week is not a Monday */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "agent-notes-dispute_agent_note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        note_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AgentNoteDispute"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentNoteRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Only the athlete rates a note */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such note */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The subject is not exactly one, or the week is not a Monday */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
   "anchors-list_anchor_versions": {
     parameters: {
       query?: {
@@ -6237,6 +6749,227 @@ export interface operations {
         };
       };
       /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "proposals-list_proposals": {
+    parameters: {
+      query?: {
+        /** @description Restrict to one status; omit for all of them. */
+        status?: components["schemas"]["ProposalStatus"];
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_ProposalRead_"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "proposals-get_proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such proposal */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "proposals-accept_proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such proposal */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The proposal is no longer pending, has expired, or the plan has moved on since it was written */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "proposals-reject_proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        proposal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ProposalReject"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such proposal */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The proposal is no longer pending, has expired, or the plan has moved on since it was written */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The answer violates a schema or domain rule */
       422: {
         headers: {
           [name: string]: unknown;

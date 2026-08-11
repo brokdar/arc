@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.deps import require_session
 from app.api.routes.activity import manual_router as manual_sessions_router
 from app.api.routes.activity import router as sessions_router
+from app.api.routes.agent_notes import router as agent_notes_router
 from app.api.routes.anchors import router as anchors_router
 from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
@@ -22,6 +23,7 @@ from app.api.routes.matching import router as matches_router
 from app.api.routes.matching import session_router as session_matches_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
+from app.api.routes.proposals import router as proposals_router
 from app.api.routes.purposes import router as purposes_router
 from app.api.routes.scoring import planned_router as planned_reasons_router
 from app.api.routes.scoring import router as scores_router
@@ -35,6 +37,7 @@ from app.core.scheduler import create_scheduler
 from app.ingest.inbox import register_inbox_job
 from app.ingest.scoring import install_stream_loader
 from app.services.matching import register_missed_sessions_job
+from app.services.proposals import register_proposal_expiry_job
 from app.services.scoring import register_prompt_expiry_job
 from app.services.templates import verify_bundled_resources
 
@@ -70,6 +73,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The evening-prompt expiry sweep (WP-7.3). Hourly and idempotent, like the
     # one above; each prompt carries its own 72-hour deadline.
     register_prompt_expiry_job(app.state.scheduler)
+    # The plan-change proposal expiry sweep (WP-8.2). Hourly and idempotent
+    # like the two above; nothing is applied on expiry — a lapsed proposal
+    # means the committed plan stands.
+    register_proposal_expiry_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)
@@ -148,6 +155,8 @@ def create_app() -> FastAPI:
     api.include_router(workouts_router)
     api.include_router(workout_labels_router)
     api.include_router(planned_sessions_router)
+    api.include_router(proposals_router)
+    api.include_router(agent_notes_router)
     api.include_router(plan_router)
     api.include_router(sessions_router)
     api.include_router(manual_sessions_router)

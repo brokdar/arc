@@ -14,7 +14,11 @@ import {
   TodayIcon,
   WorkoutsIcon,
 } from "@/components/icons";
+import { $api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+
+/** The section whose nav row carries a count of what is waiting. */
+const COUNTED_HREF = "/proposals";
 
 interface NavItem {
   readonly href: string;
@@ -64,13 +68,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
     arrives:
       "Per-session analysis is on each session page; the aggregate surface — power curves, trends — arrives after the MVP",
   },
-  {
-    href: "/coach",
-    label: "Coach",
-    icon: CoachIcon,
-    ready: false,
-    arrives: "The coach arrives with WP-8",
-  },
+  // The row the mockup reserved for "Coach", resolved into the one coach
+  // surface that is a *place*: the queue of plan changes waiting on an answer
+  // (D181). The coach's other output — its notes on a session or a week — is
+  // read where the thing it is about is, not in a section of its own.
+  { href: "/proposals", label: "Proposals", icon: CoachIcon, ready: true },
   {
     href: "/settings",
     label: "Settings",
@@ -82,6 +84,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
 
 export function SidebarNav() {
   const pathname = usePathname();
+  // One page of one, asked for its `total`: the nav needs the count and not
+  // the proposals, and the alternative — a full page fetched on every screen
+  // of the app to render a two-digit badge — is the expensive version of the
+  // same answer.
+  const pending = $api.useQuery("get", "/api/v1/proposals", {
+    params: { query: { status: "pending", limit: 1 } },
+  });
+  const waiting = pending.data?.total ?? 0;
 
   return (
     <nav
@@ -108,12 +118,22 @@ export function SidebarNav() {
           // nested route is somewhere *inside* a section, not somewhere else.
           const active =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const badge = item.href === COUNTED_HREF && waiting > 0 ? waiting : 0;
           return (
             <li key={item.href}>
               {item.ready ? (
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
+                  // The count is spoken as what it counts. The bare numeral is
+                  // legible beside the word on screen and meaningless read out
+                  // after it, and both the label and the figure stay inside
+                  // the spoken name (WCAG 2.5.3).
+                  aria-label={
+                    badge
+                      ? `${item.label} — ${badge} waiting on you`
+                      : undefined
+                  }
                   className={cn(
                     "flex items-center gap-2.5 rounded-button px-2.5 py-[7px] font-[450] text-base transition-colors",
                     // The section you are on is a *state*, not a hover: the
@@ -126,6 +146,15 @@ export function SidebarNav() {
                 >
                   <Icon />
                   {item.label}
+                  {badge ? (
+                    <span
+                      aria-hidden
+                      data-testid="pending-proposals"
+                      className="ml-auto rounded-badge bg-coach-tint px-1.5 py-0.5 font-mono text-2xs text-coach-strong"
+                    >
+                      {badge}
+                    </span>
+                  ) : null}
                 </Link>
               ) : (
                 <span

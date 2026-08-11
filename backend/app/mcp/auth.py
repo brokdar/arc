@@ -48,6 +48,19 @@ MIN_KEY_LENGTH = 32
 #: example file from becoming a live credential.
 _PLACEHOLDER_MARKER = "change-me"
 
+#: Longest label accepted. The label is carried into every audit row as
+#: ``agent:<label>`` and `AuditLogEntry.actor` is 120 characters, so anything
+#: at or under this bound round-trips; a longer one would be a write that
+#: fails at the database rather than at startup. D191.
+MAX_LABEL_LENGTH = 100
+
+#: Labels that would be indistinguishable from another kind of actor in the
+#: trail. `Actor` renders the athlete as ``athlete`` and the scheduler as
+#: ``system``, and a key labelled either produces ``agent:athlete`` —
+#: confusable enough to matter in the one place that answers "who changed
+#: this".
+_RESERVED_LABELS = frozenset({"athlete", "system", "agent"})
+
 
 class Scope(StrEnum):
     """What a key is allowed to do.
@@ -68,6 +81,43 @@ class McpKey:
     label: str
     scope: Scope
     key: str
+
+
+def _check_label(position: int, label: str) -> None:
+    """Refuse a label that would not survive being written down.
+
+    The label is not decoration: it becomes the agent's identity
+    (`app.domain.actor.Actor.agent`), it is written to `audit_log.actor` as
+    ``agent:<label>``, and it is what the athlete reads when asking who
+    proposed something. So it has to be one token, short enough for the
+    column, and not the name of another kind of actor (D191). A label with a
+    newline in it can also split a log line in two, which is the cheap way to
+    forge a trail.
+
+    Raises:
+        ValueError: When the label holds whitespace or control characters, is
+            longer than :data:`MAX_LABEL_LENGTH`, or is a reserved actor name.
+            The message never contains key material.
+    """
+    if any(character.isspace() or not character.isprintable() for character in label):
+        raise ValueError(
+            f"MCP__API_KEYS entry {position} ({label!r}) has a label with "
+            "whitespace or control characters; a label is one token and it is "
+            "written into every audit row"
+        )
+    if len(label) > MAX_LABEL_LENGTH:
+        raise ValueError(
+            f"MCP__API_KEYS entry {position} has a label of {len(label)} "
+            f"characters; labels must be at most {MAX_LABEL_LENGTH}, because "
+            "every write this key makes stores 'agent:<label>'"
+        )
+    if label.casefold() in _RESERVED_LABELS:
+        reserved = ", ".join(sorted(_RESERVED_LABELS))
+        raise ValueError(
+            f"MCP__API_KEYS entry {position} ({label!r}) uses a reserved "
+            f"label; {reserved} name the other kinds of actor and a key called "
+            "one of them makes the audit trail ambiguous"
+        )
 
 
 def parse_api_keys(raw: str) -> list[McpKey]:
@@ -109,6 +159,7 @@ def parse_api_keys(raw: str) -> list[McpKey]:
 
         if not raw_label:
             raise ValueError(f"MCP__API_KEYS entry {position} has an empty label")
+        _check_label(position, raw_label)
         if not raw_key:
             raise ValueError(
                 f"MCP__API_KEYS entry {position} ({raw_label!r}) has an empty key"

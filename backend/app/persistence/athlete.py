@@ -13,11 +13,17 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from sqlalchemy import Date, Float, String, func
+from sqlalchemy import Boolean, Date, Float, String, func
+from sqlalchemy import false as sa_false
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.athlete import AthleteProfile, Sex
+from app.domain.athlete import (
+    MAX_RED_FLAG_NOTE_CHARS,
+    AthleteProfile,
+    RedFlagSeverity,
+    Sex,
+)
 from app.domain.plan import PlanState
 from app.persistence.db import Base, flush
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
@@ -56,6 +62,17 @@ class Athlete(Base):
         default=PlanState.ACTIVE,
         server_default=PlanState.ACTIVE.value,
     )
+    #: The illness/injury flag (WP-8.4). Carries a `server_default` for the
+    #: reason `plan_state` does: the table already held its one row, and an
+    #: existing profile is not flagged. The other two columns are nullable and
+    #: need none — "no note" and "no grade" are the resting state.
+    red_flag_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_false()
+    )
+    red_flag_note: Mapped[str | None] = mapped_column(String(MAX_RED_FLAG_NOTE_CHARS))
+    red_flag_severity: Mapped[RedFlagSeverity | None] = mapped_column(
+        enum_column(RedFlagSeverity)
+    )
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
@@ -72,6 +89,9 @@ class Athlete(Base):
             height_cm=self.height_cm,
             capabilities=dict(self.capabilities or {}),
             plan_state=self.plan_state,
+            red_flag_active=self.red_flag_active,
+            red_flag_note=self.red_flag_note,
+            red_flag_severity=self.red_flag_severity,
         )
 
 

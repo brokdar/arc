@@ -155,15 +155,62 @@ class ScoringSettings(BaseModel):
     """
 
 
-class McpSettings(BaseModel):
-    """MCP server settings.
+class ProposalSettings(BaseModel):
+    """WP-8: how often standing plan-change proposals are swept for expiry."""
 
-    Used only by the MCP server (`python -m app.mcp.main`); the API ignores
-    them. See `app/mcp/auth.py` for the key format.
+    expiry_interval_seconds: int = 3600
+    """How often the proposal expiry sweep runs.
+
+    Hourly, for the reason the other two sweeps are hourly: each proposal
+    carries its own `expires_at`, so the job's only duty is to notice a
+    deadline passing. Default-on-expiry is that the committed plan stands, so
+    noticing late costs nothing but an inbox row that should have gone grey.
+    """
+
+    expiry_batch: int = 200
+    """Most proposals one sweep will lapse.
+
+    A bound rather than pagination: the sweep is idempotent and the next run
+    is an hour away, so a first run after a long absence catches up over a few
+    passes instead of in one transaction.
+    """
+
+    max_horizon_days: int = 90
+    """Furthest ahead a proposal's `expires_at` may be set (D187).
+
+    Without a bound an agent can date a proposal past any sweep, and the
+    pending set — scanned on every propose and every recorded session — grows
+    without ever draining. Ninety days is well past the horizon a training
+    suggestion is meaningful over and far short of "never".
+    """
+
+
+class McpSettings(BaseModel):
+    """MCP server and coaching-agent settings.
+
+    `api_keys` is used only by the MCP server (`python -m app.mcp.main`); the
+    API ignores it. See `app/mcp/auth.py` for the key format.
+
+    `write_cap_per_hour` is **not** MCP-only: it is enforced in the service
+    layer (`app.services.guardrails`), so it binds every path an agent actor
+    can write through, including anything the API process runs on its behalf.
+    It lives here because it is a property of the agent surface, which is what
+    this section is about.
     """
 
     api_keys: SecretStr = SecretStr("")
     """Comma-separated `label:scope:key` entries; scope is `read` or `write`."""
+
+    write_cap_per_hour: int = 60
+    """Most writes an agent actor may make in a trailing hour (WP-8.3).
+
+    A circuit breaker, not a quota: a coaching agent in a loop can rewrite a
+    training plan faster than the athlete can read the inbox, and this is the
+    bound on how much of that reaches the database before someone notices.
+    Counted over `audit_log` rows whose actor starts `agent:`, so every agent
+    key shares one budget and a dry run — which writes nothing — costs
+    nothing. Athlete and system writes are not counted and never capped.
+    """
 
 
 class LogSettings(BaseModel):
@@ -202,6 +249,7 @@ class Settings(BaseSettings):
     ingest: IngestSettings = IngestSettings()
     matching: MatchingSettings = MatchingSettings()
     scoring: ScoringSettings = ScoringSettings()
+    proposals: ProposalSettings = ProposalSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()
 

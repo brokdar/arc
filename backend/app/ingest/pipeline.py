@@ -109,6 +109,7 @@ from app.persistence.ingest_log import (
     QuarantineRepository,
 )
 from app.services.matching import MatchingService
+from app.services.proposals import resolve_proposals_for_session
 
 logger = get_logger(__name__)
 
@@ -468,8 +469,42 @@ class IngestPipeline:
         )
         await commit(self._session)
         await self._compute_metrics(placement.created, actor=actor)
+        # Matching before the proposal sweep: a link is one of the two things
+        # that resolve a pending proposal (D188), and it does not exist until
+        # the matcher has run.
         await self._match(placement.created, actor=actor)
+        await self._resolve_proposals(placement.created, actor=actor)
         return report
+
+    async def _resolve_proposals(
+        self, session_ids: Sequence[uuid.UUID], *, actor: Actor
+    ) -> None:
+        """Close pending plan-change proposals each new session made moot (WP-8.2).
+
+        The athlete rode. A proposal still asking what to do with that day in
+        that discipline is not a question any more, and leaving it in the inbox
+        would let an accept rewrite the plan the ride is about to be scored
+        against. Per session inside its own ``try``, for the reason the metric
+        and matching passes are: the session, the recording and the file are
+        durable already, and a failure here leaves a stale inbox row that the
+        hourly expiry sweep clears anyway.
+        """
+        for session_id in session_ids:
+            row = await self._sessions.get(session_id)
+            if row is None:  # pragma: no cover — committed moments ago
+                continue
+            try:
+                await resolve_proposals_for_session(
+                    self._session,
+                    actor=actor,
+                    local_date=row.local_date,
+                    discipline=row.discipline,
+                )
+            except Exception:  # noqa: BLE001 — see the docstring
+                logger.exception(
+                    "proposal_resolution_failed", session_id=str(session_id)
+                )
+                await self._session.rollback()
 
     async def _compute_metrics(
         self, session_ids: Sequence[uuid.UUID], *, actor: Actor

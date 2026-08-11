@@ -13,6 +13,7 @@ feeding a renderer or a scorer something the model no longer allows.
 
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,11 +33,15 @@ from app.domain.workout import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.persistence.workouts import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_FOLDER_LENGTH,
+    MAX_NAME_LENGTH,
     MAX_TAG_LENGTH,
     WorkoutRepository,
     WorkoutRow,
 )
 from app.services.exercises import ExerciseService
+from app.services.guardrails import check_write_cap
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "workout"
@@ -67,6 +72,34 @@ class WorkoutSummary:
             self.step_count = len(flatten(body))
             self.total_duration_s = total_duration_s(body)
             self.total_sets = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkoutDraft:
+    """The workout :meth:`WorkoutService.create` would write, unsaved.
+
+    Everything on it has been through the same checks the write applies, so
+    ``tags`` are the *normalized* tags — stripped, lowercased, deduplicated and
+    sorted — and not the ones the caller sent. That is the point: a dry run
+    that echoed the request back would agree with the caller about a request
+    the real call is going to refuse or rewrite.
+    """
+
+    name: str
+    description: str | None
+    folder: str | None
+    tags: tuple[str, ...]
+    body: WorkoutBody
+
+    @property
+    def discipline(self) -> Discipline:
+        """Which discipline the parsed prescription belongs to."""
+        return discipline_of(self.body)
+
+    @property
+    def step_count(self) -> int:
+        """How many steps the prescription flattens to."""
+        return WorkoutSummary(self.body).step_count
 
 
 class WorkoutService:
@@ -133,6 +166,39 @@ class WorkoutService:
         """Return every tag in use."""
         return await self._repository.tags()
 
+    async def preview(
+        self,
+        *,
+        name: str,
+        structure: Mapping[str, Any],
+        description: str | None = None,
+        folder: str | None = None,
+        tags: Sequence[str] = (),
+    ) -> WorkoutDraft:
+        """Build and validate the workout :meth:`create` would write.
+
+        The dry run of a create, and a **separate read-only method rather than
+        a flag on the writer** — the shape `AnchorService.preview` established
+        (D178). Every rule `create` applies is applied here, because `create`
+        calls this to build its row: there is no second code path to disagree
+        with, and a dry run that ran only *some* of the validation would tell
+        an agent its call is fine and then refuse it.
+
+        Returns:
+            The draft, unsaved and unrecorded. Its tags are normalized.
+
+        Raises:
+            ValidationError: For exactly the reasons `create` would raise it —
+                an illegal prescription, an unknown exercise, malformed tags.
+        """
+        return WorkoutDraft(
+            name=_bounded("name", name, MAX_NAME_LENGTH),
+            description=_bounded("description", description, MAX_DESCRIPTION_LENGTH),
+            folder=_bounded("folder", folder, MAX_FOLDER_LENGTH),
+            tags=tuple(_clean_tags(tags)),
+            body=await self._parse(structure),
+        )
+
     async def create(
         self,
         *,
@@ -148,17 +214,26 @@ class WorkoutService:
         Raises:
             ValidationError: When the structure is not a legal prescription,
                 references an unknown exercise, or the tags are malformed.
+            RateLimitedError: When an agent actor's trailing-hour write cap is
+                spent (WP-8.3). Here rather than in the MCP tool, so it binds
+                every path an agent can reach this write through.
         """
-        body = await self._parse(structure)
-        clean_tags = _clean_tags(tags)
-        row = WorkoutRow(
+        await check_write_cap(self._session, actor)
+        draft = await self.preview(
             name=name,
+            structure=structure,
             description=description,
-            discipline=discipline_of(body),
-            structure=workout_body_to_json(body),
             folder=folder,
+            tags=tags,
         )
-        self._repository.set_tags(row, clean_tags)
+        row = WorkoutRow(
+            name=draft.name,
+            description=draft.description,
+            discipline=draft.discipline,
+            structure=workout_body_to_json(draft.body),
+            folder=draft.folder,
+        )
+        self._repository.set_tags(row, list(draft.tags))
         row = await self._repository.add(row)
         await self._audit.record(
             actor=actor,
@@ -200,9 +275,13 @@ class WorkoutService:
             body = await self._parse(updates["structure"])
             row.structure = workout_body_to_json(body)
             row.discipline = discipline_of(body)
-        for name in ("name", "description", "folder"):
+        for name, cap in (
+            ("name", MAX_NAME_LENGTH),
+            ("description", MAX_DESCRIPTION_LENGTH),
+            ("folder", MAX_FOLDER_LENGTH),
+        ):
             if name in updates:
-                setattr(row, name, updates[name])
+                setattr(row, name, _bounded(name, updates[name], cap))
         if "tags" in updates:
             self._repository.set_tags(row, _clean_tags(updates["tags"] or ()))
 
@@ -275,6 +354,54 @@ def summarize(row: WorkoutRow) -> WorkoutSummary:
     return WorkoutSummary(body_of(row))
 
 
+#: How a *stored* structure can fail to parse. The domain's decoders raise
+#: `ValueError` for everything they anticipate, but this reads a JSON column
+#: that a caller wrote, a migration rewrote, or an older version of the model
+#: accepted — so a document shaped nothing like a prescription can still reach
+#: an attribute lookup or an index on the way to being rejected.
+#:
+#: Named and shared rather than repeated as a bare `except ValueError`, because
+#: the callers are all *list* projections: one stale document must cost its own
+#: row a step count, not cost the caller the whole page.
+PARSE_FAILURES = (ValueError, TypeError, LookupError, AttributeError, RecursionError)
+
+
+def step_count_of(row: WorkoutRow) -> int | None:
+    """How many steps a stored structure flattens to, or None if it no longer parses.
+
+    ``None`` rather than an exception: a library the athlete (or the agent)
+    cannot list because one old document went stale is worse than a list with
+    a null in it, and the null is visible where a swallowed error would not be.
+    """
+    try:
+        return summarize(row).step_count
+    except PARSE_FAILURES:
+        return None
+
+
+def _bounded[T: str | None](field: str, value: T, cap: int) -> T:
+    """Refuse text longer than the column that has to hold it.
+
+    The API schemas bound these already, so this is for the callers that have
+    no schema in front of them: the MCP `create_workout` tool checked only its
+    tags, and an over-long name reached Postgres as a
+    `StringDataRightTruncation` — an agent-triggerable 500 where a 422 naming
+    the field belongs. The bounds are the column widths themselves, imported
+    rather than restated (D190).
+
+    Raises:
+        ValidationError: When ``value`` is over ``cap``.
+    """
+    if value is None:
+        return value
+    length = len(str(value))
+    if length > cap:
+        raise ValidationError(
+            f"A workout's {field} must be at most {cap} characters, got {length}"
+        )
+    return value
+
+
 def _clean_tags(tags: Sequence[str]) -> list[str]:
     """Normalize and check a tag list.
 
@@ -312,13 +439,5 @@ def _payload(row: WorkoutRow) -> dict[str, Any]:
         "discipline": row.discipline.value,
         "folder": row.folder,
         "tags": row.tag_names,
-        "step_count": _step_count(row),
+        "step_count": step_count_of(row),
     }
-
-
-def _step_count(row: WorkoutRow) -> int | None:
-    """How many steps the stored structure flattens to, if it still parses."""
-    try:
-        return summarize(row).step_count
-    except ValueError:
-        return None

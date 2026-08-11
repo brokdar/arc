@@ -6,8 +6,9 @@ Runs as its own process from the same image as the API
 `MCP__API_KEYS`; the unauthenticated `/health` route exists for the container
 healthcheck.
 
-Filled in with real tools by later work packages — for now the surface is a
-single `ping` tool that proves transport and auth are wired.
+The tool surface itself lives in `app.mcp.tools`, registered onto the server
+by `create_server`: the entrypoint owns transport, auth and the healthcheck,
+and the tools own the coaching contract.
 """
 
 from fastmcp import FastMCP
@@ -19,6 +20,7 @@ from starlette.responses import JSONResponse, Response
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.mcp.auth import McpKey, parse_api_keys, verify_key
+from app.mcp.tools import register_tools
 
 logger = get_logger(__name__)
 
@@ -60,11 +62,7 @@ class StaticKeyVerifier(TokenVerifier):
 def create_server(keys: list[McpKey]) -> FastMCP:
     """Build the MCP server with bearer auth, the tool surface and /health."""
     mcp: FastMCP = FastMCP(name=SERVER_NAME, auth=StaticKeyVerifier(keys))
-
-    @mcp.tool
-    def ping() -> dict[str, str]:
-        """Liveness check — returns a fixed payload if the server is reachable."""
-        return {"status": "ok", "service": SERVER_NAME}
+    register_tools(mcp)
 
     # Custom routes sit outside the MCP endpoint that RequireAuthMiddleware
     # wraps, so this stays reachable without a bearer token — the container

@@ -32,6 +32,9 @@ UPDATABLE_FIELDS = (
     "height_cm",
     "capabilities",
     "plan_state",
+    "red_flag_active",
+    "red_flag_note",
+    "red_flag_severity",
 )
 
 #: Fields whose "cleared" value is an empty state rather than an absence, so
@@ -40,7 +43,11 @@ EMPTY_VALUES: Mapping[str, Any] = {
     "sex": Sex.UNSPECIFIED,
     "capabilities": {},
     "plan_state": PlanState.ACTIVE,
+    "red_flag_active": False,
 }
+
+#: The two fields that only mean anything while the red flag is up.
+RED_FLAG_DETAILS = ("red_flag_note", "red_flag_severity")
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "athlete"
@@ -118,6 +125,19 @@ class AthleteService:
             if candidate[field] is None:
                 candidate[field] = empty
 
+        # Lowering the red flag retracts the whole statement. The domain
+        # refuses a note or a grade with no active flag (last month's `severe`
+        # must not read as current), and an athlete who is finally well again
+        # should not have to send three fields to say so — so the two details
+        # are cleared here unless the same patch supplies them, in which case
+        # it is asking for a contradiction and the domain says so.
+        touched = set(updates)
+        if "red_flag_active" in updates and not candidate["red_flag_active"]:
+            for field in RED_FLAG_DETAILS:
+                if field not in updates and candidate[field] is not None:
+                    candidate[field] = None
+                    touched.add(field)
+
         # Validate through the domain value object rather than field by field:
         # the rules live there, so the API and a future MCP tool cannot drift
         # apart on what a legal profile is.
@@ -128,7 +148,7 @@ class AthleteService:
         if bootstrapping:
             athlete = Athlete(id=SINGLETON_ATHLETE_ID)
         for field in UPDATABLE_FIELDS:
-            if field in updates:
+            if field in touched:
                 setattr(athlete, field, candidate[field])
         athlete = await self._repository.add(athlete)
         if bootstrapping:
@@ -152,7 +172,7 @@ class AthleteService:
                         "from": _jsonable(before[field]),
                         "to": _jsonable(after[field]),
                     }
-                    for field in updates
+                    for field in touched
                     if before[field] != after[field]
                 }
             },
@@ -170,6 +190,9 @@ def _empty_profile() -> dict[str, Any]:
         "height_cm": None,
         "capabilities": {},
         "plan_state": PlanState.ACTIVE,
+        "red_flag_active": False,
+        "red_flag_note": None,
+        "red_flag_severity": None,
     }
 
 
@@ -182,6 +205,9 @@ def _values(athlete: Athlete) -> dict[str, Any]:
         "height_cm": athlete.height_cm,
         "capabilities": dict(athlete.capabilities or {}),
         "plan_state": athlete.plan_state,
+        "red_flag_active": athlete.red_flag_active,
+        "red_flag_note": athlete.red_flag_note,
+        "red_flag_severity": athlete.red_flag_severity,
     }
 
 

@@ -14,8 +14,10 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.athlete import Discipline
 from app.persistence.audit import AuditLogEntry
 from app.persistence.workouts import WorkoutRow, WorkoutTagRow
+from app.services.workouts import step_count_of
 
 WORKOUTS = "/api/v1/workouts"
 LABELS = "/api/v1/workout-labels"
@@ -528,3 +530,30 @@ async def test_workouts_need_a_session(anon_client: AsyncClient) -> None:
     assert (await anon_client.get(WORKOUTS)).status_code == 401
     assert (await anon_client.post(WORKOUTS, json={})).status_code == 401
     assert (await anon_client.delete(f"{WORKOUTS}/{uuid.uuid4()}")).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError],
+)
+def test_a_stale_stored_structure_costs_only_its_own_step_count(
+    monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    # `step_count_of` is what every *list* projection uses — the athlete's
+    # audit payload and the agent's library page. One document the model no
+    # longer accepts must cost that row its count and nothing else, and the
+    # kinds it can fail with are not only `ValueError`: this reads a JSON
+    # column, not a value the decoder built.
+    def explode(_row: WorkoutRow) -> Any:
+        raise failure("this document went stale")
+
+    monkeypatch.setattr("app.services.workouts.summarize", explode)
+    row = WorkoutRow(
+        name="Stale",
+        description=None,
+        discipline=Discipline.CYCLING,
+        structure={},
+        folder=None,
+    )
+
+    assert step_count_of(row) is None

@@ -148,3 +148,15 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "POST /api/v1/sessions/{session_id}/merge"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# WP-8 adds one read whose rule a JSON schema cannot express, pinned by a unit
+# test (test_agent_notes_api::test_a_read_of_a_week_that_is_not_a_monday_is_refused):
+#
+#   * agent notes about a plan week are keyed by the Monday the week starts on;
+#     any other date is refused rather than snapped (D176), because snapping
+#     would file two notes about one week under two keys.
+
+[[operations]]
+include-name = "GET /api/v1/agent-notes"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

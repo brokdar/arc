@@ -9,6 +9,7 @@ use-cases is in `test_ingest_api`.
 import datetime as dt
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -24,6 +25,8 @@ from app.domain.activity import (
     SessionDiscipline,
 )
 from app.domain.actor import Actor
+from app.domain.proposals import CreateChange, ProposalStatus
+from app.domain.purpose import Purpose
 from app.domain.streams import ParsedActivity, RawSample, StreamChannel
 from app.ingest.parquet import read_streams, stream_path
 from app.ingest.pipeline import IngestPaths, IngestPipeline, _prepare
@@ -36,10 +39,27 @@ from app.persistence.activity import (
 )
 from app.persistence.audit import AuditLogEntry
 from app.persistence.ingest_log import IngestEventRow, QuarantineRecordRow
+from app.persistence.proposals import PlanProposalRow
+from app.services.proposals import ProposalService
 from tests.unit.activity_files import gpx_document, tcx_document
 from tests.unit.golden_fit import OUTDOOR_STOP_S, golden
 
 ATHLETE = Actor.athlete()
+
+#: A prescription that names no anchor, so a proposal about it can be written
+#: without an FTP in force.
+ABSOLUTE_RIDE: dict[str, Any] = {
+    "discipline": "cycling",
+    "steps": [
+        {
+            "kind": "steady",
+            "duration_s": 3_600,
+            "targets": {
+                "power": {"kind": "absolute", "low": 180, "high": 200, "unit": "W"}
+            },
+        }
+    ],
+}
 
 
 @pytest.fixture
@@ -137,6 +157,41 @@ async def test_the_ingest_is_logged_and_audited(
         "session.unplanned",
     ]
     assert audit[0].actor == "athlete"
+
+
+async def test_a_ride_resolves_a_pending_proposal_about_that_day(
+    data_root: Path, pipeline: IngestPipeline, db_session: AsyncSession
+) -> None:
+    # WP-8.2 through the ingest path, which is the other place a session comes
+    # into existence: the athlete rode, so what the coach was suggesting about
+    # that day in that discipline is not a question any more. The golden ride
+    # is a cycling session on 2026-05-04, which is what the proposal is about.
+    # (`technique` with absolute watts so the prescription pins no anchor.)
+    outcome = await ProposalService.from_session(db_session).propose(
+        actor=Actor.agent("coach"),
+        changes=[
+            CreateChange(
+                date=dt.date(2026, 5, 4),
+                purpose=Purpose.TECHNIQUE,
+                structure=ABSOLUTE_RIDE,
+            )
+        ],
+        rationale="Nothing is planned for the Monday.",
+        expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=48),
+    )
+    assert outcome.proposal is not None
+
+    await pipeline.ingest_file(
+        drop_in(data_root, "ride.fit", golden("outdoor_ride.fit")), actor=ATHLETE
+    )
+
+    db_session.expire_all()
+    [proposal] = await rows(db_session, PlanProposalRow)
+    assert proposal.status is ProposalStatus.RESOLVED_BY_REALITY
+    assert proposal.resolved_at is not None
+    assert "plan_proposal.resolved_by_reality" in [
+        entry.action for entry in await rows(db_session, AuditLogEntry)
+    ]
 
 
 async def test_the_repairs_are_rows_and_the_untouched_channels_are_certified(

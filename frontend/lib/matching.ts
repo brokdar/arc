@@ -33,6 +33,16 @@ export const PLANNED_SESSIONS_QUERY_PREFIX = [
   "get",
   "/api/v1/planned-sessions",
 ] as const;
+/**
+ * One planned session by id — a different cache from the list above, for the
+ * reason spelled out for matches: the second element is a different string,
+ * not a longer one. Today's panel and the calendar's session sheet both read
+ * it, so anything that rewrites a prescription has to name it explicitly.
+ */
+export const PLANNED_SESSION_QUERY_PREFIX = [
+  "get",
+  "/api/v1/planned-sessions/{planned_session_id}",
+] as const;
 /** The calendar week, whose cards carry the link state (WP-6, WP-7). */
 export const PLAN_WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
 

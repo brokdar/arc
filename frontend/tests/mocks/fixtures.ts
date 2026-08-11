@@ -1582,6 +1582,7 @@ export function ingestState(): IngestMockState {
 export function resetMockState(): void {
   state = seededState();
   resetScoringState();
+  resetAgentState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -2721,3 +2722,477 @@ function versionId(
 
 /** Two hex digits per facet, so the ids stay uuid-shaped and stay apart. */
 const FACET_CODES = { sc: "5c", al: "a1", me: "6e" } as const;
+
+// --- WP-8: the coach's proposals, its notes, and the athlete's red flag ------
+//
+// Everything below is *agent-written*, and every byte of it is a payload the
+// real API could produce. Two rules do the work:
+//
+//  * a diff's unchanged fields are **identical** on both sides, character for
+//    character, because the backend computes the after-snapshot by applying a
+//    change to the before-snapshot rather than by writing a second one out. A
+//    fixture whose "unchanged" purpose differed in case would let a diff view
+//    that marks every row as changed pass;
+//  * a note carries exactly one subject — `session_id` or `plan_week`, never
+//    both and never neither (`app.api.routes.agent_notes`).
+
+export const PROPOSAL_IDS = {
+  /** The only pending one: four changes, one of each kind. */
+  pending: "0199a000-0000-7000-8000-000000000801",
+  accepted: "0199a000-0000-7000-8000-000000000802",
+  rejected: "0199a000-0000-7000-8000-000000000803",
+  lapsed: "0199a000-0000-7000-8000-000000000804",
+  /** Overtaken by `pending`, which supersedes it. */
+  superseded: "0199a000-0000-7000-8000-000000000805",
+} as const;
+
+export const NOTE_IDS = {
+  /** An evaluation of the outdoor ride, unrated. */
+  rideEvaluation: "0199a000-0000-7000-8000-000000000811",
+  /** An annotation on the same ride, already rated up. */
+  rideAnnotation: "0199a000-0000-7000-8000-000000000812",
+  /** An evaluation of the week as a whole. */
+  weekEvaluation: "0199a000-0000-7000-8000-000000000813",
+} as const;
+
+/** The key label the coach's MCP key carries, as the audit actor spells it. */
+export const COACH_ACTOR = "agent:coach";
+/** The model the fixtures' notes and proposals were written by. */
+export const COACH_MODEL = "claude-opus-4-6";
+/** The instant the coach's fixtures claim to have been written at. */
+export const AGENT_NOW = "2026-08-07T06:30:00Z";
+
+/**
+ * One planned session as a proposal snapshots it.
+ *
+ * Defaults to a plausible endurance ride, so a change states only the fields
+ * it is *about* and the two sides of a diff cannot drift apart by accident.
+ */
+function snapshot(
+  overrides: Partial<Schemas["ProposalSessionSnapshot"]> = {},
+): Schemas["ProposalSessionSnapshot"] {
+  return {
+    date: "2026-08-13",
+    discipline: "cycling",
+    purpose: "endurance",
+    status: "planned",
+    workout_id: null,
+    structure: {},
+    intent_text: null,
+    success_criteria: [],
+    coach_notes: null,
+    duration_s: null,
+    total_sets: null,
+    predicted_load: null,
+    predicted_volume_kg: null,
+    ...overrides,
+  };
+}
+
+/**
+ * The four changes the pending proposal carries — one of each kind.
+ *
+ * Built as `before` plus an explicit delta so every field the change does not
+ * name is the same object value on both sides. The predicted loads are the
+ * only numbers here and they move with the prescription they describe: the
+ * VO2 session becomes a threshold session and its TSS-equivalent falls,
+ * because a shorter time above threshold is less of it.
+ */
+function pendingChanges(): Schemas["ProposalChangeDiff"][] {
+  const vo2Before = snapshot({
+    date: "2026-08-13",
+    purpose: "vo2max",
+    workout_id: WORKOUT_IDS.vo2,
+    intent_text: "Six by three at 118 %, full recoveries.",
+    coach_notes: "Bail out if the third rep is under target.",
+    predicted_load: 84,
+  });
+  const recoveryBefore = snapshot({
+    date: "2026-08-12",
+    purpose: "recovery",
+    intent_text: "Spin the legs out. Nothing above 65 %.",
+    predicted_load: 22,
+  });
+  const strengthBefore = snapshot({
+    date: "2026-08-14",
+    discipline: "strength",
+    purpose: "max_strength",
+    workout_id: WORKOUT_IDS.lower,
+    intent_text: "Heavy triples. Leave two in reserve.",
+    predicted_volume_kg: 6200,
+  });
+
+  return [
+    {
+      kind: "update",
+      planned_session_id: SESSION_IDS.vo2,
+      date: "2026-08-13",
+      discipline: "cycling",
+      expected_intent_version: 3,
+      before: vo2Before,
+      after: {
+        ...vo2Before,
+        purpose: "threshold",
+        intent_text: "Three by ten at 98 %, five minutes easy between.",
+        predicted_load: 61,
+      },
+    },
+    {
+      // The entry's `date` is where the session *is*, not where it would go:
+      // the backend fills it from the row it read and only `after.date`
+      // carries the target (`ProposalService._diff_one`). A fixture with
+      // the target in both places is a shape the API cannot produce.
+      kind: "move",
+      planned_session_id: SESSION_IDS.recovery,
+      date: "2026-08-12",
+      discipline: "cycling",
+      expected_intent_version: 1,
+      before: recoveryBefore,
+      after: { ...recoveryBefore, date: "2026-08-11" },
+    },
+    {
+      kind: "create",
+      planned_session_id: null,
+      date: "2026-08-15",
+      discipline: "cycling",
+      expected_intent_version: null,
+      before: null,
+      after: snapshot({
+        date: "2026-08-15",
+        purpose: "endurance",
+        intent_text: "Three hours steady, fuelled properly.",
+        predicted_load: 148,
+      }),
+    },
+    {
+      kind: "delete",
+      planned_session_id: SESSION_IDS.strength,
+      date: "2026-08-14",
+      discipline: "strength",
+      expected_intent_version: 2,
+      before: strengthBefore,
+      after: null,
+    },
+  ];
+}
+
+/** A one-change diff, for the proposals that are only there to be filtered. */
+function oneChange(
+  date: string,
+  intent: string,
+): Schemas["ProposalChangeDiff"][] {
+  const before = snapshot({ date, purpose: "tempo", predicted_load: 70 });
+  return [
+    {
+      kind: "update",
+      planned_session_id: SESSION_IDS.long,
+      date,
+      discipline: "cycling",
+      expected_intent_version: 1,
+      before,
+      after: { ...before, intent_text: intent },
+    },
+  ];
+}
+
+/**
+ * `changes` as the agent wrote it, beside the diff the backend computed.
+ *
+ * The API returns both and they are not the same thing: `changes` is the
+ * request (what to do), `diff` is the answer (what it would do). The mock
+ * derives one from the other so they cannot disagree.
+ */
+function requestOf(
+  diff: readonly Schemas["ProposalChangeDiff"][],
+): Record<string, unknown>[] {
+  return diff.map((change) => ({
+    kind: change.kind,
+    planned_session_id: change.planned_session_id,
+    // A move's request carries where the session should *go*; the diff entry's
+    // `date` is where it is now (the backend fills that from the row it read),
+    // so a request built off the entry date alone would ask to move a session
+    // to the day it already sits on — a no-op the API would never have written.
+    date:
+      change.kind === "move" && change.after ? change.after.date : change.date,
+    expected_intent_version: change.expected_intent_version,
+  }));
+}
+
+function seedProposals(): Schemas["ProposalRead"][] {
+  const pendingDiff = pendingChanges();
+  const soon = `${addDays(todayIsoDate(), 3)}T12:00:00Z`;
+  return [
+    {
+      id: PROPOSAL_IDS.pending,
+      status: "pending",
+      rationale:
+        "Saturday's three hours is the week's real work and Thursday's VO2 block " +
+        "sits two days ahead of it. Trade the intervals for threshold, bring the " +
+        "spin forward, and put the long ride where you are fresh for it.",
+      created_by: COACH_ACTOR,
+      created_at: AGENT_NOW,
+      expires_at: soon,
+      changes: requestOf(pendingDiff),
+      diff: pendingDiff,
+      supersedes_id: PROPOSAL_IDS.superseded,
+      superseded_by_id: null,
+      resolved_at: null,
+      resolution_note: null,
+    },
+    {
+      id: PROPOSAL_IDS.accepted,
+      status: "accepted",
+      rationale: "Your Tuesday tempo has no stated intent. Here is one.",
+      created_by: COACH_ACTOR,
+      created_at: "2026-08-03T06:30:00Z",
+      expires_at: "2026-08-06T06:30:00Z",
+      changes: requestOf(oneChange("2026-08-04", "Ninety minutes at 88 %.")),
+      diff: oneChange("2026-08-04", "Ninety minutes at 88 %."),
+      supersedes_id: null,
+      superseded_by_id: null,
+      resolved_at: "2026-08-03T19:02:00Z",
+      resolution_note: null,
+    },
+    {
+      id: PROPOSAL_IDS.rejected,
+      status: "rejected",
+      rationale: "Add a fourth ride on Friday to lift the week's volume.",
+      created_by: COACH_ACTOR,
+      created_at: "2026-07-30T06:30:00Z",
+      expires_at: "2026-08-02T06:30:00Z",
+      changes: requestOf(oneChange("2026-07-31", "Ninety easy minutes.")),
+      diff: oneChange("2026-07-31", "Ninety easy minutes."),
+      supersedes_id: null,
+      superseded_by_id: null,
+      resolved_at: "2026-07-30T20:40:00Z",
+      resolution_note:
+        "Four rides in that week is not happening. Work is busy.",
+    },
+    {
+      id: PROPOSAL_IDS.lapsed,
+      status: "lapsed",
+      rationale: "Swap Wednesday's spin for a rest day.",
+      created_by: COACH_ACTOR,
+      created_at: "2026-07-20T06:30:00Z",
+      expires_at: "2026-07-23T06:30:00Z",
+      changes: requestOf(oneChange("2026-07-22", "Rest.")),
+      diff: oneChange("2026-07-22", "Rest."),
+      supersedes_id: null,
+      superseded_by_id: null,
+      resolved_at: "2026-07-23T06:30:00Z",
+      resolution_note: "Expired unanswered; the committed plan stands.",
+    },
+    {
+      id: PROPOSAL_IDS.superseded,
+      status: "superseded",
+      rationale: "Move Thursday's VO2 block to Friday.",
+      created_by: COACH_ACTOR,
+      created_at: "2026-08-06T06:30:00Z",
+      expires_at: "2026-08-09T06:30:00Z",
+      changes: requestOf(oneChange("2026-08-13", "As written, one day later.")),
+      diff: oneChange("2026-08-13", "As written, one day later."),
+      supersedes_id: null,
+      superseded_by_id: PROPOSAL_IDS.pending,
+      resolved_at: AGENT_NOW,
+      resolution_note: "Replaced by a later proposal for the same session.",
+    },
+  ];
+}
+
+function seedNotes(): Schemas["AgentNoteRead"][] {
+  return [
+    {
+      id: NOTE_IDS.rideEvaluation,
+      kind: "evaluation",
+      session_id: ACTIVITY_IDS.outdoorRide,
+      plan_week: null,
+      text:
+        "You held the tempo band for fifty of the sixty prescribed minutes and " +
+        "the drift was under two per cent. The last ten went out the back — " +
+        "that is a fuelling story, not a fitness one.",
+      model_id: COACH_MODEL,
+      created_by: COACH_ACTOR,
+      created_at: AGENT_NOW,
+      cites: [ACTIVITY_IDS.outdoorRide],
+      dispute: null,
+      disputed_at: null,
+    },
+    {
+      id: NOTE_IDS.rideAnnotation,
+      kind: "annotation",
+      session_id: ACTIVITY_IDS.outdoorRide,
+      plan_week: null,
+      text: "Third ride this month with a coffee stop at the same hour. Noted, not judged.",
+      model_id: COACH_MODEL,
+      created_by: COACH_ACTOR,
+      created_at: "2026-08-07T06:35:00Z",
+      cites: [],
+      dispute: "up",
+      disputed_at: "2026-08-07T18:12:00Z",
+    },
+    {
+      id: NOTE_IDS.weekEvaluation,
+      kind: "evaluation",
+      session_id: null,
+      plan_week: mondayOf(todayIsoDate()),
+      text:
+        "Three of four sessions landed and the one that did not was the easiest. " +
+        "The week did what it was for.",
+      model_id: COACH_MODEL,
+      created_by: COACH_ACTOR,
+      created_at: AGENT_NOW,
+      cites: [],
+      dispute: null,
+      disputed_at: null,
+    },
+  ];
+}
+
+/** The singleton profile, mutable because the red flag is set from the UI. */
+function seedAthlete(): Schemas["AthleteRead"] {
+  return {
+    name: "Alex Rider",
+    date_of_birth: "1990-06-15",
+    sex: "male",
+    height_cm: 181.5,
+    capabilities: {},
+    plan_state: "active",
+    red_flag_active: false,
+    red_flag_note: null,
+    red_flag_severity: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+let agentState: {
+  proposals: Schemas["ProposalRead"][];
+  notes: Schemas["AgentNoteRead"][];
+  athlete: Schemas["AthleteRead"];
+} | null = null;
+
+function agent() {
+  if (!agentState) {
+    agentState = {
+      proposals: seedProposals(),
+      notes: seedNotes(),
+      athlete: seedAthlete(),
+    };
+  }
+  return agentState;
+}
+
+/** Every proposal the mock holds, newest first — the order the API answers in. */
+export function proposalList(): Schemas["ProposalRead"][] {
+  return agent().proposals;
+}
+
+/** One proposal by id, or undefined. */
+export function proposalById(id: string): Schemas["ProposalRead"] | undefined {
+  return agent().proposals.find((proposal) => proposal.id === id);
+}
+
+/** Replace one proposal in place, and hand back what it became. */
+export function updateProposal(
+  id: string,
+  patch: Partial<Schemas["ProposalRead"]>,
+): Schemas["ProposalRead"] | undefined {
+  const proposals = agent().proposals;
+  const index = proposals.findIndex((proposal) => proposal.id === id);
+  if (index < 0) {
+    return undefined;
+  }
+  const next = { ...proposals[index], ...patch };
+  proposals[index] = next;
+  return next;
+}
+
+/** Every note the mock holds, oldest first — the order the API answers in. */
+export function noteList(): Schemas["AgentNoteRead"][] {
+  return agent().notes;
+}
+
+/** Rate one note, or clear its rating. Returns the note as it now stands. */
+export function rateNote(
+  id: string,
+  rating: Schemas["DisputeRating"] | null,
+  at: string,
+): Schemas["AgentNoteRead"] | undefined {
+  const notes = agent().notes;
+  const index = notes.findIndex((note) => note.id === id);
+  if (index < 0) {
+    return undefined;
+  }
+  // `disputed_at` follows the rating rather than recording every tap: a
+  // cleared rating has no instant, because there is nothing standing that was
+  // said at one.
+  const next = {
+    ...notes[index],
+    dispute: rating,
+    disputed_at: rating === null ? null : at,
+  };
+  notes[index] = next;
+  return next;
+}
+
+/** The profile as it now stands. */
+export function athleteRecord(): Schemas["AthleteRead"] {
+  return agent().athlete;
+}
+
+/**
+ * Apply a PATCH the way the service does, including the red-flag rules.
+ *
+ * Two of them, and the mock honours both because a handler that did not would
+ * let a form that never sends a severity pass: a flag that is up **must**
+ * carry one, and lowering the flag clears the note and the severity — they
+ * described an illness that is over. Clearing them means *omitting* them: a
+ * PATCH that lowers the flag while still sending a note or a severity is
+ * refused (422), because those two facts describe an illness the same request
+ * says is over (`app.domain.athlete`, `AthleteProfile`).
+ */
+export function patchAthlete(
+  body: Schemas["AthleteUpdate"],
+): { athlete: Schemas["AthleteRead"] } | { detail: string } {
+  const current = agent().athlete;
+  const active = body.red_flag_active ?? current.red_flag_active;
+  const next: Schemas["AthleteRead"] = {
+    ...current,
+    ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.plan_state !== undefined && body.plan_state !== null
+      ? { plan_state: body.plan_state }
+      : {}),
+    red_flag_active: active,
+    updated_at: AGENT_NOW,
+  };
+  if (!active) {
+    if (body.red_flag_note != null || body.red_flag_severity != null) {
+      return {
+        detail:
+          "red_flag_note and red_flag_severity may only be set while " +
+          "red_flag_active is set",
+      };
+    }
+    next.red_flag_note = null;
+    next.red_flag_severity = null;
+  } else {
+    if (body.red_flag_severity !== undefined) {
+      next.red_flag_severity = body.red_flag_severity;
+    }
+    if (body.red_flag_note !== undefined) {
+      next.red_flag_note = body.red_flag_note;
+    }
+    if (next.red_flag_severity === null) {
+      return {
+        detail: "red_flag_severity is required while the red flag is active.",
+      };
+    }
+  }
+  agentState = { ...agent(), athlete: next };
+  return { athlete: next };
+}
+
+/** Put the coach's proposals, notes and the profile back to their seed. */
+export function resetAgentState(): void {
+  agentState = null;
+}

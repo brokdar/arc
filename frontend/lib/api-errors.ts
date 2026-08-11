@@ -56,6 +56,24 @@ export function isUnauthorized(error: unknown): boolean {
 }
 
 /**
+ * Whether a failure was a 409 — the write arrived and the world had moved.
+ *
+ * Distinguished from every other refusal because the remedy is different in
+ * kind: nothing about the request was wrong, so there is nothing to correct
+ * and re-send. Accepting a plan proposal is the case this exists for — the
+ * concurrency tokens are re-checked at accept time and a proposal whose
+ * session has been revised since is refused *and stays pending*, which is a
+ * state the page has to draw rather than an error it can print and forget.
+ */
+export function isConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as Record<symbol, unknown>)[HTTP_STATUS] === 409
+  );
+}
+
+/**
  * Why a page could not load, told apart from *whether* it could.
  *
  * "Is the API reachable?" is the wrong question when the API answered — and a

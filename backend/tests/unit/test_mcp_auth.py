@@ -1,8 +1,23 @@
 """Parsing and comparison rules for the MCP server's static bearer keys."""
 
 import pytest
+from sqlalchemy import String
 
-from app.mcp.auth import MIN_KEY_LENGTH, McpKey, Scope, parse_api_keys, verify_key
+from app.domain.actor import Actor
+from app.mcp.auth import (
+    MAX_LABEL_LENGTH,
+    MIN_KEY_LENGTH,
+    McpKey,
+    Scope,
+    parse_api_keys,
+    verify_key,
+)
+from app.persistence.audit import AuditLogEntry
+
+#: Width of the column every agent write lands in, read off the model so the
+#: label bound cannot drift away from what has to hold it.
+_ACTOR_TYPE = AuditLogEntry.__table__.c.actor.type
+AUDIT_ACTOR_LENGTH = _ACTOR_TYPE.length or 0 if isinstance(_ACTOR_TYPE, String) else 0
 
 # Realistic key material: hex-looking and exactly MIN_KEY_LENGTH long, so the
 # near-miss cases below can shorten one of these by a character and still be
@@ -124,6 +139,54 @@ def test_accepts_a_key_of_exactly_the_minimum_length() -> None:
 def test_malformed_entries_raise_value_error(raw: str, expected: str) -> None:
     with pytest.raises(ValueError, match=expected):
         parse_api_keys(raw)
+
+
+# --- parse_api_keys: the label is an identity, not a comment -----------------
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("night coach", "whitespace or control characters"),
+        ("coach\nadmin", "whitespace or control characters"),
+        ("coach\tadmin", "whitespace or control characters"),
+        ("coach\x07", "whitespace or control characters"),
+        ("c" * (MAX_LABEL_LENGTH + 1), "at most"),
+        ("athlete", "reserved"),
+        ("system", "reserved"),
+        ("Athlete", "reserved"),
+        ("agent", "reserved"),
+    ],
+    ids=[
+        "space",
+        "newline",
+        "tab",
+        "control-character",
+        "too-long",
+        "athlete",
+        "system",
+        "athlete-cased",
+        "agent",
+    ],
+)
+def test_a_label_that_would_not_survive_being_written_down_is_refused(
+    label: str, expected: str
+) -> None:
+    # The label becomes `agent:<label>` in every audit row this key writes, so
+    # it has to be one token, short enough for the column, and not the name of
+    # another kind of actor. A newline in it also splits a log line in two,
+    # which is the cheap way to forge a trail (D191).
+    with pytest.raises(ValueError, match=expected):
+        parse_api_keys(f"{label}:write:{COACH_KEY}")
+
+
+def test_a_label_of_exactly_the_maximum_length_is_accepted() -> None:
+    label = "c" * MAX_LABEL_LENGTH
+
+    (key,) = parse_api_keys(f"{label}:write:{COACH_KEY}")
+
+    assert key.label == label
+    assert len(str(Actor.agent(key.label))) <= AUDIT_ACTOR_LENGTH
 
 
 @pytest.mark.parametrize(

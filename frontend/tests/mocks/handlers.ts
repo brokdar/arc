@@ -3,9 +3,11 @@ import { createOpenApiHttp } from "openapi-msw";
 import type { components, paths } from "@/generated/api/schema";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
 import {
+  AGENT_NOW,
   alignmentRead,
   anchorVersionFixture,
   applyLinkStatuses,
+  athleteRecord,
   contentHash,
   DETAILS,
   declarationRead,
@@ -19,11 +21,16 @@ import {
   matchRead,
   matchSummary,
   mintId,
+  noteList,
+  patchAthlete,
   plannedSessionFixture,
   planWeekFixture,
+  proposalById,
+  proposalList,
   purposeTemplateFixture,
   RIDE_METRICS,
   RIDE_STREAMS,
+  rateNote,
   reasonsRead,
   reasonsRefusal,
   restoreLinkStatuses,
@@ -35,6 +42,7 @@ import {
   statedRematch,
   statedScoring,
   toListItem,
+  updateProposal,
   WORKOUT_LABELS,
   WORKOUTS,
   withMatch,
@@ -64,30 +72,17 @@ export const handlers = [
     response(200).json({ authenticated: true }),
   ),
   http.post("/api/v1/auth/login", ({ response }) => response(204).empty()),
+  // The profile is *stateful*: the red flag is set from the UI and read back
+  // by the shell's banner, so a PATCH that answered with a canned profile
+  // would let a form that sends the wrong body still light the banner up.
   http.get("/api/v1/athlete", ({ response }) =>
-    response(200).json({
-      name: "Alex Rider",
-      date_of_birth: "1990-06-15",
-      sex: "male",
-      height_cm: 181.5,
-      capabilities: {},
-      plan_state: "active",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    }),
+    response(200).json(athleteRecord()),
   ),
   http.patch("/api/v1/athlete", async ({ request, response }) => {
-    const body = await request.json();
-    return response(200).json({
-      name: "Alex Rider",
-      date_of_birth: "1990-06-15",
-      sex: "male",
-      height_cm: 181.5,
-      capabilities: {},
-      plan_state: body.plan_state ?? "active",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
+    const result = patchAthlete(await request.json());
+    return "detail" in result
+      ? response(422).json({ detail: result.detail })
+      : response(200).json(result.athlete);
   }),
 
   // The week the calendar asks for, built around whatever `start` it sends.
@@ -1061,6 +1056,111 @@ export const handlers = [
       };
       chain.push(appended);
       return response(200).json(reasonsRead(appended));
+    },
+  ),
+
+  // --- WP-8: the coach ------------------------------------------------------
+
+  // Newest first, filtered by status the way the endpoint is — the inbox asks
+  // for `pending` and must get *only* pending back, or a filter that sent the
+  // wrong parameter would still look right.
+  http.get("/api/v1/proposals", ({ query, response }) => {
+    const status = query.get("status");
+    const offset = Number(query.get("offset") ?? 0);
+    const limit = Number(query.get("limit") ?? 25);
+    const matching = proposalList().filter(
+      (proposal) => status === null || proposal.status === status,
+    );
+    return response(200).json({
+      items: matching.slice(offset, offset + limit),
+      total: matching.length,
+      offset,
+      limit,
+    });
+  }),
+  http.get("/api/v1/proposals/{proposal_id}", ({ params, response }) => {
+    const proposal = proposalById(params.proposal_id);
+    return proposal
+      ? response(200).json(proposal)
+      : response(404).json({ detail: "No such proposal." });
+  }),
+  // Accept moves the proposal *and* leaves it moved: a second accept is the
+  // 409 the API gives, because the first one already resolved it.
+  http.post(
+    "/api/v1/proposals/{proposal_id}/accept",
+    ({ params, response }) => {
+      const proposal = proposalById(params.proposal_id);
+      if (!proposal) {
+        return response(404).json({ detail: "No such proposal." });
+      }
+      if (proposal.status !== "pending") {
+        return response(409).json({
+          detail: `This proposal is ${proposal.status} and cannot be accepted.`,
+        });
+      }
+      const applied = updateProposal(params.proposal_id, {
+        status: "accepted",
+        resolved_at: AGENT_NOW,
+      });
+      if (!applied) {
+        throw new Error("a proposal that was just found is not there");
+      }
+      return response(200).json(applied);
+    },
+  ),
+  // The reason is echoed into the resolution note, which is where the API puts
+  // it — a handler that dropped it would let a form that never sent one pass.
+  http.post(
+    "/api/v1/proposals/{proposal_id}/reject",
+    async ({ params, request, response }) => {
+      const proposal = proposalById(params.proposal_id);
+      if (!proposal) {
+        return response(404).json({ detail: "No such proposal." });
+      }
+      if (proposal.status !== "pending") {
+        return response(409).json({
+          detail: `This proposal is ${proposal.status} and cannot be rejected.`,
+        });
+      }
+      const body = await request.json();
+      const rejected = updateProposal(params.proposal_id, {
+        status: "rejected",
+        resolved_at: AGENT_NOW,
+        resolution_note: body.reason ?? null,
+      });
+      if (!rejected) {
+        throw new Error("a proposal that was just found is not there");
+      }
+      return response(200).json(rejected);
+    },
+  ),
+
+  // Exactly one subject, or the request has no answer — the endpoint's own
+  // rule, and the reason it is a 422 rather than an empty list.
+  http.get("/api/v1/agent-notes", ({ query, response }) => {
+    const sessionId = query.get("session_id");
+    const week = query.get("week");
+    if ((sessionId === null) === (week === null)) {
+      return response(422).json({
+        detail: "Give exactly one of session_id and week.",
+      });
+    }
+    return response(200).json({
+      items: noteList().filter((note) =>
+        sessionId === null
+          ? note.plan_week === week
+          : note.session_id === sessionId,
+      ),
+    });
+  }),
+  http.post(
+    "/api/v1/agent-notes/{note_id}/dispute",
+    async ({ params, request, response }) => {
+      const body = await request.json();
+      const rated = rateNote(params.note_id, body.rating ?? null, AGENT_NOW);
+      return rated
+        ? response(200).json(rated)
+        : response(404).json({ detail: "No such note." });
     },
   ),
 ];
