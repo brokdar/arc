@@ -183,7 +183,8 @@ class _Durations:
             training load** (A5.1), summed across recordings.
         elapsed_time_s: The recording's own elapsed span, or the session's
             wall clock once more than one recording spans it.
-        moving_time_s: Display only, never a load input.
+        moving_time_s: The basis the artefact's averages are taken over
+            (D194), summed across recordings; never a load input.
     """
 
     recording_time_s: float

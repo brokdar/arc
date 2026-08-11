@@ -59,12 +59,31 @@ class MetricRead(BaseModel):
     not_assessed: str | None = None
 
 
+def predates(metric: str) -> MetricRead:
+    """The slot an artefact written before ``metric`` existed carries.
+
+    A payload stored by an earlier version of the metric set simply has no key
+    for a number added later, and the honest answer is neither a zero nor a
+    silently missing field: it is "these numbers predate this one, recompute to
+    get it" — which is a `not_assessed` reason like any other, rendered in the
+    slot by the same component (`.claude/rules/frontend-ui-conventions.md` rule
+    4) and fixed by the button already on the page.
+    """
+    return MetricRead(
+        not_assessed=(
+            f"these metrics were computed before {metric} was — recompute this "
+            "session to add it"
+        )
+    )
+
+
 class PowerMetricsRead(BaseModel):
     """Everything derived from the power channel."""
 
     normalized_power: MetricRead
-    #: Total work over recording time — **not** the device average. Its
-    #: explanation carries the caveat; render it.
+    #: Total work over **moving time** (D194) — the basis a head unit averages
+    #: over, and *not* the duration the load was computed over. Its explanation
+    #: carries both facts; render it.
     average_power: MetricRead
     max_power: MetricRead
     intensity_factor: MetricRead
@@ -89,6 +108,31 @@ class CadenceMetricsRead(BaseModel):
 
     average_cadence: MetricRead
     max_cadence: MetricRead
+
+
+class SpeedMetricsRead(BaseModel):
+    """Distance and speed, in km and km/h.
+
+    Every field defaults to the "recompute me" reason so that an artefact
+    written before these numbers existed still validates and still renders in
+    its slot; see :func:`predates`.
+    """
+
+    #: Integrated from the speed channel, not from the GPS track.
+    distance_km: MetricRead = Field(default_factory=lambda: predates("distance"))
+    #: Over moving time, the same basis as average power (D194).
+    average_speed_kmh: MetricRead = Field(
+        default_factory=lambda: predates("average speed")
+    )
+    max_speed_kmh: MetricRead = Field(default_factory=lambda: predates("max speed"))
+
+
+class TemperatureMetricsRead(BaseModel):
+    """What the device's own sensor read, in degrees Celsius."""
+
+    average_temp_c: MetricRead = Field(default_factory=lambda: predates("temperature"))
+    min_temp_c: MetricRead = Field(default_factory=lambda: predates("temperature"))
+    max_temp_c: MetricRead = Field(default_factory=lambda: predates("temperature"))
 
 
 class ZoneTimeRead(BaseModel):
@@ -208,12 +252,18 @@ class SessionMetricsRead(BaseModel):
     #: computed over** (A4.4, A5.1).
     recording_time_s: float
     elapsed_time_s: float
-    #: Display only.
+    #: Time at or above 1 km/h. The basis every *average* here is taken over
+    #: (D194), and never the load's duration term.
     moving_time_s: float
+    #: Elapsed minus moving, derived server-side so a client never has to pick
+    #: which two durations to subtract.
+    stopped_time_s: MetricRead = Field(default_factory=lambda: predates("stopped time"))
 
     power: PowerMetricsRead
     heart_rate: HeartRateMetricsRead
     cadence: CadenceMetricsRead
+    speed: SpeedMetricsRead = Field(default_factory=SpeedMetricsRead)
+    temperature: TemperatureMetricsRead = Field(default_factory=TemperatureMetricsRead)
     elevation_gain_m: MetricRead
     load: LoadRead
     time_in_zone: TimeInZoneBlockRead

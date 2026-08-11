@@ -33,6 +33,7 @@ from app.domain.metrics import (
     NP_WINDOW_S,
     TSS_SCALE,
     Assessment,
+    AveragingBasis,
     Measured,
     MetricExplanation,
     NotAssessed,
@@ -41,15 +42,21 @@ from app.domain.metrics import (
     StrengthVolume,
     TimeInZone,
     average_power,
+    average_speed_kmh,
+    averaging_basis,
     channel_average,
     channel_maximum,
+    channel_minimum,
     coasting_time_s,
+    distance_km,
     efficiency_factor,
     elevation_gain_m,
     hrss,
     intensity_factor,
+    max_speed_kmh,
     normalized_power,
     select_training_load,
+    stopped_time_s,
     strength_volume,
     time_in_zone,
     training_load,
@@ -84,7 +91,11 @@ class SessionInputs:
             duration term in training load** (A5.1) — not moving time, not
             elapsed. Zero for a manual session, which has no recording.
         elapsed_time_s: Last sample minus first.
-        moving_time_s: Display only, never a load input.
+        moving_time_s: Time at or above `app.domain.streams.MOVING_SPEED_MS`.
+            **The divisor of every average here** (D194) — average power,
+            average speed — and never a load input. Zero when no speed was
+            recorded, which is what makes the averages fall back to
+            ``recording_time_s`` and say so.
         columns: Channel -> that channel's cleaned (``_fixed``) column on the
             1 Hz grid. Absent channels are simply absent.
         sex: The athlete's sex; HRSS's coefficient depends on it.
@@ -144,6 +155,41 @@ class CadenceMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeedMetrics:
+    """Everything derived from the speed column, in km/h and km.
+
+    The ride log's basics, and the reason they are a block of their own rather
+    than three loose slots: distance, average speed and maximum speed are one
+    account of the same channel, and the average is only readable beside the
+    basis it was taken over (D194).
+    """
+
+    distance_km: Assessment
+    average_speed_kmh: Assessment
+    max_speed_kmh: Assessment
+
+
+@dataclass(frozen=True, slots=True)
+class TemperatureMetrics:
+    """Everything derived from the temperature channel, in degrees Celsius.
+
+    As the head unit's own sensor read it, which is not the air temperature:
+    a device on the stem in direct sun reports several degrees above it, and
+    one in a jersey pocket reports body heat. Context for why a session felt
+    the way it did, never a measurement of the weather — the MVP does not
+    fetch one (see the delivery plan's analysis-parity list).
+
+    The range is carried beside the mean because it is the interesting part: a
+    dawn start at 4 °C finishing at 24 °C is why the second half was different,
+    and an average of 14 °C describes neither half.
+    """
+
+    average_temp_c: Assessment
+    min_temp_c: Assessment
+    max_temp_c: Assessment
+
+
+@dataclass(frozen=True, slots=True)
 class SessionAnalysis:
     """One session's whole metric set, each slot answered or explained.
 
@@ -156,9 +202,15 @@ class SessionAnalysis:
     recording_time_s: float
     elapsed_time_s: float
     moving_time_s: float
+    #: Elapsed minus moving — every second at a standstill, whether or not the
+    #: device paused for it. Derived here so no client has to subtract two
+    #: durations and hope it picked the pair the server meant (D194).
+    stopped_time_s: Assessment
     power: PowerMetrics
     heart_rate: HeartRateMetrics
     cadence: CadenceMetrics
+    speed: SpeedMetrics
+    temperature: TemperatureMetrics
     elevation_gain_m: Assessment
     load: SelectedLoad | NotAssessed
     power_time_in_zone: TimeInZone | NotAssessed
@@ -201,6 +253,18 @@ def _power_load(
     They are computed together because they share every input and because a
     load whose IF was not assessed is not a load: ``TSS = duration × IF² /
     36``, so the two either both exist or neither does.
+
+    **The duration term stays recording time** — D194 moved the *averages* onto
+    moving time and deliberately stopped there. Two reasons, both about staying
+    correct against the definition in the docstrings' citation. Coggan's TSS is
+    the whole session's cost, and freewheeling down a descent or rolling to a
+    stop at a light is time the body spends recovering *inside* the session; A5.1
+    already measured what removing such time does — subtracting coasting alone
+    put this system's TSS 7 % under the reference platform's. And IF comes from
+    NP, which is a rolling window over the recorded series (D117): the pair
+    ``(NP, duration)`` has to describe the same stretch of ride, so dividing an
+    NP computed over every recorded second by a duration that excludes some of
+    them would be a load for a session nobody rode.
     """
     if np_watts is None:
         absent = NotAssessed("no power was recorded")
@@ -276,12 +340,18 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     ftp = inputs.anchor(AnchorType.FTP)
     lthr = inputs.anchor(AnchorType.LTHR)
 
+    temperature = inputs.column(StreamChannel.TEMP)
     present_watts = [value for value in power if value is not None]
     np_assessment = _normalized_power(power, present_watts)
     np_watts = value_of(np_assessment)
-    average = average_power(power, inputs.recording_time_s)
+    # One basis for every average in the artefact (D194), resolved once: two
+    # averages divided by two different clocks would not describe one ride.
+    basis = averaging_basis(inputs.moving_time_s, inputs.recording_time_s)
+    basis_label = basis.label if isinstance(basis, AveragingBasis) else "moving time"
+    average = average_power(power, basis)
     average_watts = value_of(average)
     average_beats = channel_average("heart rate", heart_rate)
+    distance = distance_km(speed)
 
     factor, power_load = _power_load(np_watts, ftp, inputs.recording_time_s)
     hr_load = hrss(
@@ -296,13 +366,18 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
         recording_time_s=inputs.recording_time_s,
         elapsed_time_s=inputs.elapsed_time_s,
         moving_time_s=inputs.moving_time_s,
+        stopped_time_s=stopped_time_s(
+            elapsed_time_s=inputs.elapsed_time_s,
+            moving_time_s=inputs.moving_time_s,
+            recording_time_s=inputs.recording_time_s,
+        ),
         power=PowerMetrics(
             normalized_power=np_assessment,
             average_power=average,
             max_power=channel_maximum("power", power),
             intensity_factor=factor,
             variability_index=(
-                variability_index(np_watts, average_watts)
+                variability_index(np_watts, average_watts, basis_label=basis_label)
                 if np_watts is not None and average_watts is not None
                 else NotAssessed("no power was recorded")
             ),
@@ -325,6 +400,16 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
         cadence=CadenceMetrics(
             average_cadence=channel_average("cadence", cadence),
             max_cadence=channel_maximum("cadence", cadence),
+        ),
+        speed=SpeedMetrics(
+            distance_km=distance,
+            average_speed_kmh=average_speed_kmh(distance, basis),
+            max_speed_kmh=max_speed_kmh(speed),
+        ),
+        temperature=TemperatureMetrics(
+            average_temp_c=channel_average("temperature", temperature),
+            min_temp_c=channel_minimum("temperature", temperature),
+            max_temp_c=channel_maximum("temperature", temperature),
         ),
         elevation_gain_m=elevation_gain_m(elevation),
         load=select_training_load(power_load, hr_load, inputs.discipline),
@@ -427,6 +512,7 @@ def analysis_to_json(analysis: SessionAnalysis) -> dict[str, Any]:
         "recording_time_s": analysis.recording_time_s,
         "elapsed_time_s": analysis.elapsed_time_s,
         "moving_time_s": analysis.moving_time_s,
+        "stopped_time_s": assessment_to_json(analysis.stopped_time_s),
         "power": {
             "normalized_power": assessment_to_json(analysis.power.normalized_power),
             "average_power": assessment_to_json(analysis.power.average_power),
@@ -448,6 +534,16 @@ def analysis_to_json(analysis: SessionAnalysis) -> dict[str, Any]:
         "cadence": {
             "average_cadence": assessment_to_json(analysis.cadence.average_cadence),
             "max_cadence": assessment_to_json(analysis.cadence.max_cadence),
+        },
+        "speed": {
+            "distance_km": assessment_to_json(analysis.speed.distance_km),
+            "average_speed_kmh": assessment_to_json(analysis.speed.average_speed_kmh),
+            "max_speed_kmh": assessment_to_json(analysis.speed.max_speed_kmh),
+        },
+        "temperature": {
+            "average_temp_c": assessment_to_json(analysis.temperature.average_temp_c),
+            "min_temp_c": assessment_to_json(analysis.temperature.min_temp_c),
+            "max_temp_c": assessment_to_json(analysis.temperature.max_temp_c),
         },
         "elevation_gain_m": assessment_to_json(analysis.elevation_gain_m),
         "load": _load_to_json(analysis.load),

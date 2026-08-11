@@ -31,14 +31,23 @@ export interface MetricHeaderProps {
 }
 
 /**
- * The header row of the analysis page: the eight numbers a session is judged by.
+ * The header of the analysis page, in two rows that answer two questions.
+ *
+ * **What the session cost** comes first — duration, NP, IF, load, work, heart
+ * rate, the shape of the time in zone — because those are the numbers a
+ * session is judged by, and they are what the rest of the product is
+ * denominated in. **What the ride was** follows under a rule: distance, speed,
+ * climbing, cadence, how long the athlete stood still, how warm it was. Those
+ * judge nothing; they are how a ride is recognised six months later, and a
+ * training application that cannot say how far you went is missing the fact
+ * every other one leads with.
  *
  * Every one of them is a slot that either holds a number *carrying its own
  * explanation* or holds the reason it does not (UI convention 4). The
  * explanation is the point rather than a nicety: NP over a ride with a coffee
- * stop, an IF against an FTP that was an estimate, an average power that is
- * work-over-recording-time and therefore lower than the head unit's — each is
- * a number an athlete would otherwise report as a bug.
+ * stop, an IF against an FTP that was an estimate, an average power divided by
+ * moving time while the load beside it is divided by recording time (D194) —
+ * each is a number an athlete would otherwise report as a bug.
  */
 export function MetricHeader({
   metrics,
@@ -51,113 +60,248 @@ export function MetricHeader({
 
   return (
     <Panel
-      className="grid grid-cols-2 gap-x-5 gap-y-4 px-5 py-4 sm:grid-cols-4 xl:grid-cols-7"
+      className="flex flex-col gap-4 px-5 py-4"
       aria-label="Session metrics"
     >
-      <Stat
-        label="Duration"
-        value={<Duration metrics={metrics} />}
-        note={
-          plannedDurationS === undefined
-            ? durationBasis(metrics)
-            : `plan ${formatDurationClock(plannedDurationS)}`
-        }
-      />
-
-      <Stat
-        label="NP"
-        unit="W"
-        value={<MetricValue metric={metrics.power.normalized_power} />}
-        note={
-          <>
-            avg <MetricValue metric={metrics.power.average_power} /> W
-          </>
-        }
-      />
-
-      <Stat
-        label="IF"
-        value={
-          <MetricValue
-            metric={metrics.power.intensity_factor}
-            format={(value) => value.toFixed(2)}
-          />
-        }
-        note={
-          ftp ? (
-            <>
-              FTP {ftp.value.toFixed(0)}
-              {ftp.ci_low !== null && ftp.ci_high !== null
-                ? ` ±${Math.round((ftp.ci_high - ftp.ci_low) / 2)}`
-                : ""}{" "}
-              · <ProvenanceMark provenance={ftp.provenance} />
-            </>
-          ) : (
-            "no FTP in force"
-          )
-        }
-      />
-
-      <Stat
-        label="Load"
-        // TSS is the *power* model's scale; the heart-rate model's is HRSS.
-        // Both are calibrated so an hour at threshold is 100, so an
-        // HRSS value stamped "TSS" looks entirely plausible — which is
-        // exactly why it has to be labelled by its basis.
-        unit={load.load_basis ? LOAD_BASIS_UNITS[load.load_basis] : undefined}
-        value={
-          load.not_assessed ? (
-            <NotAssessed reason={load.not_assessed} />
-          ) : (
-            <Explained explanation={load.explanation ?? null}>
-              {Math.round(load.training_load ?? 0)}
-            </Explained>
-          )
-        }
-        note={
-          load.load_basis
-            ? `from ${LOAD_BASIS_LABELS[load.load_basis]}${
-                plannedLoad === undefined
-                  ? ""
-                  : ` · plan ${Math.round(plannedLoad)}`
-              }`
-            : undefined
-        }
-      />
-
-      <Stat
-        label="Work"
-        unit="kJ"
-        value={<MetricValue metric={metrics.power.work_kj} />}
-      />
-
-      <Stat
-        label="Avg HR"
-        unit="bpm"
-        value={<MetricValue metric={metrics.heart_rate.average_hr} />}
-        note={
-          <>
-            max <MetricValue metric={metrics.heart_rate.max_hr} />
-          </>
-        }
-      />
-
-      <div className="col-span-2 flex min-w-0 flex-col gap-1.5 sm:col-span-4 xl:col-span-1">
-        <SectionLabel>Time in zone</SectionLabel>
-        <ZoneBar
-          distribution={metrics.time_in_zone.power}
-          fallback={metrics.time_in_zone.hr}
+      <StatRow>
+        <Stat
+          label="Duration"
+          value={<Duration metrics={metrics} />}
+          note={
+            plannedDurationS === undefined
+              ? durationBasis(metrics)
+              : `plan ${formatDurationClock(plannedDurationS)}`
+          }
         />
-      </div>
+
+        <Stat
+          label="NP"
+          unit="W"
+          value={<MetricValue metric={metrics.power.normalized_power} />}
+          note={
+            <>
+              avg <MetricValue metric={metrics.power.average_power} /> W
+            </>
+          }
+        />
+
+        <Stat
+          label="IF"
+          value={
+            <MetricValue
+              metric={metrics.power.intensity_factor}
+              format={(value) => value.toFixed(2)}
+            />
+          }
+          note={
+            ftp ? (
+              <>
+                FTP {ftp.value.toFixed(0)}
+                {ftp.ci_low !== null && ftp.ci_high !== null
+                  ? ` ±${Math.round((ftp.ci_high - ftp.ci_low) / 2)}`
+                  : ""}{" "}
+                · <ProvenanceMark provenance={ftp.provenance} />
+              </>
+            ) : (
+              "no FTP in force"
+            )
+          }
+        />
+
+        <Stat
+          label="Load"
+          // TSS is the *power* model's scale; the heart-rate model's is HRSS.
+          // Both are calibrated so an hour at threshold is 100, so an
+          // HRSS value stamped "TSS" looks entirely plausible — which is
+          // exactly why it has to be labelled by its basis.
+          unit={load.load_basis ? LOAD_BASIS_UNITS[load.load_basis] : undefined}
+          value={
+            load.not_assessed ? (
+              <NotAssessed reason={load.not_assessed} />
+            ) : (
+              <Explained explanation={load.explanation ?? null}>
+                {Math.round(load.training_load ?? 0)}
+              </Explained>
+            )
+          }
+          note={
+            load.load_basis
+              ? `from ${LOAD_BASIS_LABELS[load.load_basis]}${
+                  plannedLoad === undefined
+                    ? ""
+                    : ` · plan ${Math.round(plannedLoad)}`
+                }`
+              : undefined
+          }
+        />
+
+        <Stat
+          label="Work"
+          unit="kJ"
+          value={<MetricValue metric={metrics.power.work_kj} />}
+          note={
+            <>
+              above FTP <MetricValue metric={metrics.power.work_above_ftp_kj} />{" "}
+              kJ
+            </>
+          }
+        />
+
+        <Stat
+          label="Avg HR"
+          unit="bpm"
+          value={<MetricValue metric={metrics.heart_rate.average_hr} />}
+          note={
+            <>
+              max <MetricValue metric={metrics.heart_rate.max_hr} /> · EF{" "}
+              <MetricValue
+                metric={metrics.heart_rate.efficiency_factor}
+                format={(value) => value.toFixed(2)}
+              />
+            </>
+          }
+        />
+
+        <div className="col-span-2 flex min-w-0 flex-col gap-1.5 sm:col-span-4 xl:col-span-1">
+          <SectionLabel>Time in zone</SectionLabel>
+          <ZoneBar
+            distribution={metrics.time_in_zone.power}
+            fallback={metrics.time_in_zone.hr}
+          />
+        </div>
+      </StatRow>
+
+      <StatRow className="border-hairline border-t pt-3.5">
+        <Stat
+          label="Distance"
+          unit="km"
+          value={
+            <MetricValue
+              metric={metrics.speed?.distance_km}
+              format={(value) => value.toFixed(1)}
+            />
+          }
+          note="from the speed channel"
+        />
+
+        <Stat
+          label="Avg speed"
+          unit="km/h"
+          value={
+            <MetricValue
+              metric={metrics.speed?.average_speed_kmh}
+              format={(value) => value.toFixed(1)}
+            />
+          }
+          note={
+            <>
+              max{" "}
+              <MetricValue
+                metric={metrics.speed?.max_speed_kmh}
+                format={(value) => value.toFixed(1)}
+              />
+            </>
+          }
+        />
+
+        <Stat
+          label="Climbing"
+          unit="m"
+          value={<MetricValue metric={metrics.elevation_gain_m} />}
+          note="rises under 2 m are barometric noise"
+        />
+
+        <Stat
+          label="VI"
+          value={
+            <MetricValue
+              metric={metrics.power.variability_index}
+              format={(value) => value.toFixed(2)}
+            />
+          }
+          note="NP ÷ average power"
+        />
+
+        <Stat
+          label="Cadence"
+          unit="rpm"
+          value={<MetricValue metric={metrics.cadence.average_cadence} />}
+          note={
+            <>
+              max <MetricValue metric={metrics.cadence.max_cadence} />
+            </>
+          }
+        />
+
+        {/* Standing still and freewheeling are different facts and sit side by
+            side on purpose: one is time the ride was not moving, the other is
+            time the legs were not — and only the first is what makes a
+            90-minute ride take two hours. */}
+        <Stat
+          label="Stopped"
+          value={
+            <MetricValue
+              metric={metrics.stopped_time_s}
+              format={formatDurationClock}
+            />
+          }
+          note={
+            <>
+              coasting{" "}
+              <MetricValue
+                metric={metrics.power.coasting_time_s}
+                format={formatDurationClock}
+              />
+            </>
+          }
+        />
+
+        <Stat
+          label="Temperature"
+          unit="°C"
+          value={<MetricValue metric={metrics.temperature?.average_temp_c} />}
+          note={
+            <>
+              <MetricValue metric={metrics.temperature?.min_temp_c} /> –{" "}
+              <MetricValue metric={metrics.temperature?.max_temp_c} />
+            </>
+          }
+        />
+      </StatRow>
 
       {counterfactual ? (
-        <p className="col-span-2 border-hairline border-t pt-3 text-ink-muted text-sm sm:col-span-4 xl:col-span-7">
+        <p className="border-hairline border-t pt-3 text-ink-muted text-sm">
           Load {Math.round(load.training_load ?? 0)}, from{" "}
           {load.load_basis ? LOAD_BASIS_LABELS[load.load_basis] : "—"}.{" "}
           {counterfactual}
         </p>
       ) : null}
     </Panel>
+  );
+}
+
+/**
+ * One row of stat slots, laid out identically to every other row.
+ *
+ * Seven columns at the widest, so the two rows' slots line up vertically and
+ * a returning eye finds "avg speed" under "NP" every time (UI convention 4).
+ */
+function StatRow({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4 xl:grid-cols-7",
+        className,
+      )}
+    >
+      {children}
+    </div>
   );
 }
 

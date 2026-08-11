@@ -3770,6 +3770,8 @@ export interface components {
       discipline: components["schemas"]["SessionDiscipline"];
       /** Discipline Overridden */
       discipline_overridden: boolean;
+      /** Distance Km */
+      distance_km?: number | null;
       /** Duration S */
       duration_s: number;
       /**
@@ -3871,7 +3873,10 @@ export interface components {
       recompute_reason: string | null;
       /** Recording Time S */
       recording_time_s: number;
+      speed?: components["schemas"]["SpeedMetricsRead"];
+      stopped_time_s?: components["schemas"]["MetricRead"];
       strength: components["schemas"]["StrengthRead"];
+      temperature?: components["schemas"]["TemperatureMetricsRead"];
       time_in_zone: components["schemas"]["TimeInZoneBlockRead"];
       /** Version */
       version: number;
@@ -3890,6 +3895,8 @@ export interface components {
       discipline: components["schemas"]["SessionDiscipline"];
       /** Discipline Overridden */
       discipline_overridden: boolean;
+      /** Distance Km */
+      distance_km?: number | null;
       /** Duration S */
       duration_s: number;
       /**
@@ -4083,6 +4090,19 @@ export interface components {
      */
     Sex: "female" | "male" | "unspecified";
     /**
+     * SpeedMetricsRead
+     * @description Distance and speed, in km and km/h.
+     *
+     *     Every field defaults to the "recompute me" reason so that an artefact
+     *     written before these numbers existed still validates and still renders in
+     *     its slot; see :func:`predates`.
+     */
+    SpeedMetricsRead: {
+      average_speed_kmh?: components["schemas"]["MetricRead"];
+      distance_km?: components["schemas"]["MetricRead"];
+      max_speed_kmh?: components["schemas"]["MetricRead"];
+    };
+    /**
      * StalenessState
      * @description How much an anchor version is still to be trusted.
      *
@@ -4255,6 +4275,15 @@ export interface components {
       discipline: "strength";
       /** Groups */
       groups: components["schemas"]["StrengthGroupSchema"][];
+    };
+    /**
+     * TemperatureMetricsRead
+     * @description What the device's own sensor read, in degrees Celsius.
+     */
+    TemperatureMetricsRead: {
+      average_temp_c?: components["schemas"]["MetricRead"];
+      max_temp_c?: components["schemas"]["MetricRead"];
+      min_temp_c?: components["schemas"]["MetricRead"];
     };
     /**
      * TimeInBandSchema

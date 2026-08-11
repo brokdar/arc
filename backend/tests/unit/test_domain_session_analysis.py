@@ -27,6 +27,7 @@ from app.domain.anchors import (
 )
 from app.domain.athlete import Sex
 from app.domain.metrics import (
+    MS_TO_KMH,
     LoadBasis,
     Measured,
     NotAssessed,
@@ -72,6 +73,8 @@ ANCHORS = {
 #: A 20-minute ride: 10 min at 150 W / 130 bpm, 10 min at 260 W / 168 bpm.
 WATTS: Sequence[float | None] = [150.0] * 600 + [260.0] * 600
 BEATS: Sequence[float | None] = [130.0] * 600 + [168.0] * 600
+#: 9 m/s for 1 150 s, then 50 s at a standstill — the ride's `moving_time_s`.
+SPEED: Sequence[float | None] = [9.0] * 1_150 + [0.0] * 50
 
 
 def ride(**overrides: Any) -> SessionInputs:
@@ -85,10 +88,15 @@ def ride(**overrides: Any) -> SessionInputs:
             StreamChannel.POWER: tuple(WATTS),
             StreamChannel.HR: tuple(BEATS),
             StreamChannel.CADENCE: tuple([88.0] * 1_200),
-            StreamChannel.SPEED: tuple([9.0] * 1_200),
+            # 1 150 rows travelling and 50 standing at a light, which is
+            # exactly the moving time above: a fixture whose speed column and
+            # whose moving time disagree cannot check an average taken over
+            # one against a distance integrated from the other (D194).
+            StreamChannel.SPEED: tuple(SPEED),
             StreamChannel.ELEVATION: tuple(
                 [100.0 + index / 10 for index in range(1_200)]
             ),
+            StreamChannel.TEMP: tuple([14.0] * 600 + [20.0] * 600),
         },
         "sex": Sex.MALE,
         "anchors": dict(ANCHORS),
@@ -213,6 +221,97 @@ def test_a_manual_strength_session_reports_volume_and_nothing_it_cannot() -> Non
     assert analysis.strength.sets_completed == 4
     assert isinstance(analysis.load, NotAssessed)
     assert analysis.intervals == ()
+
+
+def test_the_averages_use_moving_time_and_the_load_does_not() -> None:
+    """D194's split, stated as the one thing that could silently be wrong.
+
+    Two rides identical but for how much of them was spent moving: the average
+    power differs (it is divided by moving time) and the training load does
+    not (its duration term is still recording time, A5.1). If a later change
+    routes the load through the averaging basis, this fails.
+    """
+    riding = analyse_session(ride(moving_time_s=1_150.0))
+    stopping = analyse_session(ride(moving_time_s=575.0))
+
+    assert isinstance(riding.power.average_power, Measured)
+    assert isinstance(stopping.power.average_power, Measured)
+    assert isinstance(riding.load, SelectedLoad)
+    assert isinstance(stopping.load, SelectedLoad)
+    joules = sum(value for value in WATTS if value is not None)
+    assert riding.power.average_power.value == pytest.approx(joules / 1_150)
+    assert stopping.power.average_power.value == pytest.approx(joules / 575)
+    assert riding.load.training_load == pytest.approx(stopping.load.training_load)
+    # And the number says which clock it was divided by, both ways round.
+    assert "moving time" in riding.power.average_power.explanation.formula
+
+
+def test_a_ride_with_no_speed_channel_averages_over_recording_time() -> None:
+    """The fallback, and what it refuses to invent.
+
+    An indoor session records no speed, so there is no moving time to divide
+    by and no distance to report — but there is still an average power, over
+    the recording time that does exist, and it says so.
+    """
+    indoor = analyse_session(
+        ride(
+            moving_time_s=0.0,
+            columns={
+                StreamChannel.POWER: tuple(WATTS),
+                StreamChannel.HR: tuple(BEATS),
+            },
+        )
+    )
+
+    assert isinstance(indoor.power.average_power, Measured)
+    joules = sum(value for value in WATTS if value is not None)
+    assert indoor.power.average_power.value == pytest.approx(joules / 1_200)
+    assert "recording time" in indoor.power.average_power.explanation.formula
+    assert isinstance(indoor.speed.distance_km, NotAssessed)
+    assert isinstance(indoor.speed.average_speed_kmh, NotAssessed)
+    # And stopped time is refused rather than claimed to be the whole ride.
+    assert isinstance(indoor.stopped_time_s, NotAssessed)
+
+
+def test_the_ride_log_basics_come_off_the_speed_channel() -> None:
+    analysis = analyse_session(ride())
+
+    assert isinstance(analysis.speed.distance_km, Measured)
+    assert isinstance(analysis.speed.average_speed_kmh, Measured)
+    assert isinstance(analysis.speed.max_speed_kmh, Measured)
+    # 1 150 s at 9 m/s is 10.35 km; over the same 1 150 s of moving time that
+    # is 32.4 km/h, which at a constant speed is also the maximum.
+    assert analysis.speed.distance_km.value == pytest.approx(10.35)
+    assert analysis.speed.average_speed_kmh.value == pytest.approx(9.0 * MS_TO_KMH)
+    assert analysis.speed.max_speed_kmh.value == pytest.approx(9.0 * MS_TO_KMH)
+
+
+def test_stopped_time_is_the_ride_minus_the_riding() -> None:
+    # Elapsed 1 260, moving 1 150: 110 s standing, of which the device paused
+    # for 60 (1 260 − 1 200 of recording time) and kept recording through 50.
+    analysis = analyse_session(ride())
+
+    assert isinstance(analysis.stopped_time_s, Measured)
+    assert analysis.stopped_time_s.value == pytest.approx(110.0)
+
+
+def test_temperature_reports_the_range_and_not_just_the_mean() -> None:
+    analysis = analyse_session(ride())
+
+    assert isinstance(analysis.temperature.average_temp_c, Measured)
+    assert isinstance(analysis.temperature.min_temp_c, Measured)
+    assert isinstance(analysis.temperature.max_temp_c, Measured)
+    assert analysis.temperature.average_temp_c.value == pytest.approx(17.0)
+    assert analysis.temperature.min_temp_c.value == pytest.approx(14.0)
+    assert analysis.temperature.max_temp_c.value == pytest.approx(20.0)
+
+
+def test_a_ride_with_no_thermometer_says_so() -> None:
+    analysis = analyse_session(ride(columns={StreamChannel.POWER: tuple(WATTS)}))
+
+    assert analysis.temperature.average_temp_c == NotAssessed(
+        "no temperature was recorded"
+    )
 
 
 def test_a_ride_never_reports_a_strength_volume() -> None:

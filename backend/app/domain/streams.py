@@ -99,7 +99,10 @@ FILL_RULE: Mapping[StreamChannel, FillRule] = MappingProxyType(
 GAP_THRESHOLD_S = 30
 
 #: Speed at or above which the athlete counts as moving, in m/s (1 km/h).
-#: Display only — load uses recording time, never moving time (A5.1).
+#: The line between moving time and standing still: every *average* in the
+#: metric set is divided by the moving time this defines (D194), while training
+#: load's duration term stays recording time (A5.1). Two different questions,
+#: two different denominators, and this constant separates them.
 MOVING_SPEED_MS = 1000 / 3600
 
 #: Per-channel plausible range, inclusive on both ends. Power, heart rate and
@@ -275,8 +278,9 @@ class ResampleResult:
             one-number answer to "how irregular was this file", which is the
             first thing worth knowing when a derived value looks wrong.
         moving_time_s: Time spent at or above :data:`MOVING_SPEED_MS`, counting
-            only samples whose speed is inside :data:`PLAUSIBLE_RANGE`.
-            Display only.
+            only samples whose speed is inside :data:`PLAUSIBLE_RANGE`. The
+            basis every average in the metric set is taken over (D194); never
+            the load's duration term.
     """
 
     frame: StreamFrame

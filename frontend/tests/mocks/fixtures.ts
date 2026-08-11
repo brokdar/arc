@@ -1313,6 +1313,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       // opens cannot disagree.
       load: RIDE_METRICS.load.training_load ?? null,
       load_basis: RIDE_METRICS.load.load_basis ?? null,
+      distance_km: RIDE_METRICS.speed?.distance_km?.value ?? null,
       metrics: RIDE_METRICS,
       recordings: [OUTDOOR_RECORDING],
       logged_sets: [],

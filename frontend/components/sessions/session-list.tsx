@@ -45,7 +45,7 @@ const PAGE = 25;
  * left on the day it arrives.
  */
 const COLUMNS =
-  "grid grid-cols-[92px_minmax(96px,1fr)_72px_72px_76px_96px] items-center gap-3";
+  "grid grid-cols-[92px_minmax(96px,1fr)_72px_76px_72px_76px_96px] items-center gap-3";
 
 /**
  * The session log: what actually happened, newest first.
@@ -133,6 +133,7 @@ export function SessionList() {
               <SectionLabel>Date</SectionLabel>
               <SectionLabel>Discipline</SectionLabel>
               <SectionLabel>Duration</SectionLabel>
+              <SectionLabel>Distance</SectionLabel>
               <SectionLabel>Load</SectionLabel>
               <SectionLabel>Source</SectionLabel>
               <SectionLabel>Plan</SectionLabel>
@@ -214,6 +215,10 @@ export function SessionRow({ session, load }: SessionRowProps) {
         {formatDurationHm(session.duration_s)}
       </span>
 
+      <span className="font-mono text-ink text-sm">
+        <SessionDistance session={session} />
+      </span>
+
       <span className="font-mono text-sm">
         {load ?? <SessionLoad session={session} />}
       </span>
@@ -224,6 +229,28 @@ export function SessionRow({ session, load }: SessionRowProps) {
 
       <MatchBadge status={session.status} link={session.match} />
     </Link>
+  );
+}
+
+/**
+ * The distance column: how far the ride went, or why the row cannot say.
+ *
+ * A slot like every other one — a strength session and a ride whose head unit
+ * carried no speed sensor both keep their place in the grid and give the
+ * reason, because a column that disappeared on some rows is a column the eye
+ * has to re-find on every page (UI convention 4).
+ */
+function SessionDistance({ session }: { session: SessionListItem }) {
+  if (session.distance_km === null || session.distance_km === undefined) {
+    return (
+      <NotAssessed reason="No distance: this session recorded no speed, or nothing has been computed for it yet" />
+    );
+  }
+  return (
+    <span className="flex items-baseline gap-1">
+      {session.distance_km.toFixed(1)}
+      <span className="text-2xs text-ink-faint">km</span>
+    </span>
   );
 }
 
