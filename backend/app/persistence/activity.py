@@ -36,6 +36,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    delete,
     func,
     select,
 )
@@ -438,6 +439,18 @@ class RecordingRepository:
         )
         return list(result.scalars())
 
+    async def all(self) -> Sequence[RecordingRow]:
+        """Every recording there is, oldest first.
+
+        For the maintenance paths that walk the whole store — rebuilding the
+        stream files from the originals, above all — where "every recording"
+        is the unit of work and there is no session to start from.
+        """
+        result = await self._session.execute(
+            select(RecordingRow).order_by(RecordingRow.created_at.asc())
+        )
+        return list(result.scalars())
+
     async def add(self, row: RecordingRow) -> RecordingRow:
         """Persist a recording and refresh generated fields.
 
@@ -451,6 +464,25 @@ class RecordingRepository:
 
     async def add_anomalies(self, rows: Sequence[StreamAnomalyRow]) -> None:
         """Append anomaly rows for a recording."""
+        self._session.add_all(rows)
+        await flush(self._session)
+
+    async def replace_anomalies(
+        self, recording_id: uuid.UUID, rows: Sequence[StreamAnomalyRow]
+    ) -> None:
+        """Swap one recording's anomalies for a freshly derived set.
+
+        Delete-then-insert rather than a merge, because anomalies are not
+        records of *events* — they are a derived description of one stream
+        file, and a rebuilt file's repairs are the whole truth about it.
+        Keeping the old rows beside the new ones would leave the chart marking
+        regions of a column that no longer exists.
+        """
+        await self._session.execute(
+            delete(StreamAnomalyRow).where(
+                StreamAnomalyRow.recording_id == recording_id
+            )
+        )
         self._session.add_all(rows)
         await flush(self._session)
 
