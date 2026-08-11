@@ -257,6 +257,18 @@ export function parseNumberInput(text: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * An anchor value as it is written: `250`, `162.5` — never `249.99999999`.
+ *
+ * A tenth is the whole resolution of the quantity (nobody tests to a
+ * hundredth of a watt), and the rounding is the point: an anchor's absolute
+ * bounds are floats computed from a percentage, and printing one raw puts
+ * binary-float noise on the screen next to a number that was measured.
+ */
+export function formatAnchorValue(value: number): string {
+  return String(Math.round(value * 10) / 10);
+}
+
 /** A fraction (`0.75`) as a whole-number percentage (`75%`). */
 export function formatPercent(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;

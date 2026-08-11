@@ -46,13 +46,31 @@ export function apiErrorMessages(error: unknown): string[] {
  */
 export const HTTP_STATUS = Symbol.for("arc.api.httpStatus");
 
-/** Whether a failure was the session guard's 401 rather than anything else. */
-export function isUnauthorized(error: unknown): boolean {
+/** Whether a failure body carries the status it was tagged with. */
+function hasStatus(error: unknown, status: number): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
-    (error as Record<symbol, unknown>)[HTTP_STATUS] === 401
+    (error as Record<symbol, unknown>)[HTTP_STATUS] === status
   );
+}
+
+/** Whether a failure was the session guard's 401 rather than anything else. */
+export function isUnauthorized(error: unknown): boolean {
+  return hasStatus(error, 401);
+}
+
+/**
+ * Whether a failure was a 404 — the thing is *absent*, not out of reach.
+ *
+ * An absence is a state a page draws, not an error it prints. "No FTP anchor
+ * is in force" and "the API is down" arrive at a component as the same thrown
+ * body, and only the first one has a remedy the athlete can act on — the empty
+ * state that names the missing input and the control that supplies it
+ * (UI convention 3).
+ */
+export function isNotFound(error: unknown): boolean {
+  return hasStatus(error, 404);
 }
 
 /**
@@ -66,11 +84,7 @@ export function isUnauthorized(error: unknown): boolean {
  * state the page has to draw rather than an error it can print and forget.
  */
 export function isConflict(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as Record<symbol, unknown>)[HTTP_STATUS] === 409
-  );
+  return hasStatus(error, 409);
 }
 
 /**

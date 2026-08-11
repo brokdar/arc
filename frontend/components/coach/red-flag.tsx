@@ -200,6 +200,10 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
   ];
 
   function save() {
+    // Same reason as the two forms on the settings page: react-query keeps the
+    // last refusal until the next `mutate()`, so returning early below would
+    // show it beside the fresh complaint.
+    update.reset();
     if (active && severity === "") {
       setProblem(
         "Say how bad it is. The guardrail refuses proposals by severity, so a flag with none is a flag it cannot act on.",

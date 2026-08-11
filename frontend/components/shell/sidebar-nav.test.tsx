@@ -64,6 +64,7 @@ describe("SidebarNav", () => {
       ["Inbox", "/inbox"],
       ["Workouts", "/workouts"],
       ["Proposals", "/proposals"],
+      ["Settings", "/settings"],
     ] as const) {
       expect(
         screen.getByRole("link", { name: new RegExp(`^${label}`) }),
@@ -158,8 +159,8 @@ describe("the count of what is waiting", () => {
 describe("a section whose page has not landed", () => {
   const unready = NAV_ITEMS.filter((item) => !item.ready);
 
-  it("previews two of them", () => {
-    expect(unready.map((item) => item.label)).toEqual(["Analysis", "Settings"]);
+  it("previews the one section that has not landed", () => {
+    expect(unready.map((item) => item.label)).toEqual(["Analysis"]);
   });
 
   it.each(unready)("renders $label dimmed and inert", (item) => {

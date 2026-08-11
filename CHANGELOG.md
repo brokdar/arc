@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Settings — the anchors page (D193)
+
+The anchors API has been complete since WP-1 with no screen behind it: until
+now the athlete could not enter an FTP through the UI at all. `/settings` is
+that screen, and the Settings nav row is live.
+
+- **In force now** — every writable anchor (FTP, LTHR, max HR, resting HR) with
+  its value, provenance, effective date, confidence interval and protocol, in
+  fixed slots. One that has never been entered keeps its place and carries the
+  button that fills it.
+- **Append a version** — anchor, value, provenance, protocol (required in front
+  of the athlete when the provenance is `tested`), an effective date that
+  defaults to today and may be back-dated, and optional CI bounds. Everything
+  else the domain refuses is printed as the sentence the service sent.
+- **History** — every version ever appended, newest first, filtered through the
+  API's own `anchor_type` parameter and paged. A version dated ahead of today
+  is marked "not in force yet" (D195), so the row that sorts to the top never
+  reads as the current value. There is no edit and no delete anywhere: the API
+  answers 405 by design, and the page says so.
+- **Zones in force** — the Coggan 7 power zones and the 5-zone heart-rate
+  scheme, computed by the API from the anchors in force and never in the
+  client; when there is no anchor, the panel names the one it is waiting for.
+- **Profile and illness** — name, date of birth, sex and height, and the
+  illness/injury flag, which mounts Today's control rather than a second form.
+  A failed background refetch keeps the fields — and whatever was typed into
+  them — and says the values are the ones that last loaded.
+
+The session log and the proposal inbox page through the same `Pager` the anchor
+history and the ingest queue use: one range, one pair of buttons named for what
+they page, and each page's filter on the same line as its range.
+
 ### WP-8 — agent layer: MCP tools, proposals, guardrails
 
 The coaching agent can now act — through thirteen MCP tools that delegate to

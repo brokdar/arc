@@ -5,12 +5,15 @@ import { mondayOf, todayIsoDate } from "@/lib/dates";
 import {
   AGENT_NOW,
   alignmentRead,
-  anchorVersionFixture,
+  anchorHistory,
+  appendAnchorVersion,
   applyLinkStatuses,
   athleteRecord,
   contentHash,
+  currentAnchor,
   DETAILS,
   declarationRead,
+  defaultZoneModel,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
@@ -47,6 +50,8 @@ import {
   WORKOUTS,
   withMatch,
   workoutFixture,
+  zoneModelMatches,
+  zonesFixture,
 } from "@/tests/mocks/fixtures";
 
 /**
@@ -193,11 +198,66 @@ export const handlers = [
   http.get("/api/v1/purposes/{purpose}", ({ params, response }) =>
     response(200).json(purposeTemplateFixture(params.purpose)),
   ),
+  // --- WP-1: anchors and the zones derived from them ------------------------
+  //
+  // Stateful, like the ingest queue and for the same reason: an append that
+  // answered with a canned version could not fail when the form sends the
+  // wrong anchor type or drops the protocol off a tested value, and "the
+  // history now has the version I just entered, and it is the one in force"
+  // is the whole behaviour of the settings page. The refusals live in
+  // `appendAnchorVersion`, which applies the service's rules rather than
+  // guessing at them.
+  http.get("/api/v1/anchors", ({ query, response }) => {
+    const anchorType = query.get("anchor_type") as
+      | components["schemas"]["AnchorType"]
+      | null;
+    return response(200).json(
+      page(anchorHistory(anchorType), query.get("offset"), query.get("limit")),
+    );
+  }),
+  http.post("/api/v1/anchors", async ({ request, response }) => {
+    const result = appendAnchorVersion(await request.json());
+    return "detail" in result
+      ? response(422).json({ detail: result.detail })
+      : response(201).json(result.version);
+  }),
   http.get("/api/v1/anchors/current", ({ query, response }) => {
-    const anchorType = query.get("anchor_type");
-    return anchorType === "ftp" || anchorType === "lthr"
-      ? response(200).json(anchorVersionFixture(anchorType))
-      : response(404).json({ detail: "No max_hr version in force" });
+    const anchorType = query.get(
+      "anchor_type",
+    ) as components["schemas"]["AnchorType"];
+    const version = currentAnchor(anchorType);
+    return version
+      ? response(200).json(version)
+      : response(404).json({
+          detail: `No ${anchorType} anchor is in force; append one first`,
+        });
+  }),
+  http.get("/api/v1/zones", ({ query, response }) => {
+    const anchorType = query.get(
+      "anchor_type",
+    ) as components["schemas"]["AnchorType"];
+    const model =
+      (query.get("zone_model") as components["schemas"]["ZoneModel"] | null) ??
+      defaultZoneModel(anchorType);
+    // Two refusals the API makes and this has to make too: no model derives
+    // from `max_hr` at all, and asking for the power scheme off a heart rate
+    // produces plausible-looking nonsense, so the pairing is checked.
+    if (!model) {
+      return response(422).json({
+        detail: `no zone model derives from ${anchorType}`,
+      });
+    }
+    if (!zoneModelMatches(model, anchorType)) {
+      return response(422).json({
+        detail: `zone model ${model} does not derive from ${anchorType}`,
+      });
+    }
+    const version = currentAnchor(anchorType);
+    return version
+      ? response(200).json(zonesFixture(version, model))
+      : response(404).json({
+          detail: `No ${anchorType} anchor is in force; append one first`,
+        });
   }),
 
   // --- ingestion: the queue, the log, the upload ----------------------------

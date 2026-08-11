@@ -73,13 +73,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // (D181). The coach's other output — its notes on a session or a week — is
   // read where the thing it is about is, not in a section of its own.
   { href: "/proposals", label: "Proposals", icon: CoachIcon, ready: true },
-  {
-    href: "/settings",
-    label: "Settings",
-    icon: SettingsIcon,
-    ready: false,
-    arrives: "Settings arrive after the MVP work packages",
-  },
+  { href: "/settings", label: "Settings", icon: SettingsIcon, ready: true },
 ];
 
 export function SidebarNav() {

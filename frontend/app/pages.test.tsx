@@ -8,6 +8,7 @@ import AppLayout from "@/app/(app)/layout";
 import ProposalsPage from "@/app/(app)/proposals/page";
 import SessionPage from "@/app/(app)/sessions/[id]/page";
 import SessionsPage from "@/app/(app)/sessions/page";
+import SettingsPage from "@/app/(app)/settings/page";
 import TodayPage from "@/app/(app)/today/page";
 import WorkoutPage from "@/app/(app)/workouts/[id]/page";
 import WorkoutsPage from "@/app/(app)/workouts/page";
@@ -159,6 +160,18 @@ describe("route shells", () => {
 
     expect(
       await screen.findByRole("heading", { name: "Proposals", level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the settings page", async () => {
+    render(
+      <Providers>
+        <SettingsPage />
+      </Providers>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Settings", level: 1 }),
     ).toBeInTheDocument();
   });
 

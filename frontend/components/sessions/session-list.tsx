@@ -5,6 +5,7 @@ import type * as React from "react";
 import { useId, useState } from "react";
 
 import { NotAssessed } from "@/components/design/not-assessed";
+import { Pager } from "@/components/design/pager";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
@@ -74,20 +75,31 @@ export function SessionList() {
 
   const items = sessions.data?.items ?? [];
   const total = sessions.data?.total ?? 0;
-  const last = Math.min(offset + items.length, total);
 
   return (
     <>
       <Toolbar>
         <h1 className="font-semibold text-lg tracking-[-0.01em]">Sessions</h1>
         <span className="font-mono text-ink-muted text-sm">
-          {sessions.data
-            ? total === 0
-              ? "none yet"
-              : `${offset + 1}–${last} of ${total}`
-            : ""}
+          {sessions.data && total === 0 ? "none yet" : ""}
         </span>
-        <div className="ml-auto flex items-center gap-2.5">
+      </Toolbar>
+
+      <PageBody className="flex flex-col gap-3">
+        {/* The range, the two steps and the filter on one line, from the
+            shared pager — the log, the inbox queue and the anchor history all
+            page the same way, and three hand-rolled copies of
+            `Math.min(offset + items.length, total)` were three chances to get
+            the last page's range wrong. */}
+        <Pager
+          heading="Log"
+          subject="sessions"
+          offset={offset}
+          onPage={items.length}
+          total={total}
+          pageSize={PAGE}
+          onOffsetChange={setOffset}
+        >
           <label htmlFor={filterId} className="text-ink-muted text-xs">
             Discipline
           </label>
@@ -97,6 +109,8 @@ export function SessionList() {
             value={discipline}
             onChange={(event) => {
               setDiscipline(event.target.value as SessionDiscipline | "");
+              // Back to the first page: page three of "all" is not page three
+              // of "cycling".
               setOffset(0);
             }}
           >
@@ -109,10 +123,8 @@ export function SessionList() {
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        </div>
-      </Toolbar>
+        </Pager>
 
-      <PageBody className="flex flex-col gap-3">
         {sessions.isPending ? (
           <p className="text-ink-muted text-sm">Loading the log…</p>
         ) : sessions.error ? (
@@ -144,24 +156,6 @@ export function SessionList() {
                 </li>
               ))}
             </ul>
-            <div className="flex items-center justify-end gap-1.5">
-              <Button
-                size="xs"
-                variant="secondary"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - PAGE))}
-              >
-                Newer
-              </Button>
-              <Button
-                size="xs"
-                variant="secondary"
-                disabled={last >= total}
-                onClick={() => setOffset(offset + PAGE)}
-              >
-                Older
-              </Button>
-            </div>
           </>
         )}
       </PageBody>

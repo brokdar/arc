@@ -17,11 +17,16 @@
 	],
 	"postCreateCommand": "bash .devcontainer/startup.sh",
 	"forwardPorts": [
+		80,
 		8000,
 		5432,
 		3000
 	],
 	"portsAttributes": {
+		"80": {
+			"label": "arc (Caddy)",
+			"onAutoForward": "silent"
+		},
 		"8000": {
 			"label": "API Service",
 			"onAutoForward": "silent"

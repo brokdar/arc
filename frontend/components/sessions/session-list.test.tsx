@@ -194,21 +194,29 @@ describe("a log longer than one page", () => {
     renderList();
 
     expect(await screen.findByText("1–25 of 57")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Older" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Newer sessions" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Older sessions" }),
+    ).toBeEnabled();
 
-    await user.click(screen.getByRole("button", { name: "Older" }));
+    await user.click(screen.getByRole("button", { name: "Older sessions" }));
     expect(await screen.findByText("26–50 of 57")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Newer" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Newer sessions" }),
+    ).toBeEnabled();
 
     // The last page is short, and the range says how short rather than
     // running to the page size.
-    await user.click(screen.getByRole("button", { name: "Older" }));
+    await user.click(screen.getByRole("button", { name: "Older sessions" }));
     expect(await screen.findByText("51–57 of 57")).toBeInTheDocument();
     expect(screen.getAllByRole("link")).toHaveLength(7);
-    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Older sessions" }),
+    ).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Newer" }));
+    await user.click(screen.getByRole("button", { name: "Newer sessions" }));
     expect(await screen.findByText("26–50 of 57")).toBeInTheDocument();
 
     // Every step asked the server for its page: a pager that paged the rows
@@ -224,7 +232,7 @@ describe("a log longer than one page", () => {
     renderList();
     await screen.findByText("1–25 of 57");
 
-    await user.click(screen.getByRole("button", { name: "Older" }));
+    await user.click(screen.getByRole("button", { name: "Older sessions" }));
     await screen.findByText("26–50 of 57");
     await user.selectOptions(screen.getByLabelText("Discipline"), "cycling");
 
