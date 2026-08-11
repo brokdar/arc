@@ -41,7 +41,7 @@ from app.domain.session_analysis import (
     analysis_to_json,
     zone_model_of,
 )
-from app.domain.streams import MOVING_SPEED_MS, StreamChannel
+from app.domain.streams import StreamChannel
 
 #: Where the generated module lands.
 DESTINATION = (
@@ -204,21 +204,6 @@ def build_columns() -> dict[StreamChannel, tuple[float | None, ...]]:
     }
 
 
-def moving_time_s(speed: tuple[float | None, ...]) -> float:
-    """Seconds the synthetic ride spent travelling.
-
-    Counted off the emitted column rather than typed in, for the reason the
-    module docstring gives about every other number here: the fixture's average
-    speed is distance over *this*, so a hand-written moving time would make the
-    two disagree by exactly the traffic light. One second per row is the same
-    arithmetic `app.domain.streams.resample` does over a 1 Hz file, where every
-    inter-sample delta is one second.
-    """
-    return float(
-        sum(1 for value in speed if value is not None and value >= MOVING_SPEED_MS)
-    )
-
-
 def build() -> tuple[dict[str, Any], dict[str, Any]]:
     """Return ``(metrics, streams)`` as the API would serve them."""
     columns = build_columns()
@@ -233,7 +218,6 @@ def build() -> tuple[dict[str, Any], dict[str, Any]]:
             # makes the fixture's load agree with the duration beside it.
             recording_time_s=float(rows - stopped),
             elapsed_time_s=float(rows),
-            moving_time_s=moving_time_s(columns[StreamChannel.SPEED]),
             columns=columns,
             sex=Sex.MALE,
             anchors=anchors,

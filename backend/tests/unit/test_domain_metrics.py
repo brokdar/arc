@@ -190,9 +190,14 @@ def test_an_explanation_holds_what_the_ui_and_the_agent_both_read() -> None:
 # --- WP-5: the rest of the power chain (Appendix A.1) -------------------------
 
 
-def moving(seconds: float) -> AveragingBasis:
-    """The averaging basis of a session that recorded ``seconds`` of movement."""
-    basis = averaging_basis(seconds, seconds + 60)
+def riding(seconds: int, *, recording_time_s: float | None = None) -> AveragingBasis:
+    """The basis of a session whose speed column moved for ``seconds`` rows."""
+    basis = averaging_basis(
+        [9.0] * seconds,
+        recording_time_s=float(seconds)
+        if recording_time_s is None
+        else recording_time_s,
+    )
     assert isinstance(basis, AveragingBasis)
     return basis
 
@@ -200,35 +205,85 @@ def moving(seconds: float) -> AveragingBasis:
 def test_the_averaging_basis_is_moving_time_when_there_is_any() -> None:
     # D194: an average divides by the seconds the athlete was travelling,
     # which is what a head unit does and what every other platform reports.
-    basis = averaging_basis(1_150.0, 1_200.0)
+    # D196: counted off the cleaned column, one second per row, so it is the
+    # same series the numerators are integrated over.
+    basis = averaging_basis([9.0] * 1_150 + [0.0] * 50, recording_time_s=1_200.0)
 
     assert isinstance(basis, AveragingBasis)
     assert basis.seconds == pytest.approx(1_150.0)
     assert basis.from_moving_time
     assert basis.label == "moving time"
+    assert basis.rows == tuple(range(1_150))
 
 
 def test_the_averaging_basis_falls_back_to_recording_time_without_speed() -> None:
     # An indoor session with no speed channel has no moving time at all.
     # Refusing to average it would be a worse answer than averaging it over
     # the duration that does exist — but the fallback has to be visible.
-    basis = averaging_basis(0.0, 1_200.0)
+    basis = averaging_basis([], recording_time_s=1_200.0)
 
     assert isinstance(basis, AveragingBasis)
     assert basis.seconds == pytest.approx(1_200.0)
     assert not basis.from_moving_time
     assert basis.label == "recording time"
+    assert basis.rows is None
+    assert "no speed was recorded" in basis.assumption
+
+
+def test_a_speed_channel_that_covers_half_the_ride_is_refused_as_a_divisor() -> None:
+    """D196, the case that used to double an average power.
+
+    The sensor dies halfway through: the column that remains is perfectly
+    plausible — 1 800 real moving seconds — and dividing a whole hour's
+    readings by it would report twice the power the athlete produced. Under
+    `SPEED_COVERAGE_FLOOR` the basis refuses to be moving time at all, and
+    says which fraction of the ride it saw.
+    """
+    basis = averaging_basis([9.0] * 1_800 + [None] * 1_801, recording_time_s=3_600.0)
+
+    assert isinstance(basis, AveragingBasis)
+    assert not basis.from_moving_time
+    assert basis.seconds == pytest.approx(3_600.0)
+    assert "50%" in basis.assumption
+    # The observed moving seconds are still reported — they are a fact about
+    # the column — and so are the seconds it said nothing about.
+    assert basis.moving_s == pytest.approx(1_800.0)
+    assert basis.uncovered_s == pytest.approx(1_800.0)
+
+
+def test_the_coverage_floor_is_a_line_and_both_sides_of_it_are_pinned() -> None:
+    # 90 % of the recorded seconds is enough to divide by; 89 % is not. The
+    # boundary is asserted from both sides because a threshold nobody straddles
+    # in a test is a threshold that can silently move.
+    enough = averaging_basis([9.0] * 900 + [None] * 100, recording_time_s=1_000.0)
+    too_little = averaging_basis([9.0] * 890 + [None] * 110, recording_time_s=1_000.0)
+
+    assert isinstance(enough, AveragingBasis)
+    assert isinstance(too_little, AveragingBasis)
+    assert enough.from_moving_time
+    assert not too_little.from_moving_time
+
+
+def test_a_recording_that_never_moved_says_that_rather_than_no_speed() -> None:
+    # A trainer session with a speed channel reading zero is not a session
+    # with no speed channel, and telling the athlete it recorded no speed
+    # would send them looking for a sensor that worked perfectly.
+    basis = averaging_basis([0.0] * 600, recording_time_s=600.0)
+
+    assert isinstance(basis, AveragingBasis)
+    assert not basis.from_moving_time
+    assert "never reached 1 km/h" in basis.assumption
 
 
 def test_the_averaging_basis_of_a_session_with_no_duration_is_a_reason() -> None:
-    assert isinstance(averaging_basis(0.0, 0.0), NotAssessed)
+    assert isinstance(averaging_basis([], recording_time_s=0.0), NotAssessed)
 
 
 def test_average_power_is_work_over_moving_time_not_the_device_average() -> None:
     # 100 rows of 200 W over 200 s of moving time: half the ride was moving
     # without a power reading, so the average is 100 W, not 200. Rows with no
     # reading contribute no joules while still costing their second.
-    assessed = average_power([200.0] * 100 + [None] * 100, moving(200.0))
+    assessed = average_power([200.0] * 100 + [None] * 100, riding(200))
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(100.0)
@@ -237,11 +292,31 @@ def test_average_power_is_work_over_moving_time_not_the_device_average() -> None
     assert any("recording time" in note for note in assessed.explanation.assumptions)
 
 
+def test_average_power_sums_only_the_seconds_its_divisor_counted() -> None:
+    """D196's invariant, stated as arithmetic.
+
+    Half an hour at 200 W and half an hour at a red light, still pedalling at
+    200 W into the turbo of a trainer that reports speed. The average is 200 W
+    either way — but only because the 1 800 stopped seconds are absent from
+    *both* the sum and the divisor. Divide by moving time while summing every
+    row and it reads 400 W.
+    """
+    speed = [9.0] * 1_800 + [0.0] * 1_800
+    basis = averaging_basis(speed, recording_time_s=3_600.0)
+    assessed = average_power([200.0] * 3_600, basis)
+
+    assert isinstance(basis, AveragingBasis)
+    assert isinstance(assessed, Measured)
+    assert basis.seconds == pytest.approx(1_800.0)
+    assert assessed.value == pytest.approx(200.0)
+    assert "while moving" in assessed.explanation.formula
+
+
 def test_average_power_over_a_speedless_session_says_which_divisor_it_used() -> None:
     # 200 W for 100 rows, no speed channel: the divisor is the 400 s of
     # recording time, and the explanation says the number reads low because
     # of it rather than leaving the athlete to discover that.
-    basis = averaging_basis(0.0, 400.0)
+    basis = averaging_basis([], recording_time_s=400.0)
     assessed = average_power([200.0] * 100, basis)
 
     assert isinstance(assessed, Measured)
@@ -252,7 +327,7 @@ def test_average_power_over_a_speedless_session_says_which_divisor_it_used() -> 
 
 
 def test_average_power_without_power_names_the_missing_channel() -> None:
-    assert average_power([None] * 10, moving(10.0)) == NotAssessed(
+    assert average_power([None] * 10, riding(10)) == NotAssessed(
         "no power was recorded"
     )
 
@@ -261,7 +336,7 @@ def test_average_power_without_a_basis_carries_the_basis_reason() -> None:
     # One reason, not two: "no duration to average over" is the whole story,
     # and inventing a second sentence for it here would put two different
     # explanations of one fact on one page.
-    basis = averaging_basis(0.0, 0.0)
+    basis = averaging_basis([], recording_time_s=0.0)
 
     assert average_power([200.0] * 10, basis) == basis
 
@@ -283,16 +358,32 @@ def test_average_speed_is_distance_over_the_same_basis_as_average_power() -> Non
     # the session also lasted do not drag it down, which is the whole point
     # of averaging over moving time.
     ride = [10.0] * 600 + [0.0] * 600
-    assessed = average_speed_kmh(distance_km(ride), moving(600.0))
+    basis = averaging_basis(ride, recording_time_s=1_200.0)
+    assessed = average_speed_kmh(distance_km(ride), basis)
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(36.0)
 
 
+def test_average_speed_does_not_carry_the_load_duration_note() -> None:
+    # The note belongs to average power, which has a load beside it computed
+    # over a different duration. Average speed has no duration term in any
+    # load model, and telling a km/h figure that TSS uses recording time
+    # answers a question its reader did not ask.
+    ride = [10.0] * 600
+    assessed = average_speed_kmh(distance_km(ride), riding(600))
+    powered = average_power([200.0] * 600, riding(600))
+
+    assert isinstance(assessed, Measured)
+    assert isinstance(powered, Measured)
+    assert not any("TSS" in note for note in assessed.explanation.assumptions)
+    assert any("TSS" in note for note in powered.explanation.assumptions)
+
+
 def test_average_speed_propagates_the_reason_it_has_no_distance() -> None:
     absent = distance_km([None] * 10)
 
-    assert average_speed_kmh(absent, moving(100.0)) == absent
+    assert average_speed_kmh(absent, riding(100)) == absent
 
 
 def test_max_speed_is_reported_in_kilometres_per_hour() -> None:
@@ -305,20 +396,43 @@ def test_max_speed_is_reported_in_kilometres_per_hour() -> None:
 def test_stopped_time_is_elapsed_minus_moving() -> None:
     # A 3 600 s ride with 3 000 s of movement stood still for 600 s, of which
     # the head unit paused for 120 (3 600 − 3 480 of recording time).
+    basis = averaging_basis([9.0] * 3_000 + [0.0] * 480, recording_time_s=3_480.0)
     assessed = stopped_time_s(
-        elapsed_time_s=3_600.0, moving_time_s=3_000.0, recording_time_s=3_480.0
+        elapsed_time_s=3_600.0, recording_time_s=3_480.0, basis=basis
     )
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(600.0)
     assert "120 s" in assessed.explanation.inputs["of which the device paused for"]
+    # And the pause is named for what it might be: on a merged session
+    # (WP-6.5) the gap between two files is time the athlete may have spent
+    # anywhere, and nothing in the data says otherwise.
+    assert any("merged" in note for note in assessed.explanation.assumptions)
+
+
+def test_stopped_time_does_not_count_a_speed_dropout_as_standing_still() -> None:
+    # 60 s of the recording carry no speed reading at all. They are not
+    # standing still — nothing is known about them — so they come out of the
+    # subtraction rather than into the total.
+    basis = averaging_basis(
+        [9.0] * 3_000 + [0.0] * 480 + [None] * 60, recording_time_s=3_540.0
+    )
+    assessed = stopped_time_s(
+        elapsed_time_s=3_600.0, recording_time_s=3_540.0, basis=basis
+    )
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(540.0)  # 3 600 − 3 000 − 60
+    assert assessed.explanation.inputs["no speed reading"] == "60 s"
 
 
 def test_stopped_time_without_speed_is_not_a_whole_ride_at_a_standstill() -> None:
     # `elapsed − 0` would claim the athlete never moved. The reason names the
     # channel that is missing instead.
     assessed = stopped_time_s(
-        elapsed_time_s=3_600.0, moving_time_s=0.0, recording_time_s=3_600.0
+        elapsed_time_s=3_600.0,
+        recording_time_s=3_600.0,
+        basis=averaging_basis([], recording_time_s=3_600.0),
     )
 
     assert isinstance(assessed, NotAssessed)
@@ -357,10 +471,42 @@ def test_work_above_ftp_without_an_anchor_says_so() -> None:
 
 
 def test_variability_index_is_one_for_a_perfectly_steady_ride() -> None:
-    assessed = variability_index(200.0, 200.0)
+    steady = [200.0] * 3_600
+    assessed = variability_index(normalized_power(steady), steady)
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(1.0)
+
+
+def test_variability_index_stays_above_one_on_a_ride_full_of_traffic_lights() -> None:
+    """The ratio's definition, pinned against the case that broke it (D196).
+
+    An hour at a steady 200 W with twenty-four 25-second lights the head unit
+    recorded through: NP comes out around 184 W, and the *published* average
+    power — divided by the 3 000 s of moving time — comes out at 200 W. Taking
+    the ratio of those two gives 0.92, a variability index below the steady
+    ride's 1.0, for a ride that was strictly more ragged. Both terms have to
+    come off the same series.
+    """
+    watts: list[float | None] = []
+    for second in range(3_600):
+        light = 25 <= second % 150 < 50
+        watts.append(0.0 if light else 200.0)
+
+    assessed = variability_index(
+        normalized_power([value for value in watts if value is not None]), watts
+    )
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value >= 1.0
+    # And it is not the ratio against the moving-time average, which is what
+    # the header prints beside it.
+    moving_seconds = sum(1 for value in watts if value)
+    published = sum(value for value in watts if value is not None) / moving_seconds
+    assert published == pytest.approx(200.0)
+    assert assessed.value > (
+        normalized_power([value for value in watts if value is not None]) / published
+    )
 
 
 def test_efficiency_factor_is_watts_per_beat() -> None:
@@ -423,12 +569,17 @@ def test_no_metric_function_raises_on_an_empty_series() -> None:
     # The whole point of `NotAssessed`: a session with nothing in it produces
     # an artefact full of reasons, never an exception and never a NaN.
     for assessed in (
-        average_power([], moving(100.0)),
-        average_power([], averaging_basis(0.0, 0.0)),
+        average_power([], riding(100)),
+        average_power([], averaging_basis([], recording_time_s=0.0)),
         distance_km([]),
-        average_speed_kmh(distance_km([]), moving(100.0)),
+        average_speed_kmh(distance_km([]), riding(100)),
         max_speed_kmh([]),
-        stopped_time_s(elapsed_time_s=0.0, moving_time_s=0.0, recording_time_s=0.0),
+        variability_index(200.0, []),
+        stopped_time_s(
+            elapsed_time_s=0.0,
+            recording_time_s=0.0,
+            basis=averaging_basis([], recording_time_s=0.0),
+        ),
         channel_minimum("temperature", []),
         work_kj([]),
         work_above_ftp_kj([], ftp_anchor(200.0)),

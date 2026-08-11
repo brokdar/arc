@@ -19,6 +19,7 @@ from app.api.schemas.metrics import SessionMetricsRead
 from app.domain.activity import SessionDiscipline
 from app.domain.metrics import intensity_factor, normalized_power, training_load
 from app.domain.session_analysis import SessionInputs, analyse_session, analysis_to_json
+from app.domain.streams import MOVING_SPEED_MS
 from tests.unit.golden_fit import golden
 
 SESSIONS = "/api/v1/sessions"
@@ -192,22 +193,71 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
 async def test_average_power_is_divided_by_moving_time_not_recording_time(
     data_root: Path, client: AsyncClient
 ) -> None:
-    """D194, asserted against the two durations the same response carries."""
+    """D194 and D196, re-derived from the stream the same session serves.
+
+    Which divisor was used is half of it; the other half is that the sum above
+    the divisor covers **exactly** the seconds the divisor counted (D196). Both
+    are recomputed here from the cleaned speed and power columns the streams
+    endpoint returns — the same grid the artefact was computed over — so a
+    numerator and a denominator that came to describe different stretches of
+    the ride would show up here rather than in an athlete's support question.
+    """
     await full_anchor_set(client)
     session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
 
-    metrics = (await client.get(f"{SESSIONS}/{session_id}")).json()["metrics"]
+    session = (await client.get(f"{SESSIONS}/{session_id}")).json()
+    streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
+    metrics = session["metrics"]
+    columns = {channel["channel"]: channel["values"] for channel in streams["channels"]}
 
-    work_j = metrics["power"]["work_kj"]["value"] * 1000
-    assert metrics["moving_time_s"] < metrics["recording_time_s"]
+    moving = [
+        index
+        for index, value in enumerate(columns["speed"])
+        if value is not None and value >= MOVING_SPEED_MS
+    ]
+    joules = sum(
+        watts for index in moving if (watts := columns["power"][index]) is not None
+    )
+    assert moving
+    assert metrics["moving_time_s"] == pytest.approx(len(moving))
+    assert metrics["moving_time_s"] != metrics["recording_time_s"]
     assert metrics["power"]["average_power"]["value"] == pytest.approx(
-        work_j / metrics["moving_time_s"]
+        joules / len(moving)
     )
     # The load did not follow it: its duration term is still recording time.
     assert any(
         "recording time" in note
         for note in metrics["load"]["explanation"]["assumptions"]
     )
+
+
+async def test_the_variability_index_is_a_ratio_over_one_series(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """D196: VI cannot mix the moving-time average with an NP over every row.
+
+    Its two terms are statistics of the same recorded series, which is what
+    puts it at or above 1; the average power beside it on the page is a
+    different number over a different divisor, and the artefact says so.
+    """
+    await full_anchor_set(client)
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    metrics = (await client.get(f"{SESSIONS}/{session_id}")).json()["metrics"]
+    streams = (await client.get(f"{SESSIONS}/{session_id}/streams")).json()
+
+    [watts] = [
+        channel["values"]
+        for channel in streams["channels"]
+        if channel["channel"] == "power"
+    ]
+    recorded = [value for value in watts if value is not None]
+    power = metrics["power"]
+    assert power["variability_index"]["value"] >= 1.0
+    assert power["variability_index"]["value"] == pytest.approx(
+        power["normalized_power"]["value"] / (sum(recorded) / len(recorded))
+    )
+    assert "recorded rows" in power["variability_index"]["explanation"]["formula"]
 
 
 def test_an_artefact_written_before_these_numbers_holds_their_slots() -> None:
@@ -223,7 +273,6 @@ def test_an_artefact_written_before_these_numbers_holds_their_slots() -> None:
                 discipline=SessionDiscipline.CYCLING,
                 recording_time_s=0.0,
                 elapsed_time_s=0.0,
-                moving_time_s=0.0,
                 columns={},
             )
         )

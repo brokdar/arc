@@ -81,12 +81,16 @@ class PowerMetricsRead(BaseModel):
     """Everything derived from the power channel."""
 
     normalized_power: MetricRead
-    #: Total work over **moving time** (D194) — the basis a head unit averages
-    #: over, and *not* the duration the load was computed over. Its explanation
-    #: carries both facts; render it.
+    #: Work done **while moving**, over moving time (D194, D196) — the basis a
+    #: head unit averages over, summed across the same seconds it divides by,
+    #: and *not* the duration the load was computed over. Its explanation
+    #: carries all of that; render it.
     average_power: MetricRead
     max_power: MetricRead
     intensity_factor: MetricRead
+    #: NP over the mean of the **same recorded rows** (D196), never over the
+    #: moving-time average power above: two divisors would let the ratio fall
+    #: below 1, which no ride can do.
     variability_index: MetricRead
     work_kj: MetricRead
     work_above_ftp_kj: MetricRead
@@ -252,11 +256,16 @@ class SessionMetricsRead(BaseModel):
     #: computed over** (A4.4, A5.1).
     recording_time_s: float
     elapsed_time_s: float
-    #: Time at or above 1 km/h. The basis every *average* here is taken over
-    #: (D194), and never the load's duration term.
+    #: Rows of the cleaned speed column at or above 1 km/h, one second each
+    #: (D196). The basis every *average* here is taken over (D194) — and the
+    #: rows they are summed over — whenever the speed channel covered enough of
+    #: the ride to be one; where it did not, this still reports what the column
+    #: showed and each average's explanation names the recording time it fell
+    #: back to. Never the load's duration term.
     moving_time_s: float
-    #: Elapsed minus moving, derived server-side so a client never has to pick
-    #: which two durations to subtract.
+    #: Elapsed minus moving minus the seconds the speed channel had no reading
+    #: for, derived server-side so a client never has to pick which durations
+    #: to subtract — or mistake a sensor dropout for standing still.
     stopped_time_s: MetricRead = Field(default_factory=lambda: predates("stopped time"))
 
     power: PowerMetricsRead

@@ -333,7 +333,6 @@ def _strength_inputs(
         discipline=session_row.discipline,
         recording_time_s=0.0,
         elapsed_time_s=session_row.duration_s,
-        moving_time_s=0.0,
         columns={},
         sex=sex,
         anchors={anchor_type: version for anchor_type, (version, _) in anchors.items()},

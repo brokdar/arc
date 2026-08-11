@@ -22,14 +22,18 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
   stopped_time_s: {
     value: 85.0,
     explanation: {
-      formula: "stopped = elapsed time \u2212 moving time",
+      formula:
+        "stopped = elapsed time \u2212 moving time \u2212 seconds with no speed reading",
       inputs: {
         elapsed: "1200 s",
         moving: "1115 s",
+        "no speed reading": "0 s",
         "of which the device paused for": "60 s",
       },
       assumptions: [
         "counts every second below 1 km/h, whether or not the device stopped recording for it",
+        "a second the speed channel had no reading for is not counted as standing still \u2014 nothing is known about it",
+        "60 s of this is time the device was not recording at all: a pause, or \u2014 on a session merged from more than one file (WP-6.5) \u2014 the gap between them, which the athlete may not have spent beside the bike. Nothing in the data distinguishes them",
       ],
       citation: null,
     },
@@ -52,16 +56,18 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
       not_assessed: null,
     },
     average_power: {
-      value: 190.74840358744396,
+      value: 190.74840358744385,
       explanation: {
-        formula: "average power = \u03a3 P \u00d7 \u0394t / moving time",
+        formula:
+          "average power = \u03a3 P \u00d7 \u0394t while moving / moving time",
         inputs: {
-          work: "213 kJ over 1140 power samples",
-          "moving time": "1115 s of moving time (speed \u2265 1 km/h)",
+          "work while moving": "213 kJ over 1115 power samples",
+          "moving time":
+            "1115 rows of the cleaned speed column at or above 1 km/h",
         },
         assumptions: [
           "rows with no power reading contribute no work",
-          "divided by moving time, the seconds spent travelling \u2014 the same basis a head unit averages over",
+          "divided by moving time, the seconds spent travelling \u2014 the same basis a head unit averages over \u2014 and the sum above it runs over those same seconds, so a second missing from one is missing from both",
           "the training load's duration term is unaffected: TSS is still computed over recording time (A5.1), not over this basis",
         ],
         citation: "Allen & Coggan, Training and Racing with a Power Meter",
@@ -96,14 +102,16 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
       not_assessed: null,
     },
     variability_index: {
-      value: 1.2106925054012139,
+      value: 1.2378380772711963,
       explanation: {
-        formula: "variability index = NP / average power",
+        formula: "variability index = NP / mean power over the recorded rows",
         inputs: {
           NP: "231 W",
-          "average power": "191 W (work \u00f7 moving time)",
+          "mean power": "187 W over the 1140 recorded rows",
         },
-        assumptions: [],
+        assumptions: [
+          "both terms are taken over the same recorded rows, which is what keeps the ratio at or above 1 \u2014 it is deliberately not the average power shown beside it, which is divided by moving time (D194)",
+        ],
         citation: "Allen & Coggan, Training and Racing with a Power Meter",
       },
       not_assessed: null,
@@ -254,6 +262,8 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
         assumptions: [
           "integrated from the speed channel, not from the GPS track \u2014 it is the quantity a head unit's odometer counts",
           "rows with no speed reading contribute no distance",
+          "every reading counts, including the metres rolled below 1 km/h that moving time does not \u2014 a head unit's odometer counts those too",
+          "a reading the cleaner carried forward over a dropout (up to 29 s at the last good speed) contributes distance the wheel may not have turned; the repaired regions are listed on the stream itself",
         ],
         citation: null,
       },
@@ -265,11 +275,11 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
         formula: "average speed = distance / moving time",
         inputs: {
           distance: "10.04 km",
-          "moving time": "1115 s of moving time (speed \u2265 1 km/h)",
+          "moving time":
+            "1115 rows of the cleaned speed column at or above 1 km/h",
         },
         assumptions: [
-          "divided by moving time, the seconds spent travelling \u2014 the same basis a head unit averages over",
-          "the training load's duration term is unaffected: TSS is still computed over recording time (A5.1), not over this basis",
+          "divided by moving time, the seconds spent travelling \u2014 the same basis a head unit averages over \u2014 and the sum above it runs over those same seconds, so a second missing from one is missing from both",
         ],
         citation: null,
       },

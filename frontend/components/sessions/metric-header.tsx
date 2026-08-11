@@ -219,7 +219,11 @@ export function MetricHeader({
               format={(value) => value.toFixed(2)}
             />
           }
-          note="NP ÷ average power"
+          // Not "NP ÷ average power": since D196 the denominator is the mean
+          // over the *recorded* rows, not the moving-time average shown two
+          // slots to the left, and a VI that looked like a ratio of two
+          // numbers on the same screen would not divide into one of them.
+          note="NP ÷ mean power over the recorded rows"
         />
 
         <Stat

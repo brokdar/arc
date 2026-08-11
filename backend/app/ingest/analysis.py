@@ -176,20 +176,24 @@ class _Segment:
 
 @dataclass(frozen=True, slots=True)
 class _Durations:
-    """A4.4's three durations for a session, however many recordings it has.
+    """The durations a session's metrics are computed against (A4.4).
+
+    Moving time is deliberately **not** here (D196): the artefact derives it
+    from the cleaned speed column of the same joined grid the metrics run over,
+    so that the seconds an average is divided by and the seconds it is summed
+    over are one set. The recordings' own device-derived ``moving_time_s``
+    stays on the recording row, where it describes the file rather than the
+    artefact.
 
     Args:
         recording_time_s: Elapsed minus every stop — **the duration term in
             training load** (A5.1), summed across recordings.
         elapsed_time_s: The recording's own elapsed span, or the session's
             wall clock once more than one recording spans it.
-        moving_time_s: The basis the artefact's averages are taken over
-            (D194), summed across recordings; never a load input.
     """
 
     recording_time_s: float
     elapsed_time_s: float
-    moving_time_s: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,7 +355,6 @@ class SessionAnalyser:
                 discipline=session_row.discipline,
                 recording_time_s=durations.recording_time_s,
                 elapsed_time_s=durations.elapsed_time_s,
-                moving_time_s=durations.moving_time_s,
                 columns=columns,
                 sex=sex,
                 anchors={
@@ -396,7 +399,6 @@ class SessionAnalyser:
                 _Durations(
                     recording_time_s=0.0,
                     elapsed_time_s=session_row.duration_s,
-                    moving_time_s=0.0,
                 ),
                 {},
             )
@@ -428,7 +430,6 @@ class SessionAnalyser:
                     if len(session_row.recordings) == 1
                     else session_row.duration_s
                 ),
-                moving_time_s=sum(one.moving_time_s for one in recordings),
             ),
             columns,
         )

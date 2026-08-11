@@ -103,6 +103,14 @@ GAP_THRESHOLD_S = 30
 #: metric set is divided by the moving time this defines (D194), while training
 #: load's duration term stays recording time (A5.1). Two different questions,
 #: two different denominators, and this constant separates them.
+#:
+#: The same threshold is applied to two different series, on purpose and with
+#: one owner each: :func:`resample` counts it over the **raw device samples**
+#: for the recording row's own ``moving_time_s``, and
+#: `app.domain.metrics.averaging_basis` counts it over the **cleaned 1 Hz
+#: column** for the artefact's divisor (D196). The artefact uses the second
+#: because that is the series its numerators integrate; the two may differ by
+#: whatever the cleaner repaired, and that difference is not a defect.
 MOVING_SPEED_MS = 1000 / 3600
 
 #: Per-channel plausible range, inclusive on both ends. Power, heart rate and
@@ -278,9 +286,13 @@ class ResampleResult:
             one-number answer to "how irregular was this file", which is the
             first thing worth knowing when a derived value looks wrong.
         moving_time_s: Time spent at or above :data:`MOVING_SPEED_MS`, counting
-            only samples whose speed is inside :data:`PLAUSIBLE_RANGE`. The
-            basis every average in the metric set is taken over (D194); never
-            the load's duration term.
+            only samples whose speed is inside :data:`PLAUSIBLE_RANGE`. **The
+            recording's own number, describing the file** — the metric
+            artefact re-derives its divisor from the cleaned column instead
+            (D196, `app.domain.metrics.averaging_basis`), because a denominator
+            counted here and a numerator integrated there are two accounts of
+            one ride that nothing keeps in step. Never the load's duration
+            term either way.
     """
 
     frame: StreamFrame

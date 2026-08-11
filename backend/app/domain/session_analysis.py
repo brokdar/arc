@@ -84,6 +84,15 @@ ZONE_MODEL_CHANNEL: dict[ZoneModel, StreamChannel] = {
 class SessionInputs:
     """Everything the metric set is computed from. No I/O has touched it.
 
+    **Moving time is not an input** (D196). It used to be, counted off the raw
+    device samples by `app.domain.streams.resample` and passed through here
+    while every numerator integrated the cleaned columns — two derivations of
+    one ride that nothing kept in step, and a speed channel that dropped out
+    for half a ride made them disagree by half a ride. It is now derived from
+    ``columns[SPEED]`` by `app.domain.metrics.averaging_basis`, beside the rows
+    the averages are summed over. A caller cannot pass a divisor that disagrees
+    with the column, because a caller no longer passes one.
+
     Args:
         discipline: What the session was, which is what decides whether the
             power or the heart-rate load model is preferred (A5.2).
@@ -91,11 +100,6 @@ class SessionInputs:
             duration term in training load** (A5.1) — not moving time, not
             elapsed. Zero for a manual session, which has no recording.
         elapsed_time_s: Last sample minus first.
-        moving_time_s: Time at or above `app.domain.streams.MOVING_SPEED_MS`.
-            **The divisor of every average here** (D194) — average power,
-            average speed — and never a load input. Zero when no speed was
-            recorded, which is what makes the averages fall back to
-            ``recording_time_s`` and say so.
         columns: Channel -> that channel's cleaned (``_fixed``) column on the
             1 Hz grid. Absent channels are simply absent.
         sex: The athlete's sex; HRSS's coefficient depends on it.
@@ -107,7 +111,6 @@ class SessionInputs:
     discipline: SessionDiscipline
     recording_time_s: float
     elapsed_time_s: float
-    moving_time_s: float
     columns: dict[StreamChannel, tuple[float | None, ...]]
     sex: Sex = Sex.UNSPECIFIED
     anchors: dict[AnchorType, AnchorVersion] | None = None
@@ -201,10 +204,17 @@ class SessionAnalysis:
 
     recording_time_s: float
     elapsed_time_s: float
+    #: Rows of the **cleaned** speed column at or above 1 km/h, one second each
+    #: (D196). Exactly the divisor and exactly the row set every average here
+    #: was taken over, whenever the speed channel covered enough of the ride to
+    #: be one; where it did not, this still reports what the column showed and
+    #: the averages' own explanations name the recording time they fell back to.
     moving_time_s: float
-    #: Elapsed minus moving — every second at a standstill, whether or not the
-    #: device paused for it. Derived here so no client has to subtract two
-    #: durations and hope it picked the pair the server meant (D194).
+    #: Elapsed minus moving minus the seconds the speed channel said nothing
+    #: about — every second the athlete is *known* to have been standing,
+    #: whether or not the device paused for it. Derived here so no client has
+    #: to subtract two durations and hope it picked the pair the server meant
+    #: (D194, D196).
     stopped_time_s: Assessment
     power: PowerMetrics
     heart_rate: HeartRateMetrics
@@ -344,12 +354,13 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     present_watts = [value for value in power if value is not None]
     np_assessment = _normalized_power(power, present_watts)
     np_watts = value_of(np_assessment)
-    # One basis for every average in the artefact (D194), resolved once: two
-    # averages divided by two different clocks would not describe one ride.
-    basis = averaging_basis(inputs.moving_time_s, inputs.recording_time_s)
-    basis_label = basis.label if isinstance(basis, AveragingBasis) else "moving time"
+    # One basis for every average in the artefact (D194), resolved once from
+    # the cleaned speed column and the recording time (D196): two averages
+    # divided by two different clocks would not describe one ride, and a
+    # divisor counted off a different series from its numerator would not
+    # describe one either.
+    basis = averaging_basis(speed, recording_time_s=inputs.recording_time_s)
     average = average_power(power, basis)
-    average_watts = value_of(average)
     average_beats = channel_average("heart rate", heart_rate)
     distance = distance_km(speed)
 
@@ -365,20 +376,23 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     return SessionAnalysis(
         recording_time_s=inputs.recording_time_s,
         elapsed_time_s=inputs.elapsed_time_s,
-        moving_time_s=inputs.moving_time_s,
+        moving_time_s=basis.moving_s if isinstance(basis, AveragingBasis) else 0.0,
         stopped_time_s=stopped_time_s(
             elapsed_time_s=inputs.elapsed_time_s,
-            moving_time_s=inputs.moving_time_s,
             recording_time_s=inputs.recording_time_s,
+            basis=basis,
         ),
         power=PowerMetrics(
             normalized_power=np_assessment,
             average_power=average,
             max_power=channel_maximum("power", power),
             intensity_factor=factor,
+            # Over the recorded series, not over the published average power:
+            # NP and the mean it is divided by have to be two statistics of one
+            # series or the ratio is not a variability index at all (D196).
             variability_index=(
-                variability_index(np_watts, average_watts, basis_label=basis_label)
-                if np_watts is not None and average_watts is not None
+                variability_index(np_watts, power)
+                if np_watts is not None
                 else NotAssessed("no power was recorded")
             ),
             work_kj=work_kj(power),

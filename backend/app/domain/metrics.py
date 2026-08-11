@@ -44,6 +44,15 @@ uses makes a correct number read as a wrong one. The *load chain* is untouched:
 NP is still a rolling window over the recorded series and TSS's duration term
 is still `recording time` (A4.4, A5.1). The split is deliberate and each
 explanation says which side of it its number stands on.
+
+**And one series per ratio** (D196). The basis counts its own rows and hands
+them to :meth:`AveragingBasis.integrate`, so an average's numerator covers
+exactly the seconds its denominator did — the speed channel cannot dropout its
+way into doubling an average or into inventing a standstill. The one number
+that is a *ratio of two statistics* rather than a total over a duration, the
+variability index, takes both of them over the recorded series instead, because
+NP over one series divided by a mean over another is not a variability index
+and can fall below 1.
 """
 
 import math
@@ -264,10 +273,24 @@ LOAD_DURATION_NOTE = (
     "over recording time (A5.1), not over this basis"
 )
 
+#: How much of the recorded time the cleaned speed column has to cover before
+#: moving time may be a divisor at all (D196).
+#:
+#: The failure this line exists for is not proportional, so it cannot be
+#: absorbed by a wider assumption string. A speed sensor that dies halfway
+#: through a steady hour leaves a column that is perfectly plausible for the
+#: half it covers: 1 800 moving seconds, every one of them real. Dividing by it
+#: would double the average power of a ride nothing else about changed, and
+#: subtracting it from elapsed time would report the athlete as having stood
+#: still for thirty minutes they spent riding. Under this line the answer is
+#: not a smaller number, it is a different question — so the basis falls back
+#: to recording time and says so, and stopped time is refused outright.
+SPEED_COVERAGE_FLOOR = 0.9
+
 
 @dataclass(frozen=True, slots=True)
 class AveragingBasis:
-    """The denominator a ride's **averages** are divided by (D194).
+    """The denominator a ride's **averages** are divided by, and the seconds it counted.
 
     Moving time where the ride recorded speed: the seconds the athlete was
     actually travelling, at or above :data:`app.domain.streams.MOVING_SPEED_MS`.
@@ -276,12 +299,22 @@ class AveragingBasis:
     a divisor nobody else uses is reported as a bug about a number that is
     arithmetically fine.
 
+    **The basis carries its own rows** (D196), and that is the point of the
+    type rather than a convenience. Moving time used to be counted off the raw
+    device samples while every numerator integrated the cleaned 1 Hz column;
+    nothing tied the two together, so a speed channel that dropped out for half
+    a ride produced a numerator over 3 600 seconds above a denominator over
+    1 800. :meth:`integrate` closes that: a numerator is summed over **exactly**
+    the rows :attr:`seconds` counted, so the two cannot describe different
+    stretches of the ride however the speed channel behaves.
+
     Recording time is the **fallback**, not a second policy: an indoor session
     with no speed channel has no moving time to divide by, and refusing to
     report an average power for it would be a worse answer than reporting one
     over the duration that does exist. :attr:`from_moving_time` says which
-    happened, and every explanation built from this basis prints
-    :attr:`described`, so the two cases are never confused on screen.
+    happened, :attr:`assumption` says *why* in the athlete's words, and every
+    explanation built from this basis prints both, so the two cases are never
+    confused on screen.
 
     Args:
         seconds: The divisor. Always above zero.
@@ -289,32 +322,112 @@ class AveragingBasis:
         described: The same, with its number and its definition, for an input
             line.
         from_moving_time: Whether moving time supplied it.
+        assumption: The one sentence an average over this basis has to state —
+            what the divisor is and, when it is not moving time, what stopped
+            it from being.
+        rows: The grid rows this basis counted, or ``None`` for "every row",
+            which is what a recording-time basis means.
+        moving_s: Seconds the cleaned speed column reported travelling,
+            whichever basis was chosen. Equal to :attr:`seconds` exactly when
+            :attr:`from_moving_time`; reported anyway when the basis fell back,
+            because it is still a fact about the column.
+        uncovered_s: Recorded seconds the speed column had no reading for.
+            Neither moving nor standing still — nothing is known about them —
+            and :func:`stopped_time_s` is the one that must not pretend
+            otherwise.
     """
 
     seconds: float
     label: str
     described: str
     from_moving_time: bool
+    assumption: str
+    rows: tuple[int, ...] | None
+    moving_s: float
+    uncovered_s: float
+
+    def integrate(self, column: Sequence[float | None]) -> tuple[float, int]:
+        """Sum one column over exactly the rows this basis counted.
+
+        Returns:
+            ``(total, readings)`` — the sum of the column over this basis' own
+            rows and how many of them carried a reading. Rows with no reading
+            contribute nothing to the total while still costing their second in
+            :attr:`seconds`, which is what makes a channel's dropout read as a
+            lower average rather than as a shorter ride.
+        """
+        indices = range(len(column)) if self.rows is None else self.rows
+        total = 0.0
+        readings = 0
+        for index in indices:
+            if index < len(column) and (value := column[index]) is not None:
+                total += value
+                readings += 1
+        return total, readings
 
 
 def averaging_basis(
-    moving_time_s: float, recording_time_s: float
+    speed_fixed: Sequence[float | None], *, recording_time_s: float
 ) -> AveragingBasis | NotAssessed:
     """Pick the divisor for this session's averages, or say there is none.
+
+    Counted off the **cleaned speed column** — the same column every numerator
+    is integrated over — rather than off the raw device samples
+    (`app.domain.streams.ResampleResult.moving_time_s`, which remains the
+    recording's own device-derived number and is not what the artefact
+    averages by). One second per row at or above
+    :data:`app.domain.streams.MOVING_SPEED_MS`, which on the 1 Hz grid is the
+    same arithmetic and, unlike the raw count, cannot disagree with the
+    numerators about which seconds existed.
+
+    Moving time is refused when the column does not cover the ride: see
+    :data:`SPEED_COVERAGE_FLOOR` for the failure that line exists for.
+
+    One second per row is the same convention :func:`coasting_time_s` and
+    :func:`time_in_zone` count by, and it carries the grid's ``+1``: a frame
+    spans ``floor(elapsed) + 1`` rows, so a ride that never stopped moving can
+    report one second more moving time than recording time. That single second
+    is the last row's, and it is a real row of the ride.
+
+    Args:
+        speed_fixed: The cleaned speed column on the 1 Hz grid, in m/s. Empty
+            for a session that recorded no speed at all.
+        recording_time_s: Elapsed minus every stop over 30 s (A4.4) — both the
+            fallback divisor and the yardstick the speed channel's coverage is
+            measured against.
 
     Returns:
         The basis, or a :class:`NotAssessed` when the session recorded neither
         duration — a manual session whose columns are empty anyway.
     """
-    if moving_time_s > 0:
+    moving = tuple(
+        index
+        for index, value in enumerate(speed_fixed)
+        if value is not None and value >= MOVING_SPEED_MS
+    )
+    covered_s = float(sum(1 for value in speed_fixed if value is not None))
+    coverage = min(covered_s / recording_time_s, 1.0) if recording_time_s > 0 else 0.0
+    uncovered_s = max(0.0, recording_time_s - covered_s)
+    threshold_kmh = f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h"
+
+    if moving and (coverage >= SPEED_COVERAGE_FLOOR or recording_time_s <= 0):
         return AveragingBasis(
-            seconds=moving_time_s,
+            seconds=float(len(moving)),
             label="moving time",
             described=(
-                f"{moving_time_s:.0f} s of moving time "
-                f"(speed ≥ {MOVING_SPEED_MS * MS_TO_KMH:g} km/h)"
+                f"{len(moving)} rows of the cleaned speed column at or above "
+                f"{threshold_kmh}"
             ),
             from_moving_time=True,
+            assumption=(
+                "divided by moving time, the seconds spent travelling — the "
+                "same basis a head unit averages over — and the sum above it "
+                "runs over those same seconds, so a second missing from one "
+                "is missing from both"
+            ),
+            rows=moving,
+            moving_s=float(len(moving)),
+            uncovered_s=uncovered_s,
         )
     if recording_time_s > 0:
         return AveragingBasis(
@@ -325,28 +438,45 @@ def averaging_basis(
                 "(elapsed minus every stop over 30 s)"
             ),
             from_moving_time=False,
+            assumption=_fallback_assumption(
+                covered_s=covered_s, coverage=coverage, moving_rows=len(moving)
+            ),
+            rows=None,
+            moving_s=float(len(moving)),
+            uncovered_s=uncovered_s,
         )
     return NotAssessed("this session records no duration to average over")
 
 
-def _basis_assumptions(basis: AveragingBasis) -> tuple[str, ...]:
-    """What an average over ``basis`` had to assume, in order."""
-    if basis.from_moving_time:
-        return (
-            (
-                "divided by moving time, the seconds spent travelling — the "
-                "same basis a head unit averages over"
-            ),
-            LOAD_DURATION_NOTE,
-        )
-    return (
-        (
-            "no speed was recorded, so there is no moving time; the divisor is "
-            "recording time — elapsed minus every stop over 30 s — and this "
-            "reads lower than the average a head unit would display"
-        ),
-        LOAD_DURATION_NOTE,
+def _fallback_assumption(*, covered_s: float, coverage: float, moving_rows: int) -> str:
+    """Why this session's averages are over recording time, precisely.
+
+    Three different facts end up at the same divisor and they are not the same
+    thing to an athlete: an indoor session that carries no speed channel at
+    all, a ride whose speed channel covers too little of the recording to be
+    divided by, and a recording that never moved. Saying "no speed was
+    recorded" for all three — which is what this used to do — tells two of them
+    something untrue about their own file.
+    """
+    tail = (
+        "the divisor is recording time — elapsed minus every stop over 30 s — "
+        "and this reads lower than the average a head unit would display"
     )
+    if covered_s <= 0:
+        return f"no speed was recorded, so there is no moving time; {tail}"
+    if coverage < SPEED_COVERAGE_FLOOR:
+        return (
+            f"the speed channel covers only {coverage:.0%} of the recorded "
+            "seconds, so its moving time would divide a whole ride's readings "
+            f"by part of one; {tail}"
+        )
+    if moving_rows == 0:
+        return (
+            "the speed channel never reached "
+            f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h, so there is no moving "
+            f"time; {tail}"
+        )
+    return f"there is no moving time to divide by; {tail}"
 
 
 # --- the power chain (work order A-2, Appendix A.1) ----------------------------
@@ -355,40 +485,58 @@ def _basis_assumptions(basis: AveragingBasis) -> tuple[str, ...]:
 def average_power(
     power_fixed: Sequence[float | None], basis: AveragingBasis | NotAssessed
 ) -> Assessment:
-    """Total work divided by the averaging basis — moving time (D194).
+    """Work done over the averaging basis, divided by it — moving time (D194).
 
-    ``average_power = Σ P × Δt / basis`` (Appendix A.1, with D194's divisor).
+    ``average_power = Σ P × Δt / basis`` (Appendix A.1, with D194's divisor),
+    where the sum runs over **exactly the seconds the basis counted** (D196).
+    That coupling is the whole of it: the numerator and the denominator are
+    both taken from :class:`AveragingBasis`, so no dropout, no repair and no
+    noisy GPS can leave one describing more of the ride than the other. Over a
+    moving basis this is work done while travelling ÷ moving time, which is the
+    number a head unit shows; the ride's total work is
+    :func:`work_kj`, over every recorded row, and the two differ by whatever
+    was produced at a standstill.
+
     Rows with no power reading contribute no joules while still costing their
     second, so a ride whose meter dropped out for ten minutes averages lower
     than the ten minutes it lost — which is the honest reading and is stated
     as an assumption rather than hidden.
 
-    The basis is moving time wherever speed was recorded, which is what a head
-    unit divides by; :class:`AveragingBasis` documents the fallback and why it
-    exists. What this is **not** is the load's duration term: TSS still divides
-    the ride by recording time (A5.1), and every explanation says so, because
-    an average and a load that appear to disagree about how long the ride was
-    is exactly the question this data is here to answer.
+    The basis is moving time wherever the speed channel covers the ride, which
+    is what a head unit divides by; :class:`AveragingBasis` documents the
+    fallback and why it exists. What this is **not** is the load's duration
+    term: TSS still divides the ride by recording time (A5.1), and every
+    explanation says so, because an average and a load that appear to disagree
+    about how long the ride was is exactly the question this data is here to
+    answer.
     """
     if isinstance(basis, NotAssessed):
         return basis
-    present = _present(power_fixed)
-    if not present:
+    if not _present(power_fixed):
         return _absent("power")
-    joules = sum(present)
+    joules, readings = basis.integrate(power_fixed)
+    if not readings:
+        return NotAssessed(f"no power was recorded during this session's {basis.label}")
+    moving = basis.from_moving_time
+    work_label = "work while moving" if moving else "work"
     return Measured(
         value=joules / basis.seconds,
         explanation=MetricExplanation(
-            formula=f"average power = Σ P × Δt / {basis.label}",
+            formula=(
+                "average power = Σ P × Δt"
+                + (" while moving" if moving else "")
+                + f" / {basis.label}"
+            ),
             inputs=MappingProxyType(
                 {
-                    "work": f"{joules / 1000:.0f} kJ over {len(present)} power samples",
+                    work_label: f"{joules / 1000:.0f} kJ over {readings} power samples",
                     basis.label: basis.described,
                 }
             ),
             assumptions=(
                 "rows with no power reading contribute no work",
-                *_basis_assumptions(basis),
+                basis.assumption,
+                LOAD_DURATION_NOTE,
             ),
             citation=_COGGAN,
         ),
@@ -439,33 +587,62 @@ def work_above_ftp_kj(
 
 
 def variability_index(
-    np_watts: float, average_watts: float, *, basis_label: str = "moving time"
+    np_watts: float, power_fixed: Sequence[float | None]
 ) -> Assessment:
-    """``NP / average power`` — how ragged the ride was.
+    """``NP / the mean of the same series NP was taken over`` (D196).
 
-    1.0 is a perfectly steady effort; a criterium sits well above 1.1. It
-    inherits :func:`average_power`'s divisor, which since D194 is moving time —
-    the same basis a head unit averages over, so the ratio is now comparable
-    with the one a head unit would show.
+    1.0 is a perfectly steady effort; a criterium sits well above 1.1. Below
+    1.0 is not a ragged ride, it is a broken ratio — and that is what this
+    function exists to make impossible, so it takes the **column** rather than
+    a number somebody else averaged.
+
+    VI is a ratio of two statistics of one series: NP is the fourth power mean
+    of the 30 s rolling means of the recorded rows, and the denominator is the
+    arithmetic mean of those same rows. By the power-mean inequality the fourth
+    power mean dominates the first, so the ratio sits at or above 1 and reads
+    as "how much more the ride cost than its average suggests". Hand it the
+    **published** average power instead and it stops meaning that: since D194
+    that number is divided by moving time, so on a ride with recorded traffic
+    lights the denominator grows while NP does not, and a steady 200 W hour
+    interrupted by ten minutes of lights reports a variability index of 0.92 —
+    a number no definition of VI can produce, presented with no assumption
+    saying anything had happened.
+
+    So the moving-time average stays the published one and this takes its own,
+    unpublished, over the recorded series; the explanation names that basis
+    rather than letting a reader assume it is the average power on screen
+    beside it.
 
     Args:
-        np_watts: Normalized power.
-        average_watts: The average power this is taken against.
-        basis_label: What that average was divided by, named in the
-            explanation so a reader can tell a moving-time ratio from the
-            recording-time one a speed-less session falls back to.
+        np_watts: Normalized power, from :func:`normalized_power` over this
+            same column's recorded rows.
+        power_fixed: The cleaned power column NP was taken over.
     """
-    if average_watts <= 0:
+    present = _present(power_fixed)
+    if not present:
+        return _absent("power")
+    series_mean = sum(present) / len(present)
+    if series_mean <= 0:
         return NotAssessed("average power is zero, so there is no ratio to take")
     return Measured(
-        value=np_watts / average_watts,
+        value=np_watts / series_mean,
         explanation=MetricExplanation(
-            formula="variability index = NP / average power",
+            formula="variability index = NP / mean power over the recorded rows",
             inputs=MappingProxyType(
                 {
                     "NP": f"{np_watts:.0f} W",
-                    "average power": f"{average_watts:.0f} W (work ÷ {basis_label})",
+                    "mean power": (
+                        f"{series_mean:.0f} W over the {len(present)} recorded rows"
+                    ),
                 }
+            ),
+            assumptions=(
+                (
+                    "both terms are taken over the same recorded rows, which is "
+                    "what keeps the ratio at or above 1 — it is deliberately "
+                    "not the average power shown beside it, which is divided "
+                    "by moving time (D194)"
+                ),
             ),
             citation=_COGGAN,
         ),
@@ -574,6 +751,17 @@ def distance_km(speed_fixed: Sequence[float | None]) -> Assessment:
                     "— it is the quantity a head unit's odometer counts"
                 ),
                 "rows with no speed reading contribute no distance",
+                (
+                    "every reading counts, including the metres rolled below "
+                    f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h that moving time "
+                    "does not — a head unit's odometer counts those too"
+                ),
+                (
+                    "a reading the cleaner carried forward over a dropout (up "
+                    "to 29 s at the last good speed) contributes distance the "
+                    "wheel may not have turned; the repaired regions are "
+                    "listed on the stream itself"
+                ),
             ),
         ),
     )
@@ -590,6 +778,11 @@ def average_speed_kmh(
     different clocks. Either input's reason is propagated unchanged: an average
     speed with no distance behind it should say "no speed was recorded", not
     invent a second sentence for the same fact.
+
+    The load-duration note that average power carries is deliberately **not**
+    here (D196): average speed has no duration term in any load model, and
+    attaching "TSS is still computed over recording time" to it answered a
+    question nobody reading a km/h figure had asked.
     """
     if isinstance(distance, NotAssessed):
         return distance
@@ -606,7 +799,7 @@ def average_speed_kmh(
                     basis.label: basis.described,
                 }
             ),
-            assumptions=_basis_assumptions(basis),
+            assumptions=(basis.assumption,),
         ),
     )
 
@@ -636,40 +829,57 @@ def max_speed_kmh(speed_fixed: Sequence[float | None]) -> Assessment:
 
 
 def stopped_time_s(
-    *, elapsed_time_s: float, moving_time_s: float, recording_time_s: float
+    *,
+    elapsed_time_s: float,
+    recording_time_s: float,
+    basis: AveragingBasis | NotAssessed,
 ) -> Assessment:
-    """Time the athlete was not travelling: ``elapsed − moving``.
+    """Time the athlete is **known** not to have been travelling.
+
+    ``elapsed − moving − the seconds the speed channel said nothing about``.
 
     Derived here rather than by whatever renders it, because the subtraction
-    only means something against this system's definitions of its two terms —
-    elapsed is last sample minus first, moving is time at or above
-    :data:`app.domain.streams.MOVING_SPEED_MS` — and a client doing the
-    arithmetic itself would be free to pair them with any other pair of
-    durations it had to hand.
+    only means something against this system's definitions of its terms —
+    elapsed is last sample minus first, moving is the rows of the cleaned speed
+    column at or above :data:`app.domain.streams.MOVING_SPEED_MS` — and a
+    client doing the arithmetic itself would be free to pair them with any
+    other pair of durations it had to hand. It reads the same
+    :class:`AveragingBasis` the averages divide by, so "stopped" and "the
+    seconds the averages were taken over" cannot drift apart.
 
     It covers **both** kinds of standing still: the stops long enough that the
     head unit paused (elapsed − recording) and the traffic lights it kept
     recording through. Those are one number to an athlete asking why a
     90-minute ride took two hours, and two numbers only to the ingest pipeline.
 
-    Not assessed without a speed channel: ``elapsed − 0`` would claim the whole
-    ride was spent at a standstill.
+    What it refuses to count as standing still (D196) is a second the speed
+    channel had **no reading** for. A dropout is not a standstill, and
+    ``elapsed − moving`` alone cannot tell them apart: a sensor that dies for
+    half a ride would be reported as half an hour spent at the kerb. Those
+    seconds are subtracted from the total instead and named in the inputs, and
+    where the channel covers so little of the ride that the moving basis was
+    refused altogether (:data:`SPEED_COVERAGE_FLOOR`) there is no honest
+    subtraction left to make and the reason is returned instead.
     """
     if elapsed_time_s <= 0:
         return NotAssessed("this session records no elapsed time")
-    if moving_time_s <= 0:
+    if isinstance(basis, NotAssessed) or not basis.from_moving_time:
         return NotAssessed(
-            "no speed was recorded, so standing still cannot be told from riding"
+            "standing still cannot be told from riding here: "
+            + (basis.reason if isinstance(basis, NotAssessed) else basis.assumption)
         )
     paused_s = max(0.0, elapsed_time_s - recording_time_s)
     return Measured(
-        value=max(0.0, elapsed_time_s - moving_time_s),
+        value=max(0.0, elapsed_time_s - basis.moving_s - basis.uncovered_s),
         explanation=MetricExplanation(
-            formula="stopped = elapsed time − moving time",
+            formula=(
+                "stopped = elapsed time − moving time − seconds with no speed reading"
+            ),
             inputs=MappingProxyType(
                 {
                     "elapsed": f"{elapsed_time_s:.0f} s",
-                    "moving": f"{moving_time_s:.0f} s",
+                    "moving": f"{basis.moving_s:.0f} s",
+                    "no speed reading": f"{basis.uncovered_s:.0f} s",
                     "of which the device paused for": f"{paused_s:.0f} s",
                 }
             ),
@@ -678,6 +888,17 @@ def stopped_time_s(
                     "counts every second below "
                     f"{MOVING_SPEED_MS * MS_TO_KMH:g} km/h, whether or not the "
                     "device stopped recording for it"
+                ),
+                (
+                    "a second the speed channel had no reading for is not "
+                    "counted as standing still — nothing is known about it"
+                ),
+                (
+                    f"{paused_s:.0f} s of this is time the device was not "
+                    "recording at all: a pause, or — on a session merged from "
+                    "more than one file (WP-6.5) — the gap between them, which "
+                    "the athlete may not have spent beside the bike. Nothing "
+                    "in the data distinguishes them"
                 ),
             ),
         ),

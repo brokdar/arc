@@ -73,7 +73,10 @@ ANCHORS = {
 #: A 20-minute ride: 10 min at 150 W / 130 bpm, 10 min at 260 W / 168 bpm.
 WATTS: Sequence[float | None] = [150.0] * 600 + [260.0] * 600
 BEATS: Sequence[float | None] = [130.0] * 600 + [168.0] * 600
-#: 9 m/s for 1 150 s, then 50 s at a standstill — the ride's `moving_time_s`.
+#: 9 m/s for 1 150 s, then 50 s at a standstill. It **is** the ride's moving
+#: time: the artefact counts this column rather than being told a number
+#: alongside it (D196), so the fixture cannot state a moving time the stream
+#: does not support.
 SPEED: Sequence[float | None] = [9.0] * 1_150 + [0.0] * 50
 
 
@@ -83,7 +86,6 @@ def ride(**overrides: Any) -> SessionInputs:
         "discipline": SessionDiscipline.CYCLING,
         "recording_time_s": 1_200.0,
         "elapsed_time_s": 1_260.0,
-        "moving_time_s": 1_150.0,
         "columns": {
             StreamChannel.POWER: tuple(WATTS),
             StreamChannel.HR: tuple(BEATS),
@@ -210,7 +212,6 @@ def test_a_manual_strength_session_reports_volume_and_nothing_it_cannot() -> Non
             discipline=SessionDiscipline.STRENGTH,
             recording_time_s=0.0,
             elapsed_time_s=3_600.0,
-            moving_time_s=0.0,
             columns={},
             sets=[PerformedSet(reps=5, load_kg=100.0)] * 4,
         )
@@ -223,27 +224,93 @@ def test_a_manual_strength_session_reports_volume_and_nothing_it_cannot() -> Non
     assert analysis.intervals == ()
 
 
+def moved(rows: int) -> dict[StreamChannel, tuple[float | None, ...]]:
+    """The ride's columns with only the first ``rows`` seconds spent moving."""
+    return dict(ride().columns) | {
+        StreamChannel.SPEED: tuple([9.0] * rows + [0.0] * (1_200 - rows))
+    }
+
+
 def test_the_averages_use_moving_time_and_the_load_does_not() -> None:
     """D194's split, stated as the one thing that could silently be wrong.
 
     Two rides identical but for how much of them was spent moving: the average
-    power differs (it is divided by moving time) and the training load does
-    not (its duration term is still recording time, A5.1). If a later change
-    routes the load through the averaging basis, this fails.
+    power differs (it is divided by moving time, and summed over the same
+    seconds — D196) and the training load does not (its duration term is still
+    recording time, A5.1). If a later change routes the load through the
+    averaging basis, this fails.
     """
-    riding = analyse_session(ride(moving_time_s=1_150.0))
-    stopping = analyse_session(ride(moving_time_s=575.0))
+    riding = analyse_session(ride(columns=moved(1_150)))
+    stopping = analyse_session(ride(columns=moved(575)))
 
     assert isinstance(riding.power.average_power, Measured)
     assert isinstance(stopping.power.average_power, Measured)
     assert isinstance(riding.load, SelectedLoad)
     assert isinstance(stopping.load, SelectedLoad)
-    joules = sum(value for value in WATTS if value is not None)
-    assert riding.power.average_power.value == pytest.approx(joules / 1_150)
-    assert stopping.power.average_power.value == pytest.approx(joules / 575)
+    assert riding.moving_time_s == pytest.approx(1_150.0)
+    assert stopping.moving_time_s == pytest.approx(575.0)
+    assert riding.power.average_power.value == pytest.approx(
+        sum(watts or 0.0 for watts in WATTS[:1_150]) / 1_150
+    )
+    assert stopping.power.average_power.value == pytest.approx(
+        sum(watts or 0.0 for watts in WATTS[:575]) / 575
+    )
     assert riding.load.training_load == pytest.approx(stopping.load.training_load)
     # And the number says which clock it was divided by, both ways round.
     assert "moving time" in riding.power.average_power.explanation.formula
+
+
+def test_a_speed_sensor_that_dies_halfway_inflates_nothing() -> None:
+    """D196's headline case, composed.
+
+    The speed channel stops reporting at half distance and the athlete rides
+    on at the same power. Before the fix the artefact divided a whole ride's
+    work by half a ride's moving time — 2× the average power — and reported
+    the missing half as thirty minutes standing at the kerb. Now the basis
+    refuses to be moving time at all: the averages fall back to recording time
+    and say why, and stopped time is a reason rather than a fabricated number.
+    """
+    half = analyse_session(
+        ride(columns=dict(ride().columns) | {StreamChannel.SPEED: tuple([9.0] * 600)})
+    )
+    whole = analyse_session(ride(columns=moved(1_200)))
+
+    assert isinstance(half.power.average_power, Measured)
+    assert isinstance(whole.power.average_power, Measured)
+    joules = sum(watts or 0.0 for watts in WATTS)
+    # Over recording time, which is the honest divisor once the channel that
+    # would have supplied a better one has been shown not to.
+    assert half.power.average_power.value == pytest.approx(joules / 1_200)
+    assert half.power.average_power.value < whole.power.average_power.value * 1.05
+    assert any(
+        "covers only 50%" in note
+        for note in half.power.average_power.explanation.assumptions
+    )
+    # And the half hour the sensor was silent is not reported as standing still.
+    assert isinstance(half.stopped_time_s, NotAssessed)
+    assert "50%" in half.stopped_time_s.reason
+
+
+def test_the_variability_index_never_falls_below_one() -> None:
+    """VI is a ratio of two statistics of one series, so Jensen bounds it.
+
+    The ride here is steady 200 W with twenty-four recorded traffic lights, so
+    its moving-time average power is exactly the 200 W it rode at while NP is
+    lower — dividing one by the other reports a ride *less* variable than a
+    perfectly steady one, which is not a thing that exists (D196).
+    """
+    watts = tuple(0.0 if 25 <= second % 150 < 50 else 200.0 for second in range(1_200))
+    speed = tuple(0.0 if 25 <= second % 150 < 50 else 9.0 for second in range(1_200))
+    analysis = analyse_session(
+        ride(
+            columns={StreamChannel.POWER: watts, StreamChannel.SPEED: speed},
+        )
+    )
+
+    assert isinstance(analysis.power.average_power, Measured)
+    assert isinstance(analysis.power.variability_index, Measured)
+    assert analysis.power.average_power.value == pytest.approx(200.0)
+    assert analysis.power.variability_index.value >= 1.0
 
 
 def test_a_ride_with_no_speed_channel_averages_over_recording_time() -> None:
@@ -255,7 +322,6 @@ def test_a_ride_with_no_speed_channel_averages_over_recording_time() -> None:
     """
     indoor = analyse_session(
         ride(
-            moving_time_s=0.0,
             columns={
                 StreamChannel.POWER: tuple(WATTS),
                 StreamChannel.HR: tuple(BEATS),
@@ -368,7 +434,6 @@ def test_nothing_raises_when_every_input_is_absent() -> None:
             discipline=SessionDiscipline.OTHER,
             recording_time_s=0.0,
             elapsed_time_s=0.0,
-            moving_time_s=0.0,
             columns={},
         )
     )
