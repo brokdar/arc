@@ -1,10 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
 import { SettingsView } from "@/components/settings/settings-view";
-import { anchorHistory, athleteRecord } from "@/tests/mocks/fixtures";
+import { addDays, todayIsoDate } from "@/lib/dates";
+import {
+  anchorHistory,
+  appendAnchorVersion,
+  athleteRecord,
+} from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -12,11 +18,14 @@ function renderSettings() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <SettingsView />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsView />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 /** The card for one anchor in the "in force now" grid. */
@@ -189,6 +198,105 @@ describe("appending a version", () => {
     expect(posted).not.toHaveBeenCalled();
   });
 
+  it("refuses a confidence bound that is not a number rather than sending none", async () => {
+    const user = userEvent.setup();
+    const posted = vi.fn();
+    server.use(
+      http.post("/api/v1/anchors", async ({ request, response }) => {
+        posted(await request.json());
+        return response(422).json({ detail: "should never be reached" });
+      }),
+    );
+    renderSettings();
+    await screen.findByTestId("current-ftp");
+
+    await fillAppend(user, {
+      value: "272",
+      provenance: "estimated",
+      protocol: "",
+      ciLow: "26o",
+    });
+    await submitAppend(user);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /confidence bound is a number in W/,
+    );
+    // The whole point: "26o" parses to null, and null is also how this form
+    // says "no interval". Sent, it would append a version with the confidence
+    // interval quietly dropped and report it as a success.
+    expect(posted).not.toHaveBeenCalled();
+  });
+
+  it("drops the server's last refusal when it refuses the next one itself", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await screen.findByTestId("current-ftp");
+
+    await fillAppend(user, {
+      value: "2650",
+      provenance: "estimated",
+      protocol: "",
+    });
+    await submitAppend(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /must be between 30 and 700/,
+    );
+
+    // react-query holds the mutation's error until the next `mutate()`, and
+    // this submit never reaches one — so without a reset the athlete is told
+    // two things at once, one of them about a payload that no longer exists.
+    await fillAppend(user, { value: "" });
+    await submitAppend(user);
+
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getAllByRole("listitem")).toHaveLength(1);
+    expect(alert).toHaveTextContent("Enter the FTP value in W.");
+  });
+
+  it("puts the effective date back to today once the version is appended", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await screen.findByTestId("current-ftp");
+
+    await fillAppend(user, {
+      value: "240",
+      provenance: "estimated",
+      protocol: "",
+      effectiveDate: "2026-06-15",
+    });
+    await submitAppend(user);
+    await screen.findByRole("status");
+
+    // A back-date is a one-off. Left where the correction put it, the next
+    // value — a test ridden today — would be dated to June as well.
+    expect(screen.getByLabelText(/Effective from/)).toHaveValue(todayIsoDate());
+  });
+
+  it("says a future-dated version is not in force yet, in both places it shows", async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await screen.findByTestId("current-ftp");
+
+    await fillAppend(user, {
+      value: "280",
+      provenance: "estimated",
+      protocol: "",
+      effectiveDate: addDays(todayIsoDate(), 30),
+    });
+    await submitAppend(user);
+
+    // Otherwise this is a success message beside a card that did not change
+    // and a history whose top row is not the value in force — three panels
+    // disagreeing, with nothing on the page saying why.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "It is not in force yet",
+    );
+    expect(within(slot("ftp")).getByText("265")).toBeInTheDocument();
+    const rows = await screen.findAllByTestId("anchor-version");
+    expect(rows[0]).toHaveTextContent("280 W");
+    expect(rows[0]).toHaveTextContent("not in force yet");
+  });
+
   it("prints the API's own refusal for a value the domain will not take", async () => {
     const user = userEvent.setup();
     renderSettings();
@@ -232,7 +340,9 @@ describe("appending a version", () => {
     );
   });
 
-  it("sends the value, the date and the confidence interval it was given", async () => {
+  // The confidence interval's own round trip is the first test in this block;
+  // this one is about the fields that are not typed as numbers.
+  it("sends the value, the date and the provenance it was given, and no unit", async () => {
     const user = userEvent.setup();
     renderSettings();
     await screen.findByTestId("current-ftp");
@@ -286,12 +396,10 @@ describe("the history", () => {
     server.use(
       http.get("/api/v1/anchors", ({ query, response }) => {
         asked.push(query.get("anchor_type"));
+        const rows = anchorHistory(query.get("anchor_type") as "lthr" | null);
         return response(200).json({
-          items: anchorHistory(
-            query.get("anchor_type") as "lthr" | null,
-          ) as never,
-          total: anchorHistory(query.get("anchor_type") as "lthr" | null)
-            .length,
+          items: rows,
+          total: rows.length,
           offset: 0,
           limit: 20,
         });
@@ -308,6 +416,63 @@ describe("the history", () => {
       expect(screen.getAllByTestId("anchor-version")).toHaveLength(1),
     );
     expect(asked).toContain("lthr");
+  });
+
+  it("pages a history longer than one page, asking for the page it shows", async () => {
+    // Twenty-one more versions through the mock's own append — so the history
+    // is twenty-five long: one full page and a short second one.
+    for (let index = 0; index < 21; index += 1) {
+      appendAnchorVersion({
+        anchor_type: "ftp",
+        value: 200 + index,
+        provenance: "estimated",
+        effective_date: `2026-01-${String(index + 1).padStart(2, "0")}`,
+      });
+    }
+    const offsets: (string | null)[] = [];
+    server.use(
+      http.get("/api/v1/anchors", ({ query, response }) => {
+        offsets.push(query.get("offset"));
+        const offset = Number(query.get("offset") ?? 0);
+        const limit = Number(query.get("limit") ?? 20);
+        const rows = anchorHistory(query.get("anchor_type") as null);
+        return response(200).json({
+          items: rows.slice(offset, offset + limit),
+          total: rows.length,
+          offset,
+          limit,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderSettings();
+
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+    expect(screen.getAllByTestId("anchor-version")).toHaveLength(20);
+    expect(
+      screen.getByRole("button", { name: "Newer anchor versions" }),
+    ).toBeDisabled();
+
+    await user.click(
+      screen.getByRole("button", { name: "Older anchor versions" }),
+    );
+
+    // The last page is short, and the range says how short rather than
+    // running on to the page size.
+    expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
+    expect(screen.getAllByTestId("anchor-version")).toHaveLength(5);
+    expect(
+      screen.getByRole("button", { name: "Older anchor versions" }),
+    ).toBeDisabled();
+
+    await user.click(
+      screen.getByRole("button", { name: "Newer anchor versions" }),
+    );
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+
+    // Every step asked the server for its own page: a pager that sliced the
+    // rows it already had would show the same twenty three times.
+    expect(offsets).toEqual(["0", "20", "0"]);
   });
 });
 
@@ -394,6 +559,35 @@ describe("the profile", () => {
     // An emptied field is an explicit null, which is how this API erases one
     // — a PATCH that omitted it would silently keep the old date.
     await waitFor(() => expect(athleteRecord().date_of_birth).toBeNull());
+  });
+
+  it("keeps the fields, and what was typed into them, when a refetch fails", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderSettings();
+
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Alexandra Rider");
+
+    server.use(
+      // Untyped: an infrastructure failure has no schema to conform to.
+      http.untyped.get("http://localhost:8000/api/v1/athlete", () =>
+        HttpResponse.json(
+          { detail: "The profile store is down." },
+          { status: 500 },
+        ),
+      ),
+    );
+    await act(() => queryClient.refetchQueries());
+
+    // react-query keeps the last good profile through a failed *background*
+    // refetch, so there is still a profile to show — and replacing the form
+    // with "could not load" over it would throw away half-typed edits because
+    // the network blinked. The failure is said, not swallowed.
+    expect(
+      await screen.findByText(/Could not refresh the profile/),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Alexandra Rider");
   });
 
   it("prints the field the server refused, and which field it was", async () => {

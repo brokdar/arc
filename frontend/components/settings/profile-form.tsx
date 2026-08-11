@@ -47,16 +47,33 @@ export function ProfileForm({ className }: { readonly className?: string }) {
         <SectionLabel level={2}>Profile</SectionLabel>
         {athlete.isPending ? (
           <p className="text-ink-muted text-sm">Loading the profile…</p>
-        ) : athlete.error || !athlete.data ? (
+        ) : // `!athlete.data` decides first, and deliberately: react-query keeps
+        // the last good profile when a *background refetch* fails, and a guard
+        // that asked about the error first would unmount the fields — throwing
+        // away whatever the athlete had typed into them because the network
+        // blinked. Only a query with nothing to show is a failure to show.
+        !athlete.data ? (
           <p role="alert" className="text-destructive text-sm">
             {loadFailureMessage(athlete.error, "the profile")}
           </p>
         ) : (
-          // Split in two so the fields can seed their state from a profile
-          // that has actually arrived. A single component would have to seed
-          // from `undefined` and then reconcile, which is the shape of a form
-          // that overwrites what you are typing when a refetch lands.
-          <ProfileFields athlete={athlete.data} />
+          <>
+            {/* Said rather than swallowed: the fields below are the last
+                profile that loaded, and an athlete who does not know the
+                refresh failed cannot tell them from live ones. */}
+            {athlete.error ? (
+              <p className="text-ink-muted text-sm">
+                Could not refresh the profile just now — these are the values
+                that last loaded.
+              </p>
+            ) : null}
+            {/* Split in two so the fields can seed their state from a profile
+                that has actually arrived. A single component would have to
+                seed from `undefined` and then reconcile, which is the shape of
+                a form that overwrites what you are typing when a refetch
+                lands. */}
+            <ProfileFields athlete={athlete.data} />
+          </>
         )}
       </div>
     </Panel>
@@ -91,6 +108,10 @@ function ProfileFields({ athlete }: { readonly athlete: Athlete }) {
   function submit(event: React.FormEvent) {
     event.preventDefault();
     setSaved(false);
+    // The previous server refusal described a payload that no longer exists;
+    // react-query holds it until the next `mutate()`, so the guard below would
+    // otherwise print a stale sentence beside the fresh one.
+    update.reset();
     const height = heightCm.trim() === "" ? null : parseNumberInput(heightCm);
     if (heightCm.trim() !== "" && height === null) {
       setProblem("Height has to be a number of centimetres, or nothing.");

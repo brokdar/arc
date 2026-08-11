@@ -223,6 +223,11 @@ export function AnchorForm({
       setProtocol("");
       setCiLow("");
       setCiHigh("");
+      // Back to today, like every other field goes back to empty. A date left
+      // where the last append put it is the one piece of this form that keeps
+      // arguing after it has been used: a correction back-dated to June would
+      // silently date the next value — a test ridden today — to June as well.
+      setEffectiveDate(todayIsoDate());
       // Every derived read on the page is now stale: which version is in
       // force, the history it was appended to, and the zones computed from
       // it. Three prefixes rather than one blanket invalidation, so the
@@ -246,6 +251,11 @@ export function AnchorForm({
   function submit(event: React.FormEvent) {
     event.preventDefault();
     setAppended(null);
+    // The last server refusal was about a payload that no longer exists.
+    // react-query holds `error` until the next `mutate()`, so a guard below
+    // that returns early would print the stale sentence *beside* the fresh
+    // one — two complaints about one form, only one of them true.
+    append.reset();
     const parsed = parseNumberInput(value);
     if (parsed === null) {
       setProblem(`Enter the ${anchorLabel(anchorType)} value in ${unit}.`);
@@ -255,6 +265,21 @@ export function AnchorForm({
       setProblem(
         "Say how it was tested. A tested value whose protocol is unknown " +
           "cannot be compared with the next test.",
+      );
+      return;
+    }
+    const parsedCiLow = parseNumberInput(ciLow);
+    const parsedCiHigh = parseNumberInput(ciHigh);
+    // `null` means two different things here — "no bound" and "that is not a
+    // number" — and only the field's own text can tell them apart. Without
+    // this, a typo'd `26o` is sent as *no* confidence interval and reported
+    // back as a success, which is the one failure mode the athlete cannot see.
+    if (
+      (ciLow.trim() !== "" && parsedCiLow === null) ||
+      (ciHigh.trim() !== "" && parsedCiHigh === null)
+    ) {
+      setProblem(
+        `A confidence bound is a number in ${unit}, or nothing at all.`,
       );
       return;
     }
@@ -273,8 +298,8 @@ export function AnchorForm({
         // API's own default for an absent one is today, which is what an
         // emptied field means.
         effective_date: effectiveDate === "" ? null : effectiveDate,
-        ci_low: parseNumberInput(ciLow),
-        ci_high: parseNumberInput(ciHigh),
+        ci_low: parsedCiLow,
+        ci_high: parsedCiHigh,
         // `unit` is deliberately not sent: the API stamps the anchor type's
         // own unit, and a client that names one can only ever agree or be
         // rejected.
@@ -325,7 +350,10 @@ export function AnchorForm({
               inputMode="decimal"
               className="font-mono"
               value={value}
-              onChange={(event) => setValue(event.target.value)}
+              onChange={(event) => {
+                setValue(event.target.value);
+                setProblem(null);
+              }}
             />
           </Field>
 
@@ -340,7 +368,10 @@ export function AnchorForm({
               type="date"
               className="font-mono"
               value={effectiveDate}
-              onChange={(event) => setEffectiveDate(event.target.value)}
+              onChange={(event) => {
+                setEffectiveDate(event.target.value);
+                setProblem(null);
+              }}
             />
           </Field>
         </FieldRow>
@@ -398,7 +429,10 @@ export function AnchorForm({
               inputMode="decimal"
               className="font-mono"
               value={ciLow}
-              onChange={(event) => setCiLow(event.target.value)}
+              onChange={(event) => {
+                setCiLow(event.target.value);
+                setProblem(null);
+              }}
             />
           </Field>
           <Field
@@ -412,7 +446,10 @@ export function AnchorForm({
               inputMode="decimal"
               className="font-mono"
               value={ciHigh}
-              onChange={(event) => setCiHigh(event.target.value)}
+              onChange={(event) => {
+                setCiHigh(event.target.value);
+                setProblem(null);
+              }}
             />
           </Field>
           <Button type="submit" className="ml-auto" disabled={append.isPending}>
@@ -433,7 +470,14 @@ export function AnchorForm({
             <span className="font-mono">
               {formatDayMonthYear(appended.effective_date)}
             </span>
-            .
+            .{" "}
+            {/* A version dated ahead of today is stored but not in force
+                (`anchor_as_of`), so the card above still shows the old value.
+                Said here, because a success message beside a panel that did
+                not change is otherwise read as a failed save. */}
+            {appended.effective_date > todayIsoDate()
+              ? "It is not in force yet — the version above stands until that day."
+              : ""}
           </p>
         ) : null}
 
@@ -481,6 +525,9 @@ export function AnchorHistory() {
   });
   const versions = history.data?.items ?? [];
   const total = history.data?.total ?? 0;
+  // Read once for the whole table rather than per row, so every row of one
+  // render answers "in force?" against the same day.
+  const today = todayIsoDate();
 
   return (
     <section className="flex flex-col gap-2.5">
@@ -552,6 +599,19 @@ export function AnchorHistory() {
                 >
                   <Td className="font-mono text-ink-secondary text-sm">
                     {formatDayMonthYear(version.effective_date)}
+                    {/* The history sorts by effective date, so a version
+                        dated ahead of today sits at the top of the table
+                        while a *different* version is the one in force
+                        (`anchor_as_of`). Unmarked, the first row reads as
+                        the current value and contradicts the card above. */}
+                    {version.effective_date > today ? (
+                      <span
+                        title="Stored, but dated ahead of today: the version before it is still the one in force."
+                        className="block cursor-help font-sans text-2xs text-status-under"
+                      >
+                        not in force yet
+                      </span>
+                    ) : null}
                   </Td>
                   <Td className="text-ink-secondary text-sm">
                     {anchorLabel(version.anchor_type)}

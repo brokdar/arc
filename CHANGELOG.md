@@ -22,13 +22,21 @@ that screen, and the Settings nav row is live.
   defaults to today and may be back-dated, and optional CI bounds. Everything
   else the domain refuses is printed as the sentence the service sent.
 - **History** — every version ever appended, newest first, filtered through the
-  API's own `anchor_type` parameter and paged. There is no edit and no delete
-  anywhere: the API answers 405 by design, and the page says so.
+  API's own `anchor_type` parameter and paged. A version dated ahead of today
+  is marked "not in force yet" (D195), so the row that sorts to the top never
+  reads as the current value. There is no edit and no delete anywhere: the API
+  answers 405 by design, and the page says so.
 - **Zones in force** — the Coggan 7 power zones and the 5-zone heart-rate
   scheme, computed by the API from the anchors in force and never in the
   client; when there is no anchor, the panel names the one it is waiting for.
 - **Profile and illness** — name, date of birth, sex and height, and the
   illness/injury flag, which mounts Today's control rather than a second form.
+  A failed background refetch keeps the fields — and whatever was typed into
+  them — and says the values are the ones that last loaded.
+
+The session log and the proposal inbox page through the same `Pager` the anchor
+history and the ingest queue use: one range, one pair of buttons named for what
+they page, and each page's filter on the same line as its range.
 
 ### WP-8 — agent layer: MCP tools, proposals, guardrails
 
