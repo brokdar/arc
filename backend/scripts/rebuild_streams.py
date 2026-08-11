@@ -2,7 +2,7 @@
 
 The operator's path for "the parser learned something new". Recomputing metrics
 reads the stored parquet, so a stream written before a channel existed can
-never gain that channel by recomputation — D200's odometer is the case this was
+never gain that channel by recomputation — D197's odometer is the case this was
 written for. This re-parses each original, rewrites its parquet and its
 recording row (`app.ingest.rebuild`), and then appends a metric version for
 every session whose stream changed, with a reason that says why.

@@ -348,7 +348,7 @@ def test_distance_integrates_the_speed_channel_when_there_is_no_odometer() -> No
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(6.0)
-    # And it says which of the two distances this is, first (D200).
+    # And it says which of the two distances this is, first (D197).
     assert (
         "integrated from the 1 Hz speed channel"
         in (assessed.explanation.assumptions[0])
@@ -427,7 +427,7 @@ def test_average_speed_is_distance_over_the_same_basis_as_average_power() -> Non
 
 
 def test_average_speed_divides_the_whole_rides_distance_by_moving_time() -> None:
-    # D201: the numerator is the ride's total — the odometer's span, which has
+    # D198: the numerator is the ride's total — the odometer's span, which has
     # no per-row decomposition to restrict — and the divisor is moving time.
     # 6.08 km in 600 s of moving time, with 600 s standing still that the
     # odometer did not advance through.
@@ -438,7 +438,7 @@ def test_average_speed_divides_the_whole_rides_distance_by_moving_time() -> None
     assessed = average_speed_kmh(distance_km(speed, odometer), basis)
 
     assert isinstance(assessed, Measured)
-    # 6.07985 km / (600 s / 3600) — not / 1 200 s, which is D201's whole point.
+    # 6.07985 km / (600 s / 3600) — not / 1 200 s, which is D198's whole point.
     assert assessed.value == pytest.approx(36.479, abs=1e-3)
     # The source sentence travels with it, so a km/h figure is not the one
     # number on the page whose provenance has to be looked up elsewhere.
@@ -625,7 +625,7 @@ def test_the_maximum_is_taken_over_the_repaired_column() -> None:
 
 
 def test_average_cadence_excludes_the_seconds_spent_coasting() -> None:
-    # D203, in the reference ride's proportions: 354 freewheeling seconds out
+    # D199, in the reference ride's proportions: 354 freewheeling seconds out
     # of 5 738 drag a mean-over-everything from 82.8 rpm to 77.7, which is the
     # gap between arc's old number and every other platform's.
     ride = [83.0] * 5_384 + [0.0] * 354

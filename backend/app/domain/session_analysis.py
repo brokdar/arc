@@ -103,7 +103,7 @@ class SessionInputs:
         elapsed_time_s: Last sample minus first.
         columns: Channel -> that channel's cleaned (``_fixed``) column on the
             1 Hz grid. Absent channels are simply absent — including
-            ``DISTANCE``, which every stream stored before D200 lacks and which
+            ``DISTANCE``, which every stream stored before D197 lacks and which
             :func:`app.domain.metrics.distance_km` therefore treats as an
             ordinary fallback rather than an error.
         sex: The athlete's sex; HRSS's coefficient depends on it.
@@ -157,7 +157,7 @@ class HeartRateMetrics:
 class CadenceMetrics:
     """Everything derived from the cadence column.
 
-    The average excludes coasting rows (D203) while the maximum is over every
+    The average excludes coasting rows (D199) while the maximum is over every
     reading, which is not an inconsistency: a maximum has nothing to exclude,
     and a mean has the whole freewheeling descent.
     """
@@ -175,7 +175,7 @@ class SpeedMetrics:
     account of the same channel, and the average is only readable beside the
     basis it was taken over (D194).
 
-    "The same channel" is now approximate: since D200 the distance prefers the
+    "The same channel" is now approximate: since D197 the distance prefers the
     device's own odometer where the file carried one, and only falls back to
     integrating speed. The block stays together because the *average* is still
     distance ÷ the speed-derived basis, so the three numbers still have to be

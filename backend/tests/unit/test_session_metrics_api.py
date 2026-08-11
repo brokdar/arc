@@ -153,7 +153,7 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
 
     They come from the same golden file the load does, so this also pins the
     relationship between them: the distance is the **odometer** channel that
-    file carries, differenced end to end (D200), and the average speed is that
+    file carries, differenced end to end (D197), and the average speed is that
     distance over the moving time the same artefact reports (D194) — not over
     its recording time, which is longer.
     """

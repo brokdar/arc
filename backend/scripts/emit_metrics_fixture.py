@@ -127,7 +127,7 @@ FREEWHEEL = (1_130, 1_170)
 #: A head unit integrates wheel revolutions far faster than the once-a-second
 #: speed it writes, so its cumulative `distance` field is a percent or two
 #: above anything reconstructed from that column — 1.5 % on the real ride this
-#: system was checked against (D200). The fixture carries the gap so that a
+#: system was checked against (D197). The fixture carries the gap so that a
 #: component rendering "distance" is rendering the odometer's kilometres,
 #: which is what the API now serves, and not the speed integral it used to.
 ODOMETER_RATIO = 1.015

@@ -233,7 +233,7 @@ COASTING_MAX_W = 10.0
 MS_TO_KMH = 3.6
 
 #: Metres a climb must gain before it is counted at all (D120, retuned by
-#: D202). Barometric altimeters wander by a metre or two while standing still,
+#: D200). Barometric altimeters wander by a metre or two while standing still,
 #: and summing raw positive deltas turns that wander into hundreds of metres
 #: of "climbing" on a flat ride.
 #:
@@ -246,7 +246,7 @@ MS_TO_KMH = 3.6
 ELEVATION_HYSTERESIS_M = 3.0
 
 #: Seconds of altitude averaged together, centred on each row, before the
-#: threshold above is applied (D202).
+#: threshold above is applied (D200).
 #:
 #: A threshold alone cannot separate a hill from an altimeter: pressure noise
 #: at 1 Hz is a few tenths of a metre per sample and wanders several metres
@@ -813,7 +813,7 @@ def distance_km(
 ) -> Assessment:
     """How far the ride went — the odometer where there is one, speed otherwise.
 
-    **The odometer wins** (D200). A head unit carries a cumulative ``distance``
+    **The odometer wins** (D197). A head unit carries a cumulative ``distance``
     channel that it integrates internally from wheel revolutions at a far
     higher rate than the once-a-second speed it writes out, so the last reading
     minus the first is the distance the device displayed — and the distance
@@ -843,7 +843,7 @@ def distance_km(
         speed_fixed: The cleaned speed column, in m/s.
         distance_fixed: The cleaned odometer column, in cumulative metres.
             Empty for a file that carried none, which is the ordinary case for
-            GPX and for anything ingested before D200.
+            GPX and for anything ingested before D197.
     """
     odometer = _odometer_span(distance_fixed)
     if not isinstance(odometer, str):
@@ -913,7 +913,7 @@ def average_speed_kmh(
     speed with no distance behind it should say "no speed was recorded", not
     invent a second sentence for the same fact.
 
-    **The numerator is the whole ride and the denominator is not** (D201), and
+    **The numerator is the whole ride and the denominator is not** (D198), and
     that asymmetry is deliberate rather than an oversight D196 missed. D196's
     row-set invariant applies to averages that are a *rate integrated over the
     same rows they are divided by* — average power sums watts over exactly the
@@ -921,7 +921,7 @@ def average_speed_kmh(
     numerator and denominator describing different stretches. Distance is not
     that kind of numerator. It is a **total for the ride**: every metre the
     wheel turned, including the metres rolled below the moving threshold, and
-    since D200 it is read off the device's odometer, which has no per-row
+    since D197 it is read off the device's odometer, which has no per-row
     decomposition at all — the odometer knows where the ride ended, not which
     seconds of it were spent moving.
 
@@ -957,7 +957,7 @@ def average_speed_kmh(
             ),
             assumptions=(
                 # The distance's own first assumption says which source
-                # produced it (D200); repeating it here is what stops a km/h
+                # produced it (D197); repeating it here is what stops a km/h
                 # figure from being the one number on the page whose provenance
                 # a reader has to go and look up.
                 *distance.explanation.assumptions[:1],
@@ -1090,7 +1090,7 @@ def channel_average(label: str, values: Sequence[float | None]) -> Assessment:
 
 
 def average_cadence(cadence_fixed: Sequence[float | None]) -> Assessment:
-    """Mean cadence over the rows the athlete was **pedalling** (D203).
+    """Mean cadence over the rows the athlete was **pedalling** (D199).
 
     Zero-rpm rows are coasting, and every head unit, Strava and intervals.icu
     leave them out of the average — so arc does too. The difference is not
@@ -1219,7 +1219,7 @@ def elevation_gain_m(
     Summing every positive delta of a barometric altimeter counts its noise —
     a metre of drift each way, once a second, is hundreds of metres of
     imaginary climbing over a flat four-hour ride. Two filters in series, and
-    they catch different things (D202):
+    they catch different things (D200):
 
     1. **Averaged** over a centred :data:`ELEVATION_SMOOTHING_S` window, which
        removes the high-frequency part of the wander. Terrain does not change

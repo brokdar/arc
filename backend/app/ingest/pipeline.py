@@ -1212,7 +1212,7 @@ def source_labels(activity: ParsedActivity) -> dict[StreamChannel, str]:
     produced them and A4.3's whole point is that the file does not say which.
     The odometer names a *field*: a file writes at most one, so there is no
     tie-break to record, only which field of which format it came out of
-    (D200).
+    (D197).
     """
     return {
         channel: source

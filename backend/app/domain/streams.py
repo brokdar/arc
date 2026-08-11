@@ -61,7 +61,7 @@ class StreamChannel(StrEnum):
     #: rate than the once-a-second speed it writes out, so differencing this
     #: column end to end reproduces the distance the device, Strava and
     #: intervals.icu all report, while integrating the speed column reads
-    #: about 1.5 % short (D200, `app.domain.metrics.distance_km`).
+    #: about 1.5 % short (D197, `app.domain.metrics.distance_km`).
     DISTANCE = "distance"
     ELEVATION = "elevation"
     TEMP = "temp"
@@ -139,7 +139,7 @@ MOVING_SPEED_MS = 1000 / 3600
 #: odometer mid-ride writes perfectly plausible metres in a nonsensical order,
 #: and no per-value bound sees it; :func:`clean` therefore does not try, and
 #: `app.domain.metrics.distance_km` tests the ordering itself before it
-#: differences the column (D200).
+#: differences the column (D197).
 PLAUSIBLE_RANGE: Mapping[StreamChannel, tuple[float, float]] = MappingProxyType(
     {
         StreamChannel.POWER: (0.0, 2500.0),
@@ -216,7 +216,7 @@ class ParsedActivity:
             and no tie-break: unlike power and heart rate, a file writes at
             most one odometer, so the only question is *which field* — and
             that is worth recording because differencing it is where the
-            ride's distance comes from (D200).
+            ride's distance comes from (D197).
     """
 
     file_sport_index: int
@@ -666,7 +666,7 @@ def clean(
     ``power_fixed`` is what a metric reads.
 
     **The cumulative channel is not special-cased**, and that is a decision
-    rather than an omission (D200). Every repair above happens to preserve a
+    rather than an omission (D197). Every repair above happens to preserve a
     non-decreasing ``distance`` column — the positional fill rule draws a
     straight line between two readings, and a clipped spike holds the earlier
     one — so nothing here needs to know the channel counts upwards. What no
