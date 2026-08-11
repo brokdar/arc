@@ -34,6 +34,22 @@ function without(patch: Partial<SessionMetrics>): SessionMetrics {
   return { ...RIDE_METRICS, ...patch };
 }
 
+/**
+ * The slot the API sends for a metric an older artefact was written before.
+ *
+ * Word for word what `predates()` in `backend/app/api/schemas/metrics.py`
+ * fills the missing key with, because that is what a client actually receives:
+ * the block is never absent, it is present and full of reasons that name the
+ * remedy.
+ */
+function predates(metric: string) {
+  return {
+    value: null,
+    explanation: null,
+    not_assessed: `these metrics were computed before ${metric} was — recompute this session to add it`,
+  };
+}
+
 describe("the metric header", () => {
   it("renders every number with the explanation it came with", () => {
     render(<MetricHeader metrics={RIDE_METRICS} />);
@@ -93,21 +109,36 @@ describe("the metric header", () => {
 
   it("holds the ride-log slots for an artefact written before they existed", () => {
     // The version chain is append-only, so an artefact computed by an earlier
-    // metric set stays readable and simply has no key for a number added
-    // later. Every such slot keeps its position and gives a reason.
+    // metric set has no key for a number added later — and the API fills the
+    // gap on the way out (`predates()` in app/api/schemas/metrics.py), so what
+    // reaches a client is never a missing block: it is every slot carrying the
+    // reason and the remedy. That is the payload built here; a fixture with
+    // `speed: undefined` in it would be testing a response the API cannot
+    // send, and would pass whatever the recompute wording became.
     const metrics = without({
-      speed: undefined,
-      temperature: undefined,
-      stopped_time_s: undefined,
+      speed: {
+        distance_km: predates("distance"),
+        average_speed_kmh: predates("average speed"),
+        max_speed_kmh: predates("max speed"),
+      },
+      temperature: {
+        average_temp_c: predates("temperature"),
+        min_temp_c: predates("temperature"),
+        max_temp_c: predates("temperature"),
+      },
+      stopped_time_s: predates("stopped time"),
     });
 
     render(<MetricHeader metrics={metrics} />);
 
-    expect(
-      screen.getAllByRole("img", { name: /Not assessed:/ }).length,
-    ).toBeGreaterThanOrEqual(5);
+    // UI convention 3: an empty state names the action that fills it, and the
+    // action — the recompute button already on this page — has to reach a
+    // screen reader, not only a hovering mouse.
+    const held = screen.getAllByRole("img", { name: /recompute this session/ });
+    expect(held.length).toBeGreaterThanOrEqual(7);
     expect(screen.getByText("Distance")).toBeInTheDocument();
     expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
   });
 
   it("names the FTP version an intensity factor was computed against", () => {
