@@ -271,7 +271,7 @@ def outdoor_ride(destination: Path) -> None:
         power = 210 + round(60 * wave)
         if OUTDOOR_SPIKE_AT_S <= second < OUTDOOR_SPIKE_AT_S + OUTDOOR_SPIKE_S:
             power = OUTDOOR_SPIKE_W
-        speed = round(8.4 + 1.2 * wave, 3)
+        speed = _outdoor_speed(second)
         # The odometer advances over the interval since the *previous recorded
         # sample*, so it stands still across the coffee stop exactly as a
         # paused head unit's does — and comes out ahead of the speed column by

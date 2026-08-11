@@ -17,7 +17,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.exceptions import NotFoundError
 from app.domain.actor import Actor
@@ -34,6 +34,7 @@ from app.ingest.rebuild import (
 )
 from app.persistence.activity import RecordingRow, StreamAnomalyRow
 from app.persistence.audit import AuditLogEntry
+from scripts import rebuild_streams
 from tests.unit.golden_fit import golden
 
 ATHLETE = Actor.athlete()
@@ -219,6 +220,73 @@ async def test_rebuilding_an_unknown_recording_is_a_not_found(
         await StreamRebuilder.from_session(db_session).rebuild(
             uuid.uuid7(), actor=SYSTEM
         )
+
+
+async def test_a_whole_store_rebuild_does_every_recording_and_commits_each(
+    data_root: Path, pipeline: IngestPipeline, db_session: AsyncSession
+) -> None:
+    # The shape the operator actually runs, and the loop no single-recording
+    # test exercises: a pass over the store commits each recording on its own,
+    # so a run interrupted at the second one leaves the first rebuilt rather
+    # than rolling it back.
+    await ingest_ride(data_root, pipeline)
+    indoor = data_root / "inbox" / "trainer.fit"
+    indoor.write_bytes(golden("indoor_trainer.fit").read_bytes())
+    await pipeline.ingest_file(indoor, actor=ATHLETE)
+    result = await db_session.execute(sa.select(RecordingRow))
+    recordings = list(result.scalars())
+    assert len(recordings) == 2
+    for recording in recordings:
+        age_the_stream(stream_path(data_root / "streams", recording.id))
+        recording.channels = [
+            channel for channel in recording.channels if channel != "distance"
+        ]
+    await db_session.commit()
+
+    outcomes = await StreamRebuilder.from_session(db_session).rebuild_all(actor=SYSTEM)
+
+    assert [outcome.status for outcome in outcomes] == [RebuildStatus.REBUILT] * 2
+    assert {outcome.recording_id for outcome in outcomes} == {
+        recording.id for recording in recordings
+    }
+    # Two sessions, so two recomputations — not one, and not two of the same.
+    assert len(session_ids(outcomes)) == 2
+    # Each one's audit row is its own, and each was committed as it was done.
+    audited = await db_session.execute(
+        sa.select(AuditLogEntry.entity_id).where(AuditLogEntry.action == REBUILT)
+    )
+    assert set(audited.scalars()) == {recording.id for recording in recordings}
+    # Only the ride carried an odometer; the trainer file has none, so exactly
+    # one of the two reports gaining the channel back.
+    assert sum("gained distance" in outcome.detail for outcome in outcomes) == 1
+
+
+async def test_the_script_reports_an_unknown_recording_without_a_traceback(
+    data_root: Path,
+    session_factory: async_sessionmaker[AsyncSession],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An operator who mistypes a uuid has made a mistake, not found a defect,
+    # and a traceback is the wrong way to tell them so.
+    exit_code = await rebuild_streams.run(recording_id=uuid.uuid7(), recompute=False)
+
+    captured = capsys.readouterr()
+    assert exit_code == rebuild_streams.USAGE_EXIT
+    assert captured.err.strip().startswith("error: Recording ")
+    assert len(captured.err.strip().splitlines()) == 1
+    assert "Traceback" not in captured.err
+
+
+def test_the_scripts_help_states_the_deploy_then_rebuild_ordering() -> None:
+    # The hazard is invisible from the code: a rebuilt parquet carries the new
+    # parser's channels, and an older image has no enum member for one it
+    # predates, so it reads every rebuilt stream as missing. The operator about
+    # to run this is the one who needs the sentence, so it is on --help and not
+    # only in a module docstring they did not open.
+    help_text = " ".join(rebuild_streams.build_parser().format_help().split())
+
+    assert "Deploy the new image first, then rebuild" in help_text
+    assert "never roll the image back after a rebuild" in help_text
 
 
 def test_the_sessions_to_recompute_are_deduplicated() -> None:

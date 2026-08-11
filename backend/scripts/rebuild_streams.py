@@ -16,6 +16,17 @@ Run it from ``backend/``::
 Originals are opened read-only; nothing under ``data/originals/`` is moved or
 deleted. Safe to re-run: a rebuild is idempotent for an unchanged parser, and
 each session gains one metric version per run that reaches it.
+
+**Deploy first, rebuild second, and never roll back after a rebuild.** A
+rebuilt parquet carries whatever channels the *new* parser produces, and an
+older image has no `app.domain.streams.StreamChannel` member for a channel it
+predates: `app.ingest.parquet.read_streams` raises on the unknown column and
+`app.ingest.analysis` degrades the whole file to "the stream is missing", so
+every rebuilt session loses its chart and every stream-derived metric at once.
+Nothing is destroyed — the originals are untouched and re-deploying the newer
+image restores every one of them — but the store is unreadable in the
+meantime. So: deploy the image, then run this; and if the deploy has to be
+rolled back, roll the image back *before* rebuilding, never after.
 """
 
 import argparse
@@ -23,6 +34,7 @@ import asyncio
 import sys
 import uuid
 
+from app.core.exceptions import NotFoundError
 from app.core.logging import configure_logging
 from app.domain.actor import Actor
 from app.ingest.analysis import SessionAnalyser
@@ -34,17 +46,36 @@ from app.persistence.db import session_scope
 #: than the command.
 RECOMPUTE_REASON = "stream rebuilt from the original file"
 
+#: The ordering hazard, on ``--help`` as well as in this module's docstring.
+#: An operator reading the flags is the one about to run it, and the sentence
+#: is no use to them further up a file they did not open.
+ORDERING_NOTE = (
+    "Deploy the new image first, then rebuild — and never roll the image back "
+    "after a rebuild: an older parser cannot read a channel it predates, and "
+    "every rebuilt stream would read as missing until the newer image is back."
+)
+
+#: Exit code for a caller's mistake — an id that names no recording — as
+#: opposed to 1, which means the run worked and some files could not be done.
+USAGE_EXIT = 2
+
 
 async def run(*, recording_id: uuid.UUID | None, recompute: bool) -> int:
     """Rebuild, recompute, and return the process exit code."""
     actor = Actor.system()
     async with session_scope() as session:
         rebuilder = StreamRebuilder.from_session(session)
-        outcomes: list[RebuildOutcome] = (
-            [await rebuilder.rebuild(recording_id, actor=actor)]
-            if recording_id is not None
-            else await rebuilder.rebuild_all(actor=actor)
-        )
+        try:
+            outcomes: list[RebuildOutcome] = (
+                [await rebuilder.rebuild(recording_id, actor=actor)]
+                if recording_id is not None
+                else await rebuilder.rebuild_all(actor=actor)
+            )
+        except NotFoundError as error:
+            # A mistyped id is the operator's typo, not a defect: one line and
+            # a non-zero exit, never a traceback they have to read past.
+            print(f"error: {error}", file=sys.stderr)  # noqa: T201
+            return USAGE_EXIT
 
     for outcome in outcomes:
         print(  # noqa: T201 — a maintenance script's output is its interface
@@ -72,9 +103,11 @@ async def run(*, recording_id: uuid.UUID | None, recompute: bool) -> int:
     return 1 if failed else 0
 
 
-def main() -> int:
-    """Parse the arguments and run."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, with the ordering hazard on ``--help``."""
+    parser = argparse.ArgumentParser(
+        description=f"{__doc__.splitlines()[0]} {ORDERING_NOTE}"
+    )
     parser.add_argument(
         "--recording",
         type=uuid.UUID,
@@ -87,7 +120,12 @@ def main() -> int:
         dest="recompute",
         help="rewrite the streams but leave the metric artefacts alone",
     )
-    arguments = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    """Parse the arguments and run."""
+    arguments = build_parser().parse_args()
     configure_logging()
     return asyncio.run(
         run(recording_id=arguments.recording, recompute=arguments.recompute)

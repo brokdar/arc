@@ -152,6 +152,22 @@ class StreamRebuilder:
     async def rebuild(self, recording_id: uuid.UUID, *, actor: Actor) -> RebuildOutcome:
         """Rebuild one recording's stream file and derived row.
 
+        **The parquet is written before the transaction commits**, and that
+        ordering is deliberate rather than overlooked. The window it opens is
+        real: a crash between the write and the commit leaves the new stream
+        file on disk beside the old row and the old anomaly rows, so the chart
+        marks repaired regions of a column that was re-derived and the row's
+        ``channels`` list understates what the file holds. Nothing is lost and
+        nothing is wrong about the *stream* — a parquet is a cache of one
+        parse, and this one is the newer parse of the same original.
+
+        The alternative is worse: committing first would leave a row promising
+        a channel the file on disk does not carry, which every reader would
+        then fail on rather than merely mis-annotate. And the state is
+        **self-healing** — re-running the rebuild rewrites the same bytes and
+        commits the row that describes them, so an operator's fix for an
+        interrupted run is to run it again.
+
         Raises:
             NotFoundError: When no recording has that id. Unlike the four
                 :class:`RebuildStatus` outcomes, this one is the caller's
