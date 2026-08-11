@@ -216,6 +216,9 @@ def value_of(assessment: Assessment) -> float | None:
 _COGGAN = "Allen & Coggan, Training and Racing with a Power Meter"
 _BANISTER = "Banister TRIMP, rescaled to HRSS (one hour at threshold HR = 100)"
 _TREFF = "Treff et al., polarization index"
+_GOLDEN_CHEETAH = (
+    "GoldenCheetah, ElevationGain metric (GC_ELEVATION_HYSTERESIS, default 3 m)"
+)
 
 #: Power at or below which the athlete is not pedalling, in watts. Paired with
 #: :data:`app.domain.streams.MOVING_SPEED_MS` this is the parity definition of
@@ -229,11 +232,32 @@ COASTING_MAX_W = 10.0
 #: conversion happens once, here, rather than in whichever adapter renders it.
 MS_TO_KMH = 3.6
 
-#: Metres a climb must gain over the running low point before it counts
-#: (D120). Barometric altimeters wander by a metre or two while standing
-#: still, and summing raw positive deltas turns that wander into hundreds of
-#: metres of "climbing" on a flat ride.
-ELEVATION_HYSTERESIS_M = 2.0
+#: Metres a climb must gain before it is counted at all (D120, retuned by
+#: D202). Barometric altimeters wander by a metre or two while standing still,
+#: and summing raw positive deltas turns that wander into hundreds of metres
+#: of "climbing" on a flat ride.
+#:
+#: Three metres is GoldenCheetah's ``GC_ELEVATION_HYSTERESIS``, the default its
+#: ``ElevationGain`` metric falls back to (``src/Metrics/BasicRideMetrics.cpp``:
+#: ``if (hysteresis <= 0.1) hysteresis = 3.00;``) and the number its manual
+#: describes as "only elevation changes greater than 3 m are aggregated". It is
+#: a threshold on the *climb*, not on the sample-to-sample step, so a long drag
+#: is not charged it repeatedly — see :func:`elevation_gain_m`.
+ELEVATION_HYSTERESIS_M = 3.0
+
+#: Seconds of altitude averaged together, centred on each row, before the
+#: threshold above is applied (D202).
+#:
+#: A threshold alone cannot separate a hill from an altimeter: pressure noise
+#: at 1 Hz is a few tenths of a metre per sample and wanders several metres
+#: over a minute, so an excursion large enough to clear any believable
+#: threshold happens on a perfectly flat road several times an hour. Averaging
+#: first attacks the noise where it actually differs from terrain — in
+#: frequency. Fifteen seconds is about a hundred metres of road at riding
+#: speed: shorter than any hill, longer than any pressure blip. The cost is
+#: stated rather than hidden: a sharp summit reads roughly a metre lower than
+#: the raw trace, because averaging rounds a peak off.
+ELEVATION_SMOOTHING_S = 15
 
 #: Banister's exponential weighting coefficient, per sex (Appendix A.2). It
 #: appears in numerator and denominator of HRSS and does **not** cancel — the
@@ -719,22 +743,135 @@ def coasting_time_s(
 # --- distance and speed (the ride log's basics) -------------------------------
 
 
-def distance_km(speed_fixed: Sequence[float | None]) -> Assessment:
-    """How far the ride went: ``Σ v × Δt / 1000`` over the speed column.
+#: First assumption on every distance a device's own odometer produced. The
+#: **source sentence**: :func:`distance_km` always puts the one that applies
+#: first, and :func:`average_speed_kmh` repeats whichever it finds there, so a
+#: km/h figure says what its kilometres came from without deriving it a second
+#: time.
+ODOMETER_NOTE = (
+    "the distance is the device's own odometer channel — its cumulative "
+    "distance field — differenced from its first reading to its last, which is "
+    "the number the head unit displayed and the number every platform reading "
+    "this file reports"
+)
 
-    Integrated from **speed**, not from the latitude/longitude track. The two
-    disagree, and the disagreement is not noise: a GPS trace through a tunnel
-    or under a plane-tree avenue draws a straight line the athlete did not
-    ride, and a trace from a device sampling every four seconds cuts every
-    corner. The speed channel is what the wheel magnet or the trainer measured,
-    which is the same quantity the head unit's odometer integrates — so this
-    number is the one an athlete can check against their own screen.
+#: The counterpart, completed with the reason the odometer was not used.
+SPEED_INTEGRATION_NOTE = (
+    "the distance is integrated from the 1 Hz speed channel because {reason}; "
+    "a head unit integrates wheel revolutions far faster than once a second, "
+    "so this reads roughly 1-2 % under the odometer it would have shown"
+)
 
-    Δt is one second by construction (A4.1's grid), so the sum of the column is
-    already metres. Rows with no reading contribute no distance, which makes a
-    ride whose speed sensor dropped out read short — stated as an assumption
-    rather than papered over with an interpolation nobody could audit.
+#: Why a stream has no odometer to difference. Named because it is the answer
+#: for every file ingested before the channel existed, and the athlete reading
+#: it should be told that recomputing alone will not change it.
+NO_ODOMETER_REASON = (
+    "this recording carries no odometer channel — either the device wrote "
+    "none, or the stream was stored before arc read one, in which case "
+    "rebuilding it from the original file supplies it"
+)
+
+
+def _odometer_span(distance_fixed: Sequence[float | None]) -> tuple[float, int] | str:
+    """Metres between the odometer's first and last reading, or why not.
+
+    Returns ``(metres, readings)`` when the column can be differenced, and
+    otherwise the sentence explaining why it cannot — which the caller states
+    rather than swallowing.
+
+    The one check worth making is **ordering**. An odometer counts upwards
+    forever; a column that goes backwards has been reset by a device, corrupted
+    in transit, or joined out of order, and the metres it lost are not
+    recoverable from it. Every such column still holds perfectly plausible
+    numbers, so nothing upstream can have caught it (see
+    `app.domain.streams.PLAUSIBLE_RANGE`).
     """
+    present = _present(distance_fixed)
+    if not present:
+        return NO_ODOMETER_REASON
+    if len(present) < 2:
+        return (
+            "the odometer channel carries a single reading, so there is "
+            "nothing to difference"
+        )
+    for earlier, later in zip(present, present[1:], strict=False):
+        if later < earlier:
+            return (
+                f"the odometer channel goes backwards ({earlier:.0f} m then "
+                f"{later:.0f} m), which means it was reset or corrupted rather "
+                "than merely noisy"
+            )
+    span = present[-1] - present[0]
+    if span <= 0:
+        return "the odometer channel never advanced"
+    return span, len(present)
+
+
+def distance_km(
+    speed_fixed: Sequence[float | None],
+    distance_fixed: Sequence[float | None] = (),
+) -> Assessment:
+    """How far the ride went — the odometer where there is one, speed otherwise.
+
+    **The odometer wins** (D200). A head unit carries a cumulative ``distance``
+    channel that it integrates internally from wheel revolutions at a far
+    higher rate than the once-a-second speed it writes out, so the last reading
+    minus the first is the distance the device displayed — and the distance
+    Strava and intervals.icu report, because they read the same field. Summing
+    the speed column instead loses whatever happened between two samples: on
+    the 41 km reference ride it came out 1.5 % short, 40.3 km against 40.95, a
+    gap far too large to be quantisation and exactly the size that makes an
+    athlete distrust every other number on the page.
+
+    Neither reading is taken from the latitude/longitude track. That
+    disagreement is not noise either: a GPS trace through a tunnel or under a
+    plane-tree avenue draws a straight line the athlete did not ride, and a
+    trace sampled every four seconds cuts every corner.
+
+    **Falling back is normal, not exceptional.** A GPX file has no odometer, an
+    indoor session may have none, and every stream stored before this channel
+    existed has none — so speed integration stays a first-class path and the
+    explanation names which one produced the number and why. That sentence is
+    always :attr:`MetricExplanation.assumptions`'s first entry (see
+    :data:`ODOMETER_NOTE`).
+
+    Δt is one second by construction (A4.1's grid), so summing the speed column
+    already gives metres. Rows with no reading contribute no distance either
+    way, which makes a ride whose speed sensor dropped out read short.
+
+    Args:
+        speed_fixed: The cleaned speed column, in m/s.
+        distance_fixed: The cleaned odometer column, in cumulative metres.
+            Empty for a file that carried none, which is the ordinary case for
+            GPX and for anything ingested before D200.
+    """
+    odometer = _odometer_span(distance_fixed)
+    if not isinstance(odometer, str):
+        metres, readings = odometer
+        return Measured(
+            value=metres / 1000,
+            explanation=MetricExplanation(
+                formula="distance = last odometer reading − first, / 1000",
+                inputs=MappingProxyType(
+                    {
+                        "odometer": f"{metres:.0f} m over {readings} readings at 1 Hz",
+                    }
+                ),
+                assumptions=(
+                    ODOMETER_NOTE,
+                    (
+                        "it covers the whole recording, including the metres "
+                        f"rolled below {MOVING_SPEED_MS * MS_TO_KMH:g} km/h that "
+                        "moving time does not count"
+                    ),
+                    (
+                        "a device that paused does not advance its odometer, so "
+                        "a recording stop costs no distance"
+                    ),
+                ),
+            ),
+        )
+
     present = _present(speed_fixed)
     if not present:
         return _absent("speed")
@@ -746,10 +883,7 @@ def distance_km(speed_fixed: Sequence[float | None]) -> Assessment:
                 {"samples": f"{len(present)} speed readings at 1 Hz"}
             ),
             assumptions=(
-                (
-                    "integrated from the speed channel, not from the GPS track "
-                    "— it is the quantity a head unit's odometer counts"
-                ),
+                SPEED_INTEGRATION_NOTE.format(reason=odometer),
                 "rows with no speed reading contribute no distance",
                 (
                     "every reading counts, including the metres rolled below "
@@ -779,6 +913,28 @@ def average_speed_kmh(
     speed with no distance behind it should say "no speed was recorded", not
     invent a second sentence for the same fact.
 
+    **The numerator is the whole ride and the denominator is not** (D201), and
+    that asymmetry is deliberate rather than an oversight D196 missed. D196's
+    row-set invariant applies to averages that are a *rate integrated over the
+    same rows they are divided by* — average power sums watts over exactly the
+    seconds :meth:`AveragingBasis.integrate` counted, so no dropout can leave
+    numerator and denominator describing different stretches. Distance is not
+    that kind of numerator. It is a **total for the ride**: every metre the
+    wheel turned, including the metres rolled below the moving threshold, and
+    since D200 it is read off the device's odometer, which has no per-row
+    decomposition at all — the odometer knows where the ride ended, not which
+    seconds of it were spent moving.
+
+    So "average speed = the whole ride's distance ÷ the seconds spent moving"
+    is the definition, and it is the same one the athlete's head unit and every
+    platform they will compare against use. Restricting the numerator to the
+    moving rows instead would report a *lower* average than the device on every
+    ride with a traffic light in it — arithmetically defensible, universally
+    read as a bug, and impossible to compute from an odometer anyway. The
+    trade-off is stated in the explanation rather than left for a reader to
+    discover: the few metres rolled below 1 km/h are in the numerator without
+    their seconds being in the divisor.
+
     The load-duration note that average power carries is deliberately **not**
     here (D196): average speed has no duration term in any load model, and
     attaching "TSS is still computed over recording time" to it answered a
@@ -799,7 +955,20 @@ def average_speed_kmh(
                     basis.label: basis.described,
                 }
             ),
-            assumptions=(basis.assumption,),
+            assumptions=(
+                # The distance's own first assumption says which source
+                # produced it (D200); repeating it here is what stops a km/h
+                # figure from being the one number on the page whose provenance
+                # a reader has to go and look up.
+                *distance.explanation.assumptions[:1],
+                basis.assumption,
+                (
+                    "the distance covers the whole recording while the divisor "
+                    "counts only the seconds spent moving — the convention a "
+                    "head unit's average speed uses, and the reason this reads "
+                    "higher than distance ÷ elapsed time"
+                ),
+            ),
         ),
     )
 
@@ -920,6 +1089,59 @@ def channel_average(label: str, values: Sequence[float | None]) -> Assessment:
     )
 
 
+def average_cadence(cadence_fixed: Sequence[float | None]) -> Assessment:
+    """Mean cadence over the rows the athlete was **pedalling** (D203).
+
+    Zero-rpm rows are coasting, and every head unit, Strava and intervals.icu
+    leave them out of the average — so arc does too. The difference is not
+    small and it is not a rounding argument: on the reference ride, 354 of
+    5 738 recorded seconds were spent freewheeling, which drags a mean-over-
+    everything down to 77.7 rpm against the 82.8 the athlete's own screen and
+    every platform showed. A number nobody else produces is read as a wrong
+    number, however carefully it is defined.
+
+    What makes it honest rather than merely conventional is that the excluded
+    seconds are **reported**: the explanation carries how many rows sat at
+    0 rpm, so "83 rpm" cannot quietly describe forty minutes of a two-hour
+    ride. Coasting has a metric of its own too (:func:`coasting_time_s`), which
+    is the same fact measured from power and speed instead.
+
+    A cadence column that never left zero has no pedalling to average, and says
+    so rather than reporting 0 rpm — which is a claim about how the athlete
+    rode, not about what the sensor recorded.
+    """
+    present = _present(cadence_fixed)
+    if not present:
+        return _absent("cadence")
+    pedalling = [rpm for rpm in present if rpm > 0]
+    coasting = len(present) - len(pedalling)
+    if not pedalling:
+        return NotAssessed(
+            f"every one of the {len(present)} cadence readings is 0 rpm, so "
+            "there is no pedalling to average"
+        )
+    return Measured(
+        value=sum(pedalling) / len(pedalling),
+        explanation=MetricExplanation(
+            formula="average cadence = Σ cadence / rows above 0 rpm",
+            inputs=MappingProxyType(
+                {
+                    "readings": f"{len(pedalling)} of {len(present)} at 1 Hz",
+                    "coasting": f"{coasting} of {len(present)} s at 0 rpm",
+                }
+            ),
+            assumptions=(
+                (
+                    "coasting (0 rpm) excluded — the convention every head unit "
+                    "and analysis platform averages by; including those seconds "
+                    "reports a lower number than the athlete's own device did"
+                ),
+                "rows with no reading are excluded, never read as zero",
+            ),
+        ),
+    )
+
+
 def channel_maximum(label: str, values: Sequence[float | None]) -> Assessment:
     """Largest reading of a channel, over the cleaned column.
 
@@ -965,47 +1187,130 @@ def channel_minimum(label: str, values: Sequence[float | None]) -> Assessment:
     )
 
 
+def _centred_mean(values: Sequence[float], window: int) -> list[float]:
+    """Each value replaced by the mean of the ``window`` rows centred on it.
+
+    The window shrinks at the two ends rather than padding: there is no data
+    beyond them to average with, and repeating the endpoint would flatten the
+    first and last quarter-minute of every ride by inventing readings.
+    """
+    if window <= 1 or len(values) <= 1:
+        return list(values)
+    half = window // 2
+    prefix = [0.0]
+    for value in values:
+        prefix.append(prefix[-1] + value)
+    smoothed: list[float] = []
+    for index in range(len(values)):
+        low = max(0, index - half)
+        high = min(len(values), index + half + 1)
+        smoothed.append((prefix[high] - prefix[low]) / (high - low))
+    return smoothed
+
+
 def elevation_gain_m(
     elevation_fixed: Sequence[float | None],
     *,
     hysteresis_m: float = ELEVATION_HYSTERESIS_M,
+    smoothing_s: int = ELEVATION_SMOOTHING_S,
 ) -> Assessment:
-    """Total ascent, with a hysteresis band against barometric wander.
+    """Total ascent: climbs of at least ``hysteresis_m``, over a smoothed trace.
 
-    Summing every positive delta of a barometric altimeter counts its noise:
+    Summing every positive delta of a barometric altimeter counts its noise —
     a metre of drift each way, once a second, is hundreds of metres of
-    imaginary climbing over a flat four-hour ride. So the sum runs against a
-    running **low point** instead: a rise only counts once it is
-    ``hysteresis_m`` above that low point, and any new low replaces it. The
-    band is a constant rather than a filter width because it is the quantity
-    an athlete can check — "climbs under 2 m are not counted" is a sentence;
-    "a 15-sample Savitzky-Golay filter" is not.
+    imaginary climbing over a flat four-hour ride. Two filters in series, and
+    they catch different things (D202):
+
+    1. **Averaged** over a centred :data:`ELEVATION_SMOOTHING_S` window, which
+       removes the high-frequency part of the wander. Terrain does not change
+       in a second; pressure does.
+    2. **Banked by climb, not by step.** The trace is walked keeping the
+       running valley and the running peak. A climb becomes real once the peak
+       stands ``hysteresis_m`` above the valley, and it is banked **in full** —
+       peak minus valley, every metre of it — when the trace turns back down by
+       ``hysteresis_m`` from that peak, which is what makes the turn a descent
+       rather than more wander. The last climb is banked at the end of the
+       series.
+
+    The second rule is the one that matters for long drags. Thresholding each
+    *step* instead — the shape this function used to have — charges the
+    threshold again at every wobble inside one climb, so a rolling hour loses
+    metres it really gained while a flat hour still gains metres it did not.
+    Here the threshold is paid once per climb, so the sentence in the
+    explanation ("climbs smaller than 3 m are not counted") is the literal
+    rule, and a 400 m alpine climb reports 400 m however noisy the trace is
+    inside it.
+
+    Args:
+        elevation_fixed: The cleaned altitude column, in metres.
+        hysteresis_m: Metres a climb must gain to count, and metres the trace
+            must fall to close it.
+        smoothing_s: Width of the centred averaging window, in rows (1 Hz, so
+            seconds). ``1`` disables the averaging.
+
+    Reference: the threshold is GoldenCheetah's ``GC_ELEVATION_HYSTERESIS``
+    default; see :data:`ELEVATION_HYSTERESIS_M`.
     """
     present = _present(elevation_fixed)
     if not present:
         return _absent("elevation")
-    reference = present[0]
+    trace = _centred_mean(present, smoothing_s)
+
     gain = 0.0
-    for value in present[1:]:
-        if value - reference >= hysteresis_m:
-            gain += value - reference
-            reference = value
-        elif value < reference:
-            reference = value
+    climbs = 0
+    valley = peak = trace[0]
+    climbing = False
+    for value in trace[1:]:
+        if climbing:
+            if value > peak:
+                peak = value
+            elif peak - value >= hysteresis_m:
+                gain += peak - valley
+                climbs += 1
+                valley = value
+                climbing = False
+        elif value < valley:
+            valley = value
+        elif value - valley >= hysteresis_m:
+            climbing = True
+            peak = value
+    if climbing:
+        gain += peak - valley
+        climbs += 1
+
     return Measured(
         value=gain,
         explanation=MetricExplanation(
             formula=(
-                "elevation gain = Σ rises above the running low point, counted "
-                f"once they exceed {hysteresis_m:g} m"
+                "elevation gain = Σ (peak − valley) over the climbs that gain "
+                f"at least {hysteresis_m:g} m"
             ),
-            inputs=MappingProxyType({"readings": f"{len(present)} at 1 Hz"}),
+            inputs=MappingProxyType(
+                {
+                    "readings": f"{len(present)} at 1 Hz",
+                    "smoothing": f"centred {smoothing_s} s mean of the altitude trace",
+                    "climbs counted": str(climbs),
+                }
+            ),
             assumptions=(
                 (
-                    f"rises smaller than {hysteresis_m:g} m are barometric "
-                    "noise and are not counted"
+                    f"climbs smaller than {hysteresis_m:g} m are not counted — "
+                    "a barometric altimeter wanders by that much while standing "
+                    "still, and counting the wander is how a flat ride grows "
+                    "hundreds of metres of ascent"
+                ),
+                (
+                    f"the trace is averaged over a centred {smoothing_s} s "
+                    "window first, so a one-second pressure blip is not a hill; "
+                    "the cost is that a sharp summit reads about a metre lower "
+                    "than the raw trace"
+                ),
+                (
+                    "a climb is banked in full once it clears the threshold, so "
+                    "a long drag is not charged the threshold once per wobble"
                 ),
             ),
+            citation=_GOLDEN_CHEETAH,
         ),
     )
 

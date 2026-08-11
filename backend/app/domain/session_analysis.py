@@ -41,6 +41,7 @@ from app.domain.metrics import (
     SelectedLoad,
     StrengthVolume,
     TimeInZone,
+    average_cadence,
     average_power,
     average_speed_kmh,
     averaging_basis,
@@ -101,7 +102,10 @@ class SessionInputs:
             elapsed. Zero for a manual session, which has no recording.
         elapsed_time_s: Last sample minus first.
         columns: Channel -> that channel's cleaned (``_fixed``) column on the
-            1 Hz grid. Absent channels are simply absent.
+            1 Hz grid. Absent channels are simply absent — including
+            ``DISTANCE``, which every stream stored before D200 lacks and which
+            :func:`app.domain.metrics.distance_km` therefore treats as an
+            ordinary fallback rather than an error.
         sex: The athlete's sex; HRSS's coefficient depends on it.
         anchors: Anchor type -> the version in force at computation time.
             Missing entries are what the guards report.
@@ -151,7 +155,12 @@ class HeartRateMetrics:
 
 @dataclass(frozen=True, slots=True)
 class CadenceMetrics:
-    """Everything derived from the cadence column."""
+    """Everything derived from the cadence column.
+
+    The average excludes coasting rows (D203) while the maximum is over every
+    reading, which is not an inconsistency: a maximum has nothing to exclude,
+    and a mean has the whole freewheeling descent.
+    """
 
     average_cadence: Assessment
     max_cadence: Assessment
@@ -165,6 +174,12 @@ class SpeedMetrics:
     than three loose slots: distance, average speed and maximum speed are one
     account of the same channel, and the average is only readable beside the
     basis it was taken over (D194).
+
+    "The same channel" is now approximate: since D200 the distance prefers the
+    device's own odometer where the file carried one, and only falls back to
+    integrating speed. The block stays together because the *average* is still
+    distance ÷ the speed-derived basis, so the three numbers still have to be
+    read as one claim.
     """
 
     distance_km: Assessment
@@ -346,6 +361,7 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     heart_rate = inputs.column(StreamChannel.HR)
     cadence = inputs.column(StreamChannel.CADENCE)
     speed = inputs.column(StreamChannel.SPEED)
+    odometer = inputs.column(StreamChannel.DISTANCE)
     elevation = inputs.column(StreamChannel.ELEVATION)
     ftp = inputs.anchor(AnchorType.FTP)
     lthr = inputs.anchor(AnchorType.LTHR)
@@ -362,7 +378,7 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     basis = averaging_basis(speed, recording_time_s=inputs.recording_time_s)
     average = average_power(power, basis)
     average_beats = channel_average("heart rate", heart_rate)
-    distance = distance_km(speed)
+    distance = distance_km(speed, odometer)
 
     factor, power_load = _power_load(np_watts, ftp, inputs.recording_time_s)
     hr_load = hrss(
@@ -412,7 +428,7 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
             ),
         ),
         cadence=CadenceMetrics(
-            average_cadence=channel_average("cadence", cadence),
+            average_cadence=average_cadence(cadence),
             max_cadence=channel_maximum("cadence", cadence),
         ),
         speed=SpeedMetrics(

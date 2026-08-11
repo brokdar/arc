@@ -84,7 +84,9 @@ describe("the metric header", () => {
     // Addressed through their own explanations rather than by text: this
     // ride's climbing and its load happen to round to the same integer, and a
     // bare text match would pass while pointing at the wrong slot.
-    expect(screen.getByLabelText(/elevation gain = Σ rises/)).toHaveTextContent(
+    expect(
+      screen.getByLabelText(/elevation gain = Σ \(peak/),
+    ).toHaveTextContent(
       String(Math.round(RIDE_METRICS.elevation_gain_m.value ?? 0)),
     );
     expect(screen.getByLabelText(/average temperature =/)).toHaveTextContent(

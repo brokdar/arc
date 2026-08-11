@@ -8,10 +8,16 @@ the pipeline has to get right, written by `fit-tool` (a dev dependency) and
   temperature; sampling that switches from 1 Hz to every 4 s; a 600 s coffee
   stop (A4.4's "done when"); a two-second 2 900 W spike from a dropped magnet
   — outside `app.domain.streams.PLAUSIBLE_RANGE`, so the cleaner clips it and
-  records the repair (A4.2's "done when"); two laps; a local offset of +02:00.
+  records the repair (A4.2's "done when"); two laps; a local offset of +02:00;
+  and a cumulative ``distance`` channel deliberately
+  :data:`OUTDOOR_ODOMETER_RATIO` **above** what integrating its own speed
+  gives, which is the real head unit's behaviour (D200) and the only way a
+  test can tell the two distances apart.
 * ``indoor_trainer.fit`` — no GPS, smooth 1 Hz power, **two** ANT+ power
   meters so the source rule has a choice to make (A4.3's "done when"); no
-  local offset, so the session's timezone falls back to ``UTC``.
+  local offset, so the session's timezone falls back to ``UTC``; and no
+  odometer channel at all, which keeps the fall-back-to-speed path covered by
+  a whole file rather than by a hand-built column.
 * ``strength_watch.fit`` — thirty minutes of heart rate and nothing else,
   sport ``training``: the shape that must classify as strength.
 * ``brick.fit`` — one file, two sports (A4.5), so ``file_sport_index`` is
@@ -192,6 +198,18 @@ OUTDOOR_SPIKE_S = 2
 #: `clean` repairs implausible readings and this one has to be one.
 OUTDOOR_SPIKE_W = 2900
 
+#: How much further the outdoor ride's odometer claims than integrating its
+#: own once-a-second speed does.
+#:
+#: A head unit integrates wheel revolutions continuously and writes speed
+#: rounded to the millimetre per second once a second, so its ``distance``
+#: field runs a little ahead of anything reconstructed from that column — on
+#: the Wahoo BOLT ride this system was checked against, by 1.5 % over 41 km
+#: (D200). A golden file whose odometer merely *agreed* with its speed column
+#: could not tell the two apart, and every test of which one the distance
+#: metric read would pass whichever it read.
+OUTDOOR_ODOMETER_RATIO = 1.015
+
 
 def _outdoor_offsets() -> Iterator[int]:
     """Seconds from the start at which the outdoor ride recorded a sample.
@@ -204,6 +222,16 @@ def _outdoor_offsets() -> Iterator[int]:
     yield from range(OUTDOOR_FIRST_LEG_S + 1)
     resume = OUTDOOR_FIRST_LEG_S + OUTDOOR_STOP_S
     yield from range(resume, resume + OUTDOOR_SECOND_LEG_S + 1, 4)
+
+
+def _outdoor_speed(second: int) -> float:
+    """The outdoor ride's speed at ``second``, in m/s, as the file records it.
+
+    Named because the odometer integrates the same rounded numbers the records
+    carry: a generator that integrated the unrounded sine would write an
+    odometer no reader of the file could reproduce.
+    """
+    return round(8.4 + 1.2 * math.sin(second / 240.0), 3)
 
 
 def outdoor_ride(destination: Path) -> None:
@@ -236,18 +264,29 @@ def outdoor_ride(destination: Path) -> None:
             source=SourceType.ANTPLUS,
         ),
     ]
+    odometer_m = 0.0
+    previous: int | None = None
     for second in _outdoor_offsets():
         wave = math.sin(second / 240.0)
         power = 210 + round(60 * wave)
         if OUTDOOR_SPIKE_AT_S <= second < OUTDOOR_SPIKE_AT_S + OUTDOOR_SPIKE_S:
             power = OUTDOOR_SPIKE_W
+        speed = round(8.4 + 1.2 * wave, 3)
+        # The odometer advances over the interval since the *previous recorded
+        # sample*, so it stands still across the coffee stop exactly as a
+        # paused head unit's does — and comes out ahead of the speed column by
+        # the ratio, not by whatever the gaps happened to add up to.
+        if previous is not None and second - previous <= OUTDOOR_STOP_S - 1:
+            odometer_m += _outdoor_speed(previous) * (second - previous)
+        previous = second
         messages.append(
             _record(
                 OUTDOOR_START + dt.timedelta(seconds=second),
                 power=power,
                 heart_rate=138 + round(14 * wave),
                 cadence=88 + round(5 * wave),
-                speed=round(8.4 + 1.2 * wave, 3),
+                speed=speed,
+                distance=round(odometer_m * OUTDOOR_ODOMETER_RATIO, 2),
                 altitude=round(412.0 + 60 * math.sin(second / 900.0), 1),
                 temperature=17,
                 position_lat=round(47.3769 + second * 2.0e-5, 7),

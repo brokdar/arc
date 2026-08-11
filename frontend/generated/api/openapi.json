@@ -5950,6 +5950,7 @@
           "hr",
           "cadence",
           "speed",
+          "distance",
           "elevation",
           "temp",
           "lat",

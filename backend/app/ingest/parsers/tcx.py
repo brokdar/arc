@@ -46,6 +46,12 @@ EXTENSION_CHANNELS: Mapping[str, StreamChannel] = {
     "cadence": StreamChannel.CADENCE,
 }
 
+#: What the odometer's source label says for a TCX file. ``DistanceMeters`` is
+#: in the schema proper rather than an extension, and it is the same cumulative
+#: metres-from-the-start that FIT's ``record.distance`` holds — which is what
+#: makes it worth reading (D200).
+DISTANCE_SOURCE = "trackpoint.DistanceMeters"
+
 
 def parse_tcx(path: Path) -> Sequence[ParsedActivity]:
     """Parse a TCX file into a single activity.
@@ -88,6 +94,9 @@ def parse_tcx(path: Path) -> Sequence[ParsedActivity]:
             hr_source_candidates=(),
             hr_source=hr_source,
             hr_source_rule=hr_rule,
+            distance_source=(
+                DISTANCE_SOURCE if StreamChannel.DISTANCE in present else None
+            ),
         )
     ]
 
@@ -104,6 +113,7 @@ def _samples(trackpoints: Sequence[Any]) -> Iterator[RawSample]:
             StreamChannel.ELEVATION: point.elevation,
             StreamChannel.HR: point.hr_value,
             StreamChannel.CADENCE: point.cadence,
+            StreamChannel.DISTANCE: point.distance,
         }
         for key, value in (point.tpx_ext or {}).items():
             channel = EXTENSION_CHANNELS.get(str(key).lower())

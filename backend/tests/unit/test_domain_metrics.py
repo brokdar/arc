@@ -32,6 +32,7 @@ from app.domain.metrics import (
     PerformedSet,
     SelectedLoad,
     StrengthVolume,
+    average_cadence,
     average_power,
     average_speed_kmh,
     averaging_basis,
@@ -341,16 +342,76 @@ def test_average_power_without_a_basis_carries_the_basis_reason() -> None:
     assert average_power([200.0] * 10, basis) == basis
 
 
-def test_distance_integrates_the_speed_channel() -> None:
+def test_distance_integrates_the_speed_channel_when_there_is_no_odometer() -> None:
     # 600 s at 10 m/s is 6 km, and the 600 unrecorded rows add nothing.
     assessed = distance_km([10.0] * 600 + [None] * 600)
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(6.0)
+    # And it says which of the two distances this is, first (D200).
+    assert (
+        "integrated from the 1 Hz speed channel"
+        in (assessed.explanation.assumptions[0])
+    )
+    assert "no odometer channel" in assessed.explanation.assumptions[0]
 
 
-def test_distance_without_speed_names_the_missing_channel() -> None:
+def test_distance_prefers_the_odometer_over_integrating_speed() -> None:
+    # The reference ride's shape, shrunk: a head unit integrates internally at
+    # a far higher rate than the 1 Hz speed it writes, so its own cumulative
+    # distance runs ~1.5 % ahead of anything reconstructed from that column
+    # (40.95 km against 40.32 over 41 km). The metric reports the device's
+    # number and names it.
+    speed = [10.0] * 600  # Σ v × Δt = 6 000 m
+    odometer = [metre * 10.15 for metre in range(600)]  # 0 m to 6 079.85 m
+
+    assessed = distance_km(speed, odometer)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(6.07985)
+    assert assessed.value == pytest.approx(0.985**-1 * 6.0, rel=2e-3)
+    assert "odometer" in assessed.explanation.assumptions[0]
+    assert "odometer" in assessed.explanation.formula
+
+
+def test_distance_ignores_an_odometer_that_goes_backwards() -> None:
+    # A reset odometer holds perfectly plausible metres in a nonsensical
+    # order, so nothing upstream can have caught it — and the metres it lost
+    # are not recoverable. Integrating speed is the honest answer, said out
+    # loud rather than reported as if the device had agreed.
+    speed = [10.0] * 600
+    reset = [float(metre) for metre in range(300)] + [
+        float(metre) for metre in range(300)
+    ]
+
+    assessed = distance_km(speed, reset)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(6.0)
+    assert "goes backwards" in assessed.explanation.assumptions[0]
+
+
+def test_distance_ignores_an_odometer_that_never_advanced() -> None:
+    assessed = distance_km([10.0] * 600, [0.0] * 600)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(6.0)
+    assert "never advanced" in assessed.explanation.assumptions[0]
+
+
+def test_distance_reads_an_odometer_even_with_no_speed_channel() -> None:
+    # The odometer is a whole account of the ride's distance on its own; a
+    # trainer that reported distance and no speed is still a ride that went
+    # somewhere.
+    assessed = distance_km([None] * 600, [0.0] + [4_000.0] * 599)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(4.0)
+
+
+def test_distance_without_speed_or_odometer_names_the_missing_channel() -> None:
     assert distance_km([None] * 10) == NotAssessed("no speed was recorded")
+    assert distance_km([None] * 10, [None] * 10) == NotAssessed("no speed was recorded")
 
 
 def test_average_speed_is_distance_over_the_same_basis_as_average_power() -> None:
@@ -363,6 +424,26 @@ def test_average_speed_is_distance_over_the_same_basis_as_average_power() -> Non
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(36.0)
+
+
+def test_average_speed_divides_the_whole_rides_distance_by_moving_time() -> None:
+    # D201: the numerator is the ride's total — the odometer's span, which has
+    # no per-row decomposition to restrict — and the divisor is moving time.
+    # 6.08 km in 600 s of moving time, with 600 s standing still that the
+    # odometer did not advance through.
+    speed = [10.0] * 600 + [0.0] * 600
+    odometer = [metre * 10.15 for metre in range(600)] + [6_079.85] * 600
+    basis = averaging_basis(speed, recording_time_s=1_200.0)
+
+    assessed = average_speed_kmh(distance_km(speed, odometer), basis)
+
+    assert isinstance(assessed, Measured)
+    # 6.07985 km / (600 s / 3600) — not / 1 200 s, which is D201's whole point.
+    assert assessed.value == pytest.approx(36.479, abs=1e-3)
+    # The source sentence travels with it, so a km/h figure is not the one
+    # number on the page whose provenance has to be looked up elsewhere.
+    assert any("odometer" in note for note in assessed.explanation.assumptions)
+    assert any("whole recording" in note for note in assessed.explanation.assumptions)
 
 
 def test_average_speed_does_not_carry_the_load_duration_note() -> None:
@@ -543,10 +624,42 @@ def test_the_maximum_is_taken_over_the_repaired_column() -> None:
     assert assessed.value == pytest.approx(250.0)
 
 
-def test_elevation_gain_ignores_wander_inside_the_hysteresis_band() -> None:
-    # A metre of barometric wander, once a second, for ten minutes: a raw
-    # positive-delta sum would report ~300 m of climbing on a flat road.
-    wander = [100.0, 101.0] * 300
+def test_average_cadence_excludes_the_seconds_spent_coasting() -> None:
+    # D203, in the reference ride's proportions: 354 freewheeling seconds out
+    # of 5 738 drag a mean-over-everything from 82.8 rpm to 77.7, which is the
+    # gap between arc's old number and every other platform's.
+    ride = [83.0] * 5_384 + [0.0] * 354
+
+    assessed = average_cadence(ride)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(83.0)
+    # The excluded seconds are on the number, so 83 rpm cannot quietly
+    # describe six minutes fewer than the reader thinks.
+    assert assessed.explanation.inputs["coasting"] == "354 of 5738 s at 0 rpm"
+    assert assessed.explanation.inputs["readings"] == "5384 of 5738 at 1 Hz"
+    assert "coasting (0 rpm) excluded" in assessed.explanation.assumptions[0]
+
+
+def test_average_cadence_without_a_single_turn_of_the_cranks_is_not_zero() -> None:
+    # "0 rpm" is a claim about how the athlete rode; "nothing was pedalled" is
+    # a claim about the recording, and only the second one is true here.
+    assessed = average_cadence([0.0] * 600)
+
+    assert isinstance(assessed, NotAssessed)
+    assert "0 rpm" in assessed.reason
+
+
+def test_average_cadence_without_the_channel_names_it() -> None:
+    assert average_cadence([None] * 10) == NotAssessed("no cadence was recorded")
+
+
+def test_elevation_gain_ignores_barometric_wander_on_a_flat_road() -> None:
+    # Two metres of sawtooth wander, once a second, for twenty minutes. The
+    # smoothing flattens it and nothing left clears the 3 m threshold, so a
+    # flat road reports a flat road — where a raw positive-delta sum would
+    # report over a kilometre of climbing.
+    wander = [100.0, 102.0] * 600
 
     assessed = elevation_gain_m(wander)
 
@@ -554,15 +667,61 @@ def test_elevation_gain_ignores_wander_inside_the_hysteresis_band() -> None:
     assert assessed.value == pytest.approx(0.0)
 
 
-def test_elevation_gain_counts_a_real_climb() -> None:
-    climb = [float(metre) for metre in range(100, 200)] + [
-        float(metre) for metre in range(200, 150, -1)
-    ]
+def test_elevation_gain_counts_a_staircase_exactly() -> None:
+    # The threshold is charged per *climb*, not per step, so five clean 20 m
+    # risers separated by flat sections add up to exactly 100 m — no threshold
+    # is subtracted and none is counted twice. The plateaus are long enough
+    # that the centred 15 s mean reproduces each step's endpoints exactly.
+    staircase: list[float | None] = [0.0] * 60
+    for step in range(5):
+        staircase += [float(step * 20 + metre) for metre in range(1, 21)]
+        staircase += [float((step + 1) * 20)] * 60
 
-    assessed = elevation_gain_m(climb)
+    assessed = elevation_gain_m(staircase)
 
     assert isinstance(assessed, Measured)
-    assert assessed.value == pytest.approx(100.0)  # 100 m up, then back down
+    assert assessed.value == pytest.approx(100.0)
+    assert assessed.explanation.inputs["climbs counted"] == "1"
+
+
+def test_elevation_gain_banks_a_long_climb_in_one_piece() -> None:
+    # The failure the per-step form had: a threshold applied to every step
+    # charges a noisy climb the threshold once per wobble. Here the same
+    # 100 m is gained through 1 m of jitter and still reports 100 m.
+    jittery: list[float | None] = [0.0] * 30
+    for metre in range(1, 101):
+        jittery += [float(metre), float(metre) - 1.0]
+    jittery += [100.0] * 30
+
+    assessed = elevation_gain_m(jittery)
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(100.0, abs=1.0)
+
+
+def test_elevation_gain_rounds_off_a_summit_by_about_a_metre() -> None:
+    # The documented cost of averaging first: a summit left again immediately
+    # reads a little low, because a centred mean has no way to know the apex
+    # was not noise. Pinned rather than hidden — an athlete comparing against a
+    # device needs to know which way this leans, and by how much. A 300 m climb
+    # at 0.3 m/s of ascent (a steady 6 % at 18 km/h) loses 1.1 m of it.
+    rise = [0.3 * row for row in range(1_000)]
+    flat = [0.0] * 60
+    tent: list[float | None] = [*flat, *rise, *reversed(rise), *flat]
+
+    assessed = elevation_gain_m(tent)
+
+    assert isinstance(assessed, Measured)
+    # The apex is 299.7 m and the smoothed trace peaks 0.98 m below it: the
+    # centred window there holds seven rows of each flank, which average out
+    # a little under the summit itself. "About a metre", as the explanation
+    # says, and the flat run-in and run-out keep this measuring the summit
+    # rather than the ends of the series.
+    assert assessed.value == pytest.approx(298.72, abs=0.02)
+    assert 299.7 - assessed.value < 1.5
+    assert any(
+        "reads about a metre lower" in note for note in assessed.explanation.assumptions
+    )
 
 
 def test_no_metric_function_raises_on_an_empty_series() -> None:

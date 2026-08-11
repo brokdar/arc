@@ -4192,6 +4192,7 @@ export interface components {
       | "hr"
       | "cadence"
       | "speed"
+      | "distance"
       | "elevation"
       | "temp"
       | "lat"

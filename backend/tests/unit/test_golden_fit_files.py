@@ -24,6 +24,7 @@ from app.domain.activity import (
     classify_discipline,
     timezone_label,
 )
+from app.domain.metrics import Measured, distance_km
 from app.domain.streams import (
     ParsedActivity,
     StreamChannel,
@@ -75,6 +76,7 @@ def summarise(activity: ParsedActivity) -> dict[str, object]:
         "hr_source_candidates": list(activity.hr_source_candidates),
         "hr_source": activity.hr_source,
         "hr_source_rule": activity.hr_source_rule,
+        "distance_source": activity.distance_source,
         "discipline": discipline.value,
         "classification_source": source.value,
     }
@@ -88,6 +90,10 @@ OUTDOOR_RIDE = {
     "samples": 902,
     "channels": [
         "cadence",
+        # The head unit's own cumulative odometer (D200) — deliberately ahead
+        # of what integrating this file's speed column gives, so a test can
+        # tell which one the distance metric read.
+        "distance",
         "elevation",
         "hr",
         "lat",
@@ -111,6 +117,7 @@ OUTDOOR_RIDE = {
     "hr_source_candidates": ["garmin/1234 #2"],
     "hr_source": "garmin/1234 #2",
     "hr_source_rule": "only candidate",
+    "distance_source": "record.distance",
     "discipline": "cycling",
     "classification_source": "sport_field",
 }
@@ -140,6 +147,9 @@ INDOOR_TRAINER = {
     # One strap, so no tie-break — asserted for every file that carries HR, so
     # the HR rule cannot quietly stop being recorded while the power one is.
     "hr_source_rule": "only candidate",
+    # No odometer at all: the trainer wrote none, which keeps the fall-back to
+    # integrating speed covered by a whole file rather than a synthetic column.
+    "distance_source": None,
     "discipline": "cycling",
     "classification_source": "sport_field",
 }
@@ -163,6 +173,7 @@ STRENGTH_WATCH = {
     "hr_source_candidates": ["garmin/1234 #1"],
     "hr_source": "garmin/1234 #1",
     "hr_source_rule": "only candidate",
+    "distance_source": None,
     "discipline": "strength",
     "classification_source": "sport_field",
 }
@@ -259,6 +270,52 @@ def test_the_spike_survives_raw_and_is_repaired_in_fixed() -> None:
     )
 
 
+def test_the_odometer_channel_survives_cleaning_and_is_what_distance_reads() -> None:
+    # D200, end to end over a real file rather than a hand-built column: the
+    # ride's `distance` field runs ahead of its own speed column, the cleaner
+    # leaves it non-decreasing, and the metric reports the odometer's span —
+    # naming it — rather than the speed integral it would otherwise have used.
+    [activity] = parse(golden("outdoor_ride.fit"))
+    resampled = resample(activity.samples)
+    cleaned = clean(resampled.frame, recording_stops=resampled.recording_stops)
+
+    odometer = cleaned.fixed[StreamChannel.DISTANCE]
+    speed = cleaned.fixed[StreamChannel.SPEED]
+    assessed = distance_km(speed, odometer)
+
+    readings = [value for value in odometer if value is not None]
+    assert all(
+        earlier <= later for earlier, later in zip(readings, readings[1:], strict=False)
+    ), "a cumulative channel must come out of the cleaner non-decreasing"
+    integrated_km = sum(value for value in speed if value is not None) / 1000
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx((readings[-1] - readings[0]) / 1000)
+    # Which is emphatically not the other number: the file was built so that
+    # reading the wrong column fails rather than rounds.
+    assert assessed.value > integrated_km * 1.01
+    assert "odometer" in assessed.explanation.assumptions[0]
+
+
+def test_a_file_without_an_odometer_integrates_speed_and_says_so() -> None:
+    # The other half of D200, and the reason `indoor_trainer.fit` carries no
+    # distance field: the fallback is an ordinary path, not an error, and it
+    # names itself so a reader can tell the two kinds of kilometre apart.
+    [activity] = parse(golden("indoor_trainer.fit"))
+    resampled = resample(activity.samples)
+    cleaned = clean(resampled.frame, recording_stops=resampled.recording_stops)
+
+    speed = cleaned.fixed[StreamChannel.SPEED]
+    assessed = distance_km(speed, cleaned.fixed.get(StreamChannel.DISTANCE, ()))
+
+    assert isinstance(assessed, Measured)
+    assert assessed.value == pytest.approx(
+        sum(value for value in speed if value is not None) / 1000
+    )
+    assert (
+        "integrated from the 1 Hz speed channel" in assessed.explanation.assumptions[0]
+    )
+
+
 #: What the generator wrote into two chosen samples of the outdoor ride.
 #:
 #: Every number below is worked out from `golden_fit.outdoor_ride`'s own
@@ -273,6 +330,7 @@ def test_the_spike_survives_raw_and_is_repaired_in_fixed() -> None:
 #:   heart_rate  = 138 + round(14 * wave)          bpm
 #:   cadence     =  88 + round(5 * wave)           rpm
 #:   speed       = round(8.4 + 1.2 * wave, 3)      m/s  (FIT: mm/s, exact)
+#:   distance    = round(1.015 * Σ_{i<s} speed(i), 2) m  (FIT: cm, exact)
 #:   altitude    = round(412 + 60 * sin(s/900), 1) m    (FIT: 0.2 m steps)
 #:   temperature = 17                              °C
 #:   position    = 47.3769 + s * 2.0e-5 °N, 8.5417 + s * 1.5e-5 °E
@@ -284,6 +342,7 @@ OUTDOOR_SAMPLE_VALUES = {
         "lon": 8.5417,
         "elevation": 412.0,
         "speed": 8.4,
+        "distance": 0.0,  # nothing has been ridden yet
         "power": 210.0,
         "hr": 138.0,
         "cadence": 88.0,
@@ -296,6 +355,11 @@ OUTDOOR_SAMPLE_VALUES = {
         "lon": 8.5435,  # 8.5417  + 120 * 1.5e-5
         "elevation": 420.0,  # round(412 + 60 * 0.1329437, 1) = 419.976 -> 420.0
         "speed": 8.975,  # round(8.4 + 1.2 * 0.4794255, 3)
+        # 1.015 * 1042.969, the sum of the 120 speeds already written. The
+        # ratio is what makes this ODOMETER and not a second copy of the speed
+        # column: integrating those 120 readings gives 1 042.97 m, and the
+        # device says 1 058.61 (D200).
+        "distance": 1058.61,
         "power": 239.0,  # 210 + round(28.7655)
         "hr": 145.0,  # 138 + round(6.7120)
         "cadence": 90.0,  # 88 + round(2.3971)
@@ -318,7 +382,7 @@ def test_the_outdoor_rides_channels_carry_the_values_that_were_written(
     values = activity.samples[index].values
 
     expected = OUTDOOR_SAMPLE_VALUES[index]
-    for name in ("power", "hr", "cadence", "temp", "speed", "elevation"):
+    for name in ("power", "hr", "cadence", "temp", "speed", "elevation", "distance"):
         assert values[StreamChannel(name)] == expected[name], name
     for name in ("lat", "lon"):
         assert values[StreamChannel(name)] == pytest.approx(

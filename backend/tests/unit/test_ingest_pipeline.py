@@ -29,7 +29,7 @@ from app.domain.proposals import CreateChange, ProposalStatus
 from app.domain.purpose import Purpose
 from app.domain.streams import ParsedActivity, RawSample, StreamChannel
 from app.ingest.parquet import read_streams, stream_path
-from app.ingest.pipeline import IngestPaths, IngestPipeline, _prepare
+from app.ingest.pipeline import IngestPaths, IngestPipeline, prepare
 from app.persistence.activity import (
     RecordingRepository,
     RecordingRow,
@@ -643,7 +643,7 @@ def test_the_discipline_is_classified_from_recording_time_not_elapsed() -> None:
         ],
     )
 
-    prepared = _prepare(activity)
+    prepared = prepare(activity)
 
     assert prepared.resampled.elapsed_time_s > MAX_STRENGTH_HEURISTIC_S
     assert prepared.resampled.recording_time_s < MAX_STRENGTH_HEURISTIC_S
