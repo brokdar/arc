@@ -107,7 +107,8 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
   `grep "^## D"`, and prior art is a keyword grep — read only the entries a
   grep surfaces.
 - **Commits, PRs, merges**: commit subjects follow Conventional Commits, scoped
-  by work package (`feat(wp-1): ...`). `main` is **squash-only** (the
+  by area/subsystem (`feat(mcp): ...`; historic commits used work packages,
+  which ended with the MVP build). `main` is **squash-only** (the
   `protect-main` ruleset allows no other method, and PRs are required) with
   `squash_merge_commit_title = PR_TITLE` and `squash_merge_commit_message =
   PR_BODY`, so a merged PR becomes one commit whose subject is the **PR title**

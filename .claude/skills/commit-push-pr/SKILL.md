@@ -22,7 +22,7 @@ is not already loaded rather than guessing its rules.
 If `git branch --show-current` is `main`, branch first:
 
 ```bash
-git switch -c wp-<n>-<short-slug>     # e.g. wp-1-domain-model
+git switch -c <what-it-achieves>      # e.g. coaching-loop-reads
 ```
 
 Check `git branch -vv` before pushing: a branch may already exist on the remote,
@@ -51,8 +51,9 @@ So the title must be a valid Conventional Commit:
 
 - **type**: one of `feat`, `fix`, `perf`, `refactor`, `revert`, `docs`, `chore`,
   `build`, `ci`, `test`, `style`.
-- **scope**: the work package (`wp-1`) or an area (`backend`, `frontend`, `mcp`,
-  `ci`). Optional.
+- **scope**: the area or subsystem the change is about (`backend`, `frontend`,
+  `mcp`, `anchors`, `sessions`, `ci`). Optional. Historic commits use work
+  packages (`wp-1`); new ones do not — the WPs ended with the MVP build.
 - **subject**: must **not** start with an uppercase letter and must **not** end
   with a period — `.github/workflows/pr-title.yml` fails the check otherwise.
   Summarise the whole branch, not just the last commit.
