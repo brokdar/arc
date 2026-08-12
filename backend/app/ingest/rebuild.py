@@ -10,10 +10,9 @@ Which matters the moment the parse itself improves. Recomputing metrics reads
 the *stored parquet*, so a session ingested before a channel existed can never
 gain it by recomputation however many times it is run — the column is not in
 the file. The odometer channel is exactly that case: eleven sessions were
-ingested before arc
-read the device's odometer, and their distances are integrations of speed until
-their streams are made again from the FIT files that have carried the odometer
-all along.
+ingested before arc read the device's odometer, and their distances are
+integrations of speed until their streams are made again from the FIT files
+that have carried the odometer all along.
 
 So :class:`StreamRebuilder` re-parses an original, re-derives everything that
 parse produces, and writes it over the stream file and the recording row — the

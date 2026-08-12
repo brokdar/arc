@@ -150,8 +150,7 @@ never in the adapter.
   (provenance required, `tested` demands a protocol), `create_workout`,
   `propose_plan_change`, `write_session_evaluation`, `annotate`. No tool
   touches recordings, streams, declared verdicts or reasons — the surface is
-  pinned by an exhaustive test. Refusals name the offending argument;
-  The agent setup notes show how to connect Claude.
+  pinned by an exhaustive test. Refusals name the offending argument.
 
 **Coach notes and the UI**
 
@@ -229,20 +228,20 @@ a silent commitment.
   rescale and the stored breakdown carries both what was and was not assessed,
   with reasons. Nothing assessable at all scores `None` and becomes a question
   for the athlete, not a refusal. One prescribed work unit is not a structure,
-so a steady ride is not punished for detecting no intervals.
+  so a steady ride is not punished for detecting no intervals.
 
 **The lifecycle (link table, service, sweep)**
 
 - Similarity ≥ 0.75 auto-links (`auto_high`, revocable); 0.4–0.75 raises a
   `pending` proposal that **moves neither side's status until answered**;
-below 0.4 the activity stands `unplanned`. Candidates are same
+  below 0.4 the activity stands `unplanned`. Candidates are same
   discipline within ±1 day, athlete-local dates.
 - Links live in a link table, not an FK — the one-to-one uniques are exactly
   what a set-to-set increment later drops. Manual operations always
   available: link, link-as-`displaced` (executed-instead-of; the planned
   session is neither missed nor completed), unlink, swap, mark-unplanned, and
   merge of two device recordings into one session over one joined 1 Hz grid.
-Confirmed and displaced links are **sticky**: re-matching never
+  Confirmed and displaced links are **sticky**: re-matching never
   touches them, and automatic matching runs exactly once per session — a
   re-match is an explicit override. Unlink restores both sides to
   exactly the statuses the link recorded; history lives in `audit_log`, and
@@ -535,15 +534,17 @@ The plan becomes something you can look at, rearrange, and fill.
   resolved them), `pinned_anchors` (type, version id, value, unit, provenance,
   effective date), `predicted_load` with a `MetricExplanation` — formula,
   inputs naming the *version's* value and provenance, assumptions, citation
- — and `predicted_volume` for a strength session (volume load in
+  — and `predicted_volume` for a strength session (volume load in
   kilograms, total sets, coverage), the other axis, never summed with the
   first. Appending a new FTP anchor changes nothing on a session already
   planned, which is invariant 4 finally made visible.
 - **`GET /planned-sessions` answers with a lighter row** than the session it
   names: no `resolved_steps` and no predicted fields at all — absent from the
   shape, not null in it — because a page of 200 sessions carrying them is
-  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request (superseding
-  that half of the read schema). The pins stay, since the whole page's pins are one query.
+  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request. This supersedes
+  the earlier rule that put the resolved fields on *every* endpoint answering
+  with a whole session; the member route and the writes still carry them. The
+  pins stay, since the whole page's pins are one query.
 - A success criterion's smoothing window is now bounded **above** as well as
   below: `MAX_SMOOTHING_S` is an hour, longer than any window that could mean
   something, and the API answers 422 past it. The field previously took
@@ -611,7 +612,7 @@ The plan becomes something you can look at, rearrange, and fill.
   purpose-coloured left edge on every card. `/` now redirects there — there is
   no separate home page.
 - **The week you are looking at is part of the address**: `/calendar?week=2026-08-03`.
-The param is an ISO date taken literally, the way the endpoint takes
+  The param is an ISO date taken literally, the way the endpoint takes
   `start`; an unreadable one and an absent one both mean this week, so a
   bare `/calendar` is the evergreen bookmark and is where "This week" returns
   to. Stepping replaces the history entry rather than pushing one, so the back
@@ -685,7 +686,7 @@ The param is an ISO date taken literally, the way the endpoint takes
   uses too instead of prettifying a slug.
 - The builder's state is a string-typed client draft with client-side node ids,
   translated to and from the API's structure document by three pure functions.
-It mirrors the domain's plausibility bounds so an obvious mistake is
+  It mirrors the domain's plausibility bounds so an obvious mistake is
   caught without a round trip, and renders the API's 422 verbatim when the
   server refuses something the browser could not have known about.
 
@@ -1195,7 +1196,7 @@ reasoning for this and every other departure is recorded at the code site.
   Values are substituted with Python rather than `sed`, so the `$` and `/` in
   bcrypt hashes survive; the script is idempotent and degrades to a
   placeholder hash plus instructions when there is no terminal to prompt on.
-`just hash-password` prints a ready-to-paste single-quoted hash for
+  `just hash-password` prints a ready-to-paste single-quoted hash for
   rotating the password later.
 - `just check` now also runs `api-check`, so API-contract drift is part of the
   one local gate, and the devcontainer installs `just` itself
@@ -1224,7 +1225,7 @@ reasoning for this and every other departure is recorded at the code site.
   every draft with no error. git-cliff installs in the devcontainer via
   `uv tool install git-cliff`.
 - Switched the repository's squash-merge settings to `PR_TITLE` + `PR_BODY`,
-so a merged PR's description — not a bullet dump of its commits —
+  so a merged PR's description — not a bullet dump of its commits —
   becomes the commit body on `main` and the raw material for a changelog entry.
   The `protect-main` ruleset gained a `required_status_checks` rule naming the
   `pr-title` check, so a non-conventional title now blocks the merge instead of

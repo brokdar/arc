@@ -4,7 +4,8 @@ paths: backend/app/domain/**, backend/app/services/**, frontend/lib/**
 
 # Units and ranges are one convention, system-wide
 
-Two spellings that every layer shares. Both are invisible when broken — the
+Two conventions that every layer shares: how a percentage is written (rules 1
+and 2) and where a range ends (rule 3). Both are invisible when broken — the
 wrong value is a plausible number, not an error — so they are conventions
 rather than checks, and a new module must match them without being asked.
 

@@ -7,8 +7,8 @@ reach the sessions already ingested, because recomputing metrics reads the
 stored parquet and the column is not in it. So the setup here strips the
 odometer out of a freshly written stream, which is exactly what a stream
 written before the parser read that channel looks like, and asserts that a
-rebuild puts it back and
-that the distance metric changes its answer as a result.
+rebuild puts it back and that the distance metric changes its answer as a
+result.
 """
 
 import hashlib

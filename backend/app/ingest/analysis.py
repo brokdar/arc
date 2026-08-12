@@ -131,9 +131,11 @@ def _read(path: Path) -> StoredStreams | None:
     carries a column this one has no `app.domain.streams.StreamChannel` for,
     `app.ingest.parquet.read_streams` raises ``ValueError`` naming it, and
     without this line a whole store of good streams would read as "the stream
-    file is missing" with nothing anywhere saying why (see the rebuild
-    module's ordering note). Degrading rather than raising is still right — one unreadable file
-    must not take the metric run down — but it must not be silent.
+    file is missing" with nothing anywhere saying why. (This is why the
+    ``rebuild-streams`` recipe in the justfile says to deploy the new code
+    *before* rebuilding.) Degrading rather than raising is still right — one
+    unreadable file must not take the metric run down — but it must not be
+    silent.
     """
     try:
         return read_streams(path)

@@ -212,13 +212,19 @@ class RecordingRow(Base):
     #: crank meter and a smart trainer carries two power traces that can differ
     #: by 15 %, and choosing silently makes the number unexplainable.
     #:
-    #: Power and heart rate only, deliberately. "A source label per channel"
-    #: reads as all of them, but the ambiguity it exists to record is a bike
-    #: with two power meters and a strap that may or may not be the watch's
-    #: own. Cadence, speed, altitude and temperature come from one sensor per
-    #: file in practice, so a label for them would be a column that always
-    #: repeats the device — cost without a question it answers. A third
-    #: channel gains one when a file is found that disagrees about it.
+    #: Power and heart rate only, deliberately — these are the columns that
+    #: record a *choice between devices*, which is the ambiguity A4.3 is about:
+    #: a bike with two power meters, and a strap that may or may not be the
+    #: watch's own. Hence the trio of columns each: what was on offer, what won,
+    #: and the rule that picked it. Cadence, speed, altitude and temperature
+    #: come from one sensor per file in practice, so a candidate list and a
+    #: rule would always repeat the device — cost without a question it
+    #: answers. One of them gains columns when a file is found that disagrees.
+    #:
+    #: Distance is the exception that proves the shape: it carries a source
+    #: label too (``app.ingest.pipeline.source_labels``), but the label names a
+    #: *field* rather than a device, so there is no tie-break to store and no
+    #: column here — it lives in the parquet metadata alone.
     power_source_candidates: Mapped[list[str]] = mapped_column(JSONColumn, default=list)
     power_source: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))
     power_source_rule: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))

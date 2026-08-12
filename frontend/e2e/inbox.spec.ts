@@ -292,7 +292,7 @@ async function mockApi(page: Page) {
  * * `end_time − start_time` is the **elapsed** time: 05:00 to 06:45 is 6300 s;
  * * a stop is a half-open row range on the 1 Hz grid, so 2400–2700 is
  *   300 rows and 300 seconds, and `elapsed − recording` is that sum exactly
- * — 6300 − 300 = 6000;
+ *   — 6300 − 300 = 6000;
  * * `duration_s` for a device session **is** the recording time
  *   (`_duration`), so both say 6000;
  * * moving time is time at or above 1 km/h, so it sits under the recording
@@ -361,9 +361,9 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
     duplicate.getByRole("link", { name: "The session it looks like" }),
   ).toHaveAttribute("href", `/sessions/${RIDE_SESSION}`);
 
-  // Two verdicts can be overruled and they are offered in their own words
-  //: "not a duplicate" for the overlap, "ingest it anyway" for the
-  // broken strap. Unreadable bytes stay unreadable, so that card gets neither.
+  // Two verdicts can be overruled, and they are offered in their own words:
+  // "not a duplicate" for the overlap, "ingest it anyway" for the broken
+  // strap. Unreadable bytes stay unreadable, so that card gets neither.
   const strap = page
     .getByTestId("quarantine-record")
     .filter({ hasText: "strap-2026-08-06.fit" });

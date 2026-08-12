@@ -25,13 +25,10 @@ Three mechanics are load-bearing here, and each cost a debugging session:
   edit looks like it had no effect.
 - **`${CLAUDE_PROJECT_DIR}` is the launch directory, not the git root**, and
   `.claude/settings.json` applies only when Claude Code starts at the repo
-  root. Started from `frontend/`, a user-scope TypeScript server can claim
-  `.ts` before tsgo (first server registered for an extension wins) and answer
-  hovers as `any`. Both servers therefore start through `bash -c` wrappers that
-  `cd` first, so a subdirectory session fails at spawn instead of silently
-  serving the wrong project.
-
-Accepted limitation: tsgo implements LSP 3.17 *pull* diagnostics and Claude Code
-consumes *push* only, so TypeScript errors do not appear after an edit the way
-pyrefly's do. Navigation is unaffected, and type errors are still caught by
-`bun run type-check` in the pre-push hook and CI.
+  root. Started from `backend/`, the configured path points one level too deep.
+  The server therefore starts through a `bash -c` wrapper that `cd`s first, so
+  a subdirectory session fails at spawn instead of silently serving the wrong
+  project — and a user-scope `pyright-lsp`, if one is enabled, would otherwise
+  claim `.py` first (the first server registered for an extension wins).
+  `tsgo-lsp/README.md` records the same trap from the TypeScript side, where it
+  was originally diagnosed.
