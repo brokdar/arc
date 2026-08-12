@@ -55,14 +55,15 @@ title, which no local hook can see; see the `commit-push-pr` skill.
 The list is duplicated in `.pre-commit-config.yaml`, `cliff.toml` and
 `.github/workflows/pr-title.yml` — adding a type means editing **all three**.
 
-Append `!` before the colon for a breaking change (`feat(wp-3)!: ...`), and put
+Append `!` before the colon for a breaking change (`feat(mcp)!: ...`), and put
 the explanation in a `BREAKING CHANGE:` footer — the changelog renders that
 footer, and drops any other trailing `Token: value` footer.
 
-**Scope** — the work package from the branch name: `wp-0-scaffolding` → `wp-0`.
-Optional (nothing enforces it), but every commit in this repo's history has one.
-If the branch carries no work package use an area (`backend`, `frontend`,
-`mcp`, `ci`) rather than inventing a WP number.
+**Scope** — the area or subsystem the change is about (`backend`, `frontend`,
+`mcp`, `anchors`, `sessions`, `ci`). Optional (nothing enforces it), but every
+commit in this repo's history has one. Historic commits are scoped by work
+package (`wp-0`); the WPs ended with the MVP build — never invent a WP number
+for new work.
 
 **Subject** — imperative, lowercase start, no trailing period. Keep it short;
 existing subjects run to ~87 chars, so there is no hard limit, but the PR title
