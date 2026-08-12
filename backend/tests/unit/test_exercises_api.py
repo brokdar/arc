@@ -86,6 +86,36 @@ async def test_seeding_repairs_a_drifted_row(db_session: AsyncSession) -> None:
     assert (await service.get("back_squat")).name == "Back Squat"
 
 
+async def test_seeding_inserts_a_slug_the_table_is_missing(
+    db_session: AsyncSession,
+) -> None:
+    # The upgrade path for #26: the catalogue file gains entries after a
+    # database has already been seeded. The seeder diffs by slug, not by
+    # "is the table empty", so a missing movement is inserted on the next
+    # access without touching the rest.
+    service = ExerciseService.from_session(db_session)
+    await service.ensure_seeded()
+    row = await db_session.get(ExerciseRow, "reverse_fly")
+    assert row is not None
+    await db_session.delete(row)
+    await db_session.flush()
+
+    written = await service.ensure_seeded()
+
+    assert written == 1
+    assert (await service.get("reverse_fly")).name == "Dumbbell Reverse Fly"
+
+
+async def test_the_home_gym_movements_are_served(client: AsyncClient) -> None:
+    # The two additions of #26, reachable through the HTTP catalogue too.
+    calf = (await client.get(f"{EXERCISES}/single_leg_calf_raise")).json()
+    fly = (await client.get(f"{EXERCISES}/reverse_fly")).json()
+
+    assert calf["unilateral"] is True
+    assert calf["category"] == "squat"
+    assert fly["category"] == "pull"
+
+
 async def test_filtering_by_family(client: AsyncClient) -> None:
     page = (await client.get(EXERCISES, params={"category": "core"})).json()
 

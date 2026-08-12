@@ -26,6 +26,8 @@ from app.api.schemas.matching import MatchSummary
 from app.api.schemas.metrics import SessionMetricsRead
 from app.api.validation import PostgresText
 from app.domain.activity import (
+    MAX_TEMPERATURE_C,
+    MIN_TEMPERATURE_C,
     ClassificationSource,
     RecordingKind,
     SessionDiscipline,
@@ -161,6 +163,10 @@ class SessionListItem(BaseModel):
     recording_time_s: float | None
     #: Session RPE, when there is one.
     rpe: float | None
+    #: Ambient temperature during the session, °C, athlete-reported (#23).
+    #: The conditions the measurement was taken under, not a device channel —
+    #: null means nobody said, never zero degrees.
+    temperature_c: float | None
     #: The session's training load, from its current metric artefact. Null
     #: when nothing has been computed yet **and** when neither load model
     #: could be — the row keeps the slot either way and the detail endpoint
@@ -196,26 +202,39 @@ SessionsPage = Page[SessionListItem]
 
 
 class SessionUpdate(BaseModel):
-    """Corrections to a session's guessed facts.
+    """Corrections to a session's guessed facts, and its measurement context.
 
-    Both fields are overrides of something inferred from a file: setting the
-    discipline records that the athlete decided it, and setting the timezone
-    re-derives ``local_date``, which is what puts a late-evening ride back on
-    the right day.
+    Two kinds of field, with different null semantics — and in both cases an
+    **omitted** field is left untouched (the route dumps with
+    ``exclude_unset``):
 
-    **Optional by omission, never nullable.** Neither field can be *cleared*:
-    a session always has a discipline and always has a timezone, so the
-    service refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``
-    keeps the Python-side ``= None`` "unset" default while dropping the
-    ``null`` branch from the contract, so the schema promises exactly what the
-    parser accepts — the same rule the optional *query* parameters follow
-    (`.claude/rules/api-optional-query-params.md`), applied to a request body.
-    Other update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay
-    ``X | None`` on purpose: for those, ``null`` means "clear this field".
+    * **Corrections** (``discipline``, ``timezone``) override something
+      inferred from a file: setting the discipline records that the athlete
+      decided it, and setting the timezone re-derives ``local_date``, which
+      is what puts a late-evening ride back on the right day. Neither can be
+      *cleared* — a session always has both — so the service refuses an
+      explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the
+      Python-side ``= None`` "unset" default while dropping the ``null``
+      branch from the contract, so the schema promises exactly what the
+      parser accepts (the rule of
+      `.claude/rules/api-optional-query-params.md`, applied to a body).
+    * **Measurement context** (``rpe``, ``temperature_c``, #23) is what the
+      athlete reports about the conditions of a session — including an
+      ingested one, which is the point: a device file never carries an RPE.
+      These are ``X | None`` on purpose, like ``AthleteUpdate``'s fields:
+      an explicit ``null`` *clears* the value, because "nobody said" is
+      their honest empty state.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    #: Session RPE on the athlete's 0-10 scale. Their own report — never
+    #: derived from power or heart rate, which are measured channels.
+    rpe: float | None = Field(default=None, ge=MIN_RPE, le=MAX_RPE)
+    #: Ambient temperature during the session, °C, athlete-reported.
+    temperature_c: float | None = Field(
+        default=None, ge=MIN_TEMPERATURE_C, le=MAX_TEMPERATURE_C
+    )
     discipline: SessionDiscipline | SkipJsonSchema[None] = None
     # The bound rides on the *string* branch, not on the union. `Field(
     # max_length=...)` beside a `X | SkipJsonSchema[None]` default is applied
@@ -271,5 +290,9 @@ class ManualSessionCreate(BaseModel):
     discipline: SessionDiscipline = SessionDiscipline.STRENGTH
     #: Session RPE on the 0-10 scale.
     rpe: float | None = Field(default=None, ge=MIN_RPE, le=MAX_RPE)
+    #: Ambient temperature during the session, °C, athlete-reported (#23).
+    temperature_c: float | None = Field(
+        default=None, ge=MIN_TEMPERATURE_C, le=MAX_TEMPERATURE_C
+    )
     notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)
     sets: list[LoggedSetCreate] = Field(default_factory=list, max_length=MAX_SETS)

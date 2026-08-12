@@ -34,7 +34,7 @@ from app.domain.templates import PurposeTemplate
 from app.domain.workout import workout_body_to_json
 from app.domain.zones import Zone
 from app.ingest.repricing import RepricePrediction, RepriceReport
-from app.persistence.activity import SessionRow, session_duration_s
+from app.persistence.activity import LoggedSetRow, SessionRow, session_duration_s
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.exercises import ExerciseRow
@@ -232,6 +232,45 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
         "duration_s": session_duration_s(row),
         "training_load": None if summary is None else summary.training_load,
         "rpe": row.rpe,
+        "temperature_c": row.temperature_c,
+    }
+
+
+def logged_set(row: LoggedSetRow) -> dict[str, Any]:
+    """One set of a manually recorded session, as it will be read back.
+
+    No row id: nothing reads a set by id on this surface, and on a dry run
+    there is none to show.
+    """
+    return {
+        "set_index": row.set_index,
+        "exercise_id": row.exercise_id,
+        "exercise_name": row.exercise_name,
+        "reps": row.reps,
+        "load_kg": row.load_kg,
+        "rir": row.rir,
+        "notes": row.notes,
+    }
+
+
+def manual_session_draft(row: SessionRow) -> dict[str, Any]:
+    """The session `record_manual_session` *would* store — the dry run's answer.
+
+    Rendered from the same transient row the real call persists, so the dry
+    run and the write cannot drift. No ``id`` and no ``match_status``:
+    nothing was written, so there is nothing to reference and nothing has
+    been matched.
+    """
+    return {
+        "start_time": row.start_time.isoformat(),
+        "local_date": row.local_date.isoformat(),
+        "timezone": row.timezone,
+        "discipline": row.discipline.value,
+        "duration_s": row.duration_s,
+        "rpe": row.rpe,
+        "temperature_c": row.temperature_c,
+        "notes": row.notes,
+        "sets": [logged_set(entry) for entry in row.logged_sets],
     }
 
 

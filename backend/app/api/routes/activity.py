@@ -189,6 +189,7 @@ def to_list_item(
         duration_s=duration_s,
         recording_time_s=recording_time_s,
         rpe=row.rpe,
+        temperature_c=row.temperature_c,
         load=load,
         load_basis=basis,
         distance_km=distance_km,
@@ -323,6 +324,7 @@ def to_read(
         duration_s=duration_s,
         recording_time_s=recording_time_s,
         rpe=row.rpe,
+        temperature_c=row.temperature_c,
         # The list row's two columns, taken off the artefact the detail
         # already carries — so a row and the page it opens cannot disagree.
         load=metrics.load.training_load if metrics is not None else None,
@@ -444,12 +446,15 @@ async def update_session(
     session_id: uuid.UUID,
     payload: SessionUpdate,
 ) -> SessionRead:
-    """Correct a session's discipline or its timezone.
+    """Correct a session's guessed facts, or record its measurement context.
 
     A discipline override is recorded as one (`discipline_overridden`), so no
     later re-classification can quietly undo it. A timezone override
     **re-derives** `local_date`, which is the point of storing the zone rather
-    than the offset that happened to be true once (D93).
+    than the offset that happened to be true once (D93). `rpe` and
+    `temperature_c` record the conditions the session was performed under —
+    settable on any session, ingested ones included (#23), and clearable with
+    an explicit null; an omitted field is always left untouched.
     """
     row = await service.update(
         session_id, payload.model_dump(exclude_unset=True), actor=actor
@@ -481,6 +486,7 @@ async def create_manual_session(
         duration_s=payload.duration_s,
         discipline=payload.discipline,
         rpe=payload.rpe,
+        temperature_c=payload.temperature_c,
         notes=payload.notes,
         sets=_sets(payload),
     )

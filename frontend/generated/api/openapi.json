@@ -1889,6 +1889,19 @@
             "title": "Start Time",
             "type": "string"
           },
+          "temperature_c": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": -30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature C"
+          },
           "timezone": {
             "default": "UTC",
             "description": "IANA name, fixed offset (UTC+02:00), or UTC.",
@@ -5278,6 +5291,17 @@
           "status": {
             "$ref": "#/components/schemas/SessionMatchStatus"
           },
+          "temperature_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature C"
+          },
           "timezone": {
             "title": "Timezone",
             "type": "string"
@@ -5296,6 +5320,7 @@
           "duration_s",
           "recording_time_s",
           "rpe",
+          "temperature_c",
           "load",
           "load_basis"
         ],
@@ -5617,6 +5642,17 @@
           "status": {
             "$ref": "#/components/schemas/SessionMatchStatus"
           },
+          "temperature_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature C"
+          },
           "timezone": {
             "title": "Timezone",
             "type": "string"
@@ -5640,6 +5676,7 @@
           "duration_s",
           "recording_time_s",
           "rpe",
+          "temperature_c",
           "load",
           "load_basis",
           "notes",
@@ -5844,11 +5881,37 @@
       },
       "SessionUpdate": {
         "additionalProperties": false,
-        "description": "Corrections to a session's guessed facts.\n\nBoth fields are overrides of something inferred from a file: setting the\ndiscipline records that the athlete decided it, and setting the timezone\nre-derives ``local_date``, which is what puts a late-evening ride back on\nthe right day.\n\n**Optional by omission, never nullable.** Neither field can be *cleared*:\na session always has a discipline and always has a timezone, so the\nservice refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``\nkeeps the Python-side ``= None`` \"unset\" default while dropping the\n``null`` branch from the contract, so the schema promises exactly what the\nparser accepts \u2014 the same rule the optional *query* parameters follow\n(`.claude/rules/api-optional-query-params.md`), applied to a request body.\nOther update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay\n``X | None`` on purpose: for those, ``null`` means \"clear this field\".",
+        "description": "Corrections to a session's guessed facts, and its measurement context.\n\nTwo kinds of field, with different null semantics \u2014 and in both cases an\n**omitted** field is left untouched (the route dumps with\n``exclude_unset``):\n\n* **Corrections** (``discipline``, ``timezone``) override something\n  inferred from a file: setting the discipline records that the athlete\n  decided it, and setting the timezone re-derives ``local_date``, which\n  is what puts a late-evening ride back on the right day. Neither can be\n  *cleared* \u2014 a session always has both \u2014 so the service refuses an\n  explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the\n  Python-side ``= None`` \"unset\" default while dropping the ``null``\n  branch from the contract, so the schema promises exactly what the\n  parser accepts (the rule of\n  `.claude/rules/api-optional-query-params.md`, applied to a body).\n* **Measurement context** (``rpe``, ``temperature_c``, #23) is what the\n  athlete reports about the conditions of a session \u2014 including an\n  ingested one, which is the point: a device file never carries an RPE.\n  These are ``X | None`` on purpose, like ``AthleteUpdate``'s fields:\n  an explicit ``null`` *clears* the value, because \"nobody said\" is\n  their honest empty state.",
         "properties": {
           "discipline": {
             "$ref": "#/components/schemas/SessionDiscipline",
             "title": "Discipline"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "temperature_c": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": -30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature C"
           },
           "timezone": {
             "description": "An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. Anything else is refused: a timezone that cannot be resolved makes the session's date unrecoverable.",
@@ -10890,7 +10953,7 @@
         "tags": ["sessions"]
       },
       "patch": {
-        "description": "Correct a session's discipline or its timezone.\n\nA discipline override is recorded as one (`discipline_overridden`), so no\nlater re-classification can quietly undo it. A timezone override\n**re-derives** `local_date`, which is the point of storing the zone rather\nthan the offset that happened to be true once (D93).",
+        "description": "Correct a session's guessed facts, or record its measurement context.\n\nA discipline override is recorded as one (`discipline_overridden`), so no\nlater re-classification can quietly undo it. A timezone override\n**re-derives** `local_date`, which is the point of storing the zone rather\nthan the offset that happened to be true once (D93). `rpe` and\n`temperature_c` record the conditions the session was performed under \u2014\nsettable on any session, ingested ones included (#23), and clearable with\nan explicit null; an omitted field is always left untouched.",
         "operationId": "sessions-update_session",
         "parameters": [
           {

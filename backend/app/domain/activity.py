@@ -254,6 +254,29 @@ def classify_discipline(
     return SessionDiscipline.OTHER, ClassificationSource.HEURISTIC
 
 
+# --- the conditions a measurement was taken under (#23) -----------------------
+
+#: Plausibility bounds on an athlete-reported ambient temperature, in °C.
+#: Wide enough for a Nordic winter commute and a heatwave climb; anything
+#: outside them is a typo or a unit mix-up (a Fahrenheit 85 must be refused,
+#: not stored as 85 °C — every later heat-comparison would trust it).
+MIN_TEMPERATURE_C, MAX_TEMPERATURE_C = -30.0, 50.0
+
+
+def check_temperature(temperature_c: float) -> None:
+    """Refuse an implausible ambient temperature.
+
+    Raises:
+        ValueError: When it is outside the plausibility bounds, naming them.
+    """
+    if not MIN_TEMPERATURE_C <= temperature_c <= MAX_TEMPERATURE_C:
+        raise ValueError(
+            f"temperature_c must be between {MIN_TEMPERATURE_C:g} and "
+            f"{MAX_TEMPERATURE_C:g} °C (ambient temperature, in Celsius); "
+            f"got {temperature_c:g}"
+        )
+
+
 # --- the athlete-local day (work order A-6, build plan WP-4.4) ----------------
 
 #: The timezone stored when the file offers nothing better. Not a guess about

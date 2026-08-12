@@ -33,6 +33,7 @@ from app.domain.activity import (
     ClassificationSource,
     RecordingKind,
     SessionDiscipline,
+    check_temperature,
     parse_timezone,
     session_date,
 )
@@ -47,6 +48,7 @@ from app.persistence.activity import (
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.services.exercises import ExerciseService
+from app.services.guardrails import check_write_cap
 from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService
 from app.services.proposals import resolve_proposals_for_session
@@ -56,9 +58,18 @@ logger = get_logger(__name__)
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "session"
 
-#: Fields `update` accepts. Deliberately short: this endpoint exists to
-#: correct what the pipeline guessed, not to edit history.
-UPDATABLE_FIELDS = ("discipline", "timezone")
+#: Fields `update` accepts. Two kinds, still deliberately short: corrections
+#: of what the pipeline guessed (`discipline`, `timezone`) and the
+#: athlete-reported **context of the measurement** (`rpe`, `temperature_c`,
+#: #23). Measurements themselves stay uneditable — this is not an editor of
+#: history.
+UPDATABLE_FIELDS = ("discipline", "timezone", "rpe", "temperature_c")
+
+#: The fields a session cannot be without: an explicit null for one of these
+#: is refused rather than stored. The context fields are *clearable* — a
+#: mistyped RPE is corrected by nulling it, and "nobody said" is their honest
+#: empty state.
+NON_CLEARABLE_FIELDS = ("discipline", "timezone")
 
 #: Bounds on a manually entered session. RPE is the standard 0-10 scale; the
 #: duration bound is the same "too short to be a session" line
@@ -178,27 +189,58 @@ class SessionService:
     # --- writes --------------------------------------------------------------
 
     async def update(
-        self, session_id: uuid.UUID, updates: Mapping[str, Any], *, actor: Actor
+        self,
+        session_id: uuid.UUID,
+        updates: Mapping[str, Any],
+        *,
+        actor: Actor,
+        dry_run: bool = False,
     ) -> SessionRow:
-        """Apply the athlete's corrections to one session.
+        """Apply corrections and measurement context to one session.
+
+        Patch semantics: a field not in ``updates`` is untouched; an explicit
+        ``None`` clears a context field (`rpe`, `temperature_c`) and is
+        refused for a field a session cannot be without
+        (:data:`NON_CLEARABLE_FIELDS`).
+
+        ``dry_run`` runs **every** check a real call runs — the write cap
+        excepted, because a dry run costs no budget — and returns the row
+        unchanged: the MCP adapter's "check before you act" path, sharing
+        this method so it can never validate less than the write does.
 
         Raises:
             NotFoundError: When no session has that id.
-            ValidationError: When a field is unknown, cleared, or the timezone
-                cannot be resolved.
+            ValidationError: When a field is unknown, a non-clearable one is
+                cleared, a value is out of bounds, or the timezone cannot be
+                resolved.
+            RateLimitedError: When an agent's trailing-hour cap is spent.
         """
         unknown = set(updates) - set(UPDATABLE_FIELDS)
         if unknown:
             raise ValidationError(
                 f"Unknown session fields: {', '.join(sorted(unknown))}"
             )
-        for name in UPDATABLE_FIELDS:
+        for name in NON_CLEARABLE_FIELDS:
             if name in updates and updates[name] is None:
                 raise ValidationError(f"{name} cannot be cleared")
 
         row = await self.get(session_id)
         if not updates:
             raise ValidationError("Supply at least one field to update")
+
+        # Everything is checked before anything is touched, so a refusal —
+        # and a dry run — leaves the row exactly as it was.
+        with domain_rules():
+            if "timezone" in updates:
+                parse_timezone(str(updates["timezone"]))
+            if updates.get("temperature_c") is not None:
+                check_temperature(float(updates["temperature_c"]))
+        rpe = updates.get("rpe")
+        if rpe is not None and not MIN_RPE <= float(rpe) <= MAX_RPE:
+            raise ValidationError(f"RPE is on a {MIN_RPE:g}-{MAX_RPE:g} scale")
+        if dry_run:
+            return row
+        await check_write_cap(self._session, actor)
 
         changed: dict[str, Any] = {}
         # Whether the artefact is stale afterwards, which is a narrower
@@ -218,12 +260,17 @@ class SessionService:
             changed["discipline"] = row.discipline.value
         if "timezone" in updates:
             timezone = str(updates["timezone"])
-            with domain_rules():
-                parse_timezone(timezone)
-                row.timezone = timezone
-                row.local_date = session_date(row.start_time, timezone)
+            row.timezone = timezone
+            row.local_date = session_date(row.start_time, timezone)
             changed["timezone"] = timezone
             changed["local_date"] = row.local_date.isoformat()
+        if "rpe" in updates:
+            row.rpe = None if rpe is None else float(rpe)
+            changed["rpe"] = row.rpe
+        if "temperature_c" in updates:
+            value = updates["temperature_c"]
+            row.temperature_c = None if value is None else float(value)
+            changed["temperature_c"] = row.temperature_c
 
         row = await self._repository.add(row)
         await self._audit.record(
@@ -303,39 +350,62 @@ class SessionService:
         duration_s: int,
         discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
         rpe: float | None = None,
+        temperature_c: float | None = None,
         notes: str | None = None,
         sets: Sequence[LoggedSetInput] = (),
+        dry_run: bool = False,
     ) -> SessionRow:
         """Record a session the athlete performed and typed in (B-6).
 
+        ``dry_run`` runs every check a real call runs — the timezone, the
+        bounds, every catalogue slug — and returns the session it *would*
+        have stored as a **transient** row, never added to the database
+        session; its generated fields (id, status, timestamps) are unset,
+        which is the honest rendering of a row that does not exist. Free of
+        the write cap, because checking before acting must be the cheap
+        option.
+
         Raises:
-            ValidationError: When the timezone is unresolvable, the duration
-                or RPE is out of range, or a set is malformed.
+            ValidationError: When the timezone is unresolvable, the duration,
+                RPE or temperature is out of range, or a set is malformed.
             NotFoundError: When a set names a catalogue exercise that does not
                 exist.
+            RateLimitedError: When an agent's trailing-hour cap is spent.
         """
+        if not dry_run:
+            await check_write_cap(self._session, actor)
         with domain_rules():
             parse_timezone(timezone)
             local_date = session_date(start_time, timezone)
-        _check_manual(start_time=start_time, duration_s=duration_s, rpe=rpe, sets=sets)
+        _check_manual(
+            start_time=start_time,
+            duration_s=duration_s,
+            rpe=rpe,
+            temperature_c=temperature_c,
+            sets=sets,
+        )
         rows = [
             await self._logged_set(entry, index) for index, entry in enumerate(sets)
         ]
 
-        row = await self._repository.add(
-            SessionRow(
-                start_time=start_time,
-                end_time=start_time + dt.timedelta(seconds=duration_s),
-                timezone=timezone,
-                local_date=local_date,
-                discipline=discipline,
-                # Nobody classified this: the athlete said what it was.
-                classification_source=ClassificationSource.MANUAL,
-                recording_kind=RecordingKind.MANUAL,
-                rpe=rpe,
-                notes=notes,
-            )
+        draft = SessionRow(
+            start_time=start_time,
+            end_time=start_time + dt.timedelta(seconds=duration_s),
+            timezone=timezone,
+            local_date=local_date,
+            discipline=discipline,
+            # Nobody classified this: the athlete said what it was.
+            classification_source=ClassificationSource.MANUAL,
+            recording_kind=RecordingKind.MANUAL,
+            rpe=rpe,
+            temperature_c=temperature_c,
+            notes=notes,
         )
+        if dry_run:
+            draft.logged_sets = list(rows)
+            return draft
+
+        row = await self._repository.add(draft)
         for logged in rows:
             logged.session_id = row.id
         self._session.add_all(rows)
@@ -349,6 +419,7 @@ class SessionService:
                 "discipline": discipline.value,
                 "duration_s": duration_s,
                 "rpe": rpe,
+                "temperature_c": temperature_c,
                 "sets": len(rows),
             },
         )
@@ -463,6 +534,7 @@ def _check_manual(
     start_time: dt.datetime,
     duration_s: int,
     rpe: float | None,
+    temperature_c: float | None,
     sets: Sequence[LoggedSetInput],
 ) -> None:
     """Bounds a JSON schema cannot express, refused as 422s rather than 500s.
@@ -483,6 +555,9 @@ def _check_manual(
         )
     if rpe is not None and not MIN_RPE <= rpe <= MAX_RPE:
         raise ValidationError(f"RPE is on a {MIN_RPE:g}-{MAX_RPE:g} scale")
+    if temperature_c is not None:
+        with domain_rules():
+            check_temperature(temperature_c)
     if len(sets) > MAX_SETS:
         raise ValidationError(f"A session may log at most {MAX_SETS} sets")
     for index, entry in enumerate(sets, start=1):

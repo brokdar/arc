@@ -25,6 +25,7 @@ import inspect
 import json
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -38,6 +39,7 @@ from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp.tools import register_tools
+from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.audit import AuditLogEntry
@@ -45,6 +47,7 @@ from app.persistence.db import session_scope
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
 from app.services.workouts import WorkoutService
+from tests.unit.golden_fit import golden
 from tests.unit.mcp_harness import connected_as, server_for
 from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE, unstructured
 
@@ -90,6 +93,8 @@ EXPECTED_TOOLS = {
     "append_anchor",
     "create_workout",
     "propose_plan_change",
+    "record_session_context",
+    "record_manual_session",
     "write_session_evaluation",
     "annotate",
 }
@@ -158,6 +163,27 @@ async def record(client: AsyncClient, **overrides: Any) -> str:
     response = await client.post(MANUAL, json=payload)
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
+
+
+async def ingest(client: AsyncClient, golden_name: str) -> str:
+    """Run one golden file through the real pipeline and return its session.
+
+    The seed for every context-write test: #23 is about sessions that came
+    from a device file, so the fixture must be one, not a typed-in stand-in.
+    """
+    response = await client.post(
+        "/api/v1/ingest/upload",
+        files={
+            "file": (
+                "ride.fit",
+                golden(golden_name).read_bytes(),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert response.status_code == 200, response.text
+    [session_id] = response.json()["session_ids"]
+    return str(session_id)
 
 
 async def raise_red_flag(client: AsyncClient) -> None:
@@ -327,6 +353,8 @@ async def test_the_read_tools_under_test_are_all_of_them(session_factory: Any) -
         "append_anchor",
         "create_workout",
         "propose_plan_change",
+        "record_session_context",
+        "record_manual_session",
         "write_session_evaluation",
         "annotate",
     }
@@ -1548,6 +1576,14 @@ WRITE_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
         },
     ),
     (
+        "record_session_context",
+        {"session_id": "{session}", "rpe": 5, "temperature_c": 21},
+    ),
+    (
+        "record_manual_session",
+        {"start_time": f"{MONDAY.isoformat()}T18:00:00Z", "duration_s": 1_800},
+    ),
+    (
         "write_session_evaluation",
         {"session_id": "{session}", "text": "Steady.", "model_id": MODEL},
     ),
@@ -1577,6 +1613,214 @@ async def test_every_write_answer_carries_the_remaining_budget(
         assert isinstance(data["budget_remaining"], int), (
             f"{tool} must report the remaining write budget"
         )
+
+
+# --- session context (#23) ---------------------------------------------------------
+
+
+async def test_record_session_context_lands_on_an_ingested_session(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # The whole point of the tool: a device-recorded session, which manual
+    # creation never touches, can be given the conditions it was ridden under.
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    data = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "rpe": 4, "temperature_c": 29.5},
+    )
+
+    assert data["dry_run"] is False
+    assert data["session"]["rpe"] == 4
+    assert data["session"]["temperature_c"] == 29.5
+    assert isinstance(data["budget_remaining"], int)
+    # Read back through the read surface, not the write's own echo.
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+    assert detail["session"]["rpe"] == 4
+    assert detail["session"]["temperature_c"] == 29.5
+
+
+async def test_a_context_write_with_neither_field_is_refused(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    with pytest.raises(ToolError, match="at least one"):
+        await call(COACH, "record_session_context", {"session_id": session_id})
+
+
+async def test_a_context_dry_run_writes_nothing(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    data = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "temperature_c": 29.5, "dry_run": True},
+    )
+
+    assert data["dry_run"] is True
+    assert data["would_set"] == {"temperature_c": 29.5}
+    assert data["session"]["temperature_c"] is None, "the row must stand untouched"
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+    assert detail["session"]["temperature_c"] is None
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+async def test_an_implausible_temperature_is_refused_naming_the_bounds(
+    data_root: Path, client: AsyncClient, dry_run: bool
+) -> None:
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    with pytest.raises(ToolError, match=r"-30.*50"):
+        await call(
+            COACH,
+            "record_session_context",
+            {"session_id": session_id, "temperature_c": 51, "dry_run": dry_run},
+        )
+
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+    assert detail["session"]["temperature_c"] is None
+
+
+async def test_an_out_of_scale_rpe_is_refused_over_mcp(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    with pytest.raises(ToolError, match="0-10"):
+        await call(
+            COACH, "record_session_context", {"session_id": session_id, "rpe": 11}
+        )
+
+
+# --- manual sessions over MCP --------------------------------------------------------
+
+
+async def test_record_manual_session_lands_a_strength_session_with_its_sets(
+    client: AsyncClient,
+) -> None:
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3_600,
+            "rpe": 7,
+            "sets": [
+                {"exercise_id": "back_squat", "reps": 5, "load_kg": 100, "rir": 2},
+                {"exercise_name": "Copenhagen plank", "reps": 8},
+            ],
+        },
+    )
+
+    assert data["dry_run"] is False
+    session = data["session"]
+    assert session["recording_kind"] == "manual"
+    assert session["discipline"] == "strength"
+    assert session["rpe"] == 7
+    # The catalogue set stores the catalogue's name; the free-text one its own.
+    assert [entry["exercise_name"] for entry in data["sets"]] == [
+        "Back Squat",
+        "Copenhagen plank",
+    ]
+    assert isinstance(data["budget_remaining"], int)
+
+    # It is a recorded session like any other: listable, with a strength
+    # metric artefact for scoring to read.
+    listed = await call(READER, "list_sessions", {})
+    assert [row["id"] for row in listed["items"]] == [session["id"]]
+    detail = await call(READER, "get_session_detail", {"session_id": session["id"]})
+    assert detail["metrics"] is not None
+
+
+async def test_a_manual_session_dry_run_writes_nothing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "duration_s": 3_600,
+            "sets": [{"exercise_id": "back_squat", "reps": 5, "load_kg": 100}],
+            "dry_run": True,
+        },
+    )
+
+    assert data["dry_run"] is True
+    assert "id" not in data["session"], "nothing was written, so there is no id"
+    assert [entry["exercise_name"] for entry in data["session"]["sets"]] == [
+        "Back Squat"
+    ]
+    assert await rows(db_session, SessionRow) == []
+
+
+async def test_a_manual_session_dry_run_refuses_what_the_write_refuses(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    with pytest.raises(ToolError, match="catalogue"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {
+                "start_time": f"{MONDAY.isoformat()}T17:30:00Z",
+                "duration_s": 3_600,
+                "sets": [{"exercise_id": "moon_squat", "reps": 5}],
+                "dry_run": True,
+            },
+        )
+
+    assert await rows(db_session, SessionRow) == []
+
+
+async def test_a_set_with_a_misspelled_field_is_refused_by_name(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # `weight` is not a field a set carries; dropping it silently would store
+    # a bodyweight set the athlete never reported.
+    with pytest.raises(ToolError, match="weight"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {
+                "start_time": f"{MONDAY.isoformat()}T17:30:00Z",
+                "duration_s": 3_600,
+                "sets": [{"exercise_id": "back_squat", "reps": 5, "weight": 100}],
+            },
+        )
+
+    assert await rows(db_session, SessionRow) == []
+
+
+async def test_a_naive_manual_start_time_is_refused_by_name(
+    client: AsyncClient,
+) -> None:
+    with pytest.raises(ToolError, match="start_time"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {"start_time": "2026-08-10T17:30:00", "duration_s": 3_600},
+        )
+
+
+# --- the catalogue additions (#26) ---------------------------------------------------
+
+
+async def test_the_catalogue_serves_the_home_gym_movements(
+    session_factory: Any,
+) -> None:
+    # The two movements #26 found missing, servable through the same tool a
+    # coach authors strength work against.
+    data = await call(READER, "get_exercise_catalogue", {"limit": 200})
+
+    by_id = {item["id"]: item for item in data["items"]}
+    assert "reverse_fly" in by_id
+    assert "single_leg_calf_raise" in by_id
+    assert by_id["single_leg_calf_raise"]["unilateral"] is True
 
 
 # --- notes -------------------------------------------------------------------------
