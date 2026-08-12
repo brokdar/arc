@@ -26,12 +26,17 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.domain.anchors import AnchorVersion
+from app.domain.anchors import AnchorType, AnchorVersion
 from app.domain.athlete import AthleteProfile
+from app.domain.criteria import criteria_to_json
+from app.domain.purpose import discipline_of
+from app.domain.templates import PurposeTemplate
+from app.domain.zones import Zone
 from app.ingest.repricing import RepricePrediction, RepriceReport
 from app.persistence.activity import SessionRow, session_duration_s
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
+from app.persistence.exercises import ExerciseRow
 from app.persistence.matching import SessionMatchRow
 from app.persistence.metrics import SessionMetricsRow
 from app.persistence.proposals import PlanProposalRow
@@ -46,6 +51,7 @@ from app.services.metrics import MetricSummary
 from app.services.plan import PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
 from app.services.workouts import WorkoutDraft
+from app.services.zones import ResolvedZones
 
 
 def red_flag(profile: AthleteProfile) -> dict[str, Any]:
@@ -356,6 +362,109 @@ def workout(row: WorkoutRow, *, step_count: int | None) -> dict[str, Any]:
     }
 
 
+def workout_detail(row: WorkoutRow, *, step_count: int | None) -> dict[str, Any]:
+    """One library workout **with** its prescription document.
+
+    The one projection that carries ``structure``, and it carries it verbatim
+    from storage: this is the authoring reference, and a paraphrase of the
+    document is exactly what an agent must not imitate. Everything else
+    matches :func:`workout`, so a row from the list and the same row in
+    detail never disagree.
+    """
+    return {**workout(row, step_count=step_count), "structure": dict(row.structure)}
+
+
+def exercise(row: ExerciseRow) -> dict[str, Any]:
+    """One catalogue movement.
+
+    ``id`` is the slug — the exact string a strength structure's
+    ``exercise_id`` must carry — not a uuid, and that is the point of the
+    catalogue: the identifier is stable and readable across every deployment.
+    """
+    return {
+        "id": row.id,
+        "name": row.name,
+        "category": row.category.value,
+        "unilateral": row.unilateral,
+    }
+
+
+#: The channel label each anchor type's zones govern — the same vocabulary
+#: `metrics.zone_channel` answers with, so a zone read and a time-in-zone
+#: read join without a translation table.
+ZONE_CHANNEL: dict[AnchorType, str] = {
+    AnchorType.FTP: "power",
+    AnchorType.LTHR: "hr",
+}
+
+
+def zone(band: Zone) -> dict[str, Any]:
+    """One half-open zone band ``[lower, upper)``."""
+    return {
+        "index": band.index,
+        "name": band.name,
+        "lower_pct": band.lower_pct,
+        "upper_pct": band.upper_pct,
+        "lower": band.lower,
+        "upper": band.upper,
+        "unit": band.unit.value,
+    }
+
+
+def zones(resolved: ResolvedZones) -> dict[str, Any]:
+    """One channel's zones, with the two inputs every number derives from.
+
+    The anchor version rides along whole because it is the provenance: a zone
+    list without it is a copy waiting to go stale, which is the exact failure
+    `get_zones` exists to end.
+    """
+    row = resolved.anchor_version
+    return {
+        "channel": ZONE_CHANNEL[row.anchor_type],
+        "anchor_type": row.anchor_type.value,
+        "model": resolved.model.value,
+        "anchor": anchor(row),
+        "zones": [zone(band) for band in resolved.zones],
+    }
+
+
+def zones_unavailable(anchor_type: AnchorType) -> dict[str, Any]:
+    """A channel whose anchor has no version in force yet.
+
+    An answer rather than a refusal: "there are no heart-rate zones yet" is a
+    fact about the athlete's record, and hiding it behind a `not_found` would
+    cost the caller the channel that *does* exist.
+    """
+    return {
+        "channel": ZONE_CHANNEL[anchor_type],
+        "anchor_type": anchor_type.value,
+        "model": None,
+        "anchor": None,
+        "zones": None,
+        "note": (
+            f"no {anchor_type.value} version is in force, so this channel has "
+            "no zones yet; they exist the moment one is appended"
+        ),
+    }
+
+
+def purpose_template(template: PurposeTemplate) -> dict[str, Any]:
+    """One purpose, with what it starts with and how it is judged.
+
+    ``default_criteria`` are serialized by the domain's own encoder — the same
+    wire form a planned session's ``success_criteria`` carry in a proposal
+    diff — so what this read shows is literally what an unoverridden session
+    will be scored against.
+    """
+    return {
+        "purpose": template.purpose.value,
+        "discipline": discipline_of(template.purpose).value,
+        "description": template.description,
+        "axes": [axis.value for axis in template.axes],
+        "default_criteria": criteria_to_json(template.default_criteria),
+    }
+
+
 def workout_draft(draft: WorkoutDraft) -> dict[str, Any]:
     """The workout a create *would* add — the dry run's answer.
 
@@ -430,18 +539,42 @@ def note(row: AgentNoteRow) -> dict[str, Any]:
 
 
 def proposal(row: PlanProposalRow) -> dict[str, Any]:
-    """One stored plan-change proposal."""
+    """One stored plan-change proposal, without its diff.
+
+    Enough to answer the weekly-review question — did it land, and if not,
+    how did it die — and to decide whether to drill in with `get_proposal`.
+    ``resolution_note`` is on the summary rather than behind the detail
+    because it is the athlete's own words on a rejection, and a coach that
+    has to ask a second question to hear "no, and here is why" mostly won't.
+    """
     return {
         "id": str(row.id),
         "status": row.status.value,
         "rationale": row.rationale,
+        "change_count": len(row.changes),
         "expires_at": row.expires_at.isoformat(),
         "created_at": row.created_at.isoformat(),
         "created_by": row.created_by,
+        "resolved_at": None if row.resolved_at is None else row.resolved_at.isoformat(),
+        "resolution_note": row.resolution_note,
         "supersedes_id": (
             None if row.supersedes_id is None else str(row.supersedes_id)
         ),
+        "superseded_by_id": (
+            None if row.superseded_by_id is None else str(row.superseded_by_id)
+        ),
     }
+
+
+def proposal_detail(row: PlanProposalRow) -> dict[str, Any]:
+    """One proposal in full: the summary plus its stored diff.
+
+    ``diff`` is passed through verbatim, the way :func:`score` passes a stored
+    payload through: it is the same document `propose_plan_change` computed
+    and returned when the proposal was written, and a second rendering here
+    would be a second thing to keep in step with the diff builder.
+    """
+    return {**proposal(row), "diff": list(row.diff)}
 
 
 def proposal_outcome(outcome: ProposalOutcome, *, dry_run: bool) -> dict[str, Any]:

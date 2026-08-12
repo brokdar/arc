@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.domain.athlete import Discipline
+from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp.tools import register_tools
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
@@ -72,7 +73,13 @@ EXPECTED_TOOLS = {
     "get_session_detail",
     "list_sessions",
     "get_workout_library",
+    "get_workout",
     "search_history",
+    "list_proposals",
+    "get_proposal",
+    "get_exercise_catalogue",
+    "get_zones",
+    "get_purposes",
     # writes
     "append_anchor",
     "create_workout",
@@ -81,10 +88,11 @@ EXPECTED_TOOLS = {
     "annotate",
 }
 
-#: Every read tool, with arguments that reach an answer. `{session}` is
-#: substituted with a real recorded session's id. Exhaustive on purpose: "the
-#: flag is on every read" is only true if it is on every one of them, and a
-#: sample of three would let the eighth ship without it.
+#: Every read tool, with arguments that reach an answer. `{session}`,
+#: `{workout}` and `{proposal}` are substituted with real seeded ids.
+#: Exhaustive on purpose: "the flag is on every read" is only true if it is
+#: on every one of them, and a sample of three would let the eighth ship
+#: without it.
 READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_athlete", {}),
     ("get_anchors", {}),
@@ -92,7 +100,13 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_session_detail", {"session_id": "{session}"}),
     ("list_sessions", {}),
     ("get_workout_library", {}),
+    ("get_workout", {"workout_id": "{workout}"}),
     ("search_history", {"start": "2026-08-10", "end": "2026-08-16"}),
+    ("list_proposals", {}),
+    ("get_proposal", {"proposal_id": "{proposal}"}),
+    ("get_exercise_catalogue", {}),
+    ("get_zones", {}),
+    ("get_purposes", {}),
 )
 
 
@@ -255,14 +269,41 @@ async def test_every_read_carries_the_red_flag(
 ) -> None:
     # WP-8.4: an agent that has to remember to ask will one day not ask, and
     # the refusal it then walks into looks like a bug rather than a rule.
+    # Everything is seeded *before* the flag goes up: a proposal that adds
+    # work would rightly be refused after it.
     session_id = await record(client)
+    await append_ftp(client)
+    workout = await call(
+        COACH, "create_workout", {"name": "Easy hour", "structure": EASY_RIDE}
+    )
+    proposal = await call(
+        COACH,
+        "propose_plan_change",
+        {
+            "changes": [
+                {
+                    "kind": "create",
+                    "date": MONDAY.isoformat(),
+                    "purpose": "endurance",
+                    "structure": EASY_RIDE,
+                }
+            ],
+            "rationale": "A steady hour to open the week.",
+            "expires_at": expires(),
+        },
+    )
     await raise_red_flag(client)
 
+    seeded = {
+        "session": session_id,
+        "workout": workout["workout"]["id"],
+        "proposal": proposal["proposal"]["id"],
+    }
     data = await call(
         READER,
         tool,
         {
-            key: value.format(session=session_id) if isinstance(value, str) else value
+            key: value.format(**seeded) if isinstance(value, str) else value
             for key, value in arguments.items()
         },
     )
@@ -473,6 +514,208 @@ async def test_search_history_refuses_an_inverted_range(session_factory: Any) ->
             "search_history",
             {"start": "2026-08-31", "end": "2026-08-01"},
         )
+
+
+# --- the discovery reads (issue #20) -----------------------------------------------
+
+
+async def filed_proposal(**overrides: Any) -> Any:
+    """File a one-create proposal as the coach and return the tool's answer."""
+    return await call(
+        COACH,
+        "propose_plan_change",
+        {
+            "changes": [
+                {
+                    "kind": "create",
+                    "date": MONDAY.isoformat(),
+                    "purpose": "endurance",
+                    "structure": EASY_RIDE,
+                }
+            ],
+            "rationale": "A steady hour to open the week.",
+            "expires_at": expires(),
+        }
+        | overrides,
+    )
+
+
+async def test_a_filed_proposal_is_readable_back_with_its_status(
+    client: AsyncClient,
+) -> None:
+    # The write-then-blind loop this PR closes: after propose_plan_change,
+    # the agent could not see whether its proposal still stood.
+    await append_ftp(client)
+    filed = await filed_proposal()
+
+    data = await call(READER, "list_proposals")
+
+    assert data["total"] == 1
+    [row] = data["items"]
+    assert row["id"] == filed["proposal"]["id"]
+    assert row["status"] == "pending"
+    assert row["change_count"] == 1
+    assert row["created_by"] == "agent:coach"
+    assert row["resolved_at"] is None
+    assert "diff" not in row, "the diff is get_proposal's answer, not the list's"
+
+
+async def test_list_proposals_filters_on_status(client: AsyncClient) -> None:
+    await append_ftp(client)
+    await filed_proposal()
+
+    pending = await call(READER, "list_proposals", {"status": "pending"})
+    accepted = await call(READER, "list_proposals", {"status": "accepted"})
+
+    assert pending["total"] == 1
+    assert accepted["total"] == 0
+
+
+async def test_get_proposal_returns_the_stored_diff(client: AsyncClient) -> None:
+    await append_ftp(client)
+    filed = await filed_proposal()
+
+    data = await call(READER, "get_proposal", {"proposal_id": filed["proposal"]["id"]})
+
+    proposal = data["proposal"]
+    assert proposal["status"] == "pending"
+    assert proposal["rationale"] == "A steady hour to open the week."
+    # The same document the write returned: computed once, by one code path.
+    assert proposal["diff"] == filed["diff"]
+    [entry] = proposal["diff"]
+    assert entry["kind"] == "create"
+    # The purpose resolved to concrete success criteria, visible in the diff.
+    assert entry["after"]["success_criteria"], (
+        "the diff must show what the purpose resolved to"
+    )
+
+
+async def test_a_superseded_proposal_names_its_successor(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    planned = await plan(client)
+    move = {
+        "kind": "move",
+        "planned_session_id": planned["id"],
+        "expected_intent_version": planned["intent"]["version"],
+        "date": (MONDAY + dt.timedelta(days=2)).isoformat(),
+    }
+    first = await filed_proposal(changes=[move])
+    second = await filed_proposal(
+        changes=[move | {"date": (MONDAY + dt.timedelta(days=3)).isoformat()}]
+    )
+
+    data = await call(READER, "get_proposal", {"proposal_id": first["proposal"]["id"]})
+
+    assert data["proposal"]["status"] == "superseded"
+    assert data["proposal"]["superseded_by_id"] == second["proposal"]["id"]
+    assert second["proposal"]["supersedes_id"] == first["proposal"]["id"]
+
+
+async def test_get_workout_round_trips_a_created_structure(
+    session_factory: Any,
+) -> None:
+    created = await call(
+        COACH, "create_workout", {"name": "2x20 threshold", "structure": HARD_RIDE}
+    )
+
+    data = await call(READER, "get_workout", {"workout_id": created["workout"]["id"]})
+
+    workout = data["workout"]
+    assert workout["name"] == "2x20 threshold"
+    assert workout["step_count"] == 1
+    # The stored document, verbatim: the caller's structure as the validator
+    # normalized it, which is exactly the shape a new create should follow.
+    assert workout["structure"] == workout_body_to_json(
+        workout_body_from_json(HARD_RIDE)
+    )
+
+
+async def test_the_exercise_catalogue_is_reachable_by_slug(
+    session_factory: Any,
+) -> None:
+    # The sharpest case in issue #20: create_workout refuses unknown slugs
+    # and cited a REST endpoint an MCP client cannot call.
+    data = await call(
+        READER, "get_exercise_catalogue", {"category": "squat", "query": "back"}
+    )
+
+    assert data["total"] >= 1
+    ids = [item["id"] for item in data["items"]]
+    assert "back_squat" in ids
+    entry = data["items"][ids.index("back_squat")]
+    assert entry["name"] == "Back Squat"
+    assert entry["category"] == "squat"
+    assert entry["unilateral"] is False
+
+
+async def test_the_catalogue_clamps_an_oversized_page(session_factory: Any) -> None:
+    data = await call(READER, "get_exercise_catalogue", {"limit": 10_000})
+
+    assert data["limit"] == 200
+    assert data["returned"] <= 200
+
+
+async def test_get_zones_reflects_the_current_anchor(client: AsyncClient) -> None:
+    await append_ftp(client, 250)
+
+    data = await call(READER, "get_zones")
+
+    channels = {entry["channel"]: entry for entry in data["channels"]}
+    power = channels["power"]
+    assert power["model"] == "coggan_7"
+    assert power["anchor"]["value"] == 250
+    endurance = power["zones"][1]
+    assert endurance["name"] == "Endurance"
+    assert endurance["lower"] == pytest.approx(0.55 * 250)
+    assert power["zones"][-1]["upper"] is None, "no ceiling on a sprint"
+    # No LTHR yet: an answer, not a refusal, and it costs power nothing.
+    hr = channels["hr"]
+    assert hr["zones"] is None
+    assert "no lthr version is in force" in hr["note"]
+
+
+async def test_zones_move_with_a_new_anchor_version(client: AsyncClient) -> None:
+    # "Never copy zones elsewhere": the same read answers differently the
+    # moment the anchor it derives from does.
+    await append_ftp(client, 250)
+    before = await call(READER, "get_zones")
+    await append_ftp(client, 300)
+
+    after = await call(READER, "get_zones")
+
+    def endurance_floor(data: Any) -> float:
+        [power] = [c for c in data["channels"] if c["channel"] == "power"]
+        return power["zones"][1]["lower"]
+
+    assert endurance_floor(before) == pytest.approx(137.5)
+    assert endurance_floor(after) == pytest.approx(165.0)
+
+
+async def test_get_purposes_includes_the_endurance_template(
+    session_factory: Any,
+) -> None:
+    data = await call(READER, "get_purposes")
+
+    templates = {entry["purpose"]: entry for entry in data["items"]}
+    endurance = templates["endurance"]
+    assert endurance["discipline"] == "cycling"
+    assert "completion" in endurance["axes"]
+    kinds = [criterion["kind"] for criterion in endurance["default_criteria"]]
+    assert "time_in_band" in kinds, (
+        "choosing `endurance` chooses a time-in-band contract, and this read "
+        "is where the agent learns that"
+    )
+
+
+async def test_a_write_key_may_not_read_the_discovery_surface(
+    session_factory: Any,
+) -> None:
+    # Scopes are named requirements, not a hierarchy — same rule as the
+    # original reads, re-pinned for the new ones.
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "list_proposals")
 
 
 # --- append_anchor -----------------------------------------------------------------
