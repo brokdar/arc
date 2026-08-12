@@ -52,7 +52,10 @@ from app.domain.activity import SessionDiscipline
 from app.domain.agent_notes import NoteKind
 from app.domain.anchors import AnchorSource, AnchorType, AnchorUnit, Provenance
 from app.domain.athlete import Discipline
-from app.domain.proposals import changes_from_json
+from app.domain.proposals import ProposalStatus, changes_from_json
+from app.domain.strength import ExerciseCategory
+from app.domain.templates import sorted_templates
+from app.domain.zones import DEFAULT_ZONE_MODEL
 from app.ingest.repricing import append_anchor_and_reprice, preview_anchor_append
 from app.mcp import views
 from app.mcp.auth import Scope
@@ -61,6 +64,7 @@ from app.persistence.db import session_scope
 from app.services.activity import SessionService
 from app.services.agent_notes import AgentNoteService
 from app.services.anchors import AnchorService
+from app.services.exercises import ExerciseService
 from app.services.guardrails import current_profile
 from app.services.history import HistoryService
 from app.services.matching import MatchingService
@@ -68,7 +72,9 @@ from app.services.metrics import SessionMetricsService, summarise
 from app.services.plan import PlanService
 from app.services.proposals import ProposalService
 from app.services.scoring import ScoringService
+from app.services.templates import purpose_templates
 from app.services.workouts import WorkoutService, step_count_of
+from app.services.zones import ZoneService
 
 logger = get_logger(__name__)
 
@@ -405,9 +411,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         single good one.
 
         The prescription document itself is not returned — only the name,
-        folder, tags and step count. To plan one, reference its `id` in a
-        `create` change. A `step_count` of null means that workout's stored
-        document no longer parses; the rest of the page is unaffected.
+        folder, tags and step count; `get_workout` returns one workout with
+        its full `structure`. To plan one, reference its `id` in a `create`
+        change. A `step_count` of null means that workout's stored document
+        no longer parses; the rest of the page is unaffected.
 
         Args:
             query: Free-text match on the name.
@@ -481,6 +488,233 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 )
                 return {
                     "history": views.history(summary),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def list_proposals(
+        status: ProposalStatus | None = None, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
+        """List plan-change proposals, newest first.
+
+        Read this **before proposing** — a new proposal touching a session
+        that already has an open one supersedes it, and this is where you see
+        what you would displace — and at the **start of every weekly review**:
+        it is what answers "was last week's proposal accepted, rejected, or
+        did it lapse". `get_plan_week` cannot answer that; the plan only
+        changes on acceptance, so an unanswered proposal is invisible there.
+
+        A proposal is `pending` until the athlete accepts or rejects it; left
+        unanswered it goes `lapsed` at its `expires_at`, a newer proposal
+        about the same session makes it `superseded`, and the athlete
+        training through the date it was about makes it
+        `resolved_by_reality`. On every exit but acceptance the committed
+        plan stands. `resolution_note` on a rejected one is the athlete's own
+        words on why — read it; it is them telling you what you got wrong.
+
+        Summaries only: status, timestamps, rationale and `change_count`.
+        Call `get_proposal` for the stored diff.
+
+        Args:
+            status: Restrict to one status (`pending`, `accepted`,
+                `rejected`, `lapsed`, `superseded`, `resolved_by_reality`);
+                omit for all of them.
+            limit: How many to return, newest first.
+            offset: How many to skip, for reading past the first page.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                rows, total = await ProposalService.from_session(session).list(
+                    status=status,
+                    offset=_offset(offset),
+                    limit=_limit(limit),
+                )
+                return {
+                    **views.page(
+                        [views.proposal(row) for row in rows],
+                        total=total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_proposal(proposal_id: str) -> dict[str, Any]:
+        """Read one proposal in full — rationale, status, and the stored diff.
+
+        `diff` is the same document `propose_plan_change` returned when the
+        proposal was written: per entity, before and after, computed against
+        the plan as it stood then. For a `create` it shows the
+        `success_criteria` the change's `purpose` resolved to — this is where
+        you see what a session you proposed will be scored against.
+        `supersedes_id` and `superseded_by_id` link the displacement chain in
+        both directions, so a superseded proposal names its successor.
+
+        Args:
+            proposal_id: The proposal's id, from `list_proposals` or from
+                `propose_plan_change`'s answer.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                row = await ProposalService.from_session(session).get(
+                    views.as_uuid(proposal_id, field="proposal_id")
+                )
+                return {
+                    "proposal": views.proposal_detail(row),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_workout(workout_id: str) -> dict[str, Any]:
+        """Read one library workout **with its full prescription document**.
+
+        This is the authoring reference: before writing a new structure with
+        `create_workout`, read an existing workout of the same discipline
+        here and follow its `structure` — the document is returned exactly as
+        the validator accepted it, so its shape is a shape the validator will
+        accept again. Durations are seconds, cycling targets are fractions of
+        an anchor, strength loads are kilograms.
+
+        Args:
+            workout_id: The workout's id, from `get_workout_library` or a
+                planned session's `workout_id`.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                row = await WorkoutService.from_session(session).get(
+                    views.as_uuid(workout_id, field="workout_id")
+                )
+                return {
+                    "workout": views.workout_detail(row, step_count=step_count_of(row)),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_exercise_catalogue(
+        category: ExerciseCategory | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Browse the exercise catalogue strength prescriptions are written against.
+
+        A strength structure names every movement by its **slug** — the `id`
+        here, `back_squat` — and `create_workout` refuses a structure naming
+        a slug that is not in this catalogue. So read this before authoring
+        strength work: the slug you almost remember and the slug that exists
+        are refused and accepted respectively.
+
+        The catalogue is bundled reference data, identical on every
+        deployment and read-only from everywhere: there is no tool that adds
+        a movement, and a missing one is a change to the application, not a
+        write.
+
+        Args:
+            category: Restrict to one movement family (`squat`, `hinge`,
+                `lunge`, `press`, `pull`, `core`, `carry`, `mobility`,
+                `conditioning`); omit for all of them.
+            query: Case-insensitive substring of the name.
+            limit: How many to return, by family then name.
+            offset: How many to skip, for reading past the first page.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                rows, total = await ExerciseService.from_session(session).list(
+                    category=category,
+                    query=query,
+                    offset=_offset(offset),
+                    limit=_limit(limit),
+                )
+                return {
+                    **views.page(
+                        [views.exercise(row) for row in rows],
+                        total=total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_zones() -> dict[str, Any]:
+        """Read the training zones in force, per channel.
+
+        Zones are **computed, never stored**: the `power` channel derives
+        from the FTP version in force, the `hr` channel from the LTHR one,
+        and both move the moment a new anchor version is appended. So never
+        copy them anywhere — not into a prescription, a note, or your own
+        notes-to-self. Write the anchor; read the zones.
+
+        Each channel carries the anchor version and zone model it derives
+        from — the provenance of every number in it. Bands are half-open
+        `[lower, upper)` in the anchor's own unit, with `lower_pct` /
+        `upper_pct` as fractions of the anchor value; the top zone has no
+        ceiling. A channel whose anchor has no version in force is reported
+        with null zones and a note, not a refusal — that the athlete has no
+        LTHR yet is an answer, and it does not cost you the channel that
+        exists.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                service = ZoneService.from_session(session)
+                channels = []
+                for anchor_type in DEFAULT_ZONE_MODEL:
+                    try:
+                        resolved = await service.for_current_anchor(anchor_type)
+                    except NotFoundError:
+                        # "No version in force" is a fact about the record,
+                        # not a failed call: rendered as an answer so the
+                        # other channel still comes back.
+                        channels.append(views.zones_unavailable(anchor_type))
+                    else:
+                        channels.append(views.zones(resolved))
+                return {
+                    "channels": channels,
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_purposes() -> dict[str, Any]:
+        """Read the purpose vocabulary and what each purpose is judged on.
+
+        Choosing a `purpose` — in a `create` change or a planned session —
+        chooses the `default_criteria` the session starts with and the
+        scoring axes it is judged on. Unless the plan overrides
+        `success_criteria`, those defaults **are** what the session is scored
+        against, so read this before proposing or creating: a purpose picked
+        by its name alone is a scoring contract signed unread.
+
+        The whole vocabulary is returned, unpaged — it is bundled reference
+        data, one entry per purpose. `default_criteria` are in the same wire
+        form a proposal diff carries, and they are a *default*: an `update`
+        change may revise a session's `success_criteria` afterwards.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                templates = sorted_templates(purpose_templates())
+                return {
+                    "items": [
+                        views.purpose_template(template) for template in templates
+                    ],
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -613,9 +847,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         `structure` is the prescription document. Its shape is the one the
         athlete's own workout editor produces; the safest way to write a new
-        one is to read an existing workout of the same discipline and follow
-        it. An unparseable structure, or one naming an exercise the library
-        does not have, is refused with the reason.
+        one is to read an existing workout of the same discipline with
+        `get_workout` and follow its `structure`. A strength structure names
+        every exercise by slug from `get_exercise_catalogue`. An unparseable
+        structure, or one naming an exercise the catalogue does not have, is
+        refused with the reason.
 
         Args:
             name: What to call it.
