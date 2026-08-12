@@ -108,3 +108,36 @@ async def check_write_cap(
             "hour (MCP__WRITE_CAP_PER_HOUR). Try again once the oldest of "
             "them falls out of the window."
         )
+
+
+async def remaining_write_budget(
+    session: AsyncSession, actor: Actor, *, now: dt.datetime | None = None
+) -> int | None:
+    """How many writes the trailing-hour cap still admits for this actor.
+
+    The visible side of :func:`check_write_cap`, measured the same way over
+    the same audit rows — so what this reports and what the cap refuses can
+    never disagree. It exists because a budget that is only discoverable by
+    exhausting it makes an agent ration writes blind: every MCP write tool
+    attaches this as ``budget_remaining``, after the write for a real call
+    and as the current standing for a dry run (dry runs cost nothing).
+
+    Args:
+        session: The session to count over.
+        actor: Who is asking. All agent keys share one budget (see
+            :data:`AGENT_ACTOR_PREFIX`).
+        now: The moment the window ends, for tests. Defaults to now.
+
+    Returns:
+        Writes remaining, floored at zero — or ``None`` for a non-agent
+        actor, whom the cap does not bind and for whom a number would be a
+        limit that does not exist.
+    """
+    if not is_agent(actor):
+        return None
+    cap = get_settings().mcp.write_cap_per_hour
+    moment = now or dt.datetime.now(dt.UTC)
+    spent = await AuditRepository(session).count_since(
+        actor_prefix=AGENT_ACTOR_PREFIX, since=moment - WRITE_CAP_WINDOW
+    )
+    return max(cap - spent, 0)

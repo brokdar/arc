@@ -22,6 +22,8 @@ Two things this file exists to pin that no other file can:
 import ast
 import datetime as dt
 import inspect
+import json
+import re
 import uuid
 from typing import Any
 
@@ -33,15 +35,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.domain.athlete import Discipline
+from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp.tools import register_tools
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.audit import AuditLogEntry
+from app.persistence.db import session_scope
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
+from app.services.workouts import WorkoutService
 from tests.unit.mcp_harness import connected_as, server_for
-from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE
+from tests.unit.prescriptions import EASY_RIDE, HARD_RIDE, unstructured
 
 ANCHORS = "/api/v1/anchors"
 ATHLETE = "/api/v1/athlete"
@@ -928,6 +933,79 @@ async def test_a_workout_dry_run_reports_the_tags_the_write_would_store(
     assert previewed["workout"]["discipline"] == written["workout"]["discipline"]
 
 
+async def test_a_workout_dry_run_returns_the_normalized_structure(
+    session_factory: Any,
+) -> None:
+    # The dry run is how an agent sees how its document was interpreted —
+    # defaults filled in, exactly what the write would store. Without it,
+    # `propose_plan_change`'s dry run was the only place normalization was
+    # visible, which is the wrong tool to have to reach for.
+    data = await call(
+        COACH,
+        "create_workout",
+        {"name": "Easy hour", "structure": EASY_RIDE, "dry_run": True},
+    )
+
+    normalized = workout_body_to_json(workout_body_from_json(EASY_RIDE))
+    assert data["workout"]["structure"] == normalized
+    [step] = data["workout"]["structure"]["steps"]
+    assert step["role"] == "work", "the default role must be filled in"
+
+
+async def test_the_documented_structure_examples_validate(
+    session_factory: Any,
+) -> None:
+    # The doc-can't-drift pattern (`.env.example`): the fenced JSON examples
+    # in `create_workout`'s description are what an agent copies, so each must
+    # pass the same validation the write applies — forever. A wrong example is
+    # worse than none.
+    async with connected_as(server_for(COACH, READER), READER) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+
+    description = tools["create_workout"].description or ""
+    blocks = re.findall(r"```json\s*(.*?)```", description, flags=re.DOTALL)
+    documents = [json.loads(block) for block in blocks]
+    assert {document["discipline"] for document in documents} == {
+        "cycling",
+        "strength",
+    }, "one complete example per discipline"
+
+    async with session_scope() as session:
+        service = WorkoutService.from_session(session)
+        for document in documents:
+            draft = await service.preview(name="documented", structure=document)
+            assert draft.step_count >= 1
+
+
+async def test_an_unknown_slug_points_at_the_catalogue_not_a_route(
+    session_factory: Any,
+) -> None:
+    # The refusal used to cite `GET /api/v1/exercises` — unreachable from this
+    # surface. Adapter-neutral wording lets each surface apply its own
+    # discovery tool (`get_exercise_catalogue` here).
+    structure = {
+        "discipline": "strength",
+        "groups": [
+            {
+                "items": [
+                    {
+                        "exercise_id": "kettlebell_juggling",
+                        "sets": 3,
+                        "reps": 5,
+                        "load": {"kind": "kg", "value": 24},
+                    }
+                ]
+            }
+        ],
+    }
+
+    with pytest.raises(ToolError, match="catalogue") as excinfo:
+        await call(COACH, "create_workout", {"name": "Nope", "structure": structure})
+
+    assert "kettlebell_juggling" in str(excinfo.value)
+    assert "/api/" not in str(excinfo.value), "an MCP refusal must not cite a route"
+
+
 # --- propose_plan_change -----------------------------------------------------------
 
 
@@ -1225,6 +1303,37 @@ async def test_two_changes_about_one_session_are_refused(
 # --- the rate cap ------------------------------------------------------------------
 
 
+async def test_an_unknown_purpose_names_the_whole_vocabulary(
+    session_factory: Any,
+) -> None:
+    # Issue #19: the purpose vocabulary is the largest enum on the surface and
+    # the one where enumeration helps most — a refusal naming only the
+    # rejected value cost a real agent four calls of guessing.
+    with pytest.raises(ToolError, match="unknown purpose 'sprinting'") as excinfo:
+        await call(
+            COACH,
+            "propose_plan_change",
+            {
+                "changes": [
+                    {
+                        "kind": "create",
+                        "date": MONDAY.isoformat(),
+                        "purpose": "sprinting",
+                        "structure": unstructured(3_600),
+                        "intent_text": "x",
+                    }
+                ],
+                "rationale": "x",
+                "expires_at": expires(),
+                "dry_run": True,
+            },
+        )
+
+    message = str(excinfo.value)
+    for member in Purpose:
+        assert member.value in message, f"the refusal must name {member.value}"
+
+
 async def test_the_write_cap_trips_at_the_configured_cap(
     session_factory: Any, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1275,6 +1384,100 @@ async def test_a_dry_run_costs_no_cap_budget(
         {"anchor_type": "ftp", "value": 250, "provenance": "estimated"},
     )
     assert data["dry_run"] is False
+
+
+async def test_the_budget_decrements_across_writes_and_a_dry_run_is_free(
+    session_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The visible side of the cap: an agent that can read its remaining
+    # budget does not have to ration writes blind. One budget across the
+    # whole surface, so different tools spend from the same number.
+    monkeypatch.setenv("MCP__WRITE_CAP_PER_HOUR", "5")
+    get_settings.cache_clear()
+
+    previewed = await call(
+        COACH,
+        "create_workout",
+        {"name": "Easy hour", "structure": EASY_RIDE, "dry_run": True},
+    )
+    assert previewed["budget_remaining"] == 5, "a dry run spends nothing"
+
+    first = await call(
+        COACH, "create_workout", {"name": "Easy hour", "structure": EASY_RIDE}
+    )
+    assert first["budget_remaining"] == 4
+
+    second = await call(
+        COACH,
+        "append_anchor",
+        {"anchor_type": "ftp", "value": 250, "provenance": "estimated"},
+    )
+    assert second["budget_remaining"] == 3
+
+    after = await call(
+        COACH,
+        "create_workout",
+        {"name": "Another hour", "structure": EASY_RIDE, "dry_run": True},
+    )
+    assert after["budget_remaining"] == 3, "a dry run reports the standing unchanged"
+
+
+#: Every write tool with dry-run arguments that reach an answer. `{session}`
+#: is substituted with a real recorded session id. Exhaustive on purpose, the
+#: way `READ_TOOLS` is: "every write reports the budget" is only true if
+#: every one of them does.
+WRITE_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
+    (
+        "append_anchor",
+        {"anchor_type": "ftp", "value": 250, "provenance": "estimated"},
+    ),
+    ("create_workout", {"name": "Easy hour", "structure": EASY_RIDE}),
+    (
+        "propose_plan_change",
+        {
+            "changes": [
+                {
+                    "kind": "create",
+                    "date": MONDAY.isoformat(),
+                    "purpose": "unstructured",
+                    "structure": unstructured(3_600),
+                    "intent_text": "spin",
+                }
+            ],
+            "rationale": "an easy spin",
+            "expires_at": "{expires}",
+        },
+    ),
+    (
+        "write_session_evaluation",
+        {"session_id": "{session}", "text": "Steady.", "model_id": MODEL},
+    ),
+    (
+        "annotate",
+        {"text": "Quiet week.", "model_id": MODEL, "plan_week": MONDAY.isoformat()},
+    ),
+)
+
+
+async def test_every_write_answer_carries_the_remaining_budget(
+    client: AsyncClient,
+) -> None:
+    session_id = await record(client)
+
+    assert {name for name, _ in WRITE_TOOLS} | {"ping"} | {
+        name for name, _ in READ_TOOLS
+    } == EXPECTED_TOOLS, "the sweep must cover every write tool"
+
+    for tool, arguments in WRITE_TOOLS:
+        rendered = json.loads(
+            json.dumps(arguments | {"dry_run": True})
+            .replace("{session}", session_id)
+            .replace("{expires}", expires())
+        )
+        data = await call(COACH, tool, rendered)
+        assert isinstance(data["budget_remaining"], int), (
+            f"{tool} must report the remaining write budget"
+        )
 
 
 # --- notes -------------------------------------------------------------------------

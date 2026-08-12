@@ -361,11 +361,30 @@ def _parse_updates(raw: Mapping[str, Any]) -> dict[str, Any]:
     return parsed
 
 
+def _purpose(raw: Any) -> Purpose:
+    """Parse a purpose, enumerating the vocabulary on refusal.
+
+    The vocabulary has the largest value set of any enum on this surface and
+    no adapter can be assumed to expose it, so a refusal that names only the
+    rejected value leaves the caller guessing one purpose at a time — the
+    same "expected one of" treatment every other enum gets, here at the parse
+    site so every adapter benefits.
+
+    Raises:
+        ValueError: When ``raw`` is not a member, naming all of them.
+    """
+    try:
+        return Purpose(raw)
+    except ValueError as exc:
+        legal = ", ".join(member.value for member in Purpose)
+        raise ValueError(f"unknown purpose {raw!r}; expected one of {legal}") from exc
+
+
 def _parse_update(key: str, value: Any) -> Any:
     """Coerce one patch field."""
     match key:
         case "purpose":
-            return value if isinstance(value, Purpose) else Purpose(value)
+            return value if isinstance(value, Purpose) else _purpose(value)
         case "date":
             return value if isinstance(value, dt.date) else dt.date.fromisoformat(value)
         case "workout_id":
@@ -548,11 +567,7 @@ def change_from_json(document: Mapping[str, Any]) -> PlanChange:
         ) from exc
 
     if kind is ChangeKind.CREATE:
-        raw_purpose = document.get("purpose")
-        try:
-            purpose = Purpose(raw_purpose)
-        except ValueError as exc:
-            raise ValueError(f"unknown purpose {raw_purpose!r}") from exc
+        purpose = _purpose(document.get("purpose"))
         return CreateChange(
             date=_date(document, "date"),
             purpose=purpose,

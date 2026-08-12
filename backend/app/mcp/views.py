@@ -31,6 +31,7 @@ from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
 from app.domain.purpose import discipline_of
 from app.domain.templates import PurposeTemplate
+from app.domain.workout import workout_body_to_json
 from app.domain.zones import Zone
 from app.ingest.repricing import RepricePrediction, RepriceReport
 from app.persistence.activity import SessionRow, session_duration_s
@@ -469,9 +470,11 @@ def workout_draft(draft: WorkoutDraft) -> dict[str, Any]:
     """The workout a create *would* add — the dry run's answer.
 
     No `id`, for the reason :func:`anchor_draft` has none: nothing was written.
-    ``tags`` are the normalized ones the write would store, not the ones the
-    caller sent, so a dry run and the call after it agree about what is in the
-    library.
+    ``tags`` and ``structure`` are the **normalized** forms the write would
+    store — tags cleaned, the document re-serialized from the parsed
+    prescription with every default filled in — not what the caller sent, so
+    a dry run and the call after it agree about what is in the library, and
+    the caller sees how their document was interpreted before writing it.
     """
     return {
         "name": draft.name,
@@ -480,6 +483,7 @@ def workout_draft(draft: WorkoutDraft) -> dict[str, Any]:
         "folder": draft.folder,
         "tags": list(draft.tags),
         "step_count": draft.step_count,
+        "structure": workout_body_to_json(draft.body),
     }
 
 
