@@ -174,6 +174,25 @@ class SessionMetricsRepository:
                 current[row.session_id] = row
         return current
 
+    async def all_current(self) -> Sequence[SessionMetricsRow]:
+        """The version in force for **every** session that has one.
+
+        The scan behind "recompute everything that used this FTP version" —
+        the query the pin columns exist to make possible (see the module
+        docstring). Same broken-chain tolerance as
+        :meth:`current_for_sessions`: of several unsuperseded rows, the
+        highest version counts.
+        """
+        result = await self._session.execute(
+            select(SessionMetricsRow).where(SessionMetricsRow.superseded_by.is_(None))
+        )
+        current: dict[uuid.UUID, SessionMetricsRow] = {}
+        for row in result.scalars():
+            held = current.get(row.session_id)
+            if held is None or row.version > held.version:
+                current[row.session_id] = row
+        return list(current.values())
+
     async def add(self, row: SessionMetricsRow) -> SessionMetricsRow:
         """Persist one version and refresh its generated fields.
 

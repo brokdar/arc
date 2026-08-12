@@ -297,6 +297,98 @@
         "title": "AnchorUnit",
         "type": "string"
       },
+      "AnchorVersionAppended": {
+        "description": "The appended version, plus what appending it did to the history.",
+        "properties": {
+          "anchor_type": {
+            "$ref": "#/components/schemas/AnchorType"
+          },
+          "ci_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci High"
+          },
+          "ci_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci Low"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "reprice": {
+            "$ref": "#/components/schemas/RepriceReportRead"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AnchorSource"
+          },
+          "staleness_state": {
+            "$ref": "#/components/schemas/StalenessState"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/AnchorUnit"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "anchor_type",
+          "value",
+          "unit",
+          "provenance",
+          "protocol",
+          "effective_date",
+          "ci_low",
+          "ci_high",
+          "source",
+          "staleness_state",
+          "created_at",
+          "reprice"
+        ],
+        "title": "AnchorVersionAppended",
+        "type": "object"
+      },
       "AnchorVersionCreate": {
         "additionalProperties": false,
         "description": "Payload for appending a version to an anchor's history.",
@@ -4610,6 +4702,41 @@
         "title": "RepeatBlockSchema",
         "type": "object"
       },
+      "RepriceReportRead": {
+        "description": "What appending an anchor version did to previously recorded sessions.\n\nMirrors `app.ingest.repricing.RepriceReport`, field for field.",
+        "properties": {
+          "examined": {
+            "title": "Examined",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "repriced": {
+            "title": "Repriced",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "required": ["examined", "repriced", "unchanged", "failed", "note"],
+        "title": "RepriceReportRead",
+        "type": "object"
+      },
       "ResolvedStepRead": {
         "description": "One flattened step of the prescription, with its targets resolved.",
         "properties": {
@@ -7492,7 +7619,7 @@
         "tags": ["anchors"]
       },
       "post": {
-        "description": "Append a new version to an anchor's history.",
+        "description": "Append a new version to an anchor's history.\n\nAppending also **reprices the recorded history the version governs**\n(`app.ingest.repricing`): sessions whose current metrics were computed\nagainst a different measurement of this anchor for their date get a new\nmetric version, and `reprice` reports the counts. The append itself is\ncommitted first \u2014 a recompute failure never unwinds the measurement.",
         "operationId": "anchors-append_anchor_version",
         "requestBody": {
           "content": {
@@ -7509,7 +7636,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnchorVersionRead"
+                  "$ref": "#/components/schemas/AnchorVersionAppended"
                 }
               }
             },

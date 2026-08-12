@@ -20,9 +20,11 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.schemas.anchors import (
+    AnchorVersionAppended,
     AnchorVersionCreate,
     AnchorVersionRead,
     AnchorVersionsPage,
+    RepriceReportRead,
 )
 from app.core.exceptions import (
     ErrorDetail,
@@ -30,6 +32,7 @@ from app.core.exceptions import (
     ValidationErrorDetail,
 )
 from app.domain.anchors import AnchorSource, AnchorType
+from app.ingest.repricing import append_anchor_and_reprice
 from app.persistence.db import SessionDep
 from app.services.anchors import AnchorService
 
@@ -97,10 +100,18 @@ async def list_anchor_versions(
 
 @router.post("", status_code=status.HTTP_201_CREATED, responses=BAD_BODY | INVALID)
 async def append_anchor_version(
-    service: ServiceDep, actor: ActorDep, payload: AnchorVersionCreate
-) -> AnchorVersionRead:
-    """Append a new version to an anchor's history."""
-    version = await service.append(
+    session: SessionDep, actor: ActorDep, payload: AnchorVersionCreate
+) -> AnchorVersionAppended:
+    """Append a new version to an anchor's history.
+
+    Appending also **reprices the recorded history the version governs**
+    (`app.ingest.repricing`): sessions whose current metrics were computed
+    against a different measurement of this anchor for their date get a new
+    metric version, and `reprice` reports the counts. The append itself is
+    committed first — a recompute failure never unwinds the measurement.
+    """
+    version, report = await append_anchor_and_reprice(
+        session,
         actor=actor,
         anchor_type=payload.anchor_type,
         value=payload.value,
@@ -114,7 +125,16 @@ async def append_anchor_version(
         ci_low=payload.ci_low,
         ci_high=payload.ci_high,
     )
-    return AnchorVersionRead.model_validate(version)
+    return AnchorVersionAppended(
+        **AnchorVersionRead.model_validate(version).model_dump(),
+        reprice=RepriceReportRead(
+            examined=report.examined,
+            repriced=report.repriced,
+            unchanged=report.unchanged,
+            failed=report.failed,
+            note=report.note,
+        ),
+    )
 
 
 @router.get("/current", responses=NOT_FOUND)

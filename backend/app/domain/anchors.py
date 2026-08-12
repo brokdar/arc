@@ -111,6 +111,13 @@ ANCHOR_UNITS: dict[AnchorType, AnchorUnit] = {
     AnchorType.W_PRIME: AnchorUnit.JOULE,
 }
 
+#: Longest a ``protocol`` may be. A **domain** rule, not just a column width:
+#: the MCP tool does not pass through the API schema, so a bound that lived
+#: only there let a dry run validate what the write then failed at the INSERT
+#: (issue #17). The API schema and the persistence column both reference this
+#: constant, so the three layers cannot drift.
+MAX_PROTOCOL_CHARS = 200
+
 #: Plausibility bounds per anchor type. A typo guard at the boundary, not a
 #: judgement about the athlete: an FTP of 25000 W would otherwise poison every
 #: zone, target and score derived from it.
@@ -176,6 +183,11 @@ class AnchorVersion:
             raise ValueError(
                 f"{self.anchor_type.value} is measured in "
                 f"{expected_unit.value}, not {self.unit.value}"
+            )
+        if self.protocol is not None and len(self.protocol) > MAX_PROTOCOL_CHARS:
+            raise ValueError(
+                f"protocol must be at most {MAX_PROTOCOL_CHARS} characters, "
+                f"got {len(self.protocol)}"
             )
         if self.provenance is Provenance.TESTED and not (self.protocol or "").strip():
             raise ValueError(
@@ -253,6 +265,25 @@ def anchor_as_of(
         for version in versions
         if version.effective_date <= day and version.created_at <= moment
     ]
+    if not in_force:
+        return None
+    return max(in_force, key=_ordering_key)
+
+
+def anchor_effective_on(
+    versions: Iterable[AnchorVersion], day: dt.date
+) -> AnchorVersion | None:
+    """Return the version that governs ``day``, as the history stands now.
+
+    The prescriptive cousin of :func:`anchor_as_of`, with the ``created_at``
+    half deliberately absent: that function answers "what was knowable at that
+    instant" (which is what makes stored scores reproducible), while this one
+    answers "which measurement does the *current* history assign to that day" —
+    the question repricing asks after an append, when the newly created version
+    must count for the past days it is effective from, precisely because its
+    ``created_at`` is now.
+    """
+    in_force = [version for version in versions if version.effective_date <= day]
     if not in_force:
         return None
     return max(in_force, key=_ordering_key)
