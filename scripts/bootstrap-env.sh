@@ -107,7 +107,7 @@ chmod 600 "$ENV_FILE"
 # below is written verbatim, including the single quotes.
 BOOT_POSTGRES_PASSWORD="$(rand_hex 16)" \
   BOOT_SESSION_SECRET="$(rand_hex 32)" \
-  BOOT_MCP_API_KEYS="'coach:write:$(rand_hex 32),readonly:read:$(rand_hex 32)'" \
+  BOOT_MCP_API_KEYS="'coach:read+write:$(rand_hex 32),readonly:read:$(rand_hex 32)'" \
   BOOT_PASSWORD_HASH="$password_hash" \
   python3 - "$ENV_FILE" <<'PY'
 import os
@@ -153,7 +153,7 @@ echo
 echo "Wrote .env (mode 600) with:"
 echo "  POSTGRES__PASSWORD         random"
 echo "  AUTH__SESSION__SECRET_KEY  random"
-echo "  MCP__API_KEYS              random keys for the 'coach' (write) and 'readonly' (read) clients"
+echo "  MCP__API_KEYS              random keys for the 'coach' (read+write) and 'readonly' (read) clients"
 if [ "$hash_is_placeholder" -eq 0 ]; then
   echo "  AUTH__PASSWORD_HASH        bcrypt hash of your password"
   echo

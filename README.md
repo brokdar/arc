@@ -54,8 +54,10 @@ hostname for automatic HTTPS. Runtime files live in `./data`
 container.
 
 MCP clients authenticate with a bearer key from `MCP__API_KEYS` — comma-
-separated `label:scope:key` entries, scope `read` or `write`. `just init`
-generates a `coach` (write) and a `readonly` (read) key; the server refuses to
+separated `label:scope[+scope]:key` entries, scopes `read` and `write`
+(`write` does not imply `read`; a key that needs both carries both, e.g.
+`coach:read+write:<hex>`). `just init` generates a `coach` (read+write) and a
+`readonly` (read) key; the server refuses to
 start without any, and rejects keys under 32 characters, keys still holding the
 `change-me` placeholder, and two entries sharing a key.
 

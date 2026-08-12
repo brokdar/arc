@@ -30,7 +30,9 @@ choice is recorded in `docs/decisions.md`.
   `node_modules/next/dist/docs/` before writing app code.
 - **MCP server** (`backend/app/mcp/`) — FastMCP 3 over streamable HTTP on
   :8001. Every request carries a bearer key from `MCP__API_KEYS`
-  (`label:scope:key,...`, scope `read` or `write`); the label and scope land on
+  (`label:scope[+scope]:key,...`, scopes `read`/`write`, e.g.
+  `coach:read+write:<hex>` — `write` does not imply `read`); the label and
+  scope set land on
   the authenticated identity for per-tool checks and audit rows. Tools delegate
   to `app/services/` — the same layer `app/api/` uses. No logic lives in an
   adapter, and `api` and `mcp` may not import each other.

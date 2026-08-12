@@ -1,6 +1,6 @@
 """Who is calling an MCP tool, and may they.
 
-`app/mcp/main.py` puts the matched key's label and scope on the request's
+`app/mcp/main.py` puts the matched key's label and scope set on the request's
 `AccessToken` (`client_id`, `scopes`, `claims`). This module reads them back
 and turns them into the two things a tool needs: a domain :class:`Actor` for
 the audit trail, and a hard scope check.
@@ -59,8 +59,9 @@ def current_actor() -> Actor:
 def require_scope(scope: Scope) -> Actor:
     """Assert the calling key carries ``scope``, and return its actor.
 
-    Scopes are not nested: a `write` key does not imply `read`. Each tool names
-    the scope it needs and the key must carry it (see `app.mcp.auth.Scope`).
+    Scopes are not nested: `write` does not imply `read`. A key may carry
+    several scopes (`read+write`); each tool names the one it needs and the
+    key's set must contain it (see `app.mcp.auth.Scope`).
 
     Args:
         scope: The scope the tool requires.

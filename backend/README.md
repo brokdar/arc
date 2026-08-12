@@ -80,8 +80,10 @@ on the `api` and `mcp` services, so that guard always runs in the shipped
 stack.
 
 The MCP server authenticates separately: every request presents a bearer key
-from `MCP__API_KEYS` (comma-separated `label:scope:key`, scope `read` or
-`write`), parsed by the framework-free `app/mcp/auth.py` and compared in
+from `MCP__API_KEYS` (comma-separated `label:scope[+scope]:key`, scopes `read`
+and `write` — `write` does not imply `read`, so a coaching key typically
+carries `read+write`), parsed by the framework-free `app/mcp/auth.py` and
+compared in
 constant time. With no keys — or with a key under 32 characters, one still
 holding the `change-me` placeholder, or two entries sharing a key or a label —
 the server exits 1 rather than serve an unauthenticated or ambiguous tool

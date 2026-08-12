@@ -49,8 +49,9 @@ PLANNED = "/api/v1/planned-sessions"
 PROPOSALS = "/api/v1/proposals"
 
 _KEY = "a1b2c3d4" * 4
-#: One key per scope, as an operator would issue them: scopes are named
-#: requirements and not a hierarchy, so a write key cannot read.
+#: Deliberately single-scope keys (a real coach would carry `read+write`):
+#: scopes are named requirements and not a hierarchy, so a write-only key
+#: cannot read, and these keys keep each refusal observable per scope.
 COACH = f"coach:write:{_KEY}"
 READER = f"reader:read:{_KEY[::-1]}"
 
