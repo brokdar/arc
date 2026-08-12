@@ -60,4 +60,8 @@ logs/
 .claude/scheduled_tasks.lock
 **/agent-memory/
 
-docs/
+# Local docs stay untracked (see PR #6), with named exceptions that are
+# shared instruments rather than working notes. `docs/*` instead of `docs/`
+# because git will not re-include a file inside an ignored directory.
+docs/*
+!docs/agent-eval.md
