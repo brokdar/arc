@@ -86,14 +86,17 @@ class ExerciseService:
 
         Raises:
             ValidationError: Naming every slug that is not in the catalogue.
+                Worded without naming any route or tool: this service is
+                behind more than one adapter, and each surface has its own
+                way to list the catalogue.
         """
         await self.ensure_seeded()
         known = {row.id for row in await self._repository.all()}
         unknown = sorted(set(exercise_ids) - known)
         if unknown:
             raise ValidationError(
-                f"unknown exercise(s): {', '.join(unknown)}. "
-                "See GET /api/v1/exercises for the catalogue."
+                f"unknown exercise(s): {', '.join(unknown)}; not in the "
+                "exercise catalogue — list the catalogue for the valid slugs"
             )
 
     async def ensure_seeded(self, *, actor: Actor | None = None) -> int:

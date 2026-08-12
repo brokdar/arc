@@ -65,7 +65,7 @@ from app.services.activity import SessionService
 from app.services.agent_notes import AgentNoteService
 from app.services.anchors import AnchorService
 from app.services.exercises import ExerciseService
-from app.services.guardrails import current_profile
+from app.services.guardrails import current_profile, remaining_write_budget
 from app.services.history import HistoryService
 from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService, summarise
@@ -751,7 +751,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         This is append-only: nothing is edited or deleted, and a value you
         regret is corrected by appending a better one. `cp` and `w_prime` are
         reserved and refused. `protocol` is free text of at most 200
-        characters — a citation of what was done, not the write-up.
+        characters — a citation of what was done, not the write-up. Every
+        answer carries `budget_remaining` — how many writes the hourly cap
+        still admits, after this one if it was real (a dry run is free, so
+        there it is simply the current standing).
 
         **Appending reprices the recorded history the version governs.**
         Sessions whose stored metrics were computed against a different
@@ -807,6 +810,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         "dry_run": True,
                         "anchor": views.anchor_draft(draft),
                         "reprice": views.reprice_prediction(prediction),
+                        "budget_remaining": await remaining_write_budget(
+                            session, actor
+                        ),
                     }
                 row, report = await append_anchor_and_reprice(
                     session,
@@ -825,6 +831,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     "dry_run": False,
                     "anchor": views.anchor(row),
                     "reprice": views.reprice(report),
+                    "budget_remaining": await remaining_write_budget(session, actor),
                 }
 
     @mcp.tool
@@ -843,15 +850,65 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         Creating a workout does **not** put it on the calendar. To plan it,
         propose a `create` change referencing the returned `id`
-        (`propose_plan_change`).
+        (`propose_plan_change`) — and read `get_purposes` before choosing
+        that change's `purpose`, because the purpose decides the success
+        criteria the session is scored against.
 
-        `structure` is the prescription document. Its shape is the one the
-        athlete's own workout editor produces; the safest way to write a new
-        one is to read an existing workout of the same discipline with
-        `get_workout` and follow its `structure`. A strength structure names
-        every exercise by slug from `get_exercise_catalogue`. An unparseable
-        structure, or one naming an exercise the catalogue does not have, is
-        refused with the reason.
+        `structure` is the prescription document — the shape the athlete's
+        own workout editor produces and `get_workout` returns. A minimal but
+        complete document per discipline (durations in seconds, power as
+        fractions of the anchor):
+
+        Cycling — a steady warm-up, then 4 x (8 min at 88-93 % of FTP, 4 min
+        easy):
+
+        ```json
+        {
+          "discipline": "cycling",
+          "steps": [
+            {"kind": "steady", "duration_s": 900, "role": "warmup",
+             "targets": {"power": {"kind": "percent_of_anchor",
+                                   "anchor_type": "ftp",
+                                   "pct_low": 0.5, "pct_high": 0.65}}},
+            {"kind": "repeat", "times": 4, "children": [
+              {"kind": "steady", "duration_s": 480, "role": "work",
+               "targets": {"power": {"kind": "percent_of_anchor",
+                                     "anchor_type": "ftp",
+                                     "pct_low": 0.88, "pct_high": 0.93}}},
+              {"kind": "steady", "duration_s": 240, "role": "recovery",
+               "targets": {"power": {"kind": "percent_of_anchor",
+                                     "anchor_type": "ftp",
+                                     "pct_low": 0.5, "pct_high": 0.55}}}
+            ]}
+          ]
+        }
+        ```
+
+        Strength — `groups` of `items`, every exercise named by its slug from
+        `get_exercise_catalogue`, loads in kg / fraction of e1RM / RPE /
+        bodyweight:
+
+        ```json
+        {
+          "discipline": "strength",
+          "groups": [
+            {"label": "A", "items": [
+              {"exercise_id": "back_squat", "sets": 5, "reps": 5,
+               "load": {"kind": "kg", "value": 100}, "rir": 2, "rest_s": 180}
+            ]},
+            {"label": "B", "items": [
+              {"exercise_id": "romanian_deadlift", "sets": 3, "reps": 8,
+               "load": {"kind": "percent_e1rm", "value": 0.7}, "rir": 3}
+            ]}
+          ]
+        }
+        ```
+
+        An unparseable structure, or one naming an exercise the catalogue
+        does not have, is refused with the reason. Every answer carries
+        `budget_remaining` — how many writes the hourly cap still admits,
+        after this one if it was real (a dry run is free, so there it is the
+        current standing).
 
         Args:
             name: What to call it.
@@ -861,8 +918,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             tags: Short labels for searching.
             dry_run: Validate the structure and tags without writing, costing
                 no rate-cap budget. Returns no `id`, because nothing was made
-                — and returns the **normalized** tags, which is what a real
-                call would store.
+                — and returns the **normalized** tags and `structure`, which
+                is what a real call would store, with every default filled
+                in.
 
         Requires a `write` key.
         """
@@ -883,7 +941,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         folder=folder,
                         tags=tags or (),
                     )
-                    return {"dry_run": True, "workout": views.workout_draft(draft)}
+                    return {
+                        "dry_run": True,
+                        "workout": views.workout_draft(draft),
+                        "budget_remaining": await remaining_write_budget(
+                            session, actor
+                        ),
+                    }
                 row = await service.create(
                     actor=actor,
                     name=name,
@@ -895,6 +959,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 return {
                     "dry_run": False,
                     "workout": views.workout(row, step_count=step_count_of(row)),
+                    "budget_remaining": await remaining_write_budget(session, actor),
                 }
 
     @mcp.tool
@@ -948,6 +1013,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `conflict` — a concurrency token is stale. Re-read, re-propose.
         * `invalid` — the request is malformed; the message names the change.
 
+        `get_purposes` enumerates the `purpose` vocabulary and the success
+        criteria each purpose maps to — read it before choosing one. Every
+        answer carries `budget_remaining`: how many writes the hourly cap
+        still admits, after this one if it was real (a dry run is free, so
+        there it is the current standing).
+
         Args:
             changes: One to twenty change objects, as above.
             rationale: Why, in the athlete's terms. Required, and the thing
@@ -971,7 +1042,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     expires_at=views.as_datetime(expires_at, field="expires_at"),
                     dry_run=dry_run,
                 )
-                return views.proposal_outcome(outcome, dry_run=dry_run)
+                return {
+                    **views.proposal_outcome(outcome, dry_run=dry_run),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
 
     @mcp.tool
     async def write_session_evaluation(
@@ -995,6 +1069,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         This does **not** set the verdict. `declared_verdict` and its reasons
         are the athlete's, always.
+
+        Every answer carries `budget_remaining`: how many writes the hourly
+        cap still admits, after this one if it was real (a dry run is free,
+        so there it is the current standing).
 
         Args:
             session_id: The recorded session this is about.
@@ -1022,7 +1100,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     cites=cites or (),
                     dry_run=dry_run,
                 )
-                return {"dry_run": dry_run, "note": views.note(row)}
+                return {
+                    "dry_run": dry_run,
+                    "note": views.note(row),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
 
     @mcp.tool
     async def annotate(
@@ -1043,6 +1125,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         Exactly one target. A note about a week is filed under the **Monday**
         the week starts on; any other day is refused, so that one week has one
         key and every read of it finds every note.
+
+        Every answer carries `budget_remaining`: how many writes the hourly
+        cap still admits, after this one if it was real (a dry run is free,
+        so there it is the current standing).
 
         Args:
             text: The comment.
@@ -1077,4 +1163,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     cites=cites or (),
                     dry_run=dry_run,
                 )
-                return {"dry_run": dry_run, "note": views.note(row)}
+                return {
+                    "dry_run": dry_run,
+                    "note": views.note(row),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
