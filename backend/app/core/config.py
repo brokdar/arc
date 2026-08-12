@@ -199,7 +199,7 @@ class McpSettings(BaseModel):
     """
 
     api_keys: SecretStr = SecretStr("")
-    """Comma-separated `label:scope:key` entries; scope is `read` or `write`."""
+    """Comma-separated `label:scope[+scope]:key` entries; scopes `read`, `write`."""
 
     write_cap_per_hour: int = 60
     """Most writes an agent actor may make in a trailing hour (WP-8.3).

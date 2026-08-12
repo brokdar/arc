@@ -50,7 +50,8 @@ async def token_for(entry: str) -> AccessToken:
     """The access token `app.mcp.main` really issues for a configured key.
 
     Args:
-        entry: One `label:scope:key` entry, as `MCP__API_KEYS` holds them.
+        entry: One `label:scope[+scope]:key` entry, as `MCP__API_KEYS` holds
+            them.
     """
     keys = parse_api_keys(entry)
     token = await StaticKeyVerifier(keys).verify_token(keys[0].key)
@@ -69,7 +70,7 @@ async def connected_as(server: FastMCP, entry: str) -> AsyncIterator[Client]:
 
     Args:
         server: The server to talk to, from :func:`server_for`.
-        entry: The `label:scope:key` entry to authenticate as. One client is
+        entry: The `label:scope[+scope]:key` entry to authenticate as. One client is
             one key, which is also how the real thing works — a connection
             presents one bearer token.
     """

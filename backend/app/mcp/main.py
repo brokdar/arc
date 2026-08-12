@@ -50,12 +50,14 @@ class StaticKeyVerifier(TokenVerifier):
             return None
 
         # client_id/scopes land on the request's authenticated identity, so
-        # tools can read the caller's label and scope from the MCP context.
+        # tools can read the caller's label and scopes from the MCP context.
+        # Sorted for determinism — a set has no order to preserve.
+        scopes = [scope.value for scope in sorted(matched.scopes)]
         return AccessToken(
             token=token,
             client_id=matched.label,
-            scopes=[matched.scope.value],
-            claims={"label": matched.label, "scope": matched.scope.value},
+            scopes=scopes,
+            claims={"label": matched.label, "scopes": scopes},
         )
 
 
@@ -93,8 +95,8 @@ def load_keys() -> list[McpKey]:
         logger.error(
             "mcp_api_keys_missing",
             hint=(
-                "set MCP__API_KEYS='label:scope:key,...' (scope: read or write) "
-                "before starting the MCP server"
+                "set MCP__API_KEYS='label:scope[+scope]:key,...' "
+                "(scopes: read, write) before starting the MCP server"
             ),
         )
         raise SystemExit(1)
@@ -110,7 +112,13 @@ def main() -> None:
         "mcp_server_starting",
         host=HOST,
         port=PORT,
-        keys=[{"label": key.label, "scope": key.scope.value} for key in keys],
+        keys=[
+            {
+                "label": key.label,
+                "scopes": [scope.value for scope in sorted(key.scopes)],
+            }
+            for key in keys
+        ],
     )
     # show_banner=False also skips FastMCP's PyPI update check, which the
     # banner triggers — a service should not phone home on every boot.

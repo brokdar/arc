@@ -1,13 +1,15 @@
 """Static bearer-key auth for the MCP server.
 
 Keys are configured as a single ``MCP__API_KEYS`` string of comma-separated
-``label:scope:key`` entries, e.g.::
+``label:scope[+scope]:key`` entries, e.g.::
 
-    MCP__API_KEYS='coach:write:6f1c...,readonly:read:9ab3...'
+    MCP__API_KEYS='coach:read+write:6f1c...,dashboard:read:9ab3...'
 
 The label names the client (it shows up in logs and in the request's
-authenticated identity), the scope bounds what that client may do, and the key
-is the bearer token itself.
+authenticated identity), the scope set bounds what that client may do, and the
+key is the bearer token itself. A single scope is a set of one, so existing
+``label:scope:key`` entries parse unchanged. Scopes are not nested — ``write``
+does not imply ``read`` — so a key that needs both carries both.
 
 Key material has to earn its keep: a key must be at least
 :data:`MIN_KEY_LENGTH` characters, must not contain the ``change-me``
@@ -31,12 +33,15 @@ ENTRY_SEPARATOR = ","
 #: Separator between the fields of one entry.
 FIELD_SEPARATOR = ":"
 
-#: Fields per entry: label, scope, key.
+#: Separator between the scopes within one entry's scope field.
+SCOPE_SEPARATOR = "+"
+
+#: Fields per entry: label, scope set, key.
 _FIELDS_PER_ENTRY = 3
 
 _ENTRY_FORMAT_HINT = (
-    "expected 'label:scope:key' entries separated by commas, "
-    "e.g. 'coach:write:<hex>,readonly:read:<hex>'"
+    "expected 'label:scope[+scope]:key' entries separated by commas, "
+    "e.g. 'coach:read+write:<hex>,dashboard:read:<hex>'"
 )
 
 #: Shortest key accepted. 32 characters is what `openssl rand -hex 16` yields;
@@ -63,11 +68,12 @@ _RESERVED_LABELS = frozenset({"athlete", "system", "agent"})
 
 
 class Scope(StrEnum):
-    """What a key is allowed to do.
+    """One thing a key is allowed to do.
 
-    Scopes are carried on the authenticated identity; individual tools enforce
-    them (WP-8). ``write`` is not a superset of ``read`` here — a tool asks for
-    the scope it needs and the key must carry it.
+    A key carries a *set* of scopes on its authenticated identity; individual
+    tools enforce them (WP-8). Scopes are not nested — ``write`` does not imply
+    ``read`` — so a tool asks for the scope it needs and the key's set must
+    contain it.
     """
 
     READ = "read"
@@ -79,7 +85,7 @@ class McpKey:
     """One configured API key: who it is, what it may do, and its secret."""
 
     label: str
-    scope: Scope
+    scopes: frozenset[Scope]
     key: str
 
 
@@ -120,6 +126,45 @@ def _check_label(position: int, label: str) -> None:
         )
 
 
+def _parse_scopes(position: int, label: str, raw_scope: str) -> frozenset[Scope]:
+    """Parse one entry's scope field into a scope set.
+
+    The field is one or more scopes joined by :data:`SCOPE_SEPARATOR`
+    (``read``, ``write``, ``read+write``). Listing a scope twice is refused
+    rather than collapsed: a duplicate is a typo for the other scope often
+    enough that silently deduplicating would grant less than the operator
+    meant to.
+
+    Raises:
+        ValueError: On an empty scope token, an unknown scope (the message
+            lists the valid ones), or a scope listed twice. The message never
+            contains key material.
+    """
+    scopes: set[Scope] = set()
+    for token in (part.strip() for part in raw_scope.split(SCOPE_SEPARATOR)):
+        if not token:
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({label!r}) has an empty "
+                f"scope token; scopes are joined with '{SCOPE_SEPARATOR}', "
+                "e.g. 'read+write'"
+            )
+        try:
+            scope = Scope(token)
+        except ValueError as exc:
+            valid = ", ".join(sorted(member.value for member in Scope))
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({label!r}) has unknown scope "
+                f"{token!r}; valid scopes are: {valid}"
+            ) from exc
+        if scope in scopes:
+            raise ValueError(
+                f"MCP__API_KEYS entry {position} ({label!r}) lists scope "
+                f"{scope.value!r} more than once"
+            )
+        scopes.add(scope)
+    return frozenset(scopes)
+
+
 def parse_api_keys(raw: str) -> list[McpKey]:
     """Parse the raw ``MCP__API_KEYS`` value into keys.
 
@@ -134,9 +179,10 @@ def parse_api_keys(raw: str) -> list[McpKey]:
         The configured keys, in the order they appear.
 
     Raises:
-        ValueError: On a malformed entry, an unknown scope, a key that is too
-            short or still the `.env.example` placeholder, or a duplicate label
-            or key. The message never contains the key material.
+        ValueError: On a malformed entry, a bad scope set (unknown, empty or
+            duplicated scope), a key that is too short or still the
+            `.env.example` placeholder, or a duplicate label or key. The
+            message never contains the key material.
     """
     keys: list[McpKey] = []
     seen_labels: set[str] = set()
@@ -165,14 +211,7 @@ def parse_api_keys(raw: str) -> list[McpKey]:
                 f"MCP__API_KEYS entry {position} ({raw_label!r}) has an empty key"
             )
 
-        try:
-            scope = Scope(raw_scope)
-        except ValueError as exc:
-            valid = ", ".join(sorted(member.value for member in Scope))
-            raise ValueError(
-                f"MCP__API_KEYS entry {position} ({raw_label!r}) has unknown scope "
-                f"{raw_scope!r}; valid scopes are: {valid}"
-            ) from exc
+        scopes = _parse_scopes(position, raw_label, raw_scope)
 
         # Key-material rules. Every message names the entry by position and
         # label only — never the key, since these errors get logged.
@@ -199,8 +238,8 @@ def parse_api_keys(raw: str) -> list[McpKey]:
 
         # Duplicate key material would resolve order-dependently in
         # verify_key (its loop runs to completion and keeps the LAST match), so
-        # the same secret shared by two labels/scopes is a configuration error,
-        # not a shorthand for "either identity".
+        # the same secret shared by two labels/scope sets is a configuration
+        # error, not a shorthand for "either identity".
         if raw_key in seen_keys:
             raise ValueError(
                 f"MCP__API_KEYS entry {position} ({raw_label!r}) reuses the key "
@@ -208,7 +247,7 @@ def parse_api_keys(raw: str) -> list[McpKey]:
             )
         seen_keys.add(raw_key)
 
-        keys.append(McpKey(label=raw_label, scope=scope, key=raw_key))
+        keys.append(McpKey(label=raw_label, scopes=scopes, key=raw_key))
 
     return keys
 

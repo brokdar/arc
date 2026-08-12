@@ -1,4 +1,4 @@
-"""The MCP key's label and scope, as tools consume them (WP-8).
+"""The MCP key's label and scope set, as tools consume them (WP-8).
 
 The auth context is set the way `AuthContextMiddleware` sets it on a real
 request, and the tokens come from the real `StaticKeyVerifier`, so these
@@ -50,6 +50,34 @@ async def test_write_scope_does_not_imply_read() -> None:
         pytest.raises(ToolError, match="'read' is required"),
     ):
         require_scope(Scope.READ)
+
+
+async def test_the_verifier_puts_every_scope_on_the_token() -> None:
+    token = await _token_for(f"coach:read+write:{COACH_KEY}")
+
+    assert token.scopes == ["read", "write"]
+    assert token.claims["scopes"] == ["read", "write"]
+    assert token.claims["label"] == "coach"
+
+
+async def test_a_multi_scope_key_passes_every_scope_it_carries() -> None:
+    # The point of scope sets: one coach identity that reads before it writes,
+    # without splitting the audit trail across two keys.
+    with authenticated_as(await _token_for(f"coach:read+write:{COACH_KEY}")):
+        assert require_scope(Scope.READ) == Actor.agent("coach")
+        assert require_scope(Scope.WRITE) == Actor.agent("coach")
+
+
+async def test_a_read_only_key_still_fails_write_naming_the_granted_set() -> None:
+    with (
+        authenticated_as(await _token_for(f"readonly:read:{COACH_KEY}")),
+        pytest.raises(ToolError, match="'write' is required") as excinfo,
+    ):
+        require_scope(Scope.WRITE)
+
+    message = str(excinfo.value)
+    assert "key has ['read']" in message
+    assert COACH_KEY not in message
 
 
 def test_no_token_is_refused_rather_than_attributed_to_nobody() -> None:
