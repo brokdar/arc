@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.api.pagination import Page
 from app.api.validation import PostgresText
 from app.domain.anchors import (
+    MAX_PROTOCOL_CHARS,
     AnchorSource,
     AnchorType,
     AnchorUnit,
@@ -20,7 +21,9 @@ from app.domain.anchors import (
     StalenessState,
 )
 
-Protocol = Annotated[PostgresText, Field(min_length=1, max_length=200)]
+#: Bounded by the domain's own constant (`AnchorVersion` refuses more), so the
+#: schema's 422 and the domain's refusal can never disagree about the limit.
+Protocol = Annotated[PostgresText, Field(min_length=1, max_length=MAX_PROTOCOL_CHARS)]
 #: The appendable anchor types, spelled as a `Literal` so the contract does
 #: not advertise the reserved `cp`/`w_prime` (which the service also refuses,
 #: for callers that do not come through this schema). `resting_hr` joined them
@@ -84,6 +87,31 @@ class AnchorVersionRead(BaseModel):
     #: Hardcoded `fresh` in the MVP — the staleness model is deferred.
     staleness_state: StalenessState
     created_at: dt.datetime
+
+
+class RepriceReportRead(BaseModel):
+    """What appending an anchor version did to previously recorded sessions.
+
+    Mirrors `app.ingest.repricing.RepriceReport`, field for field.
+    """
+
+    #: Sessions whose current metric artefact was checked.
+    examined: int
+    #: Sessions that got a new metric version priced against the new anchor.
+    repriced: int
+    #: Sessions whose price the new version could not change.
+    unchanged: int
+    #: Sessions whose recompute failed; each stays individually recomputable.
+    failed: int
+    #: Non-null only when the scan itself failed after the append committed —
+    #: the counts are then zero and mean "unknown".
+    note: str | None
+
+
+class AnchorVersionAppended(AnchorVersionRead):
+    """The appended version, plus what appending it did to the history."""
+
+    reprice: RepriceReportRead
 
 
 AnchorVersionsPage = Page[AnchorVersionRead]

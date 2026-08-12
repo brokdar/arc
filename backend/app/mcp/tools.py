@@ -53,6 +53,7 @@ from app.domain.agent_notes import NoteKind
 from app.domain.anchors import AnchorSource, AnchorType, AnchorUnit, Provenance
 from app.domain.athlete import Discipline
 from app.domain.proposals import changes_from_json
+from app.ingest.repricing import append_anchor_and_reprice, preview_anchor_append
 from app.mcp import views
 from app.mcp.auth import Scope
 from app.mcp.identity import require_scope
@@ -515,35 +516,49 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         This is append-only: nothing is edited or deleted, and a value you
         regret is corrected by appending a better one. `cp` and `w_prime` are
-        reserved and refused.
+        reserved and refused. `protocol` is free text of at most 200
+        characters — a citation of what was done, not the write-up.
+
+        **Appending reprices the recorded history the version governs.**
+        Sessions whose stored metrics were computed against a different
+        measurement of this anchor for their date — including sessions
+        ingested before any anchor existed — get a new metric version, and
+        `reprice` in the answer reports it: `examined` sessions checked,
+        `repriced` recomputed, `unchanged` already priced right, `failed`
+        recomputes that errored (logged; each stays recomputable). A
+        `reprice.note` means the scan itself failed after the anchor was
+        safely written and the counts are unknown, not zero. On a dry run
+        nothing is recomputed; `reprice` instead predicts `would_reprice`.
 
         Args:
             anchor_type: `ftp` (watts), `lthr`, `max_hr`, `resting_hr` (bpm).
             value: The measurement, in the anchor's own unit.
             provenance: How the value was arrived at.
-            protocol: How it was measured. Required for `tested`.
+            protocol: How it was measured, at most 200 characters. Required
+                for `tested`.
             effective_date: The date it applies from, `YYYY-MM-DD`. Defaults
                 to today. Backdating is how a test is recorded late.
             unit: The anchor's own unit is used when omitted; a different one
                 is an error, not a conversion request.
             ci_low: Lower bound of the confidence interval, same unit.
             ci_high: Upper bound, same unit.
-            dry_run: Validate and return what would be appended, writing
-                nothing and costing no rate-cap budget.
+            dry_run: Validate and return what would be appended and how many
+                sessions it would reprice, writing nothing and costing no
+                rate-cap budget.
 
         Requires a `write` key.
         """
         actor = require_scope(Scope.WRITE)
         with tool_errors():
             async with session_scope() as session:
-                service = AnchorService.from_session(session)
                 day = (
                     None
                     if effective_date is None
                     else views.as_date(effective_date, field="effective_date")
                 )
                 if dry_run:
-                    draft = service.preview(
+                    draft, prediction = await preview_anchor_append(
+                        session,
                         anchor_type=anchor_type,
                         value=value,
                         provenance=provenance,
@@ -554,8 +569,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         ci_low=ci_low,
                         ci_high=ci_high,
                     )
-                    return {"dry_run": True, "anchor": views.anchor_draft(draft)}
-                row = await service.append(
+                    return {
+                        "dry_run": True,
+                        "anchor": views.anchor_draft(draft),
+                        "reprice": views.reprice_prediction(prediction),
+                    }
+                row, report = await append_anchor_and_reprice(
+                    session,
                     actor=actor,
                     anchor_type=anchor_type,
                     value=value,
@@ -567,7 +587,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     ci_low=ci_low,
                     ci_high=ci_high,
                 )
-                return {"dry_run": False, "anchor": views.anchor(row)}
+                return {
+                    "dry_run": False,
+                    "anchor": views.anchor(row),
+                    "reprice": views.reprice(report),
+                }
 
     @mcp.tool
     async def create_workout(

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.anchors import (
+    MAX_PROTOCOL_CHARS,
     MVP_STALENESS_STATE,
     AnchorSource,
     AnchorType,
@@ -45,7 +46,7 @@ class AnchorVersionRow(Base):
     provenance: Mapped[Provenance] = mapped_column(enum_column(Provenance))
     #: How the value was measured. Required for `tested` provenance — the
     #: domain enforces that; the column stays nullable for the other three.
-    protocol: Mapped[str | None] = mapped_column(String(200))
+    protocol: Mapped[str | None] = mapped_column(String(MAX_PROTOCOL_CHARS))
     #: The date the value describes the athlete from — not the append time.
     effective_date: Mapped[dt.date] = mapped_column(Date, index=True)
     ci_low: Mapped[float | None] = mapped_column(Float)

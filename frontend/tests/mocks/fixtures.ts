@@ -1211,7 +1211,7 @@ export function currentAnchor(
  */
 export function appendAnchorVersion(
   body: Schemas["AnchorVersionCreate"],
-): { version: Schemas["AnchorVersionRead"] } | { detail: string } {
+): { version: Schemas["AnchorVersionAppended"] } | { detail: string } {
   const unit = ANCHOR_UNITS[body.anchor_type];
   if (body.unit && body.unit !== unit) {
     return {
@@ -1222,6 +1222,11 @@ export function appendAnchorVersion(
   if (body.value < low || body.value > high) {
     return {
       detail: `${body.anchor_type} value must be between ${low} and ${high} ${unit}, got ${body.value}`,
+    };
+  }
+  if (body.protocol != null && body.protocol.length > 200) {
+    return {
+      detail: `protocol must be at most 200 characters, got ${body.protocol.length}`,
     };
   }
   if (body.provenance === "tested" && !body.protocol?.trim()) {
@@ -1258,7 +1263,21 @@ export function appendAnchorVersion(
     created_at: createdAt.toISOString(),
   };
   anchors().push(version);
-  return { version };
+  return {
+    version: {
+      ...version,
+      // What the real API reports for an athlete with no recorded sessions:
+      // the settings-page tests never seed priced sessions, so an empty scan
+      // is the payload the backend would actually produce here.
+      reprice: {
+        examined: 0,
+        repriced: 0,
+        unchanged: 0,
+        failed: 0,
+        note: null,
+      },
+    },
+  };
 }
 
 /**

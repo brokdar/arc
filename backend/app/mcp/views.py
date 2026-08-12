@@ -28,6 +28,7 @@ from typing import Any
 
 from app.domain.anchors import AnchorVersion
 from app.domain.athlete import AthleteProfile
+from app.ingest.repricing import RepricePrediction, RepriceReport
 from app.persistence.activity import SessionRow, session_duration_s
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
@@ -120,6 +121,26 @@ def anchor_draft(version: AnchorVersion) -> dict[str, Any]:
         "ci_low": version.ci_low,
         "ci_high": version.ci_high,
         "source": version.source.value,
+    }
+
+
+def reprice(report: RepriceReport) -> dict[str, Any]:
+    """What appending an anchor version did to the recorded history."""
+    return {
+        "examined": report.examined,
+        "repriced": report.repriced,
+        "unchanged": report.unchanged,
+        "failed": report.failed,
+        "note": report.note,
+    }
+
+
+def reprice_prediction(prediction: RepricePrediction) -> dict[str, Any]:
+    """What a dry-run append **would** do — nothing was recomputed."""
+    return {
+        "examined": prediction.examined,
+        "would_reprice": prediction.would_reprice,
+        "unchanged": prediction.unchanged,
     }
 
 

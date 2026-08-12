@@ -550,6 +550,56 @@ async def test_a_dry_run_still_refuses_what_the_write_would_refuse(
         )
 
 
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+async def test_an_over_long_protocol_is_refused_not_crashed(
+    session_factory: Any, db_session: AsyncSession, dry_run: bool
+) -> None:
+    """Issue #17: the same 432-char protocol that passed a dry run crashed the write.
+
+    No schema stands between an agent and this service, so the bound lives in
+    the domain rules `preview` applies — the one path the dry run and the
+    write share. Parametrized over both, because the defect *was* the pair
+    disagreeing.
+    """
+    with pytest.raises(ToolError, match="invalid:") as excinfo:
+        await call(
+            COACH,
+            "append_anchor",
+            {
+                "anchor_type": "ftp",
+                "value": 250,
+                "provenance": "estimated",
+                "protocol": "x" * 432,
+                "dry_run": dry_run,
+            },
+        )
+
+    # The refusal names the field, the limit and the actual length.
+    assert "protocol" in str(excinfo.value)
+    assert "200" in str(excinfo.value)
+    assert "432" in str(excinfo.value)
+    assert await rows(db_session, AnchorVersionRow) == []
+
+
+async def test_a_protocol_of_exactly_the_limit_is_appended(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    data = await call(
+        COACH,
+        "append_anchor",
+        {
+            "anchor_type": "ftp",
+            "value": 250,
+            "provenance": "estimated",
+            "protocol": "x" * 200,
+        },
+    )
+
+    assert data["dry_run"] is False
+    [row] = await rows(db_session, AnchorVersionRow)
+    assert row.protocol == "x" * 200
+
+
 async def test_a_reserved_anchor_type_is_refused(session_factory: Any) -> None:
     with pytest.raises(ToolError, match="reserved"):
         await call(

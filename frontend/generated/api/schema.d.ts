@@ -72,6 +72,12 @@ export interface paths {
     /**
      * Append Anchor Version
      * @description Append a new version to an anchor's history.
+     *
+     *     Appending also **reprices the recorded history the version governs**
+     *     (`app.ingest.repricing`): sessions whose current metrics were computed
+     *     against a different measurement of this anchor for their date get a new
+     *     metric version, and `reprice` reports the counts. The append itself is
+     *     committed first — a recompute failure never unwinds the measurement.
      */
     post: operations["anchors-append_anchor_version"];
     delete?: never;
@@ -1559,6 +1565,41 @@ export interface components {
      * @enum {string}
      */
     AnchorUnit: "W" | "bpm" | "J";
+    /**
+     * AnchorVersionAppended
+     * @description The appended version, plus what appending it did to the history.
+     */
+    AnchorVersionAppended: {
+      anchor_type: components["schemas"]["AnchorType"];
+      /** Ci High */
+      ci_high: number | null;
+      /** Ci Low */
+      ci_low: number | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Protocol */
+      protocol: string | null;
+      provenance: components["schemas"]["Provenance"];
+      reprice: components["schemas"]["RepriceReportRead"];
+      source: components["schemas"]["AnchorSource"];
+      staleness_state: components["schemas"]["StalenessState"];
+      unit: components["schemas"]["AnchorUnit"];
+      /** Value */
+      value: number;
+    };
     /**
      * AnchorVersionCreate
      * @description Payload for appending a version to an anchor's history.
@@ -3569,6 +3610,24 @@ export interface components {
       times: number;
     };
     /**
+     * RepriceReportRead
+     * @description What appending an anchor version did to previously recorded sessions.
+     *
+     *     Mirrors `app.ingest.repricing.RepriceReport`, field for field.
+     */
+    RepriceReportRead: {
+      /** Examined */
+      examined: number;
+      /** Failed */
+      failed: number;
+      /** Note */
+      note: string | null;
+      /** Repriced */
+      repriced: number;
+      /** Unchanged */
+      unchanged: number;
+    };
+    /**
      * ResolvedStepRead
      * @description One flattened step of the prescription, with its targets resolved.
      */
@@ -4870,7 +4929,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["AnchorVersionRead"];
+          "application/json": components["schemas"]["AnchorVersionAppended"];
         };
       };
       /** @description Malformed body */
