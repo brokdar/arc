@@ -67,7 +67,7 @@ from app.mcp import views
 from app.mcp.auth import Scope
 from app.mcp.identity import require_scope
 from app.persistence.db import session_scope
-from app.services.activity import SessionService
+from app.services.activity import LoggedSetInput, SessionService
 from app.services.agent_notes import AgentNoteService
 from app.services.anchors import AnchorService
 from app.services.exercises import ExerciseService
@@ -169,6 +169,59 @@ def _offset(offset: int) -> int:
     if offset < 0:
         raise ValueError(f"offset must be zero or more, got {offset}")
     return offset
+
+
+#: The fields one set object of `record_manual_session` may carry — the same
+#: vocabulary the service's set input takes, checked here so a misspelled
+#: field is refused by name rather than silently dropped.
+_SET_FIELDS = frozenset(
+    {"exercise_id", "exercise_name", "reps", "load_kg", "rir", "notes"}
+)
+
+
+def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
+    """Parse a tool call's set objects into the service's input values.
+
+    Field-name and type errors are caught here, in words that name the set
+    and the field: the service validates *values* (bounds, catalogue slugs),
+    but a key it does not know would otherwise be dropped on the floor and a
+    string where a number belongs would be a 500.
+
+    Raises:
+        ValueError: Naming the first malformed set and what is wrong with it.
+    """
+    inputs: list[LoggedSetInput] = []
+    for index, entry in enumerate(entries or [], start=1):
+        unknown = sorted(set(entry) - _SET_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"set {index} has unknown field(s): {', '.join(unknown)}. A "
+                f"set carries {', '.join(sorted(_SET_FIELDS))}."
+            )
+        reps = entry.get("reps")
+        if not isinstance(reps, int) or isinstance(reps, bool):
+            raise ValueError(f"set {index}: reps must be an integer, got {reps!r}")
+        load_kg = entry.get("load_kg")
+        if load_kg is not None and (
+            not isinstance(load_kg, int | float) or isinstance(load_kg, bool)
+        ):
+            raise ValueError(
+                f"set {index}: load_kg must be a number of kilograms, got {load_kg!r}"
+            )
+        rir = entry.get("rir")
+        if rir is not None and (not isinstance(rir, int) or isinstance(rir, bool)):
+            raise ValueError(f"set {index}: rir must be an integer, got {rir!r}")
+        inputs.append(
+            LoggedSetInput(
+                reps=reps,
+                exercise_id=entry.get("exercise_id"),
+                exercise_name=entry.get("exercise_name"),
+                load_kg=None if load_kg is None else float(load_kg),
+                rir=rir,
+                notes=entry.get("notes"),
+            )
+        )
+    return inputs
 
 
 def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per tool
@@ -1139,6 +1192,168 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 )
                 return {
                     **views.proposal_outcome(outcome, dry_run=dry_run),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
+
+    @mcp.tool
+    async def record_session_context(
+        session_id: str,
+        rpe: float | None = None,
+        temperature_c: float | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Record the conditions one recorded session was performed under.
+
+        These are the facts that decide whether a session's numbers are
+        comparable later — the athlete's reported exertion and the ambient
+        temperature. Without them, "was that Q4 fade fatigue or a fluid
+        deficit at 29 °C" lives in prose nothing can filter; recorded here,
+        next week's comparison is a query (`list_sessions`,
+        `get_session_detail`) instead of a re-read of every note.
+
+        * `rpe` (0-10) is the athlete's **own report** of how hard it felt.
+          Write it only when they told you — never infer it from power or
+          heart rate, which is exactly what the measured channels are for.
+        * `temperature_c` is the ambient temperature in °C. Values outside
+          −30…50 °C are refused as implausible (a Fahrenheit number will be
+          caught by this — convert first).
+
+        This writes *context only*. The measured record — recordings,
+        streams, computed metrics — stays unwritable from here, and the
+        athlete's verdict stays theirs. Give at least one of the two fields;
+        a call with neither is refused. Setting a field again overwrites it;
+        neither can be cleared from this surface. Every answer carries
+        `budget_remaining` — how many writes the hourly cap still admits,
+        after this one if it was real (a dry run is free, so there it is the
+        current standing).
+
+        Args:
+            session_id: The recorded session this context is about.
+            rpe: The athlete's reported session RPE, 0-10.
+            temperature_c: Ambient temperature in °C, −30…50.
+            dry_run: Run every check and return what would be set, writing
+                nothing and costing no rate-cap budget. `session` then shows
+                the row as it still stands, and `would_set` what a real call
+                would change.
+
+        Requires a `write` key.
+        """
+        actor = require_scope(Scope.WRITE)
+        with tool_errors():
+            if rpe is None and temperature_c is None:
+                raise ValueError(
+                    "give at least one of rpe or temperature_c — a context "
+                    "write with neither would record nothing"
+                )
+            updates: dict[str, Any] = {}
+            if rpe is not None:
+                updates["rpe"] = rpe
+            if temperature_c is not None:
+                updates["temperature_c"] = temperature_c
+            async with session_scope() as session:
+                identifier = views.as_uuid(session_id, field="session_id")
+                row = await SessionService.from_session(session).update(
+                    identifier, updates, actor=actor, dry_run=dry_run
+                )
+                current = await SessionMetricsService.from_session(
+                    session
+                ).current_for_sessions([row.id])
+                summary = summarise(current[row.id]) if row.id in current else None
+                answer: dict[str, Any] = {
+                    "dry_run": dry_run,
+                    "session": views.session_summary(row, summary),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
+                if dry_run:
+                    answer["would_set"] = updates
+                return answer
+
+    @mcp.tool
+    async def record_manual_session(
+        start_time: str,
+        duration_s: int,
+        timezone: str = "UTC",
+        discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
+        rpe: float | None = None,
+        temperature_c: float | None = None,
+        notes: str | None = None,
+        sets: list[dict[str, Any]] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Record a session that has no device file — a gym session, usually.
+
+        This is how a session the athlete reported in chat becomes a
+        *recorded* session: it lands as the same row a device file would
+        produce, and matching and scoring treat it like any recording.
+        Matching runs inside this call — the new session is compared against
+        the plan exactly as an ingested file is, a strength metric artefact
+        is computed from its sets, and `match_status` in the answer says
+        where it stood when the call returned (`matched` when a planned
+        session claimed it, `unplanned` when nothing could).
+
+        **Record what the athlete reported, not what you assume they did**:
+        the sets, loads and RPE here are their account of the session, and a
+        set they did not mention is a set that did not happen. Each set
+        object is `{"exercise_id": "back_squat", "reps": 5, "load_kg": 100,
+        "rir": 2, "notes": "..."}` — `exercise_id` must be a slug from
+        `get_exercise_catalogue`, or give `exercise_name` (free text) for a
+        movement the catalogue lacks; exactly one of the two per set.
+        `load_kg` is absent for bodyweight sets.
+
+        Every answer carries `budget_remaining` — how many writes the hourly
+        cap still admits, after this one if it was real (a dry run is free,
+        so there it is the current standing).
+
+        Args:
+            start_time: When it started, ISO datetime **with a timezone
+                offset** (e.g. `2026-08-12T17:30:00+02:00`).
+            duration_s: Wall-clock length in seconds, 60 s to 24 h.
+            timezone: The athlete-local timezone (IANA name, `UTC+02:00`, or
+                `UTC`) — it fixes which day the session belongs to.
+            discipline: `strength` (the default — that is what has no device
+                file), `cycling` or `other`.
+            rpe: The athlete's reported session RPE, 0-10.
+            temperature_c: Ambient temperature in °C, −30…50.
+            notes: The athlete's own words about the session.
+            sets: The sets they reported, in order, as above.
+            dry_run: Run every check — timezone, bounds, every catalogue
+                slug — and return the session that would be stored, writing
+                nothing and costing no rate-cap budget. No `id` and no
+                `match_status`: nothing was written or matched.
+
+        Requires a `write` key.
+        """
+        actor = require_scope(Scope.WRITE)
+        with tool_errors():
+            async with session_scope() as session:
+                row = await SessionService.from_session(session).create_manual(
+                    actor=actor,
+                    start_time=views.as_datetime(start_time, field="start_time"),
+                    timezone=timezone,
+                    duration_s=duration_s,
+                    discipline=discipline,
+                    rpe=rpe,
+                    temperature_c=temperature_c,
+                    notes=notes,
+                    sets=_logged_sets(sets),
+                    dry_run=dry_run,
+                )
+                if dry_run:
+                    return {
+                        "dry_run": True,
+                        "session": views.manual_session_draft(row),
+                        "budget_remaining": await remaining_write_budget(
+                            session, actor
+                        ),
+                    }
+                current = await SessionMetricsService.from_session(
+                    session
+                ).current_for_sessions([row.id])
+                summary = summarise(current[row.id]) if row.id in current else None
+                return {
+                    "dry_run": False,
+                    "session": views.session_summary(row, summary),
+                    "sets": [views.logged_set(entry) for entry in row.logged_sets],
                     "budget_remaining": await remaining_write_budget(session, actor),
                 }
 

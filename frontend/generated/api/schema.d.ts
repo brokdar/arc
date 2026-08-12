@@ -960,12 +960,15 @@ export interface paths {
     head?: never;
     /**
      * Update Session
-     * @description Correct a session's discipline or its timezone.
+     * @description Correct a session's guessed facts, or record its measurement context.
      *
      *     A discipline override is recorded as one (`discipline_overridden`), so no
      *     later re-classification can quietly undo it. A timezone override
      *     **re-derives** `local_date`, which is the point of storing the zone rather
-     *     than the offset that happened to be true once (D93).
+     *     than the offset that happened to be true once (D93). `rpe` and
+     *     `temperature_c` record the conditions the session was performed under —
+     *     settable on any session, ingested ones included (#23), and clearable with
+     *     an explicit null; an omitted field is always left untouched.
      */
     patch: operations["sessions-update_session"];
     trace?: never;
@@ -2308,6 +2311,8 @@ export interface components {
        * Format: date-time
        */
       start_time: string;
+      /** Temperature C */
+      temperature_c?: number | null;
       /**
        * Timezone
        * @description IANA name, fixed offset (UTC+02:00), or UTC.
@@ -3858,6 +3863,8 @@ export interface components {
        */
       start_time: string;
       status: components["schemas"]["SessionMatchStatus"];
+      /** Temperature C */
+      temperature_c: number | null;
       /** Timezone */
       timezone: string;
     };
@@ -3995,6 +4002,8 @@ export interface components {
        */
       start_time: string;
       status: components["schemas"]["SessionMatchStatus"];
+      /** Temperature C */
+      temperature_c: number | null;
       /** Timezone */
       timezone: string;
       /**
@@ -4100,26 +4109,36 @@ export interface components {
     };
     /**
      * SessionUpdate
-     * @description Corrections to a session's guessed facts.
+     * @description Corrections to a session's guessed facts, and its measurement context.
      *
-     *     Both fields are overrides of something inferred from a file: setting the
-     *     discipline records that the athlete decided it, and setting the timezone
-     *     re-derives ``local_date``, which is what puts a late-evening ride back on
-     *     the right day.
+     *     Two kinds of field, with different null semantics — and in both cases an
+     *     **omitted** field is left untouched (the route dumps with
+     *     ``exclude_unset``):
      *
-     *     **Optional by omission, never nullable.** Neither field can be *cleared*:
-     *     a session always has a discipline and always has a timezone, so the
-     *     service refuses an explicit ``null`` with a 422. ``SkipJsonSchema[None]``
-     *     keeps the Python-side ``= None`` "unset" default while dropping the
-     *     ``null`` branch from the contract, so the schema promises exactly what the
-     *     parser accepts — the same rule the optional *query* parameters follow
-     *     (`.claude/rules/api-optional-query-params.md`), applied to a request body.
-     *     Other update payloads here (``AthleteUpdate``, ``WorkoutUpdate``) stay
-     *     ``X | None`` on purpose: for those, ``null`` means "clear this field".
+     *     * **Corrections** (``discipline``, ``timezone``) override something
+     *       inferred from a file: setting the discipline records that the athlete
+     *       decided it, and setting the timezone re-derives ``local_date``, which
+     *       is what puts a late-evening ride back on the right day. Neither can be
+     *       *cleared* — a session always has both — so the service refuses an
+     *       explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the
+     *       Python-side ``= None`` "unset" default while dropping the ``null``
+     *       branch from the contract, so the schema promises exactly what the
+     *       parser accepts (the rule of
+     *       `.claude/rules/api-optional-query-params.md`, applied to a body).
+     *     * **Measurement context** (``rpe``, ``temperature_c``, #23) is what the
+     *       athlete reports about the conditions of a session — including an
+     *       ingested one, which is the point: a device file never carries an RPE.
+     *       These are ``X | None`` on purpose, like ``AthleteUpdate``'s fields:
+     *       an explicit ``null`` *clears* the value, because "nobody said" is
+     *       their honest empty state.
      */
     SessionUpdate: {
       /** Discipline */
       discipline?: components["schemas"]["SessionDiscipline"];
+      /** Rpe */
+      rpe?: number | null;
+      /** Temperature C */
+      temperature_c?: number | null;
       /**
        * Timezone
        * @description An IANA name (Europe/Zurich), a fixed offset (UTC+02:00), or UTC. Anything else is refused: a timezone that cannot be resolved makes the session's date unrecoverable.

@@ -259,7 +259,7 @@ async def test_a_session_field_that_cannot_be_cleared_is_refused(
     assert (await client.get(f"{SESSIONS}/{session_id}")).json() == before
 
 
-async def test_the_session_patch_contract_does_not_offer_null(
+async def test_the_session_patch_contract_offers_null_exactly_where_it_means_clear(
     data_root: Path, client: AsyncClient
 ) -> None:
     spec = (await client.get("/openapi.json")).json()
@@ -268,9 +268,81 @@ async def test_the_session_patch_contract_does_not_offer_null(
 
     # `SkipJsonSchema[None]` keeps the Python-side unset default and drops the
     # `null` branch from the contract, so the schema promises exactly what the
-    # parser accepts: omit a field to leave it alone, never null it.
-    assert "null" not in str(update), update
+    # parser accepts: omit a non-clearable field to leave it alone, never
+    # null it.
+    assert "null" not in str(update["discipline"]), update["discipline"]
     assert update["timezone"]["type"] == "string"
+    # The context fields are the opposite on purpose: an explicit null
+    # clears them, so the contract must advertise it.
+    assert "null" in str(update["rpe"]), update["rpe"]
+    assert "null" in str(update["temperature_c"]), update["temperature_c"]
+
+
+# --- measurement context on any recorded session (#23) -------------------------
+
+
+async def test_context_can_be_recorded_on_an_ingested_session(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # The point of #23: a device file never carries an RPE or a temperature,
+    # and before this the only write path was manual creation — which an
+    # ingested session never passes through.
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    response = await client.patch(
+        f"{SESSIONS}/{session_id}", json={"rpe": 4, "temperature_c": 29.5}
+    )
+
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["rpe"] == 4
+    assert session["temperature_c"] == 29.5
+    # And the list row carries both, so the log is filterable on them.
+    [item] = (await client.get(SESSIONS)).json()["items"]
+    assert item["rpe"] == 4
+    assert item["temperature_c"] == 29.5
+
+
+async def test_an_explicit_null_clears_a_context_field_and_omission_keeps_it(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+    await client.patch(f"{SESSIONS}/{session_id}", json={"rpe": 6, "temperature_c": 22})
+
+    cleared = await client.patch(f"{SESSIONS}/{session_id}", json={"rpe": None})
+
+    assert cleared.status_code == 200, cleared.text
+    session = cleared.json()
+    # Patch semantics: the nulled field is cleared, the omitted one untouched.
+    assert session["rpe"] is None
+    assert session["temperature_c"] == 22
+
+
+@pytest.mark.parametrize(("temperature_c", "bound"), [(-31, "-30"), (51, "50")])
+async def test_an_implausible_temperature_is_refused_naming_the_bound(
+    data_root: Path, client: AsyncClient, temperature_c: float, bound: str
+) -> None:
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    response = await client.patch(
+        f"{SESSIONS}/{session_id}", json={"temperature_c": temperature_c}
+    )
+
+    assert response.status_code == 422, response.text
+    assert bound in response.text
+    assert (await client.get(f"{SESSIONS}/{session_id}")).json()[
+        "temperature_c"
+    ] is None
+
+
+async def test_an_out_of_scale_rpe_is_refused(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "ride.fit", "outdoor_ride.fit")
+
+    response = await client.patch(f"{SESSIONS}/{session_id}", json={"rpe": 11})
+
+    assert response.status_code == 422
 
 
 async def test_an_empty_patch_is_refused(data_root: Path, client: AsyncClient) -> None:
@@ -298,6 +370,7 @@ async def test_a_manual_session_is_stored_with_its_sets(
     assert session["duration_s"] == 3600.0
     assert session["local_date"] == "2026-05-11"
     assert session["rpe"] == 7
+    assert session["temperature_c"] is None
     assert [entry["set_index"] for entry in session["logged_sets"]] == [0, 1]
     catalogue, free_text = session["logged_sets"]
     # A catalogue set stores the catalogue's name, so the row stays readable
@@ -306,6 +379,17 @@ async def test_a_manual_session_is_stored_with_its_sets(
     assert catalogue["exercise_name"] == "Back Squat"
     assert free_text["exercise_id"] is None
     assert free_text["exercise_name"] == "Copenhagen plank"
+
+
+async def test_a_manual_session_can_state_the_temperature_it_was_performed_at(
+    data_root: Path, client: AsyncClient
+) -> None:
+    response = await client.post(MANUAL, json=a_manual_session(temperature_c=31.0))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["temperature_c"] == 31.0
+    too_hot = await client.post(MANUAL, json=a_manual_session(temperature_c=85))
+    assert too_hot.status_code == 422
 
 
 async def test_a_manual_session_appears_in_the_list_beside_device_sessions(

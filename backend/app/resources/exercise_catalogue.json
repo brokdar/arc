@@ -12,6 +12,7 @@
     { "id": "pistol_squat", "name": "Pistol Squat", "category": "squat", "unilateral": true },
     { "id": "air_squat", "name": "Air Squat", "category": "squat" },
     { "id": "leg_extension", "name": "Leg Extension", "category": "squat" },
+    { "id": "single_leg_calf_raise", "name": "Single-Leg Calf Raise", "category": "squat", "unilateral": true },
 
     { "id": "conventional_deadlift", "name": "Conventional Deadlift", "category": "hinge" },
     { "id": "sumo_deadlift", "name": "Sumo Deadlift", "category": "hinge" },
@@ -64,6 +65,7 @@
     { "id": "chest_supported_row", "name": "Chest-Supported Row", "category": "pull" },
     { "id": "inverted_row", "name": "Inverted Row", "category": "pull" },
     { "id": "face_pull", "name": "Face Pull", "category": "pull" },
+    { "id": "reverse_fly", "name": "Dumbbell Reverse Fly", "category": "pull" },
     { "id": "barbell_shrug", "name": "Barbell Shrug", "category": "pull" },
     { "id": "barbell_curl", "name": "Barbell Curl", "category": "pull" },
     { "id": "dumbbell_curl", "name": "Dumbbell Curl", "category": "pull" },

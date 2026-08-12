@@ -1559,6 +1559,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       duration_s: 3600,
       recording_time_s: null,
       rpe: 7,
+      temperature_c: null,
       notes: "Felt strong; added a set of pull-ups at the end.",
       // WP-5: nothing computed yet — a real state the page has an
       // action for, not a placeholder.
@@ -1584,6 +1585,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       duration_s: OUTDOOR_RECORDING_S,
       recording_time_s: OUTDOOR_RECORDING_S,
       rpe: null,
+      temperature_c: null,
       notes: null,
       // The one session with an artefact. Its load and basis are read off
       // that artefact rather than typed beside it, so the row and the page it
@@ -1612,6 +1614,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       duration_s: 3600,
       recording_time_s: 3600,
       rpe: null,
+      temperature_c: null,
       notes: null,
       // WP-5: nothing computed yet — a real state the page has an
       // action for, not a placeholder.
@@ -1938,6 +1941,7 @@ export function ingestedSessionFixture(
     duration_s: recording,
     recording_time_s: recording,
     rpe: null,
+    temperature_c: null,
     notes: null,
     // WP-5: nothing computed yet — a real state the page has an action for,
     // not a placeholder.
@@ -2065,6 +2069,7 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
       duration_s: recording,
       recording_time_s: recording,
       rpe: null,
+      temperature_c: null,
       notes: null,
       // WP-5: nothing computed yet — a real state the page has an action
       // for, not a placeholder.
@@ -2677,6 +2682,7 @@ export function seedMergeCandidate(): Schemas["SessionRead"] {
     duration_s: 2160,
     recording_time_s: 2160,
     rpe: null,
+    temperature_c: null,
     notes: null,
     load: null,
     load_basis: null,

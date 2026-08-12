@@ -117,6 +117,11 @@ class SessionRow(Base):
     #: Session RPE, 0-10, for manual strength entry (B-6). Null for a device
     #: session unless the athlete adds one.
     rpe: Mapped[float | None] = mapped_column(Float)
+    #: Ambient temperature during the session, °C, athlete-reported (#23) —
+    #: the conditions the measurement was taken under, not a device channel.
+    #: One number for the whole session: the cheapest queryable slice of
+    #: "conditions", ahead of the MMP's observed-conditions model (D210).
+    temperature_c: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(String(MAX_NOTES_LENGTH))
 
     #: Reserved (R3), no behavior: bodyweight **at the time**, pinned like an

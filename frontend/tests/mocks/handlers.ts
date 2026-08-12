@@ -569,6 +569,15 @@ export const handlers = [
         session.timezone = body.timezone;
         session.local_date = statedLocalDate(session.start_time, body.timezone);
       }
+      // The context fields (#23) are patch-semantics: an omitted field is
+      // untouched, an explicit null clears. The handler honours what it was
+      // sent — a canned echo could not fail when the form dropped a field.
+      if (body.rpe !== undefined) {
+        session.rpe = body.rpe;
+      }
+      if (body.temperature_c !== undefined) {
+        session.temperature_c = body.temperature_c;
+      }
       session.updated_at = NOW;
       return response(200).json(withMatch(session));
     },
