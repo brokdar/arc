@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### An agent surface that can read back what it wrote (#17–#26)
+
+An external coaching agent (claude-opus-5) migrated a real athlete into arc
+over MCP and reviewed the interface. Its verdict — "excellent at the moment of
+writing and poor at every moment before and after" — became issues #17–#26 and
+this round of changes, measured against the baseline now recorded in
+`docs/agent-eval.md`.
+
+- **One key can read and write.** `MCP__API_KEYS` entries carry scope sets
+  (`coach:read+write:<hex>`), so "read before writing" no longer requires
+  mounting two MCP servers with two audit identities. Single-scope entries
+  parse unchanged; `write` still does not imply `read`.
+- **Appending an anchor reprices the history it governs** (#18). Sessions
+  whose stored metrics disagree — as measurements — with the version now in
+  force for their date get a new metric version; the answer reports
+  examined/repriced/unchanged/failed, and a dry run predicts `would_reprice`.
+  The first FTP no longer leaves imported history silently unpriced, and the
+  append itself is never hostage to the repricing.
+- **Dry-run parity restored** (#17). The `protocol` length limit is a domain
+  rule on the one path dry run and write share, so a dry run that passes means
+  the write will pass; an audit of every other MCP-reachable column found no
+  further holes.
+- **The reads the coaching loop runs on** (#20): `list_proposals` and
+  `get_proposal` close the write-then-blind loop, `get_workout` returns the
+  full structure the library list withholds, `get_exercise_catalogue` makes
+  strength authorable over MCP alone, `get_zones` ends hand-kept zone copies,
+  and `get_purposes` shows the criteria each purpose is judged by.
+- **`get_coaching_context`** opens a coaching session in one call — athlete,
+  red flag, anchors in force, current week, open proposals, last seven
+  sessions, write budget — replacing the four-to-six-call opening.
+- **Discoverable contracts** (#19, #21). `create_workout` documents one
+  cycling and one strength structure, pinned by a test that runs the
+  documented examples through the real parser; unknown-purpose errors
+  enumerate the vocabulary; every write reports `budget_remaining`; error
+  strings no longer point MCP clients at REST paths they cannot call.
+- **Sessions carry the conditions they were performed under** (#23). `rpe`
+  and `temperature_c` are writable on any recorded session — over the API and
+  the new `record_session_context` tool — so "was that fade fatigue or a
+  fluid deficit at 29 °C" becomes a query instead of a re-read of prose.
+  Manual sessions are recordable over MCP (`record_manual_session`), which
+  makes strength scorable; the exercise catalogue gained the single-leg calf
+  raise and reverse fly (#26).
+
 ### Metric accuracy against the head unit (D197–D203)
 
 Three numbers computed differently from the athlete's own device, checked
