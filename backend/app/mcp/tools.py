@@ -50,7 +50,13 @@ from app.core.exceptions import (
 from app.core.logging import get_logger
 from app.domain.activity import SessionDiscipline
 from app.domain.agent_notes import NoteKind
-from app.domain.anchors import AnchorSource, AnchorType, AnchorUnit, Provenance
+from app.domain.anchors import (
+    RESERVED_ANCHOR_TYPES,
+    AnchorSource,
+    AnchorType,
+    AnchorUnit,
+    Provenance,
+)
 from app.domain.athlete import Discipline
 from app.domain.proposals import ProposalStatus, changes_from_json
 from app.domain.strength import ExerciseCategory
@@ -81,6 +87,11 @@ logger = get_logger(__name__)
 #: Most rows any one read tool will return. A model that asks for everything
 #: gets a page and a total, so it can see that there was more.
 MAX_LIMIT = 200
+
+#: How many recorded sessions `get_coaching_context` carries — enough to see
+#: the week that was and the shape of the one before it, small enough that
+#: the one opening call stays one-call sized. Older ones are `list_sessions`.
+RECENT_SESSIONS = 7
 
 #: How an `AppError` is labelled on its way out, most specific first —
 #: `RedFlagError` is a `ForbiddenError`, and the order is what keeps it from
@@ -180,12 +191,96 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
     # --- reads ----------------------------------------------------------------
 
     @mcp.tool
+    async def get_coaching_context() -> dict[str, Any]:
+        """Start every coaching session with this one call.
+
+        It replaces the `get_athlete` → `get_anchors` → `get_plan_week` →
+        `list_sessions` → `list_proposals` opening: who you are coaching,
+        the numbers in force, the week they are in, what they just did and
+        what you last suggested — one answer, assembled from the same
+        services those tools read, so it never disagrees with them.
+
+        What each block is, and where the rest lives:
+
+        * `athlete` — the profile, as `get_athlete` returns it. `plan_state`
+          is `active` or `paused` — while paused the athlete has stopped
+          training and nothing is being scored, so suggesting a busier week
+          answers a question nobody asked.
+        * `red_flag` — illness or injury. While `active`, any proposal that
+          **adds or intensifies** training is refused (see
+          `propose_plan_change`). It is on every read from this server, so
+          there is never a call where you did not know.
+        * `anchors` — the version of each anchor **currently in force**,
+          keyed by type; null where none has been appended yet, which is an
+          answer (there is no FTP), not a gap. The append-only histories are
+          `get_anchors`.
+        * `week` — the current plan week, exactly as `get_plan_week` returns
+          it, concurrency tokens included. Other weeks are `get_plan_week`
+          with a `start`.
+        * `open_proposals` — `pending` proposals only, the summary rows
+          `list_proposals` serves. Resolved ones are `list_proposals`; the
+          stored diff is `get_proposal`.
+        * `recent_sessions` — the last 7 recorded sessions, the summary rows
+          `list_sessions` serves. Older ones are `list_sessions`; one
+          session's axes, verdict and alignment are `get_session_detail`.
+        * `budget_remaining` — the hourly write cap's current standing: how
+          many writes it still admits.
+
+        Requires a `read` key.
+        """
+        actor = require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                profile = await current_profile(session)
+                anchor_service = AnchorService.from_session(session)
+                anchors: dict[str, Any] = {}
+                for anchor_type in AnchorType:
+                    if anchor_type in RESERVED_ANCHOR_TYPES:
+                        continue
+                    try:
+                        row = await anchor_service.current(anchor_type)
+                    except NotFoundError:
+                        # "No version in force yet" is a fact about the
+                        # record, not a failed call — the same answer-shaped
+                        # absence `get_zones` serves.
+                        anchors[anchor_type.value] = None
+                    else:
+                        anchors[anchor_type.value] = views.anchor(row)
+                week = await PlanService.from_session(session).week()
+                pending, _ = await ProposalService.from_session(session).list(
+                    status=ProposalStatus.PENDING, limit=MAX_LIMIT
+                )
+                recent, _ = await SessionService.from_session(session).list(
+                    limit=RECENT_SESSIONS
+                )
+                current = await SessionMetricsService.from_session(
+                    session
+                ).current_for_sessions(row.id for row in recent)
+                return {
+                    "athlete": views.athlete(profile, today=dt.date.today()),
+                    "red_flag": views.red_flag(profile),
+                    "anchors": anchors,
+                    "week": views.plan_week(week),
+                    "open_proposals": [views.proposal(row) for row in pending],
+                    "recent_sessions": [
+                        views.session_summary(
+                            row,
+                            summarise(current[row.id]) if row.id in current else None,
+                        )
+                        for row in recent
+                    ],
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
+
+    @mcp.tool
     async def get_athlete() -> dict[str, Any]:
         """Read the athlete's profile, plan state and illness/injury flag.
 
-        Start here. `plan_state` is `active` or `paused` — while paused the
-        athlete has stopped training and nothing is being scored, so
-        suggesting a busier week answers a question nobody asked.
+        The session opener is `get_coaching_context`, which carries this
+        whole answer; call this when the profile alone is the question.
+        `plan_state` is `active` or `paused` — while paused the athlete has
+        stopped training and nothing is being scored, so suggesting a busier
+        week answers a question nobody asked.
 
         `red_flag.active` means illness or injury: while it is up, any
         proposal that **adds or intensifies** training is refused (see

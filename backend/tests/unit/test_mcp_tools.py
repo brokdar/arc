@@ -72,6 +72,7 @@ MONDAY = dt.date(2026, 8, 10)
 EXPECTED_TOOLS = {
     "ping",
     # reads
+    "get_coaching_context",
     "get_athlete",
     "get_anchors",
     "get_plan_week",
@@ -99,6 +100,7 @@ EXPECTED_TOOLS = {
 #: on every one of them, and a sample of three would let the eighth ship
 #: without it.
 READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("get_coaching_context", {}),
     ("get_athlete", {}),
     ("get_anchors", {}),
     ("get_plan_week", {}),
@@ -721,6 +723,103 @@ async def test_a_write_key_may_not_read_the_discovery_surface(
     # original reads, re-pinned for the new ones.
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "list_proposals")
+
+
+# --- get_coaching_context ----------------------------------------------------------
+
+
+async def test_the_context_on_a_fresh_instance_reports_absence_as_answers(
+    session_factory: Any,
+) -> None:
+    # The opening call must work on day zero: every block present, every
+    # absence rendered as an answer rather than a refusal or a missing key.
+    data = await call(READER, "get_coaching_context")
+
+    assert data["athlete"]["plan_state"] == "active"
+    assert data["red_flag"]["active"] is False
+    assert data["anchors"] == {
+        "ftp": None,
+        "lthr": None,
+        "max_hr": None,
+        "resting_hr": None,
+    }, "no version in force is null per type — and the reserved types are absent"
+    assert data["week"]["session_count"] == 0
+    assert data["week"]["sessions"] == []
+    assert data["open_proposals"] == []
+    assert data["recent_sessions"] == []
+    assert isinstance(data["budget_remaining"], int)
+
+
+async def test_the_context_composes_the_opening_reads(client: AsyncClient) -> None:
+    # The 4-6 call opening, replaced: anchors current-only, the pending
+    # proposal visible, and the recent sessions capped at the newest 7.
+    await append_ftp(client, 250)
+    await append_ftp(client, 300)
+    for day in range(8):
+        await record(
+            client,
+            start_time=f"{(MONDAY + dt.timedelta(days=day)).isoformat()}T17:00:00Z",
+        )
+    # Filed after the recordings: a session recorded through a proposal's
+    # date resolves it by reality, and this one must still be pending.
+    filed = await filed_proposal()
+
+    data = await call(READER, "get_coaching_context")
+
+    # The version in force, not the history — that is `get_anchors`' answer.
+    assert data["anchors"]["ftp"]["value"] == 300
+    assert data["anchors"]["lthr"] is None
+    [row] = data["open_proposals"]
+    assert row["id"] == filed["proposal"]["id"]
+    assert row["status"] == "pending"
+    assert "diff" not in row, "the diff is get_proposal's answer, not the opener's"
+    dates = [item["local_date"] for item in data["recent_sessions"]]
+    assert len(dates) == 7
+    assert dates == sorted(dates, reverse=True), "newest first, like list_sessions"
+    assert MONDAY.isoformat() not in dates, "the eighth-oldest fell off the window"
+    assert data["recent_sessions"][0]["duration_s"] == 3_600
+
+
+async def test_the_context_week_is_get_plan_weeks_answer(client: AsyncClient) -> None:
+    # Same service, same view, same instant: the opener and the drill-down
+    # tool may never tell the agent two different weeks.
+    await append_ftp(client)
+    today = dt.date.today()
+    await plan(client, date=(today - dt.timedelta(days=today.weekday())).isoformat())
+
+    standalone = await call(READER, "get_plan_week")
+    data = await call(READER, "get_coaching_context")
+
+    assert data["week"]["session_count"] == 1
+    assert data["week"] == standalone["week"]
+
+
+async def test_the_context_budget_is_the_caps_standing(session_factory: Any) -> None:
+    # The same number a write's dry run reports — measured over the same
+    # audit rows, so what the opener says and what the cap refuses agree.
+    await call(COACH, "create_workout", {"name": "Easy hour", "structure": EASY_RIDE})
+    standing = await call(
+        COACH,
+        "append_anchor",
+        {
+            "anchor_type": "ftp",
+            "value": 250,
+            "provenance": "estimated",
+            "dry_run": True,
+        },
+    )
+
+    data = await call(READER, "get_coaching_context")
+
+    assert data["budget_remaining"] == standing["budget_remaining"]
+    assert data["budget_remaining"] == get_settings().mcp.write_cap_per_hour - 1
+
+
+async def test_a_write_key_may_not_open_the_context(session_factory: Any) -> None:
+    # Scopes are named requirements, not a hierarchy — re-pinned for the
+    # opener, because it is the read a coach makes first.
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_coaching_context")
 
 
 # --- append_anchor -----------------------------------------------------------------
