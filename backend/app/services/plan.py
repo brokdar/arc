@@ -6,7 +6,7 @@ A read-only use-case, and the only one in this layer that exists for a
 the calendar a request per session and a step-tree walk in the browser, so the
 week is assembled once, here, where the domain's own helpers are.
 
-Two shape decisions the adapters inherit (D55):
+Two shape decisions the adapters inherit:
 
 * the week is **seven days**, always, including the empty ones — a calendar
   renders a grid, and a projection that omitted Thursday would make every
@@ -125,7 +125,7 @@ class WeekSession:
     #: same number `PredictedLoad.coverage` carries on the session resource
     #: and from the same computation. ``None`` exactly when `predicted_load`
     #: is: a load without it cannot be told apart from a fully covered one,
-    #: and a card is where that mistake gets made (D88).
+    #: and a card is where that mistake gets made.
     predicted_load_coverage: float | None
     #: Σ ``sets × reps × kg`` for a strength session, when its loads are in
     #: kilograms. Kilograms, **not** a load: never add this to
@@ -352,8 +352,8 @@ class PlanService:
 
         ``start`` is taken literally — a Wednesday start gives the seven days
         from Wednesday — so a client can page the calendar by a day if it
-        wants to. Omitted, it defaults to the Monday of the current week
-        (D55), computed in **UTC** (:func:`_today`). That is right for the
+        wants to. Omitted, it defaults to the Monday of the current week,
+        computed in **UTC** (:func:`_today`). That is right for the
         browser client, which always sends an explicit `start=` derived from
         the athlete's own clock; a WP-8 MCP caller that passes nothing gets
         the UTC Monday, which is the wrong week for a few hours either side of
@@ -485,7 +485,7 @@ class PlanService:
         Both sides are already keyed by the link, so the only way the two can
         disagree is a swap whose rescore did not land — and showing the old
         prescription's verdict on the new one's card would be the strip
-        answering a question nobody asked of it (D161).
+        answering a question nobody asked of it.
         """
         session_ids = [link.session_id for link in links.values()]
         declared = await self._declarations.for_sessions(session_ids)
@@ -579,7 +579,7 @@ def _today() -> dt.date:
 
     The athlete's own timezone is not modelled until WP-4 puts one on each
     recorded session, so UTC is the calendar the whole application already
-    agrees on (D55). Isolated here so that work package has one line to
+    agrees on. Isolated here so that work package has one line to
     change.
     """
     return dt.datetime.now(dt.UTC).date()

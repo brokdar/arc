@@ -42,7 +42,7 @@ class ProposalSessionSnapshot(BaseModel):
     has kilograms and no TSS. They are different quantities and must never be
     added or shown in one column.
 
-    **Every field a change can touch is here, on both sides** (D185). A
+    **Every field a change can touch is here, on both sides**. A
     snapshot that carried only the cheap scalars let a revision of the success
     criteria or of the prescription itself render as "no field differs" above
     an enabled Accept button — the athlete answering a question the diff had
@@ -59,7 +59,7 @@ class ProposalSessionSnapshot(BaseModel):
     #: are what decide whether a recording settles the question
     #: (`resolved_by_reality`).
     discipline: Discipline
-    #: Derived from reality, never proposed (D174): an `update` change may not
+    #: Derived from reality, never proposed: an `update` change may not
     #: carry it, so it is the same on both sides of every diff.
     status: SessionStatus
     intent_text: str | None

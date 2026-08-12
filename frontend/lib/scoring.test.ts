@@ -75,7 +75,7 @@ describe("the WP-7 vocabularies", () => {
  * The strip's palette, measured rather than remembered.
  *
  * Purple belongs to the coach and to the over-target verdict and to nothing
- * else (build-plan invariant 7, D84) — so `over` is the only state allowed to
+ * else (build-plan invariant 7) — so `over` is the only state allowed to
  * wear it, and every other tone has to stay ΔE00 10 clear. The states also
  * have to be told apart *from each other*: a strip whose `missed` and
  * `abandoned` read as the same red would be a strip that says nothing.
@@ -161,8 +161,8 @@ describe("the completion-state palette", () => {
         const [rightState, rightHex] = entries[right];
         if (leftHex === rightHex) {
           // The one deliberate sharing: `displaced` and `different_session`
-          // are the same statement from two writers, so they are one colour
-          // (D156). Any other pair sharing a hex is an accident.
+          // are the same statement from two writers, so they are one colour.
+          // Any other pair sharing a hex is an accident.
           expect(new Set([leftState, rightState])).toEqual(
             new Set(["displaced", "different_session"]),
           );

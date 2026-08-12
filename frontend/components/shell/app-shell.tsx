@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  * `sticky top-0` toolbar at the top of its own content (see `Toolbar`).
  *
  * The red-flag banner is above both, spanning the width, and outside the
- * scrolling column so it cannot be scrolled away (D182). It renders nothing
+ * scrolling column so it cannot be scrolled away. It renders nothing
  * while the flag is down, so in the normal case this is the same two-element
  * frame it has always been.
  */

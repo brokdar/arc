@@ -5,8 +5,7 @@ Two routers, split by what each operation is *about*.
 `/api/v1/sessions/{id}/…` is a recorded session asking about its own judgement:
 its current score and the history behind it, the alignment it was scored
 through, and the verdict the athlete declares on it. Every path is one segment
-deeper than `GET /sessions/{id}`, so none of them shadows it
-(`.claude/rules/api-collection-facets.md`).
+deeper than `GET /sessions/{id}`, so none of them shadows it.
 
 `/api/v1/planned-sessions/{id}/reasons` is the other half of WP-7.3: a session
 that was **missed** has no recording and no declaration, so the athlete answers
@@ -190,7 +189,7 @@ async def get_session_score(
     Also 404 once the link a score was computed against is **gone** — unlinked,
     rejected, called unplanned, or pointed at a different plan entry. The
     versions stay on `/score/history`, where they are the record of what was
-    measured; what they stop being is this session's standing judgement (D161).
+    measured; what they stop being is this session's standing judgement.
     """
     row = await service.get_current(session_id)
     if row is None:

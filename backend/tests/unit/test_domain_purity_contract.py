@@ -25,7 +25,7 @@ DOMAIN_MAY_IMPORT = {
     "pydantic": "pure data modelling — validation and value objects, no I/O",
     # This list anticipated polars/pyarrow being allowlisted when WP-5 moved
     # metrics into the domain. It was not needed and the entry was never
-    # written (D112): the WP-5 metric functions are plain Python over
+    # written: the WP-5 metric functions are plain Python over
     # `Sequence[float | None]`, exactly as `normalized_power` already was, and
     # `app.ingest` reads the parquet file and hands the domain plain tuples.
     # pyarrow stays on the *forbidden* side of the contract, where it has been

@@ -89,7 +89,7 @@ export function SessionCard({
               "font-mono text-xs",
               // Struck through, not dimmed out of readability: a missed
               // session's duration is what was *not* done, which is
-              // information. `ink-disabled` is for inactive controls (D85).
+              // information. `ink-disabled` is for inactive controls.
               missed && "text-ink-muted line-through decoration-ink-muted/50",
             )}
           >
@@ -129,7 +129,7 @@ export function SessionCard({
             are the *consequences* of a confirmed link and of an
             executed-instead-of one, so repeating them here would be saying the
             same thing twice; a **pending** proposal changes neither status by
-            design (D140), which makes it the one link state a card is
+            design, which makes it the one link state a card is
             otherwise silent about. */}
         {judged && stateTone ? (
           <span

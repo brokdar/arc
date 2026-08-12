@@ -1,7 +1,7 @@
 """Request/response schemas for completed sessions.
 
-Two shapes, and the split is the same one the planned-session list makes
-(D79): a **list row** is what a log line renders and costs one query for the
+Two shapes, and the split is the same one the planned-session list makes:
+a **list row** is what a log line renders and costs one query for the
 page, while the **detail** carries the recording metadata behind it — the
 sources that produced each channel, the stops that were subtracted, and how
 many repairs the cleaner made.
@@ -216,8 +216,8 @@ class SessionUpdate(BaseModel):
       explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the
       Python-side ``= None`` "unset" default while dropping the ``null``
       branch from the contract, so the schema promises exactly what the
-      parser accepts (the rule of
-      `.claude/rules/api-optional-query-params.md`, applied to a body).
+      parser accepts. In a body, omitting a field means "leave it alone" and
+      ``null`` would mean "clear it" — which is not an operation these two have.
     * **Measurement context** (``rpe``, ``temperature_c``, #23) is what the
       athlete reports about the conditions of a session — including an
       ingested one, which is the point: a device file never carries an RPE.

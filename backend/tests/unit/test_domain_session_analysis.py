@@ -75,7 +75,7 @@ WATTS: Sequence[float | None] = [150.0] * 600 + [260.0] * 600
 BEATS: Sequence[float | None] = [130.0] * 600 + [168.0] * 600
 #: 9 m/s for 1 150 s, then 50 s at a standstill. It **is** the ride's moving
 #: time: the artefact counts this column rather than being told a number
-#: alongside it (D196), so the fixture cannot state a moving time the stream
+#: alongside it, so the fixture cannot state a moving time the stream
 #: does not support.
 SPEED: Sequence[float | None] = [9.0] * 1_150 + [0.0] * 50
 
@@ -93,7 +93,7 @@ def ride(**overrides: Any) -> SessionInputs:
             # 1 150 rows travelling and 50 standing at a light, which is
             # exactly the moving time above: a fixture whose speed column and
             # whose moving time disagree cannot check an average taken over
-            # one against a distance integrated from the other (D194).
+            # one against a distance integrated from the other.
             StreamChannel.SPEED: tuple(SPEED),
             StreamChannel.ELEVATION: tuple(
                 [100.0 + index / 10 for index in range(1_200)]
@@ -198,7 +198,7 @@ def test_the_artefact_records_the_zone_model_of_each_channel() -> None:
 
 
 def test_detected_intervals_travel_with_the_metrics() -> None:
-    # D118: detection is deterministic from the stream, so it is versioned
+    # Detection is deterministic from the stream, so it is versioned
     # with the metrics rather than recomputed by each consumer.
     analysis = analyse_session(ride())
 
@@ -232,11 +232,11 @@ def moved(rows: int) -> dict[StreamChannel, tuple[float | None, ...]]:
 
 
 def test_the_averages_use_moving_time_and_the_load_does_not() -> None:
-    """D194's split, stated as the one thing that could silently be wrong.
+    """The averaging split, stated as the one thing that could silently be wrong.
 
     Two rides identical but for how much of them was spent moving: the average
     power differs (it is divided by moving time, and summed over the same
-    seconds — D196) and the training load does not (its duration term is still
+    seconds) and the training load does not (its duration term is still
     recording time, A5.1). If a later change routes the load through the
     averaging basis, this fails.
     """
@@ -261,7 +261,7 @@ def test_the_averages_use_moving_time_and_the_load_does_not() -> None:
 
 
 def test_a_speed_sensor_that_dies_halfway_inflates_nothing() -> None:
-    """D196's headline case, composed.
+    """The averaging basis' headline case, composed.
 
     The speed channel stops reporting at half distance and the athlete rides
     on at the same power. Before the fix the artefact divided a whole ride's
@@ -297,7 +297,7 @@ def test_the_variability_index_never_falls_below_one() -> None:
     The ride here is steady 200 W with twenty-four recorded traffic lights, so
     its moving-time average power is exactly the 200 W it rode at while NP is
     lower — dividing one by the other reports a ride *less* variable than a
-    perfectly steady one, which is not a thing that exists (D196).
+    perfectly steady one, which is not a thing that exists.
     """
     watts = tuple(0.0 if 25 <= second % 150 < 50 else 200.0 for second in range(1_200))
     speed = tuple(0.0 if 25 <= second % 150 < 50 else 9.0 for second in range(1_200))

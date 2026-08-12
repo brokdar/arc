@@ -175,8 +175,8 @@ async function mockApi(page: Page) {
 /**
  * The id of the nth planned session — a **real** uuid, because the app checks.
  *
- * `?session=` is validated for uuid shape before it is spent on a request
- * (D88), so a fake handing out `<uuid><ordinal>` would be handing out ids the
+ * `?session=` is validated for uuid shape before it is spent on a request,
+ * so a fake handing out `<uuid><ordinal>` would be handing out ids the
  * application is right to refuse.
  */
 function sessionId(ordinal: number): string {
@@ -404,7 +404,7 @@ test("write a workout, plan it, and see it on the week", async ({ page }) => {
   ).toBeVisible();
 
   // --- and so is the session you have open ----------------------------------
-  // The same rule one level down (D88). Only a real reload can prove it: the
+  // The same rule one level down. Only a real reload can prove it: the
   // sheet used to be component state, which no address could describe.
   await page.getByRole("button", { name: /Threshold 2×20/ }).click();
   await expect(page).toHaveURL(

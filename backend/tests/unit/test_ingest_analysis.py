@@ -7,7 +7,7 @@ are excluded rather than read as zero, and the load's duration term is the
 recordings' own summed — which is exactly why the **cumulative** channel is
 worth a test file of its own: the odometer is the only column whose meaning
 depends on where one recording ends and the next begins, and reading it end to
-end blames the athlete's device for a column arc itself assembled (D202).
+end blames the athlete's device for a column arc itself assembled.
 """
 
 import datetime as dt

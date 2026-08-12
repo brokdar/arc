@@ -176,7 +176,7 @@ class ProposalSettings(BaseModel):
     """
 
     max_horizon_days: int = 90
-    """Furthest ahead a proposal's `expires_at` may be set (D187).
+    """Furthest ahead a proposal's `expires_at` may be set.
 
     Without a bound an agent can date a proposal past any sweep, and the
     pending set — scanned on every propose and every recorded session — grows

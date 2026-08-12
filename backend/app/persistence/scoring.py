@@ -68,7 +68,7 @@ class SessionAlignmentRow(Base):
     """One immutable version of how a recording lines up with a prescription.
 
     Persisted from WP-7 rather than WP-5 because an alignment describes a
-    *match*, and matches did not exist until WP-6 (D116). The offset is the
+    *match*, and matches did not exist until WP-6. The offset is the
     reason it is versioned at all (A7.1): the athlete slides the planned
     timeline, that creates version *n+1*, and every score records which version
     it was computed against — so a score taken before the correction stays
@@ -253,7 +253,7 @@ class SessionReasonsRow(Base):
         # `session_id` here, and the missed side has no session at all.
         # The check constraint leaves exactly one of the two columns non-null,
         # and NULLs are distinct in a unique index on both SQLite and
-        # Postgres, so each constraint binds only the rows it is about (D165).
+        # Postgres, so each constraint binds only the rows it is about.
         UniqueConstraint("declaration_id", "version"),
         UniqueConstraint("planned_session_id", "version"),
     )

@@ -6,7 +6,7 @@ Claude Code.
 The official `typescript-lsp` plugin is deliberately **not** used here: it runs
 `typescript-language-server`, which drives **tsserver** from the TypeScript 5.9
 workspace package, while this repo type-checks with `tsgo` (`bun run
-type-check`, `just typecheck`, the pre-push hook, and CI — see D2). Two
+type-check`, `just typecheck`, the pre-push hook, and CI). Two
 compilers means editor diagnostics that disagree with the build. Same reasoning
 as `pyrefly-lsp`, applied to the other language.
 

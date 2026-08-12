@@ -19,7 +19,7 @@ segment than the id route, so nothing collides.
 This has come up twice. In WP-1 the id route itself was the problem
 (`PUT /anchors/current` answering 422 about uuid syntax), and the fix was to
 type the path parameter `str` and answer 405 from real handlers — correct
-there, because the refusals are the point (D36, D39). In WP-2 the collision
-was accidental and the path moved instead (D50). Prefer moving the path: four
+there, because the refusals are the point. In WP-2 the collision
+was accidental and the path moved instead. Prefer moving the path: four
 refusal handlers per shadowed facet is a lot of code to say "this route should
 never have been in the id namespace".

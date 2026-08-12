@@ -10,7 +10,7 @@ collection rather than `/workouts/folders`. Any single extra segment under
 `/workouts` also matches `/workouts/{workout_id}`, so an undocumented method
 on it (`PATCH /workouts/tags`) fell through to the id route and answered 422
 about uuid syntax where 405 is the true answer — found by Schemathesis, and
-the same class of mismatch D39 fixed for the append-only refusals. Moving the
+the same class of mismatch already fixed for the append-only refusals. Moving the
 path out of the id namespace removes the collision instead of papering over it
 with more refusal handlers.
 """
@@ -62,8 +62,8 @@ def get_service(session: SessionDep) -> WorkoutService:
 
 ServiceDep = Annotated[WorkoutService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 SearchQuery = Annotated[
     PostgresText | SkipJsonSchema[None],
     Query(

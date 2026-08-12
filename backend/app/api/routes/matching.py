@@ -9,7 +9,7 @@ proposal inbox is `GET /matches?status=pending`.
 `/api/v1/sessions/{id}/…` is the session asking about its own state: run
 matching again, or declare that nothing on the calendar is what this was. Both
 are sub-resources of one member — one segment deeper than `GET /sessions/{id}`
-— so neither shadows it (`.claude/rules/api-collection-facets.md`).
+— so neither shadows it.
 
 Merging two recordings is deliberately **not** here: it is an edit to the
 session, it answers with the session, and it has to recompute the metrics over
@@ -74,8 +74,8 @@ def get_service(session: SessionDep) -> MatchingService:
 
 ServiceDep = Annotated[MatchingService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 StatusFilter = Annotated[
     MatchLinkStatus | SkipJsonSchema[None],
     Query(

@@ -133,7 +133,7 @@ async def test_the_breakdown_is_queryable_jsonb(client: AsyncClient) -> None:
     assert row.shape == "object"
     assert row.duration_weight == pytest.approx(0.4)
     # A typed-in ride has no stream, so duration is the one component that
-    # could be assessed and the other two say why they could not (D138) — the
+    # could be assessed and the other two say why they could not — the
     # renormalisation, visible to Postgres itself.
     assert row.assessed == 1
     assert row.absent == 2

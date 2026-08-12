@@ -60,7 +60,17 @@ export interface SessionSheetProps {
   readonly onMove: (sessionId: string, toDate: string) => void;
   readonly onCopy: (sessionId: string, toDate: string) => void;
   readonly onDelete: (sessionId: string) => void;
-  /** Opens the plan form on this session, pre-filled. */
+  /**
+   * Opens the plan form on this session, pre-filled — editing **this session**,
+   * never the library workout it was planned from.
+   *
+   * A planned session carries a frozen snapshot of its prescription plus its
+   * own purpose, intent, notes and criteria, so editing the library workout
+   * would change neither this session nor any other already planned from it.
+   * One button doing the visibly-nothing thing is the worse failure, so
+   * changing the library is a separate, explicitly-labelled route into
+   * `/workouts/{id}`.
+   */
   readonly onEdit: (sessionId: string, date: string) => void;
   readonly busy?: boolean;
   /**
@@ -100,10 +110,9 @@ interface SheetHeader {
  *
  * **Which session is open is the URL's** (`/calendar?session=<id>`), and this
  * component is handed the id rather than an object: a sheet is a place, and a
- * place has to survive a reload, a bookmark and a Back press (UI convention 1,
- * D88).
+ * place has to survive a reload, a bookmark and a Back press (UI convention 1).
  *
- * The calendar card carries a summary (D55); everything else — the step tree,
+ * The calendar card carries a summary; everything else — the step tree,
  * the criteria, the coach notes, the intent history — lives behind
  * `GET /planned-sessions/{id}` and is fetched when the sheet opens. When the
  * card is on screen it renders the header immediately, so the sheet is never

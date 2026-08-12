@@ -61,7 +61,7 @@ class StreamChannel(StrEnum):
     #: rate than the once-a-second speed it writes out, so differencing this
     #: column end to end reproduces the distance the device, Strava and
     #: intervals.icu all report, while integrating the speed column reads
-    #: about 1.5 % short (D197, `app.domain.metrics.distance_km`).
+    #: about 1.5 % short (`app.domain.metrics.distance_km`).
     DISTANCE = "distance"
     ELEVATION = "elevation"
     TEMP = "temp"
@@ -115,7 +115,7 @@ GAP_THRESHOLD_S = 30
 
 #: Speed at or above which the athlete counts as moving, in m/s (1 km/h).
 #: The line between moving time and standing still: every *average* in the
-#: metric set is divided by the moving time this defines (D194), while training
+#: metric set is divided by the moving time this defines, while training
 #: load's duration term stays recording time (A5.1). Two different questions,
 #: two different denominators, and this constant separates them.
 #:
@@ -123,7 +123,7 @@ GAP_THRESHOLD_S = 30
 #: one owner each: :func:`resample` counts it over the **raw device samples**
 #: for the recording row's own ``moving_time_s``, and
 #: `app.domain.metrics.averaging_basis` counts it over the **cleaned 1 Hz
-#: column** for the artefact's divisor (D196). The artefact uses the second
+#: column** for the artefact's divisor. The artefact uses the second
 #: because that is the series its numerators integrate; the two may differ by
 #: whatever the cleaner repaired, and that difference is not a defect.
 MOVING_SPEED_MS = 1000 / 3600
@@ -139,7 +139,7 @@ MOVING_SPEED_MS = 1000 / 3600
 #: odometer mid-ride writes perfectly plausible metres in a nonsensical order,
 #: and no per-value bound sees it; :func:`clean` therefore does not try, and
 #: `app.domain.metrics.distance_km` tests the ordering itself before it
-#: differences the column (D197).
+#: differences the column.
 PLAUSIBLE_RANGE: Mapping[StreamChannel, tuple[float, float]] = MappingProxyType(
     {
         StreamChannel.POWER: (0.0, 2500.0),
@@ -216,7 +216,7 @@ class ParsedActivity:
             and no tie-break: unlike power and heart rate, a file writes at
             most one odometer, so the only question is *which field* — and
             that is worth recording because differencing it is where the
-            ride's distance comes from (D197).
+            ride's distance comes from.
     """
 
     file_sport_index: int
@@ -320,7 +320,7 @@ class ResampleResult:
             only samples whose speed is inside :data:`PLAUSIBLE_RANGE`. **The
             recording's own number, describing the file** — the metric
             artefact re-derives its divisor from the cleaned column instead
-            (D196, `app.domain.metrics.averaging_basis`), because a denominator
+            (`app.domain.metrics.averaging_basis`), because a denominator
             counted here and a numerator integrated there are two accounts of
             one ride that nothing keeps in step. Never the load's duration
             term either way.
@@ -666,7 +666,7 @@ def clean(
     ``power_fixed`` is what a metric reads.
 
     **The cumulative channel is not special-cased**, and that is a decision
-    rather than an omission (D197). Every repair above happens to preserve a
+    rather than an omission. Every repair above happens to preserve a
     non-decreasing ``distance`` column — the positional fill rule draws a
     straight line between two readings, and a clipped spike holds the earlier
     one — so nothing here needs to know the channel counts upwards. What no

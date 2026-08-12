@@ -93,7 +93,7 @@ describe("the paged fixtures", () => {
         (total, stop) => total + (stop.end_index - stop.start_index),
         0,
       );
-      // D101, exactly: elapsed − recording is the sum of the stop rows.
+      // Exactly: elapsed − recording is the sum of the stop rows.
       expect(recording.elapsed_time_s - recording.recording_time_s).toBe(
         paused,
       );

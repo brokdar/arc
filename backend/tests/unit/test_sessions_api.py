@@ -79,7 +79,7 @@ async def test_the_list_row_reports_recording_time_not_elapsed(
 
     [item] = (await client.get(SESSIONS)).json()["items"]
 
-    # 2400 s elapsed minus the stop's 599 rows (D101).
+    # 2400 s elapsed minus the stop's 599 rows.
     assert item["recording_time_s"] == 1801.0
     assert item["duration_s"] == item["recording_time_s"]
 
@@ -135,7 +135,7 @@ async def test_the_detail_counts_repairs_and_not_the_channels_that_needed_none(
     assert recording["anomaly_count"] == 1
     [stop] = recording["recording_stops"]
     assert stop == {"start_index": 601, "end_index": 1200}
-    # Exactly the stop's row range separates the two durations (D101).
+    # Exactly the stop's row range separates the two durations.
     assert recording["elapsed_time_s"] - recording["recording_time_s"] == (
         stop["end_index"] - stop["start_index"]
     )
@@ -202,7 +202,7 @@ async def test_overriding_the_timezone_re_derives_the_local_date(
 ) -> None:
     # The gym session starts at 17:00 UTC. Fourteen hours east of that is the
     # next day — which is the whole reason the column holds a zone and not an
-    # offset that happened to be true once (D93).
+    # offset that happened to be true once.
     session_id = await ingest(client, "gym.fit", "strength_watch.fit")
 
     response = await client.patch(
@@ -238,8 +238,8 @@ async def test_an_unresolvable_timezone_is_refused(
 # A session always has a discipline and always has a timezone, so neither
 # field has a null to mean anything and the service refuses one. The *schema*
 # used to advertise `X | None` anyway, which is the same schema/parser mismatch
-# `.claude/rules/api-optional-query-params.md` describes for query parameters:
-# the contract promised something the API rejects, and Schemathesis' fuzzer
+# query parameters have: the contract promised something the API rejects,
+# and Schemathesis' fuzzer
 # fails on exactly that (`API rejected schema-compliant request`). The two
 # tests below hold both ends — the contract no longer offers `null`, and the
 # service still refuses one from a caller who sends it anyway.

@@ -446,7 +446,7 @@ def _local_offset(activities: Sequence[Mapping[str, Any]]) -> dt.timedelta | Non
     and `local_timestamp` (the same instant on the athlete's own clock), and
     their difference is the whole of what the file knows — hence the
     fixed-offset spelling `app.domain.activity.timezone_label` produces (§0
-    decision 5, D93).
+    decision 5).
 
     Offsets are rounded to the minute: real zones are whole minutes, and a
     device that writes a second of skew must not produce a timezone string

@@ -94,8 +94,8 @@ export interface StreamChartsProps {
   /**
    * Resolved planned step bands, drawn behind the power trace.
    *
-   * `undefined` until WP-6 gives a session a match to resolve them from
-   * (D116). The component renders nothing for it, so wiring the data later is
+   * `undefined` until WP-6 gives a session a match to resolve them from.
+   * The component renders nothing for it, so wiring the data later is
    * a prop change rather than a new component — and the capability is tested
    * against a mock today so WP-6 finds it working.
    */
@@ -111,7 +111,7 @@ export interface StreamChartsProps {
  * and a zoom on one panel zooms all of them. uPlot rather than a
  * general-purpose chart library because 14 400 points per channel is where
  * SVG charting stops being interactive, and it is the **only** chart
- * dependency this page adds (D113).
+ * dependency this page adds.
  *
  * **Nulls are drawn as breaks.** A recording stop is a hole in the data
  * (A4.1), and uPlot renders a null as a gap in the trace by default. Nothing

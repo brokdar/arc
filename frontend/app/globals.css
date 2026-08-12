@@ -3,14 +3,14 @@
 @import "shadcn/tailwind.css";
 
 /*
- * arc is dark-only by design (D59). `<html>` always carries `.dark`, so the
+ * arc is dark-only by design. `<html>` always carries `.dark`, so the
  * variant still exists for vendored shadcn components that ship `dark:` rules,
  * but nothing in this app is styled for a light canvas.
  */
 @custom-variant dark (&:is(.dark *));
 
 /*
- * The design system, taken from docs/ui_mockups/Training App.dc.html.
+ * The design system, taken from the product's UI mockup.
  *
  * Tokens are named for what they mean, never for what they look like: a card
  * is `bg-card`, a completed session is `text-status-completed`. The palette is
@@ -88,7 +88,7 @@
   /* Four rungs of prose, all of them WCAG AA (≥ 4.5:1) on every surface they
      land on — `ink-faint` is 4.54:1 at its worst (on `accent-surface-hover`),
      which is why it is #7d848f and not the mockup's #5c636d (3.01:1 on a card,
-     carrying every uppercase label at 10px). See D85; tests/ink-contrast.test
+     carrying every uppercase label at 10px). tests/ink-contrast.test
      keeps it true. `ink-disabled` is the exception and stays below AA
      deliberately: it is reserved for *inactive controls*, which WCAG 1.4.3
      exempts, and nothing that carries information may use it. */
@@ -120,7 +120,7 @@
   --color-status-missed: #e05c5c;
   --color-status-over: #a78bfa;
   --color-status-pending: #6b7280; /* planned: still ahead of the athlete */
-  /* Matched and recorded, and judged by nobody yet (D152). Deliberately not
+  /* Matched and recorded, and judged by nobody yet. Deliberately not
      the completed green: a session arrives in this state some seconds before
      it is scored, and painting it green would be the strip declaring a
      verdict nothing computed. */
@@ -130,7 +130,7 @@
   --color-status-abandoned: #d9663c;
   /* "The athlete trained, and it was not this" — the `displaced` link status
      and the `different_session` verdict are the same statement from two
-     different writers, so they are one colour (D156). */
+     different writers, so they are one colour. */
   --color-status-different: #c86fa8;
   /* Ridden with nothing planned for it. */
   --color-status-unplanned: #7d8fa8;
@@ -172,7 +172,7 @@
      interpretive content to be visually distinguishable wherever it lands. So
      the top training zone is not purple — and when WP-5 adds the
      fitness/fatigue series, they must not be purple either. The strength
-     purposes used to be, and are not any more (D84); `purpose.test.ts` now
+     purposes used to be, and are not any more; `purpose.test.ts` now
      fails any tone within ΔE00 10 of either reservation, so this paragraph is
      enforced rather than believed.
 

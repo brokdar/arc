@@ -56,7 +56,7 @@ _PLACEHOLDER_MARKER = "change-me"
 #: Longest label accepted. The label is carried into every audit row as
 #: ``agent:<label>`` and `AuditLogEntry.actor` is 120 characters, so anything
 #: at or under this bound round-trips; a longer one would be a write that
-#: fails at the database rather than at startup. D191.
+#: fails at the database rather than at startup.
 MAX_LABEL_LENGTH = 100
 
 #: Labels that would be indistinguishable from another kind of actor in the
@@ -96,7 +96,7 @@ def _check_label(position: int, label: str) -> None:
     (`app.domain.actor.Actor.agent`), it is written to `audit_log.actor` as
     ``agent:<label>``, and it is what the athlete reads when asking who
     proposed something. So it has to be one token, short enough for the
-    column, and not the name of another kind of actor (D191). A label with a
+    column, and not the name of another kind of actor. A label with a
     newline in it can also split a log line in two, which is the cheap way to
     forge a trail.
 

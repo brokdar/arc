@@ -98,8 +98,8 @@ describe("the inbox queue", () => {
     renderInbox();
     await screen.findByText("Suspected duplicate");
 
-    // The API answers 409 for every reason but the two it lets you overrule
-    // (D107), so the unreadable file is offered the one answer that exists.
+    // The API answers 409 for every reason but the two it lets you overrule,
+    // so the unreadable file is offered the one answer that exists.
     expect(
       within(cardFor("wahoo-2026-08-05.fit")).getByRole("button", {
         name: "Not a duplicate",
@@ -485,7 +485,7 @@ describe("uploading a file", () => {
     renderInbox();
     await screen.findByText("Suspected duplicate");
 
-    // 200 with `outcome: "quarantined"` (D97) — a client reading the status
+    // 200 with `outcome: "quarantined"` — a client reading the status
     // instead would call this a success and show nothing.
     await upload(user, activityFile("ride.csv", "date,power\n"));
 

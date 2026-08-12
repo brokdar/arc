@@ -80,7 +80,7 @@ def enum_column[E: Enum](enum_class: type[E]) -> sa.Enum:
     Non-native by convention: a plain ``VARCHAR(n)`` on both SQLite and
     Postgres, where ``n`` is the length of the **longest member value**. There
     is no ``CHECK`` constraint — SQLAlchemy's ``create_constraint`` defaults to
-    ``False`` and this codebase leaves it there (D81), so the vocabulary is
+    ``False`` and this codebase leaves it there, so the vocabulary is
     enforced by ``validate_strings=True`` on the way in, not by the database.
     A row written by hand-rolled SQL can therefore hold a value the enum does
     not have; the ORM refuses to read it back.

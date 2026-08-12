@@ -94,7 +94,7 @@ describe("TodayView", () => {
   });
 
   /**
-   * The invariant this page exists to respect (D49).
+   * The invariant this page exists to respect.
    *
    * The session pinned an **estimated 250 W**; the anchor in force is a
    * **tested 265 W**. Resolving against "now" would render 106–323 W and

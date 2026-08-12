@@ -49,7 +49,7 @@ EXTENSION_CHANNELS: Mapping[str, StreamChannel] = {
 #: What the odometer's source label says for a TCX file. ``DistanceMeters`` is
 #: in the schema proper rather than an extension, and it is the same cumulative
 #: metres-from-the-start that FIT's ``record.distance`` holds — which is what
-#: makes it worth reading (D197).
+#: makes it worth reading.
 DISTANCE_SOURCE = "trackpoint.DistanceMeters"
 
 

@@ -253,7 +253,7 @@ export function reasonsProblem(
  *
  * Two states share a tone deliberately. `displaced` is a link status and
  * `different_session` is a verdict, and both say *the athlete trained, and it
- * was not this* — one fact, one colour (D156).
+ * was not this* — one fact, one colour.
  */
 export interface CompletionTone {
   readonly label: string;
@@ -266,7 +266,7 @@ export const COMPLETION_TONES: Readonly<
   planned: { label: "Planned", color: "var(--color-status-pending)" },
   completed: {
     // Not "Completed as intended": nothing has judged it yet, and a strip that
-    // said so would be declaring a verdict nobody computed (D152).
+    // said so would be declaring a verdict nobody computed.
     label: "Recorded, not yet judged",
     color: "var(--color-status-recorded)",
   },

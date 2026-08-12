@@ -88,7 +88,7 @@ export function describeCriterion(criterion: SuccessCriterion): string {
  * Always said, never implied. The window is the difference between judging
  * the athlete and judging the equipment — power is spiky at 1 Hz, and the same
  * ride scores differently at 0 s and at 30 s — so a criterion that hides its
- * window is not a criterion the athlete can hold anyone to (D73).
+ * window is not a criterion the athlete can hold anyone to.
  */
 function describeSmoothing(seconds: number): string {
   return seconds > 0 ? `, ${seconds} s average` : ", raw samples";

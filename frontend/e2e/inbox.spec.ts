@@ -77,7 +77,7 @@ async function mockApi(page: Page) {
         resolved_at: null,
       },
       {
-        // The other verdict the API lets you overrule (D107): the ride is
+        // The other verdict the API lets you overrule: the ride is
         // fine, the strap is not, and the cleaner blanks what it cannot
         // believe — so "ingest it anyway" is a real answer here.
         id: STRAP_RECORD,
@@ -175,7 +175,7 @@ async function mockApi(page: Page) {
           json({ detail: "That record is already resolved" }, 409),
         );
       }
-      // The API's own rule (D107): two verdicts can be overruled, and this
+      // The API's own rule: two verdicts can be overruled, and this
       // fake holds the line so the spec walks the path the server allows.
       if (
         record.reason !== "suspected_duplicate" &&
@@ -290,9 +290,9 @@ async function mockApi(page: Page) {
  * The arithmetic is the API's, exactly:
  *
  * * `end_time − start_time` is the **elapsed** time: 05:00 to 06:45 is 6300 s;
- * * a stop is a half-open row range on the 1 Hz grid (D89), so 2400–2700 is
+ * * a stop is a half-open row range on the 1 Hz grid, so 2400–2700 is
  *   300 rows and 300 seconds, and `elapsed − recording` is that sum exactly
- *   (D101) — 6300 − 300 = 6000;
+ * — 6300 − 300 = 6000;
  * * `duration_s` for a device session **is** the recording time
  *   (`_duration`), so both say 6000;
  * * moving time is time at or above 1 km/h, so it sits under the recording
@@ -362,7 +362,7 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
   ).toHaveAttribute("href", `/sessions/${RIDE_SESSION}`);
 
   // Two verdicts can be overruled and they are offered in their own words
-  // (D107): "not a duplicate" for the overlap, "ingest it anyway" for the
+  //: "not a duplicate" for the overlap, "ingest it anyway" for the
   // broken strap. Unreadable bytes stay unreadable, so that card gets neither.
   const strap = page
     .getByTestId("quarantine-record")
@@ -445,10 +445,10 @@ test("answer the inbox, upload a ride, and follow it to its session", async ({
   await expect(page.getByText("Wahoo KICKR")).toBeVisible();
   await expect(page.getByText("Garmin HRM-Pro")).toBeVisible();
   // Both channels had one candidate, so both print the tie-break that was
-  // never needed — FIT names candidates and nothing that chose (D96).
+  // never needed — FIT names candidates and nothing that chose.
   await expect(page.getByText("chosen: only candidate")).toHaveCount(2);
   // 6300 s elapsed, one 300-row stop, 6000 s recorded — the page shows its
-  // arithmetic rather than asserting it (D101).
+  // arithmetic rather than asserting it.
   await expect(page.getByText("1:45:00")).toBeVisible();
   // Twice: the session's "Recording time" and the file's "Recording" are the
   // same 6000 s, which is what makes the session's account of itself the

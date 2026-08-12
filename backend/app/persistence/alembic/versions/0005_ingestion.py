@@ -42,11 +42,11 @@ JSON_COLUMN = sa.JSON().with_variant(
 )
 
 #: Enums are non-native VARCHARs holding the member VALUE
-#: (`app.persistence.types.enum_column`) with no CHECK constraint (D81), so a
+#: (`app.persistence.types.enum_column`) with no CHECK constraint, so a
 #: member no longer than the longest one here needs no migration at all —
 #: which is what made `sessionmatchstatus` a one-member enum here and WP-6's
 #: `matched` / `unplanned` / `displaced` free to add later, and what let
-#: `streamchannel` gain `distance` (D197) with no migration either. So the
+#: `streamchannel` gain `distance` with no migration either. So the
 #: vocabularies below are what this revision *created*, not what the
 #: application uses today; `app.domain.streams.StreamChannel` and its
 #: neighbours are the live lists, and `alembic check` stays green regardless.

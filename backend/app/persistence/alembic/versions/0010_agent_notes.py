@@ -52,7 +52,7 @@ JSON_COLUMN = sa.JSON().with_variant(
 )
 
 #: Non-native VARCHARs holding the member VALUE, no CHECK constraint — the
-#: convention `app.persistence.types.enum_column` sets (D81).
+#: convention `app.persistence.types.enum_column` sets.
 NOTE_KIND = sa.Enum("evaluation", "annotation", name="notekind", native_enum=False)
 DISPUTE_RATING = sa.Enum("up", "down", name="disputerating", native_enum=False)
 

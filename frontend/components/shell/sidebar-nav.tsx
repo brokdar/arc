@@ -36,7 +36,7 @@ interface NavItem {
    * Shown on hover, so the sidebar answers "when?" instead of implying the
    * feature is broken. Required for every unready item and forbidden on a
    * ready one — a stale "arrives soon" on a page that shipped is worse than
-   * no tooltip at all (D61).
+   * no tooltip at all.
    */
   readonly arrives?: string;
 }
@@ -46,7 +46,7 @@ interface NavItem {
  *
  * All of them the mockup previews, not just the ones that exist: the shape of
  * the application is part of what the shell communicates, and a nav that grows
- * a row per release reads as a different product each time (D61). The ones
+ * a row per release reads as a different product each time. The ones
  * that have no page render dimmed and inert.
  *
  * Inbox is the eighth and is not one the mockup drew: the watched folder needs
@@ -69,8 +69,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
       "Per-session analysis is on each session page; the aggregate surface — power curves, trends — arrives after the MVP",
   },
   // The row the mockup reserved for "Coach", resolved into the one coach
-  // surface that is a *place*: the queue of plan changes waiting on an answer
-  // (D181). The coach's other output — its notes on a session or a week — is
+  // surface that is a *place*: the queue of plan changes waiting on an answer.
+  // The coach's other output — its notes on a session or a week — is
   // read where the thing it is about is, not in a section of its own.
   { href: "/proposals", label: "Proposals", icon: CoachIcon, ready: true },
   { href: "/settings", label: "Settings", icon: SettingsIcon, ready: true },

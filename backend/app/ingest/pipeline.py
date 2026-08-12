@@ -48,7 +48,7 @@ call stays on the loop, where the session lives. A season's backfill is 150
 files at up to a second each, and a synchronous pass over them starves
 `/health` (5 s timeout) long enough for the container to be declared unhealthy
 and take Caddy and the frontend down with it. This is still one in-process
-pipeline — no queue, no worker (D5) — it simply yields.
+pipeline — no queue, no worker — it simply yields.
 """
 
 import asyncio
@@ -470,7 +470,7 @@ class IngestPipeline:
         await commit(self._session)
         await self._compute_metrics(placement.created, actor=actor)
         # Matching before the proposal sweep: a link is one of the two things
-        # that resolve a pending proposal (D188), and it does not exist until
+        # that resolve a pending proposal, and it does not exist until
         # the matcher has run.
         await self._match(placement.created, actor=actor)
         await self._resolve_proposals(placement.created, actor=actor)
@@ -1211,8 +1211,7 @@ def source_labels(activity: ParsedActivity) -> dict[StreamChannel, str]:
     Power and heart rate name a *device*, because more than one could have
     produced them and A4.3's whole point is that the file does not say which.
     The odometer names a *field*: a file writes at most one, so there is no
-    tie-break to record, only which field of which format it came out of
-    (D197).
+    tie-break to record, only which field of which format it came out of.
     """
     return {
         channel: source

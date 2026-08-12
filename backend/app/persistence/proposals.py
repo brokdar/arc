@@ -150,7 +150,7 @@ class PlanProposalRepository:
         """Pending proposals whose deadline has passed, **oldest deadline first**.
 
         The batch is taken after the deadline filter and in the order the
-        sweep works through, not over the newest pending ones — D164, in the
+        sweep works through, not over the newest pending ones, in the
         letter: paging before filtering starves exactly the rows the sweep
         exists for whenever the backlog is larger than one batch.
         """

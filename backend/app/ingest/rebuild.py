@@ -9,7 +9,8 @@ and sources that same parse found, and both can be thrown away and made again.
 Which matters the moment the parse itself improves. Recomputing metrics reads
 the *stored parquet*, so a session ingested before a channel existed can never
 gain it by recomputation however many times it is run — the column is not in
-the file. D197 is exactly that case: eleven sessions were ingested before arc
+the file. The odometer channel is exactly that case: eleven sessions were
+ingested before arc
 read the device's odometer, and their distances are integrations of speed until
 their streams are made again from the FIT files that have carried the odometer
 all along.

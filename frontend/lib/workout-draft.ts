@@ -16,7 +16,7 @@
  *   they mirror the domain's own bounds (`app/domain/workout.py`,
  *   `app/domain/strength.py`) so an obvious mistake is caught without a round
  *   trip. The backend's 422 remains the authority — this is a courtesy, not a
- *   second rule engine (D68).
+ *   second rule engine.
  * * `draftFromStructure` — the inverse, for editing something already saved.
  */
 
@@ -668,7 +668,7 @@ function round(value: number, places = 0): number {
  * Empty means "worth sending". It does not mean "the server will accept it":
  * anchors that are not in force, purposes that disagree with the discipline
  * and every other rule the client cannot see still come back as a 422, which
- * the form renders as-is (D68).
+ * the form renders as-is.
  */
 export function validateDraft(draft: WorkoutDraft): string[] {
   return draft.discipline === "cycling"

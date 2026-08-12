@@ -14,7 +14,7 @@ loader callable with a null default; :func:`install_stream_loader` fills it with
 the real one, and `app.main.create_app` calls that at wiring time so every path
 into the application — HTTP, the scheduler, the inbox sweep — has it installed.
 Nothing here decides anything: it reads the same joined grid the chart endpoint
-serves (`load_streams`, merged-session aware per D143) and renames the channels
+serves (`load_streams`, merged-session aware) and renames the channels
 into the prescription's vocabulary.
 """
 

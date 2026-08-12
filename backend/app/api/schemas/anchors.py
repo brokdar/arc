@@ -27,7 +27,7 @@ Protocol = Annotated[PostgresText, Field(min_length=1, max_length=MAX_PROTOCOL_C
 #: The appendable anchor types, spelled as a `Literal` so the contract does
 #: not advertise the reserved `cp`/`w_prime` (which the service also refuses,
 #: for callers that do not come through this schema). `resting_hr` joined them
-#: with WP-5: HRSS reads it, so the athlete has to be able to enter it (D114).
+#: with WP-5: HRSS reads it, so the athlete has to be able to enter it.
 WritableAnchorType = Literal[
     AnchorType.FTP,
     AnchorType.LTHR,

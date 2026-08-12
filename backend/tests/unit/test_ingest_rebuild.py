@@ -2,11 +2,12 @@
 
 The invariant under test is the one the whole ``data/originals/`` tree exists
 to make true: **an original is enough to rebuild every derived artefact.** The
-case that forced it is D197 — a parser that learns to read a new channel cannot
+case that forced it is the odometer — a parser that learns a new channel cannot
 reach the sessions already ingested, because recomputing metrics reads the
 stored parquet and the column is not in it. So the setup here strips the
-odometer out of a freshly written stream, which is exactly what every stream
-written before D197 looks like, and asserts that a rebuild puts it back and
+odometer out of a freshly written stream, which is exactly what a stream
+written before the parser read that channel looks like, and asserts that a
+rebuild puts it back and
 that the distance metric changes its answer as a result.
 """
 

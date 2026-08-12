@@ -83,7 +83,7 @@ export interface MatchPanelProps {
  * says so rather than rendering 0%. And it never hides what a score was made
  * of: the components that could not be assessed are shown in their own slots
  * with the sentence the domain wrote about each, because a similarity of 60%
- * over one component is a different claim from 60% over three (D138).
+ * over one component is a different claim from 60% over three.
  */
 export function MatchPanel({ session }: MatchPanelProps) {
   const link = session.match ?? null;
@@ -170,7 +170,7 @@ function Problems({ errors }: { errors: readonly unknown[] }) {
  *
  * A **pending** link is a question and is presented as one: the two answers
  * are the only prominent controls, and neither the session nor the planned
- * session has moved a millimetre until one of them is clicked (D140).
+ * session has moved a millimetre until one of them is clicked.
  */
 function Linked({ session, match }: { session: Session; match: Match }) {
   const refresh = useRefresh(session.id);

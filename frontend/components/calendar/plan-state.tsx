@@ -12,7 +12,7 @@ type PlanState = components["schemas"]["PlanState"];
 const athleteQueryKey = $api.queryOptions("get", "/api/v1/athlete").queryKey;
 
 /**
- * Reads and writes `athlete.plan_state` (D58).
+ * Reads and writes `athlete.plan_state`.
  *
  * Pausing does not pause the application: ingestion, matching and scoring
  * carry on. What stops is missed-session marking — so the UI has to say what

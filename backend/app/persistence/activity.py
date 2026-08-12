@@ -120,7 +120,7 @@ class SessionRow(Base):
     #: Ambient temperature during the session, °C, athlete-reported (#23) —
     #: the conditions the measurement was taken under, not a device channel.
     #: One number for the whole session: the cheapest queryable slice of
-    #: "conditions", ahead of the MMP's observed-conditions model (D210).
+    #: "conditions", ahead of the MMP's observed-conditions model.
     temperature_c: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(String(MAX_NOTES_LENGTH))
 
@@ -211,6 +211,14 @@ class RecordingRow(Base):
     #: A4.3: which meter produced the numbers, and why that one. A file with a
     #: crank meter and a smart trainer carries two power traces that can differ
     #: by 15 %, and choosing silently makes the number unexplainable.
+    #:
+    #: Power and heart rate only, deliberately. "A source label per channel"
+    #: reads as all of them, but the ambiguity it exists to record is a bike
+    #: with two power meters and a strap that may or may not be the watch's
+    #: own. Cadence, speed, altitude and temperature come from one sensor per
+    #: file in practice, so a label for them would be a column that always
+    #: repeats the device — cost without a question it answers. A third
+    #: channel gains one when a file is found that disagrees about it.
     power_source_candidates: Mapped[list[str]] = mapped_column(JSONColumn, default=list)
     power_source: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))
     power_source_rule: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))

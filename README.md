@@ -12,7 +12,7 @@ computed value still works.
 
 Status: scaffolding (WP-0) complete — the stack runs end to end with a login,
 a health-checked API, an MCP server and CI. The training domain itself is being
-built work package by work package; see `docs/mvp-build-plan.md`.
+built out increment by increment.
 
 ## Quick start
 
@@ -111,7 +111,7 @@ frontend/   Next.js app — generated/api/ holds the OpenAPI-derived types (neve
 caddy/      Caddyfile for the reverse proxy that fronts the stack
 scripts/    cross-cutting automation (env bootstrap, API type generation, integration tests)
 data/       runtime tree (gitignored): inbox/, originals/, streams/, quarantine/
-docs/       build plan, tech stack, decision log, product description
+docs/       working notes, mostly untracked (see Documentation below)
 .github/    CI workflows — path-filtered, no per-project edits needed
 ```
 
@@ -124,13 +124,18 @@ pre-push, so the architecture fails the build rather than drifting.
 
 | Where | What |
 |---|---|
-| `docs/mvp-build-plan.md` | The plan being executed: invariants, stack, work packages WP-0…WP-9 |
-| `docs/tech-stack.md` | Every dependency choice with its rationale, upgrade watch list |
-| `docs/decisions.md` | Running decision log — what was chosen, over what, and why |
-| `docs/training-application-description-v2.md` | Full product description (beyond the MVP) |
-| `docs/training-application-delivery-plan.md` | Phased delivery plan |
 | `CLAUDE.md` | Conventions and commands for humans and coding agents |
+| `.claude/rules/*.md` | Conventions scoped to the files they govern, loaded when those files are touched |
+| `CHANGELOG.md` | Hand-curated Keep a Changelog; `just changelog` drafts it from commits |
 | `backend/README.md`, `frontend/README.md` | Per-project detail |
+| `docs/agent-eval.md` | How the coaching agent's MCP surface is evaluated |
+
+Design reasoning lives in the code: a choice is explained in the docstring or
+comment at the site it governs, and where a later edit could break it silently,
+in a test that fails when it does. Conventions spanning a class of files live
+in `.claude/rules/`, scoped by a `paths:` key. `git log` — squash-merged, so
+each commit body is its PR description — is the narrative record of why a
+change was made.
 
 ## Releases
 

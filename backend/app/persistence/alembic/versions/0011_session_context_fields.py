@@ -6,7 +6,7 @@ above all, which decouples heart rate from power — lived only in prose, where
 nothing can filter on them. `temperature_c` is the cheapest queryable slice of
 that: one athlete-reported number per session, bounds enforced by the domain
 (`app.domain.activity.check_temperature`), ahead of the MMP's fuller
-observed-conditions model (D210). `rpe` needed no migration: the column has
+observed-conditions model. `rpe` needed no migration: the column has
 existed since 0005 and only its write paths grew.
 
 Nothing is backfilled: no session recorded before this revision carries a

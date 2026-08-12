@@ -40,16 +40,16 @@ const WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
  * The calendar week: seven columns, drag to move, click for the full session.
  *
  * The client owns which week is shown — it computes Monday starts and passes
- * `start=` — because the endpoint takes whatever date it is given literally
- * (D55). Everything else is the server's: this component holds no copy of the
+ * `start=` — because the endpoint takes whatever date it is given literally.
+ * Everything else is the server's: this component holds no copy of the
  * plan beyond react-query's cache.
  *
  * **Where you are lives in the URL** — both facets of it. Which week is shown
- * is `?week=2026-08-03` (D77) and which session is open is `?session=<id>`
- * (D88), because a session someone is reading is a place they would bookmark,
+ * is `?week=2026-08-03` and which session is open is `?session=<id>`,
+ * because a session someone is reading is a place they would bookmark,
  * reload or send to their coach, and state that survives a reload has to be
  * addressable (UI convention 1). The week param is taken literally, not
- * snapped to a Monday — the same rule the endpoint follows (D55) — so a link
+ * snapped to a Monday — the same rule the endpoint follows — so a link
  * to a Wednesday shows the seven days from that Wednesday. Anything
  * unreadable, and anything at all missing, means this week.
  *
@@ -78,7 +78,7 @@ export function CalendarWeek() {
    * The native History API rather than `router.push` / `router.replace`,
    * because those two **cannot drop a search param** in this Next major:
    * navigating from `/calendar?week=…` to `/calendar` is a silent no-op
-   * (verified against a production build, D77), which would strand both "This
+   * (verified against a production build), which would strand both "This
    * week" and closing the sheet on whatever the URL last said. `pushState` /
    * `replaceState` are Next's own documented escape hatch for updating the URL
    * without navigating, and they sync `usePathname` / `useSearchParams`, so
@@ -117,7 +117,7 @@ export function CalendarWeek() {
    * pushing would make the back button mean "undo one of my last eleven
    * clicks" instead of "leave the calendar", eleven entries deep after a
    * minute of paging. The URL is a real address either way — a bookmark and a
-   * shared link both work — so only the history stack is at stake (D77).
+   * shared link both work — so only the history stack is at stake.
    *
    * This week is the bare `/calendar`, never `?week=<this monday>`: a URL
    * whose meaning is "the week I am in" is still right tomorrow, so the
@@ -127,7 +127,7 @@ export function CalendarWeek() {
    * nothing: the sheet is a modal, so these controls are inert while one is
    * open and this cannot run underneath it. The two params are independent
    * facets of one address, and `?week=…&session=…` naming a session outside
-   * that week is a link this page honours (D88).
+   * that week is a link this page honours.
    */
   const showWeek = (next: string) => {
     writeUrl({ week: next === thisWeek ? null : next }, "replace");
@@ -206,7 +206,7 @@ export function CalendarWeek() {
    * week arrives with no card at all, and the sheet renders itself from the
    * session it fetches instead. Handing it over when we do have it is what
    * keeps the header on screen from the first frame rather than after a
-   * request (D55).
+   * request.
    */
   const openCard =
     week.data?.days

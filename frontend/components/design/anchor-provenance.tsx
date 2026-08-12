@@ -80,7 +80,7 @@ export interface AnchorProvenanceProps {
  * The one line that says what the numbers beside it were resolved against.
  *
  * `SessionIntent.pinned_anchor_versions` is the product's most distinctive
- * invariant (D49) and it is worth nothing invisible: an FTP of 250 W that was
+ * invariant and it is worth nothing invisible: an FTP of 250 W that was
  * *estimated* is a different claim from one that was *tested*, and every watt
  * on the screen inherits whichever it is. So the provenance is rendered as its
  * own mark, and the three non-tested kinds are marked differently from

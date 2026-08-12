@@ -2,7 +2,7 @@
 
 Workout structures, success criteria and purpose templates are all stored and
 transported as JSON, and all three are decoded by hand rather than by a schema
-library — `app.domain` is pure (D31), so there is no pydantic model to lean on
+library — `app.domain` is pure, so there is no pydantic model to lean on
 here even though the API layer has one.
 
 Hand-written decoders rot into inconsistent error messages fast ("bad step",

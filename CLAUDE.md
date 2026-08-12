@@ -3,8 +3,9 @@
 Self-hosted, single-athlete training application (cycling + strength): a
 FastAPI backend and a Next.js frontend joined by an end-to-end typed API
 contract, plus an MCP server that exposes the same services to a coaching
-agent. `docs/mvp-build-plan.md` is the plan being executed; every non-obvious
-choice is recorded in `docs/decisions.md`.
+agent. Every non-obvious choice is recorded where it binds — in the docstring
+at the code site, in a test that fails when it is violated, or in
+`.claude/rules/` — never in a document that can drift from the code.
 
 ## Architecture
 
@@ -97,15 +98,14 @@ The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
 - **Migrations**: every model change ships with an Alembic migration in the
   same PR. Integration tests build the schema via `alembic upgrade head` and
   run `alembic check` — model/migration drift fails CI.
-- **Decisions**: when you resolve an ambiguity or depart from
-  `docs/mvp-build-plan.md`, append an entry to `docs/decisions.md`. Entries are
-  append-only and **compact**: `## D<n> — <title>` plus three short lines —
-  **What** / **Displaced** / **Why** — ~80 words total. Deep reasoning belongs
-  in the docstring at the code site; the entry's Why then just points there
-  (`see similarity() docstring`). **Never Read the file whole** (45k+ tokens):
-  next free ID is `grep -c "^## D" docs/decisions.md`, the index is
-  `grep "^## D"`, and prior art is a keyword grep — read only the entries a
-  grep surfaces.
+- **Decisions live where they bind.** When you resolve an ambiguity or make a
+  non-obvious choice, the reasoning goes in the **docstring or comment at the
+  code site it governs** — what was chosen, what it displaced, why — and, where
+  a later edit could violate it silently, a **test that fails when it does**. A
+  convention spanning a class of files goes in `.claude/rules/<name>.md` with a
+  `paths:` key; a machine-catchable mistake goes in a hook. What a change is
+  *for* goes in the PR description, which squash-merge makes the commit body on
+  `main`, so `git log` is the narrative record.
 - **Commits, PRs, merges**: commit subjects follow Conventional Commits, scoped
   by area/subsystem (`feat(mcp): ...`; historic commits used work packages,
   which ended with the MVP build). `main` is **squash-only** (the

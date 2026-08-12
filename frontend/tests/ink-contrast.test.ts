@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { contrastRatio } from "@/tests/colour";
 
 /**
- * Every rung of ink clears WCAG AA on every surface it lands on (D85).
+ * Every rung of ink clears WCAG AA on every surface it lands on.
  *
  * The mockup's `#5c636d` was 3.01:1 on a card and carried 38 pieces of real
  * text at 9.5–10.5px — every `SectionLabel`, the anchor provenance line, the

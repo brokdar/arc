@@ -262,10 +262,10 @@ class ScoringService:
         judgement while that link is still the one in force. Unlinking,
         rejecting, marking a session unplanned and swapping it onto a different
         plan entry all change the answer here, and every current-score read
-        goes through it (D161).
+        goes through it.
 
-        A **pending** link is not one: a proposal is a question, and D140's
-        rule is why nothing scores against one in the first place.
+        A **pending** link is not one: a proposal is a question, and that
+        is why nothing scores against one in the first place.
         """
         link = await self._links.for_session(session_id)
         if link is None or link.status is MatchLinkStatus.PENDING:
@@ -285,9 +285,9 @@ class ScoringService:
         ``None`` for a session whose link has since been removed or retargeted,
         even though the chain behind it is intact and :meth:`history` still
         returns every version of it. The chain is the record of what was once
-        measured (invariant 1, D153); the *judgement* answers to a link, and
+        measured (invariant 1); the *judgement* answers to a link, and
         presenting last week's verdict for a ride that now answers to nothing
-        on the calendar would be the score outliving its own subject (D161).
+        on the calendar would be the score outliving its own subject.
         """
         row = await self._scores.get_current(session_id)
         return row if await self._stands(row) else None
@@ -375,7 +375,7 @@ class ScoringService:
         ``None`` when there is nothing to score: an unlinked session, or one
         whose link is still a **pending proposal**. A proposal is a question,
         and scoring a ride against a prescription the athlete has not agreed it
-        answers to would put a verdict on a guess (D140's rule, applied to
+        answers to would put a verdict on a guess (the same rule, applied to
         WP-7).
 
         Raises:
@@ -502,8 +502,7 @@ class ScoringService:
         the result differs from what is stored: a recompute that reaches the
         same pairing has not changed the alignment, and a chain that grew a
         link every time anything was rescored would make "which alignment was
-        this score taken against" a question with a hundred identical answers
-        (D151).
+        this score taken against" a question with a hundred identical answers.
         """
         current = await self._alignments.get_current(row.id)
         offset = offset_s if offset_s is not None else _offset_of(current)
@@ -644,7 +643,7 @@ class ScoringService:
         deliberate override from flagging itself the moment anything is
         recomputed — the athlete overruling `as_intended` with `under` has not
         been contradicted by a rescore that still says `as_intended`. What is
-        new is a new opinion (D150).
+        new is a new opinion.
 
         The declaration itself is never touched.
         """
@@ -696,7 +695,7 @@ class ScoringService:
         it and the score it writes references no alignment version. Sliding the
         offset there would append alignment version *n+1* that nothing points
         at — a 200 and a new version whose only effect is to falsify the
-        promise this method makes about the one in force (D160).
+        promise this method makes about the one in force.
 
         Raises:
             NotFoundError: When no session has that id.
@@ -1009,7 +1008,7 @@ class ScoringService:
         The batch is taken over prompts that **have** expired, oldest deadline
         first, rather than over the newest pending ones: paging before
         filtering starved the overdue prompts the sweep exists for whenever the
-        pending backlog was larger than one batch (D164).
+        pending backlog was larger than one batch.
 
         Returns:
             The prompts expired, oldest deadline first.
@@ -1132,7 +1131,7 @@ def _scored_steps(
     """Pair each kept alignment with the rows and the targets it was ridden at.
 
     ``intervals`` is the **same list** the alignment was made against — the one
-    stored with the metric artefact (D118) — so an
+    stored with the metric artefact — so an
     `app.domain.alignment.AlignedStep`'s ``interval_index`` addresses it
     directly. Re-detecting the efforts here could disagree with what was
     paired, and the pairing is what the score is about.
@@ -1199,7 +1198,7 @@ def _step_targets(step: ResolvedStep) -> dict[Channel, float]:
 
 
 def _intervals(row: SessionMetricsRow | None) -> list[WorkInterval]:
-    """The detected work intervals stored with the metric artefact (D118).
+    """The detected work intervals stored with the metric artefact.
 
     Read back rather than re-detected: the intervals table, the structure hint
     and the scoring axes have to be looking at the same efforts, and a second

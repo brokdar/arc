@@ -65,7 +65,7 @@ function useRedFlag() {
  * In the shell rather than on a page, because the flag is not a property of
  * any one screen: it changes what the coach is allowed to propose everywhere,
  * and a control the athlete has to remember to go and look at is a control
- * they will forget they set (D182). It renders nothing at all while the flag
+ * they will forget they set. It renders nothing at all while the flag
  * is down, so the layout of every page is unchanged in the normal case.
  */
 export function RedFlagBanner() {

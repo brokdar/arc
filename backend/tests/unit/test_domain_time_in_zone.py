@@ -147,7 +147,7 @@ def test_the_hr_model_bands_are_the_five_zone_mapping() -> None:
     # The addenda's 1-2 / 3-4 / 5-7 numbers are the *power* model's. The rule
     # behind them is where **threshold** sits, and applying that rule to
     # `lthr_5` puts its Z4 (`SubThreshold`, 94-100 %LTHR) in moderate and
-    # leaves Z5 (`SuperThreshold`, from 100 %LTHR) alone in hard (D121).
+    # leaves Z5 (`SuperThreshold`, from 100 %LTHR) alone in hard.
     easy, moderate, hard = THREE_ZONE_BANDS[ZoneModel.LTHR_5]
 
     assert easy == frozenset({1, 2})

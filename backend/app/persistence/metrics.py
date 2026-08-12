@@ -78,7 +78,7 @@ class SessionMetricsRow(Base):
     #: Why this version exists. NULL on version 1.
     recompute_reason: Mapped[str | None] = mapped_column(String(MAX_REASON_LENGTH))
 
-    # --- the pins (D115, A5.5) ------------------------------------------------
+    # --- the pins (A5.5) ------------------------------------------------
     #
     # All nullable: a session with no power pins no FTP, and an athlete with
     # no resting-HR anchor pins none. Real foreign keys because anchor history

@@ -90,7 +90,7 @@ OUTDOOR_RIDE = {
     "samples": 902,
     "channels": [
         "cadence",
-        # The head unit's own cumulative odometer (D197) — deliberately ahead
+        # The head unit's own cumulative odometer — deliberately ahead
         # of what integrating this file's speed column gives, so a test can
         # tell which one the distance metric read.
         "distance",
@@ -103,7 +103,7 @@ OUTDOOR_RIDE = {
         "temp",
     ],
     "laps": 2,
-    # Elapsed minus the stop's 599 rows (D101): the samples flanking the
+    # Elapsed minus the stop's 599 rows: the samples flanking the
     # 600 s gap were themselves recorded, so the stop is one row narrower
     # than the gap and recording time is one second longer than 1800.
     "elapsed_time_s": 2400.0,
@@ -227,7 +227,7 @@ def test_a_multisport_file_parses_to_one_activity_per_sport() -> None:
 
 def test_the_coffee_stop_is_subtracted_from_recording_time() -> None:
     # A4.4's "done when": elapsed exceeds recording time by exactly the stop's
-    # row range (D101), reported as one range, not spread over the columns.
+    # row range, reported as one range, not spread over the columns.
     [activity] = parse(golden("outdoor_ride.fit"))
 
     resampled = resample(activity.samples)
@@ -271,7 +271,7 @@ def test_the_spike_survives_raw_and_is_repaired_in_fixed() -> None:
 
 
 def test_the_odometer_channel_survives_cleaning_and_is_what_distance_reads() -> None:
-    # D197, end to end over a real file rather than a hand-built column: the
+    # End to end over a real file rather than a hand-built column: the
     # ride's `distance` field runs ahead of its own speed column, the cleaner
     # leaves it non-decreasing, and the metric reports the odometer's span —
     # naming it — rather than the speed integral it would otherwise have used.
@@ -297,7 +297,7 @@ def test_the_odometer_channel_survives_cleaning_and_is_what_distance_reads() -> 
 
 
 def test_a_file_without_an_odometer_integrates_speed_and_says_so() -> None:
-    # The other half of D197, and the reason `indoor_trainer.fit` carries no
+    # The other half of the odometer rule, and why `indoor_trainer.fit` carries no
     # distance field: the fallback is an ordinary path, not an error, and it
     # names itself so a reader can tell the two kinds of kilometre apart.
     [activity] = parse(golden("indoor_trainer.fit"))
@@ -358,7 +358,7 @@ OUTDOOR_SAMPLE_VALUES = {
         # 1.015 * 1042.969, the sum of the 120 speeds already written. The
         # ratio is what makes this ODOMETER and not a second copy of the speed
         # column: integrating those 120 readings gives 1 042.97 m, and the
-        # device says 1 058.61 (D197).
+        # device says 1 058.61.
         "distance": 1058.61,
         "power": 239.0,  # 210 + round(28.7655)
         "hr": 145.0,  # 138 + round(6.7120)

@@ -326,7 +326,7 @@ export const handlers = [
         });
       }
       if (!OVERRULABLE.has(record.reason)) {
-        // The API's own rule (D107): two verdicts can be overruled — a
+        // The API's own rule: two verdicts can be overruled — a
         // suspected duplicate and an implausible channel — and nothing about
         // disagreeing with the parser makes unreadable bytes readable.
         return response(409).json({
@@ -540,7 +540,7 @@ export const handlers = [
     },
   ),
   // A correction answers with the session as corrected — including the date
-  // a new timezone re-derives, which is the whole point of the field (D93).
+  // a new timezone re-derives, which is the whole point of the field.
   // Answering with the stored row would let a page that sent the wrong zone
   // still look right.
   http.patch(
@@ -1332,7 +1332,7 @@ const NOW = "2026-08-07T09:00:00Z";
 /** What the parsers can open (`app.ingest.parsers.base.SUPPORTED_EXTENSIONS`). */
 const READABLE_EXTENSIONS = new Set(["fit", "gpx", "tcx"]);
 
-/** The verdicts `IngestService.reject` accepts (D107); every other one is a 409. */
+/** The verdicts `IngestService.reject` accepts; every other one is a 409. */
 const OVERRULABLE = new Set<components["schemas"]["QuarantineReason"]>([
   "suspected_duplicate",
   "implausible_channel",

@@ -99,7 +99,7 @@ describe("the session log", () => {
     renderList();
     await screen.findByText("1–3 of 3");
 
-    // A pending proposal deliberately leaves the session `unmatched` (D140: a
+    // A pending proposal deliberately leaves the session `unmatched` (a
     // proposal is a question, and neither side moves until it is answered), so
     // a badge reading the session alone would say "Unmatched" about exactly
     // the rows that are waiting on a click.

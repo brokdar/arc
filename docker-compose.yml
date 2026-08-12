@@ -146,6 +146,12 @@ services:
         # served the page and Caddy proxies it to the API.
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
 
+  # Depends on api and frontend, deliberately NOT on mcp: Caddy resolves proxy
+  # upstreams per request, so /mcp* starts working the moment the MCP server
+  # is up, with no restart. Waiting on it would take the whole site down —
+  # UI included — whenever MCP__API_KEYS is unset and the MCP server exits by
+  # design. Without the dependency, a missing MCP configuration costs a 502 on
+  # one route instead of the entire application.
   caddy:
     image: caddy:2.11-alpine
     restart: unless-stopped

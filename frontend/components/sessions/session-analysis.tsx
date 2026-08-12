@@ -45,7 +45,7 @@ export interface SessionAnalysisProps {
   /**
    * Resolved planned step bands for the power chart.
    *
-   * A component capability rather than an API field until WP-6 (D116): an
+   * A component capability rather than an API field until WP-6: an
    * alignment describes a *match*, and matches do not exist yet. Passing it a
    * mock is how the overlay is tested today, so WP-6 wires data rather than
    * building a component.
@@ -120,7 +120,7 @@ export function SessionAnalysis({
  * What the page says when a session has no metric artefact.
  *
  * A real state, not a loading one: a session ingested before WP-5, or one
- * whose metric run failed after the file was safely stored (D125). It names
+ * whose metric run failed after the file was safely stored. It names
  * the remedy and puts the control beside it.
  */
 function NotComputed({ sessionId }: { sessionId: string }) {
@@ -207,7 +207,7 @@ function RecomputeButton({
 /**
  * The detected intervals, as a table.
  *
- * Detection is deterministic from the stream alone (D118), so this is a
+ * Detection is deterministic from the stream alone, so this is a
  * description of the ride rather than a judgement of it: there is no adherence
  * column — that is WP-7's, against a plan this session may not even have — and
  * no device laps, which WP-4 never persisted.
@@ -362,7 +362,7 @@ function Figure({
  *
  * The pins are the point: an IF is only meaningful beside the FTP version it
  * divided by, and that version is frozen on the artefact rather than looked up
- * now (D115). Recomputing writes a new version and leaves this one readable.
+ * now. Recomputing writes a new version and leaves this one readable.
  */
 function Provenance({
   metrics,

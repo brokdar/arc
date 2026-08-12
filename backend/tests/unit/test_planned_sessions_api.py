@@ -692,8 +692,8 @@ async def test_a_pre_execution_edit_triggers_no_rescore(
 async def test_a_post_hoc_edit_drops_pins_it_no_longer_needs_and_adds_the_rest(
     client: AsyncClient,
 ) -> None:
-    # "Keep the pins" is about the anchors the new version still refers to
-    # (D54). One the edit removed is dropped — an intent may not carry a pin
+    # "Keep the pins" is about the anchors the new version still refers to.
+    # One the edit removed is dropped — an intent may not carry a pin
     # its prescription has no use for — and one the edit *introduced* is
     # pinned at today's version, because there is no older answer to keep: it
     # was never part of what the athlete executed against.
@@ -834,9 +834,9 @@ async def test_an_empty_edit_is_refused_rather_than_audited(
 
 # --- moving and copying -------------------------------------------------------
 #
-# Both are calendar operations with their own verbs (D56): a move changes the
+# Both are calendar operations with their own verbs: a move changes the
 # date and nothing else, and a copy is a *new* session planned now — which is
-# why it re-pins (invariant 4, D57) rather than inheriting the original's pins.
+# why it re-pins (invariant 4) rather than inheriting the original's pins.
 
 
 async def test_moving_a_session_changes_its_date_and_nothing_else(
@@ -1313,7 +1313,7 @@ async def test_a_list_row_carries_no_resolved_steps_and_no_explanation(
     client: AsyncClient,
 ) -> None:
     # A page of two hundred sessions carrying a resolved step tree each is
-    # measured in megabytes and in seconds of synchronous CPU (D79). The
+    # measured in megabytes and in seconds of synchronous CPU. The
     # fields are absent from the list shape, not null in it, so nothing can
     # read a list row as a session with nothing to predict.
     await append_ftp(client, 250)
@@ -1344,7 +1344,7 @@ async def test_a_list_row_still_names_the_anchor_versions_it_pinned(
 
 
 async def test_the_whole_session_is_one_request_away(client: AsyncClient) -> None:
-    # The other half of D79: what the list drops, the member route still has.
+    # The other half of the list shape: what it drops, the member route has.
     await append_ftp(client, 250)
     session = await plan(client)
 
@@ -1404,7 +1404,7 @@ async def test_the_intent_chain_cascades_in_the_database_not_the_orm(
     # WHAT takes it, because the ORM's own cascade deletes the rows it has
     # loaded whatever the schema says. This statement goes around the ORM, so
     # only `ON DELETE CASCADE` can be left holding the chain — and the unit
-    # suite runs with SQLite's foreign keys on (D51), so it is checked here as
+    # suite runs with SQLite's foreign keys on, so it is checked here as
     # well as on Postgres.
     await append_ftp(client)
     session = await plan(client)

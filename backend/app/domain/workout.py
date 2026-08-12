@@ -284,7 +284,7 @@ class RampStep:
     Both ends prescribe the *same* channels **in the same terms**: a ramp that
     starts on power and ends on heart rate is not a ramp, it is two steps, and
     a ramp from ``60 % FTP`` to ``250 W`` has no defined interpolation until
-    the anchor resolves (D53). Percentage ends must also name one anchor:
+    the anchor resolves. Percentage ends must also name one anchor:
     "from 60 % of FTP to 90 % of LTHR" is two prescriptions in a trench coat.
 
     Args:

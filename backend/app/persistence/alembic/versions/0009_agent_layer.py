@@ -60,7 +60,7 @@ JSON_COLUMN = sa.JSON().with_variant(
 )
 
 #: Non-native VARCHARs holding the member VALUE, no CHECK constraint — the
-#: convention `app.persistence.types.enum_column` sets (D81). Each compiles to
+#: convention `app.persistence.types.enum_column` sets. Each compiles to
 #: `VARCHAR(n)` where n is the longest member value, on either dialect.
 RED_FLAG_SEVERITY = sa.Enum(
     "mild", "moderate", "severe", name="redflagseverity", native_enum=False

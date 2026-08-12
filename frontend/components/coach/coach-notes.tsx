@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
  * application: notes arrive over MCP from a coaching agent the athlete may
  * never connect, and a permanent "no coach notes yet" block on every session
  * of an athlete who has not connected one is a dead slot on every page rather
- * than a missing input with an action attached (D183). A *failed* load is
+ * than a missing input with an action attached. A *failed* load is
  * different and does render — "the coach said nothing" and "we could not ask"
  * are not the same claim.
  */

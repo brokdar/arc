@@ -150,7 +150,7 @@ test("the analysis page shows the numbers and what they were computed from", asy
   // A5.2's counterfactual: both models were computable, so the page says what
   // the other one would have given.
   await expect(page.getByText(/Had power been unavailable/)).toBeVisible();
-  // D115: the pins are on the artefact, and the page names them.
+  // The pins are on the artefact, and the page names them.
   await expect(page.getByText(/ftp 262 W/)).toBeVisible();
 });
 

@@ -76,7 +76,7 @@ LIFT: dict[str, Any] = {
 #: The same hour prescribed in **watts** rather than as a percentage. What it
 #: costs therefore depends entirely on which FTP version it is priced against
 #: — 100 TSS at an FTP of 200, 25 at an FTP of 400 — which is what makes it
-#: the document for testing the freeze rule's re-pin (WP-8 D185).
+#: the document for testing the freeze rule's re-pin (WP-8).
 WATT_HOUR: dict[str, Any] = {
     "discipline": "cycling",
     "steps": [

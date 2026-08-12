@@ -73,7 +73,7 @@ describe("describeCriterion", () => {
 
   it("states the smoothing window every band and ceiling declares", () => {
     // A criterion that hides its window is not one an athlete can hold anyone
-    // to: the same ride scores differently at 0 s and at 30 s (D73).
+    // to: the same ride scores differently at 0 s and at 30 s.
     expect(
       describeCriterion({
         kind: "time_in_band",

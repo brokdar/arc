@@ -28,7 +28,7 @@ because it has two possible subjects and the version is numbered within
 whichever one a row names. The check constraint leaves exactly one of the two
 columns non-null and NULLs are distinct in a unique index on both dialects, so
 each constraint binds only its own half of the table — and two concurrent
-revisions can no longer both land version *n+1* (D165).
+revisions can no longer both land version *n+1*.
 
 **Every reference to a planned session is `ON DELETE SET NULL`**, not CASCADE,
 except the reasons' own subject. Deleting a plan entry must not destroy the

@@ -18,7 +18,7 @@ because the sweep is idempotent and runs hourly over the same backlog.
 members here (`matched`, `unplanned`, `displaced`) and `planned_sessions.status`
 gains none — its `displaced` member has been in the vocabulary since 0002. Both
 columns are VARCHAR(9) and every new value is nine characters or fewer, which
-is exactly the property D81 reserved them for, so this revision has no
+is exactly the property the non-native enum reserved them for, so this revision has no
 ``ALTER COLUMN`` in it.
 
 Nothing is backfilled either. Every session ingested before this revision is

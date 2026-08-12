@@ -42,7 +42,7 @@ function useDebounced<T>(value: T, delay: number): T {
  *
  * Note what a card does *not* show: a purpose badge. A workout has no purpose
  * in the model — purpose is a property of *planning* a session, not of the
- * prescription (D66) — so the card shows the discipline, the shape of the
+ * prescription — so the card shows the discipline, the shape of the
  * prescription, and the labels the athlete filed it under.
  */
 export function WorkoutLibrary() {

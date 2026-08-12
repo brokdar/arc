@@ -1,7 +1,7 @@
 """Use-cases for the exercise catalogue: seed it, read it.
 
 **Seeding is lazy and idempotent**, on first access of the catalogue — the
-same shape as the athlete bootstrap (D33), and for the same reasons. A
+same shape as the athlete bootstrap, and for the same reasons. A
 migration cannot own it, because the integration suite truncates every table
 between tests and a restore-from-dump would leave an application whose
 strength prescriptions reference nothing. The application lifespan cannot own

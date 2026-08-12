@@ -21,7 +21,7 @@ test("the app shell renders behind the session cookie @fullstack", async ({
 }) => {
   await page.goto("/");
 
-  // `/` redirects to the calendar (D60); its heading proves the shell, the
+  // `/` redirects to the calendar; its heading proves the shell, the
   // session cookie and the week query all survived the proxy.
   await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible();
 });

@@ -3,7 +3,7 @@
  *
  * Plan dates are *athlete-local calendar dates*, not instants — the backend
  * stores them as `date` columns and the week endpoint takes and returns them
- * as `YYYY-MM-DD` (D55). So this module never converts to or from a timestamp:
+ * as `YYYY-MM-DD`. So this module never converts to or from a timestamp:
  * everything happens in UTC-noon `Date` objects that exist only long enough to
  * add days, which keeps a DST boundary or a negative timezone offset from
  * quietly shifting a session onto the day before.
@@ -66,7 +66,7 @@ export function addDays(isoDate: string, days: number): string {
  * The Monday of the week `isoDate` falls in.
  *
  * Monday-first weeks are an ISO-8601 convention and the one the mockup's grid
- * uses; the API takes whatever `start` it is given literally (D55), so picking
+ * uses; the API takes whatever `start` it is given literally, so picking
  * the Monday is the client's job.
  */
 export function mondayOf(isoDate: string): string {

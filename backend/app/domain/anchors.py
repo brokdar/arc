@@ -30,7 +30,7 @@ class AnchorType(StrEnum):
     FTP = "ftp"
     LTHR = "lthr"
     MAX_HR = "max_hr"
-    #: Resting heart rate. An anchor and not a profile field (D114): HRSS
+    #: Resting heart rate. An anchor and not a profile field: HRSS
     #: reads it as the floor of the heart-rate reserve, so it needs the same
     #: provenance, effective date and append-only history every other input to
     #: a derived number has. No zone model derives from it.

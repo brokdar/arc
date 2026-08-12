@@ -18,8 +18,8 @@ that gives none, and a ride with no power meter has no intensity to compare
 against a watts target. Either default is a lie in a different direction —
 1.0 invents agreement, 0.0 invents disagreement — so an unassessable component
 is **left out and the remaining weights renormalise over what is left**, and
-the components that were and were not assessed both travel on the result
-(D138). A candidate where *nothing* can be assessed scores ``None``, not 0.0:
+the components that were and were not assessed both travel on the result.
+A candidate where *nothing* can be assessed scores ``None``, not 0.0:
 the date and the discipline still agree, so the honest outcome is to ask the
 athlete rather than to refuse silently.
 
@@ -87,7 +87,7 @@ MISSED_GRACE_DAYS = 1
 #: mean anything. One work step is not a structure: a steady endurance ride is
 #: prescribed as a single work step and correctly detects **no** intervals,
 #: which as a ratio reads 0.0 and would put a perfectly executed ride below the
-#: auto-link threshold for having been ridden steadily (D139).
+#: auto-link threshold for having been ridden steadily.
 MIN_STRUCTURE_UNITS = 2
 
 
@@ -376,7 +376,7 @@ def similarity(evidence: MatchEvidence) -> Similarity:
     renormalisation: when every component is assessed it is 1.0 and the formula
     is the plain weighted mean the build plan states; when one is missing the
     other two are scaled up between them rather than the missing one being
-    invented as agreement or disagreement (D138).
+    invented as agreement or disagreement.
 
     Returns:
         The score with its full breakdown. :attr:`Similarity.score` is ``None``

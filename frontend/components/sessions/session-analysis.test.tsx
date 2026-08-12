@@ -63,7 +63,7 @@ describe("the metric header", () => {
     );
     // Average power carries the caveat that matters most about it: the
     // divisor is moving time, and the load beside it still uses recording
-    // time (D194). Both sentences travel on the number itself.
+    // time. Both sentences travel on the number itself.
     const average = screen.getByLabelText(/average power = Σ P × Δt/);
     expect(average.getAttribute("aria-label")).toMatch(/moving time/);
     expect(average.getAttribute("aria-label")).toMatch(/recording time/);
@@ -420,7 +420,7 @@ describe("the analysis section", () => {
       />,
     );
 
-    // D115: the pins are frozen on the artefact, not looked up now — an IF is
+    // The pins are frozen on the artefact, not looked up now — an IF is
     // only meaningful beside the FTP version it divided by.
     for (const pin of RIDE_METRICS.pins) {
       expect(
@@ -432,7 +432,7 @@ describe("the analysis section", () => {
   });
 
   it("takes planned bands as a prop and renders nothing without them", () => {
-    // D116: the overlay is a component capability until WP-6 has matches to
+    // The overlay is a component capability until WP-6 has matches to
     // resolve bands from. Passing a mock is how it is proven to work today.
     const bands: PlannedBand[] = [
       { fromS: 240, toS: 360, lowWatts: 300, highWatts: 318 },

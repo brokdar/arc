@@ -92,7 +92,7 @@ async def engine() -> AsyncIterator[AsyncEngine]:
     # SQLite ignores foreign keys unless asked, per connection. Without this,
     # `ON DELETE CASCADE` and `ON DELETE SET NULL` are inert in the unit suite
     # and enforced in production — the exact divergence `app.persistence.types`
-    # exists to prevent (D29), one layer down in the schema.
+    # exists to prevent, one layer down in the schema.
     @event.listens_for(engine.sync_engine, "connect")
     def _enable_foreign_keys(connection: Any, _record: Any) -> None:
         cursor = connection.cursor()

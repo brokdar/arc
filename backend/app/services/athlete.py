@@ -1,7 +1,7 @@
 """Use-cases for the athlete profile.
 
 Bootstrap policy: the singleton row is created **lazily, on first access** —
-read or write — rather than seeded by a migration (see `docs/decisions.md`).
+read or write — rather than seeded by a migration.
 `get` is therefore a write path on its very first call, which is why it takes
 an ``actor`` like every mutating method and appends an audit row when it
 creates the profile.

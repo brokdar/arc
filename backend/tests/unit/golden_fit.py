@@ -11,7 +11,7 @@ the pipeline has to get right, written by `fit-tool` (a dev dependency) and
   records the repair (A4.2's "done when"); two laps; a local offset of +02:00;
   and a cumulative ``distance`` channel deliberately
   :data:`OUTDOOR_ODOMETER_RATIO` **above** what integrating its own speed
-  gives, which is the real head unit's behaviour (D197) and the only way a
+  gives, which is the real head unit's behaviour and the only way a
   test can tell the two distances apart.
 * ``indoor_trainer.fit`` — no GPS, smooth 1 Hz power, **two** ANT+ power
   meters so the source rule has a choice to make (A4.3's "done when"); no
@@ -146,7 +146,7 @@ def _activity(
 
     FIT has no timezone field: `local_timestamp` is the same instant written
     on the athlete's own clock, and the difference between the two is all the
-    offset there is (§0 decision 5, D93).
+    offset there is (§0 decision 5).
     """
     message = ActivityMessage()
     end = start + dt.timedelta(seconds=elapsed_s)
@@ -204,8 +204,8 @@ OUTDOOR_SPIKE_W = 2900
 #: A head unit integrates wheel revolutions continuously and writes speed
 #: rounded to the millimetre per second once a second, so its ``distance``
 #: field runs a little ahead of anything reconstructed from that column — on
-#: the Wahoo BOLT ride this system was checked against, by 1.5 % over 41 km
-#: (D197). A golden file whose odometer merely *agreed* with its speed column
+#: the Wahoo BOLT ride this system was checked against, by 1.5 % over 41 km.
+#: A golden file whose odometer merely *agreed* with its speed column
 #: could not tell the two apart, and every test of which one the distance
 #: metric read would pass whichever it read.
 OUTDOOR_ODOMETER_RATIO = 1.015

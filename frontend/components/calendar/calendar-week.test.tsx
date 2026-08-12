@@ -183,7 +183,7 @@ describe("CalendarWeek", () => {
   });
 
   it("marks the card of a session with a proposal waiting on it", async () => {
-    // A pending proposal changes neither status by design (D140), so the
+    // A pending proposal changes neither status by design, so the
     // card's status dot cannot say it: the marker is the only thing on the
     // week that shows a link the athlete has not answered. `completed` and
     // `displaced` need no marker — the dot already carries both.
@@ -404,7 +404,7 @@ describe("CalendarWeek", () => {
   });
 
   it("shows the week the query string names, taken literally", async () => {
-    // A Wednesday, deliberately: the endpoint takes `start` literally (D55),
+    // A Wednesday, deliberately: the endpoint takes `start` literally,
     // so a link to a Wednesday shows the seven days from that Wednesday
     // rather than being quietly snapped back to its Monday.
     window.history.replaceState(null, "", "/calendar?week=2026-03-04");
@@ -470,7 +470,7 @@ describe("CalendarWeek", () => {
   });
 
   /**
-   * The open sheet is the second facet of this page's address (D88). It used
+   * The open sheet is the second facet of this page's address. It used
    * to be `useState<WeekSession | null>`, which could not be reloaded,
    * bookmarked or sent to anyone — the exact failure `?week=` had already
    * been fixed for.

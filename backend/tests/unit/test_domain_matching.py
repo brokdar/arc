@@ -137,11 +137,11 @@ def test_the_score_is_the_weighted_mean_of_its_components() -> None:
     assert result.score == pytest.approx(0.4 * 0.5 + 0.3 * 1.0 + 0.3 * 0.5)
 
 
-# --- the renormalisation (D138) -------------------------------------------------
+# --- the renormalisation -------------------------------------------------
 
 
 def test_a_missing_component_is_renormalised_not_defaulted() -> None:
-    """The whole of D138 in one assertion.
+    """The whole renormalisation rule in one assertion.
 
     A ride with no power against a prescription with a power target has no
     intensity term. Scoring it 1.0 would invent agreement and 0.0 would invent
@@ -208,8 +208,7 @@ def test_nothing_to_compare_scores_none_rather_than_zero() -> None:
     assert classify(result.score) is MatchLinkStatus.PENDING
 
 
-def test_a_single_work_step_is_not_a_structure_to_compare(  # D139
-) -> None:
+def test_a_single_work_step_is_not_a_structure_to_compare() -> None:
     """A steady endurance ride detects no intervals, and correctly so."""
     steady = MatchEvidence(
         planned_duration_s=3_600,

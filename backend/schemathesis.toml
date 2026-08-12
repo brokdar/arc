@@ -8,18 +8,18 @@
 # Its default expectation — a valid-looking request gets 2xx/401/403/404/409 —
 # cannot hold for an API with rules a JSON schema cannot express:
 #
-#   * the append-only anchor refusals answer 405 by design (D36); a fuzzer
+#   * the append-only anchor refusals answer 405 by design; a fuzzer
 #     reading the schema has no way to know PUT is documented in order to be
 #     refused,
 #   * anchor and profile writes are validated against domain rules — per-type
 #     plausibility bounds, `tested` provenance requiring a protocol, the
-#     confidence interval bracketing the value (D35) — which reach the client
+#     confidence interval bracketing the value — which reach the client
 #     as 422s the schema does not describe,
-#   * zones exist only for anchor types a zone model derives from (D32), so
+#   * zones exist only for anchor types a zone model derives from, so
 #     `?anchor_type=max_hr` is schema-valid and semantically empty.
 #
 # Every one of those refusals is pinned by a unit test, which is the condition
-# for narrowing a check at all (D13). The check stays fully armed everywhere
+# for narrowing a check at all. The check stays fully armed everywhere
 # else, and `expected-statuses` here *replaces* the default list, so each entry
 # repeats the statuses the operation can legitimately return.
 
@@ -98,7 +98,7 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 #     `quarantined` outcome, which is a result and not an error.)
 #   * a session's timezone override must resolve to a real zone: an IANA name,
 #     a UTC±HH:MM offset, or UTC. A stored timezone that cannot be resolved
-#     makes the session's date unrecoverable (D93), so it is refused where it
+#     makes the session's date unrecoverable, so it is refused where it
 #     is written, and a patch that supplies no field at all is refused too.
 #   * a manually entered session's sets name exactly one of exercise_id and
 #     exercise_name, and its duration, RPE, reps, load and RIR carry bounds
@@ -153,7 +153,7 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 # test (test_agent_notes_api::test_a_read_of_a_week_that_is_not_a_monday_is_refused):
 #
 #   * agent notes about a plan week are keyed by the Monday the week starts on;
-#     any other date is refused rather than snapped (D176), because snapping
+#     any other date is refused rather than snapped, because snapping
 #     would file two notes about one week under two keys.
 
 [[operations]]

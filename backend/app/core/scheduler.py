@@ -4,8 +4,10 @@ Scheduling deliberately runs inside the API process (APScheduler's
 ``AsyncIOScheduler`` on the app's own event loop) rather than in a separate
 worker backed by Redis or Celery. This is a single-user application: the
 scheduled workload is periodic ingest and maintenance, which needs neither a
-distributed queue, multiple consumers, nor cross-process durability. See
-``docs/decisions.md`` (D5).
+distributed queue, multiple consumers, nor cross-process durability. An
+in-process scheduler removes a whole stateful service from Compose, from
+deployment and from the failure surface, while covering every job this
+application actually schedules.
 
 No jobs are registered yet — they arrive with the work packages that need
 them: ingest polling in WP-4 and the backup job in WP-9. Each of those adds

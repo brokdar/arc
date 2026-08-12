@@ -280,7 +280,7 @@ function SessionLoad({ session }: { session: SessionListItem }) {
  *
  * The **link** is a second input because the session's own status does not
  * carry the state that most needs an athlete: a pending proposal leaves the
- * session `unmatched` on purpose (D140 — a proposal is a question, and nothing
+ * session `unmatched` on purpose (a proposal is a question, and nothing
  * moves until it is answered), so a badge reading only the session would say
  * "Unmatched" about the one row on the page that is waiting for a click. When
  * a proposal is open the badge says so, in the accent, and every other state

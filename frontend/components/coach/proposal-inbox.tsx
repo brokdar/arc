@@ -177,9 +177,8 @@ function EmptyInbox({ status }: { status: ProposalStatus | "" }) {
       </p>
       <p className="max-w-[68ch] text-ink-muted text-sm">
         Proposals are written by a coaching agent connected to arc's MCP server
-        (see <code className="font-mono">docs/agent-setup.md</code>). Until one
-        is connected and has something to suggest, this queue stays empty and
-        the plan is entirely yours.
+        over a scoped API key. Until one is connected and has something to
+        suggest, this queue stays empty and the plan is entirely yours.
       </p>
     </Panel>
   );
