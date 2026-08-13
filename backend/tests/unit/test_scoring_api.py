@@ -1013,7 +1013,11 @@ async def test_logging_one_side_of_each_round_does_not_settle_as_the_session(
         ],
     )
 
-    assert done["match"]["status"] != MatchLinkStatus.AUTO_HIGH.value
+    # Pinned by value, not by `!= AUTO_HIGH`: half the prescribed work is a
+    # similarity of exactly 0.5, and an inequality would go on passing if the
+    # ratio drifted to a third or a sixth for some other reason.
+    assert done["match"]["similarity"] == pytest.approx(0.5)
+    assert done["match"]["status"] == MatchLinkStatus.PENDING.value
 
 
 # --- the stream seam, end to end ----------------------------------------------------

@@ -603,16 +603,27 @@ async def test_a_logged_hold_reports_its_seconds_and_no_kilograms(
     assert metrics["strength"]["coverage"] == pytest.approx(1 / 4)
 
 
+@pytest.mark.parametrize(
+    "logged",
+    [
+        pytest.param({}, id="neither"),
+        pytest.param({"reps": 5, "duration_s": 45}, id="both"),
+    ],
+)
 async def test_a_set_that_is_neither_reps_nor_a_hold_is_refused_by_name(
-    data_root: Path, client: AsyncClient
+    data_root: Path, client: AsyncClient, logged: dict[str, int]
 ) -> None:
+    # Both halves of the rule, because the logged side enforces it in its own
+    # code (`_check_manual`) rather than through `StrengthSet`: a row with
+    # both is as unaccountable as a row with neither — it would be counted
+    # twice, once in the kilograms and once in the seconds.
     response = await client.post(
         MANUAL,
         json={
             "start_time": "2026-05-11T17:30:00+02:00",
             "timezone": "Europe/Zurich",
             "duration_s": 3600,
-            "sets": [{"exercise_id": "back_squat", "load_kg": 100.0}],
+            "sets": [{"exercise_id": "back_squat", "load_kg": 100.0, **logged}],
         },
     )
 

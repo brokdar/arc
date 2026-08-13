@@ -291,6 +291,13 @@ function Cell({ value, absent }: { value: number | null; absent: string }) {
  * from training load (v2 §5.4), so it is never rendered in the same column and
  * never totalled with one. Coverage travels with it, because a session whose
  * bodyweight work is uncounted has a smaller number for a reason.
+ *
+ * Seconds are a third axis and get their own figure when something was held:
+ * a hold has no reps to multiply by kilograms, so folding its work into the
+ * volume would be the `reps: 1` lie in another place. The counts are in
+ * **working sets** (`app.domain.metrics.PerformedSet`), so three per-side rows
+ * read as six — which is why the note says so rather than promising a count of
+ * the rows the athlete typed.
  */
 export function StrengthCard({ strength }: { strength: StrengthMetrics }) {
   return (
@@ -317,14 +324,23 @@ export function StrengthCard({ strength }: { strength: StrengthMetrics }) {
               note={
                 strength.coverage === null || strength.coverage === undefined
                   ? undefined
-                  : `${Math.round(strength.coverage * 100)}% of sets carried kilograms`
+                  : `${Math.round(strength.coverage * 100)}% of the working sets carried kilograms`
               }
             />
             <Figure
               label="Sets completed"
               value={strength.sets_completed ?? 0}
-              note="every set logged, loaded or not"
+              note="working sets — a per-side row counts twice"
             />
+            {strength.total_hold_s === null ||
+            strength.total_hold_s === undefined ? null : (
+              <Figure
+                label="Held"
+                unit="s"
+                value={strength.total_hold_s}
+                note="seconds beside the kilograms, never inside them"
+              />
+            )}
           </>
         )}
       </Panel>

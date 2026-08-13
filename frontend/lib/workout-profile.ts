@@ -236,9 +236,12 @@ export function totalSets(
  * One prescription line's rounds and what each holds — `3×11 per side`,
  * `3×45 s`.
  *
- * One function because three surfaces render it (Today, the calendar sheet,
- * the week rail's tooltip) and a per-side line rendered as a bare `3×11` on
- * any of them says the athlete does half the work the plan asked for.
+ * One function because both surfaces that render a prescription line render it
+ * (Today's session panel and the calendar sheet) and a per-side line rendered
+ * as a bare `3×11` on either of them says the athlete does half the work the
+ * plan asked for. The week rail shows `total_sets` from the backend rather
+ * than the lines, so it is not a caller — `totalSets` above is its half of the
+ * same rule.
  */
 export function describeSets(item: StrengthItem): string {
   const each =
@@ -246,6 +249,82 @@ export function describeSets(item: StrengthItem): string {
       ? `${item.reps ?? "?"}`
       : `${item.duration_s} s`;
   return `${item.sets}×${each}${item.per_side ? " per side" : ""}`;
+}
+
+/** Whether a prescription line is held for seconds rather than repeated. */
+function isHold(item: StrengthItem): boolean {
+  return item.duration_s !== null && item.duration_s !== undefined;
+}
+
+/** How a load is prescribed, in the words `unmeasuredVolumeReason` uses. */
+const LOAD_KIND_WORDS: Readonly<Record<Schemas["LoadKind"], string>> = {
+  kg: "kilograms",
+  percent_e1rm: "%e1RM",
+  rpe: "RPE",
+  bodyweight: "bodyweight",
+};
+
+/**
+ * Why a strength prescription has no volume load, read off the prescription.
+ *
+ * Never "no data": volume load is kilograms, and a session that states none is
+ * saying something specific about how it is prescribed. Naming the forms it
+ * *did* use is what makes the missing number legible (UI convention 3).
+ *
+ * **A hold is a second reason, and it is not a load kind.** Volume load is
+ * `Σ working sets × reps × kg`, so a timed line contributes nothing however it
+ * is loaded — a 45-second plank under a 20 kg vest is prescribed in kilograms
+ * *and* has no volume. Reading every line's load kind therefore produced the
+ * one sentence this function must never say: "no set is prescribed in
+ * kilograms, and this session prescribes its loads as kilograms". Only the
+ * rep-based lines answer the question asked; the holds are named separately.
+ *
+ * Here rather than beside the sheet that renders it because that is what let
+ * the three branches be tested directly, which is the shape a sentence with
+ * this much arithmetic behind it needs.
+ */
+export function unmeasuredVolumeReason(structure: StrengthStructure): {
+  short: string;
+  sentence: string;
+} {
+  const items = structure.groups.flatMap((group) => group.items);
+  const holds = items.filter(isHold).length;
+  const kinds = new Set(
+    items.filter((item) => !isHold(item)).map((item) => item.load.kind),
+  );
+  if (items.length === 0) {
+    return {
+      short: "Nothing prescribed",
+      sentence:
+        "This session prescribes no movements yet, so there is no volume to total.",
+    };
+  }
+  if (kinds.size === 0) {
+    return {
+      short: "Every line is a hold",
+      sentence:
+        "Volume load is Σ working sets × reps × kg, and a hold has no reps to multiply. " +
+        "This session's seconds are reported beside the kilograms, never inside them.",
+    };
+  }
+  const words = [...kinds].map((kind) => LOAD_KIND_WORDS[kind]);
+  return {
+    short: "No set is prescribed in kilograms",
+    sentence:
+      `Volume load is Σ working sets × reps × kg, and this session prescribes its repetitions as ${listWords(words)}. ` +
+      (holds > 0
+        ? "Its holds have no reps to multiply and report their seconds instead. "
+        : "") +
+      "The kilograms exist once it is performed, not before.",
+  };
+}
+
+/** `a`, `a and b`, `a, b and c` — a list as a sentence says it. */
+function listWords(words: readonly string[]): string {
+  if (words.length <= 1) {
+    return words[0] ?? "";
+  }
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
 
 type Intensity =

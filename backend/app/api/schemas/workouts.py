@@ -161,9 +161,15 @@ class StrengthSetSchema(BaseModel):
     has one home, `app.domain.strength.StrengthSet`, and one message.
 
     Every optional field is ``None``-defaulted rather than ``False``-defaulted
-    for a second reason: `structure_document` drops nulls, so a prescription
-    that never said ``per_side`` does not acquire ``"per_side": false`` on its
-    way through.
+    so that `structure_document` drops it: a request that never said
+    ``per_side`` reaches the parser as the document it was written as. What
+    keeps the *stored* prescription free of the key is one layer further in —
+    both writers persist `workout_body_to_json` of the parsed body, never this
+    schema's dump, and `app.domain.strength.strength_set_to_json` omits an
+    unset field (pinned by the fixture round trip in
+    `tests/unit/test_domain_strength.py`). Two mechanisms, and only the second
+    one is load-bearing; this docstring said otherwise until a test written to
+    pin the claim passed with the default flipped.
     """
 
     model_config = ConfigDict(extra="forbid")

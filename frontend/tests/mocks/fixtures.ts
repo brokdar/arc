@@ -272,6 +272,23 @@ const CORE_STRUCTURE: Schemas["StrengthStructureSchema"] = {
           exercise_id: "hanging_leg_raise",
           sets: 4,
           reps: 12,
+          duration_s: null,
+          per_side: null,
+          load: { kind: "bodyweight", value: null },
+          rir: null,
+          rest_s: 60,
+          tempo: null,
+          notes: null,
+        },
+        {
+          // A hold, because a core session is where one actually appears —
+          // and because the prescribed-volume section has a seconds line and
+          // a "holds have no reps" sentence that no fixture exercised.
+          exercise_id: "front_plank",
+          sets: 3,
+          reps: null,
+          duration_s: 45,
+          per_side: null,
           load: { kind: "bodyweight", value: null },
           rir: null,
           rest_s: 60,
@@ -349,10 +366,11 @@ const STRENGTH_PREDICTED_VOLUME: Schemas["PredictedVolumeRead"] = {
   coverage: 0.3,
 };
 
+/** Four working sets of leg raises and three 45 s planks: 135 s held, no kg. */
 const CORE_PREDICTED_VOLUME: Schemas["PredictedVolumeRead"] = {
   volume_load_kg: null,
-  total_sets: 4,
-  total_hold_s: null,
+  total_sets: 7,
+  total_hold_s: 135,
   coverage: 0,
 };
 
@@ -611,8 +629,8 @@ const SEEDS: readonly SessionSeed[] = [
       title: null,
       workout_id: null,
       planned_duration_s: null,
-      total_sets: 4,
-      step_count: 1,
+      total_sets: 7,
+      step_count: 2,
       intent_text: "Not attempted.",
       intent_version: 1,
       predicted_load: null,
@@ -2394,7 +2412,7 @@ const PLANNED_SEEDS: readonly PlannedSeed[] = [
     structure: CORE_STRUCTURE,
     criteria: STRENGTH_CRITERIA,
     pinnedAnchors: [],
-    summary: { step_count: 1, total_duration_s: null, total_sets: 4 },
+    summary: { step_count: 2, total_duration_s: null, total_sets: 7 },
   },
 ];
 

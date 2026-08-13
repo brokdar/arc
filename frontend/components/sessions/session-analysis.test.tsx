@@ -348,10 +348,59 @@ describe("the strength card", () => {
     expect(screen.getByText("1000")).toBeInTheDocument();
     expect(screen.getByText("kg")).toBeInTheDocument();
     expect(
-      screen.getByText(/67% of sets carried kilograms/),
+      screen.getByText(/67% of the working sets carried kilograms/),
     ).toBeInTheDocument();
     // v2 §5.4: kilograms are not a load, and nothing here calls them one.
     expect(screen.queryByText("TSS")).not.toBeInTheDocument();
+  });
+
+  it("reports held seconds as their own figure, never inside the kilograms", () => {
+    // A session of planks moved no kilograms and is still work. Without this
+    // figure the only trace of it on the page is the per-row `45 s` in the
+    // logged-sets table, and the session's total held time is unreadable.
+    render(
+      <StrengthCard
+        strength={{
+          not_assessed: null,
+          volume_load_kg: null,
+          sets_completed: 4,
+          total_hold_s: 135,
+          coverage: 0,
+          explanation: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Held")).toBeInTheDocument();
+    expect(screen.getByText("135")).toBeInTheDocument();
+    expect(screen.getByText("s")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(
+        "Not assessed: No set in this session was logged in kilograms",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("counts sets in working sets, and the note says so", () => {
+    // `sets_completed` counts a per-side row twice, so three logged rows read
+    // as six. The note promised "every set logged", which is the count of
+    // rows the athlete typed — a different number.
+    render(
+      <StrengthCard
+        strength={{
+          not_assessed: null,
+          volume_load_kg: 990,
+          sets_completed: 6,
+          total_hold_s: null,
+          coverage: 1,
+          explanation: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("6")).toBeInTheDocument();
+    expect(screen.getByText(/a per-side row counts twice/)).toBeInTheDocument();
+    expect(screen.queryByText("Held")).not.toBeInTheDocument();
   });
 });
 

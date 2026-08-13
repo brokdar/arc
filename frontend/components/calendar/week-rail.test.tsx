@@ -93,10 +93,11 @@ describe("WeekRail", () => {
     expect(within(rail()).getByText("3 sessions")).toBeInTheDocument();
     expect(within(rail()).getByText("2 sessions")).toBeInTheDocument();
 
-    // 14 strength sets and 213 cycling TSS both render — and neither borrows
-    // the other's column, because kilograms and TSS are different axes.
+    // 17 strength working sets (10 + 7) and 213 cycling TSS both render — and
+    // neither borrows the other's column, because kilograms and TSS are
+    // different axes.
     expect(
-      within(disciplineRow("Strength")).getByText("14"),
+      within(disciplineRow("Strength")).getByText("17"),
     ).toBeInTheDocument();
     expect(
       within(rail()).getByLabelText(

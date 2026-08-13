@@ -252,6 +252,31 @@ async def test_per_side_and_a_hold_survive_the_library_round_trip(
     assert created["summary"]["total_sets"] == 9
 
 
+async def test_writing_a_pre_per_side_document_does_not_store_the_new_keys(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # AC-20's second half through HTTP rather than over the domain function:
+    # the plan asks for the old-document case at this layer too, and what a
+    # reader wants to know is what ends up in the *table*. `LIFT` is the
+    # pre-existing shape — `reps` everywhere, neither new key anywhere — and a
+    # serializer that grew keys on every write would make the next diff of
+    # every stored prescription a lie about what changed.
+    #
+    # It is the domain serializer this catches, not the API schema's defaults:
+    # both writers store `workout_body_to_json` of the parsed body, so the
+    # schema could default `per_side` to `False` and the stored document would
+    # still be clean. That is why the assertion is on the row and not on the
+    # response, which does carry the new keys as explicit nulls.
+    created = await create(client, name="Squat day", structure=LIFT)
+
+    stored = await db_session.get(WorkoutRow, uuid.UUID(created["id"]))
+    assert stored is not None
+    items = [item for group in stored.structure["groups"] for item in group["items"]]
+    assert items  # a document with no lines would pass the assertions below
+    assert all("per_side" not in item for item in items)
+    assert all("duration_s" not in item for item in items)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

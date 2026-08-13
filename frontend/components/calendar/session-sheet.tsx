@@ -37,7 +37,11 @@ import {
   formatSets,
 } from "@/lib/format";
 import { purposeLabel, STATUS_TONES } from "@/lib/purpose";
-import { describeSets, type StrengthStructure } from "@/lib/workout-profile";
+import {
+  describeSets,
+  type StrengthStructure,
+  unmeasuredVolumeReason,
+} from "@/lib/workout-profile";
 
 type Schemas = components["schemas"];
 type PredictedLoad = Schemas["PredictedLoadRead"];
@@ -625,9 +629,11 @@ function PredictedLoadFigure({ predicted }: { predicted: PredictedLoad }) {
  *
  * Never in the TSS slot and never added to one (spec v2 §5.4, §8.3) — the two
  * quantities have their own sections for the same reason the week rail gives
- * them their own columns. Volume load is `Σ sets × reps × kg`, so a session
- * prescribed in %e1RM or RPE has none until it is performed; that is
- * `NotAssessed` with the reason the prescription itself supplies, never a 0.
+ * them their own columns. Volume load is `Σ working sets × reps × kg`, so a
+ * session prescribed in %e1RM or RPE has none until it is performed, and
+ * neither has one prescribed as a hold; that is `NotAssessed` with the reason
+ * the prescription itself supplies, never a 0. Held seconds are their own
+ * line, on the same reasoning that keeps kilograms out of the TSS slot.
  */
 function PredictedVolumeSection({
   predicted,
@@ -650,9 +656,13 @@ function PredictedVolumeSection({
             {formatSets(predicted.total_sets)}
           </span>
           {/* Same rule as the ride's coverage: a volume computed from three of
-              ten sets is not the session's volume, and the count says so. */}
+              ten sets is not the session's volume, and the count says so. The
+              denominator is working sets, and a hold is one of them — it is
+              prescribed in kilograms or not, but either way it contributes
+              none, so the sentence says *contributes* rather than
+              *prescribed*. */}
           <span className="ml-auto font-mono text-2xs text-ink-faint">
-            {formatPercent(predicted.coverage)} of the sets are prescribed in
+            {formatPercent(predicted.coverage)} of the working sets contribute
             kilograms
           </span>
         </div>
@@ -673,57 +683,19 @@ function PredictedVolumeSection({
           <p className="text-ink-muted text-sm">{reason.sentence}</p>
         </div>
       )}
+      {/* Seconds beside the kilograms, never inside them — and only when
+          something is held, because a `—` in this slot on every squat session
+          would report an absence nobody asked about. */}
+      {predicted && predicted.total_hold_s !== null ? (
+        <p className="font-mono text-ink-muted text-xs">
+          {/* Seconds, not `2min`: a hold is prescribed in seconds and read
+              back in them, and rounding 135 s to two minutes would make this
+              the one surface that restates the athlete's own number. */}
+          {predicted.total_hold_s} s held
+        </p>
+      ) : null}
     </section>
   );
-}
-
-/** How a load is prescribed, in the words the sentence below uses. */
-const LOAD_KIND_WORDS: Readonly<Record<Schemas["LoadKind"], string>> = {
-  kg: "kilograms",
-  percent_e1rm: "%e1RM",
-  rpe: "RPE",
-  bodyweight: "bodyweight",
-};
-
-/**
- * Why this session has no volume load, read off the prescription itself.
- *
- * Never "no data": volume load is kilograms, and a session that states none is
- * saying something specific about how it is prescribed. Naming the forms it
- * *did* use is what makes the missing number legible (UI convention 3).
- */
-function unmeasuredVolumeReason(structure: StrengthStructure): {
-  short: string;
-  sentence: string;
-} {
-  const kinds = new Set<Schemas["LoadKind"]>();
-  for (const group of structure.groups) {
-    for (const item of group.items) {
-      kinds.add(item.load.kind);
-    }
-  }
-  const words = [...kinds].map((kind) => LOAD_KIND_WORDS[kind]);
-  if (words.length === 0) {
-    return {
-      short: "Nothing prescribed",
-      sentence:
-        "This session prescribes no movements yet, so there is no volume to total.",
-    };
-  }
-  return {
-    short: "No set is prescribed in kilograms",
-    sentence:
-      `Volume load is Σ sets × reps × kg, and this session prescribes its loads as ${listWords(words)}. ` +
-      "The kilograms exist once it is performed, not before.",
-  };
-}
-
-/** `a`, `a and b`, `a, b and c` — a list as a sentence says it. */
-function listWords(words: readonly string[]): string {
-  if (words.length <= 1) {
-    return words[0] ?? "";
-  }
-  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
 
 /**
