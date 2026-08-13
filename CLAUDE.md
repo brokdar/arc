@@ -56,6 +56,31 @@ at the code site, in a test that fails when it is violated, or in
 Everything goes through the `justfile`; `just` alone lists the recipes.
 The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
 
+## Worktrees
+
+Worktrees live at `.claude/worktrees/<name>` (gitignored). Create one with
+`claude --worktree <name>` or `git worktree add .claude/worktrees/<name> -b
+<branch>`, then run **`just worktree-init`** in it: a worktree has no `.venv`
+and no `node_modules`, and the always-run api-schema-sync pre-commit hook needs
+the frontend's — `scripts/generate-api-types.sh` refuses to run without it
+rather than regenerating the committed types from an unpinned compiler.
+
+- **Docker is not per-worktree.** `up`, `infra`, `smoke` and `test-int` bind
+  fixed host ports, and `test-int` reuses one compose project name in every
+  checkout — run them from one checkout at a time, from the main one by
+  preference.
+- **Always `uv run` / `bun run`.** A VS Code terminal exports `VIRTUAL_ENV`
+  pointing at the checkout it was opened in, so a bare `python`/`pytest`/
+  `alembic` in a worktree can import the other tree's code. `uv run` ignores it
+  with a warning; every justfile recipe uses it.
+- `.worktreeinclude` carries `.env` into worktrees **Claude Code** creates;
+  `just worktree-init` copies it for ones created with `git worktree add`.
+- Git hooks are shared — prek installs into the common `.git/hooks` — and run
+  correctly from a worktree once its dependencies are installed. Claude Code
+  keys session history and auto-memory by path, so a worktree session starts
+  with an empty memory, and an isolated worktree session is blocked from
+  writing to the main checkout at all.
+
 ## Conventions
 
 - **Package managers**: `uv` for Python, `bun` for the frontend. Never npm/npx/pnpm/yarn.

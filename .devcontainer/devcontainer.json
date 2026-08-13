@@ -11,9 +11,10 @@
 		"ghcr.io/va-h/devcontainers-features/uv:1": {}
 	},
 	"mounts": [
-		"type=volume,source=${localWorkspaceFolderBasename}-node_modules,target=${containerWorkspaceFolder}/frontend/node_modules",
-		"type=volume,source=${localWorkspaceFolderBasename}-backend-venv,target=${containerWorkspaceFolder}/backend/.venv",
-		"type=volume,source=${localWorkspaceFolderBasename}-next,target=${containerWorkspaceFolder}/frontend/.next"
+		// Claude Code's login, session history, plugins and auto-memory. Without
+		// this they live in the container's writable layer and every rebuild
+		// silently costs you all four.
+		"type=volume,source=${localWorkspaceFolderBasename}-claude-home,target=/home/vscode/.claude"
 	],
 	"postCreateCommand": "bash .devcontainer/startup.sh",
 	"forwardPorts": [
