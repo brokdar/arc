@@ -14,6 +14,21 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/frontend/generated/api"
+
+# Refuse to run without the installed dependency tree. `bunx openapi-typescript`
+# prefers the local binary but silently falls back to downloading the LATEST
+# release when there is none — a different major than the `^7` in bun.lock, so
+# it rewrites schema.d.ts wholesale and the sync check then fails on drift it
+# created itself. That is the default state of a fresh git worktree, and this
+# script runs from the always-run pre-commit hook, so the first commit made
+# there would trash the committed types. Fail before writing anything.
+if [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
+  echo "ERROR: $REPO_ROOT/frontend/node_modules is missing — refusing to" >&2
+  echo "generate API types with an unpinned openapi-typescript." >&2
+  echo "Run: bun install  (in a fresh worktree: just worktree-init)" >&2
+  exit 1
+fi
+
 mkdir -p "$OUT_DIR"
 
 echo "Exporting OpenAPI schema from FastAPI app..."

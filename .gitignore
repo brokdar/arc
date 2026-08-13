@@ -58,6 +58,7 @@ logs/
 .data-dev/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/worktrees/
 **/agent-memory/
 
 # Local docs stay untracked (see PR #6), with named exceptions that are

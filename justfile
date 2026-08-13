@@ -8,6 +8,22 @@ default:
 init:
 	bash scripts/bootstrap-env.sh
 
+# A worktree checks out tracked files and nothing else: no .env, no .venv, no
+# node_modules. Install them before working there — the always-run
+# api-schema-sync pre-commit hook shells out to bunx, and without
+# frontend/node_modules it would generate the API types from an unpinned
+# openapi-typescript (see scripts/generate-api-types.sh, which now refuses).
+
+# Install the dependencies and .env of the worktree you are standing in
+worktree-init:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	main="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+	# Claude Code copies .env in via .worktreeinclude; `git worktree add` does not.
+	[ -f .env ] || cp -p "$main/.env" .env
+	(cd backend && uv sync)
+	(cd frontend && bun install)
+
 # The printed line is single-quoted because bcrypt hashes are full of `$`,
 # which .env parsers and your shell would otherwise expand.
 

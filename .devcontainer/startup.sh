@@ -7,6 +7,13 @@ WORKSPACE="$(pwd)"
 
 echo "🚀 Initializing development environment..."
 
+# Fix ownership of the named volume (created as root by Docker). This must run
+# before anything writes to $HOME/.claude — the Claude Code installer and the
+# settings merge below both do, and on a freshly created volume they would hit
+# a root-owned mount point and fail the rebuild.
+echo "🔧 Fixing volume permissions..."
+sudo chown -R "$(id -u):$(id -g)" "$HOME/.claude"
+
 # Ensure bun global bin is in PATH for all shell sessions
 export PATH="$HOME/.bun/bin:$PATH"
 if ! grep -q 'bun/bin' ~/.bashrc 2>/dev/null; then
@@ -27,13 +34,6 @@ if [ -f "$CLAUDE_SETTINGS" ]; then
 else
     echo '{"permissions":{"defaultMode":"auto"}}' >"$CLAUDE_SETTINGS"
 fi
-
-# Fix ownership of named volumes (created as root by Docker)
-echo "🔧 Fixing volume permissions..."
-sudo chown -R "$(id -u):$(id -g)" \
-    "$WORKSPACE/frontend/node_modules" \
-    "$WORKSPACE/backend/.venv" \
-    "$WORKSPACE/frontend/.next"
 
 echo "📦 Installing backend dependencies..."
 cd "$WORKSPACE/backend"
