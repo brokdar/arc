@@ -224,7 +224,7 @@ class MoveChange:
     """Move an existing planned session to another date.
 
     Its own kind rather than an :class:`UpdateChange` carrying ``date``, for
-    the reason `POST /planned-sessions/{id}/move` is its own verb (D56):
+    the reason `POST /planned-sessions/{id}/move` is its own verb:
     moving a session is one intention, and the diff the athlete reads should
     be able to say so instead of showing a field patch.
     """
@@ -248,7 +248,7 @@ class DeleteChange:
 #: malformed patch is refused when the change is *built*, not when it is
 #: applied hours later.
 #:
-#: `status` is deliberately absent (D174). A planned session's status is
+#: `status` is deliberately absent. A planned session's status is
 #: derived from reality — WP-6 moves it between `planned`, `completed`,
 #: `missed` and `displaced` as matches come and go — so it is not a statement
 #: anyone can *suggest*: proposing `completed` would be proposing that the
@@ -693,9 +693,8 @@ def intensifies(  # noqa: PLR0911 — one branch per signal, each with its own s
     "intensifies" is answered here, for a revision of a session that already
     exists.
 
-    **The rule fails closed** (D186, superseding D170's fail-open half): while
-    the athlete is ill or injured, a change is refused unless it can be *shown*
-    not to add work. Two things follow from that.
+    **The rule fails closed**: while the athlete is ill or injured, a change
+    is refused unless it can be *shown* not to add work. Two things follow from that.
 
     First, an increase in any of four signals refuses:
 

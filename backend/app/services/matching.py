@@ -10,8 +10,7 @@ exists, because the intensity and structure terms read that artefact. A
 re-match (`POST /sessions/{id}/rematch`) is the athlete or the agent asking
 again, explicitly, and therefore **overrules an earlier automatic verdict and
 an earlier "this was unplanned"** — but never a `confirmed` or `displaced`
-link, which are the athlete's own words and which no re-run touches (WP-6.6,
-D142).
+link, which are the athlete's own words and which no re-run touches (WP-6.6).
 
 **Every state change is reversible, and reversible exactly.** A link records
 the two statuses it displaced, so :meth:`unlink` restores them rather than
@@ -30,7 +29,7 @@ no link              ``unplanned``        ``planned`` / ``missed``
 
 A **pending** link changes nothing on either side on purpose: a proposal is a
 question, and a calendar that marked a session complete because the machine
-thought it probably was would be answering it on the athlete's behalf (D140).
+thought it probably was would be answering it on the athlete's behalf.
 
 **The missed sweep is thin because the rule is pure.**
 `app.domain.matching.is_missed` owns "end of day+1 in the athlete's local
@@ -291,8 +290,7 @@ class MatchingService:
             rematch: Whether this is an explicit re-run. It only widens what
                 may be replaced — an automatic run leaves an existing link
                 alone, an explicit one revises an open link and reconsiders a
-                session the athlete or an earlier run marked `unplanned`
-                (D142).
+                session the athlete or an earlier run marked `unplanned`.
 
         Raises:
             NotFoundError: When no session has that id.
@@ -614,7 +612,7 @@ class MatchingService:
         span widens to cover both; the absorbed session row itself goes, and
         with it the metric artefacts computed over half a ride.
 
-        The parquet frames are not touched (D143): a stream file is addressed
+        The parquet frames are not touched: a stream file is addressed
         by *recording* id, and the concatenated view a scorer needs is
         assembled on read by `app.ingest.analysis`, which is where reading
         parquet is allowed. The survivor's metrics are stale the moment this
@@ -766,8 +764,7 @@ class MatchingService:
 
         A **pending** proposal is not scored. A proposal is a question, and
         putting a verdict on the answer before the athlete has given it is the
-        same mistake `_settle_statuses` refuses to make with the statuses
-        (D140).
+        same mistake `_settle_statuses` refuses to make with the statuses.
 
         **On a session of its own**, which is what makes "leave the match
         alone" true rather than aspirational. Rolling *this* service's session
@@ -778,7 +775,7 @@ class MatchingService:
         greenlet, and the endpoint answers 500: the match survived in the
         database and the athlete was told it had not. A second session cannot
         touch the caller's objects at all, so the failure costs exactly the
-        score (D159). Same shape as
+        score. Same shape as
         `app.ingest.service.IngestService.reject_quarantine`, and for the same
         reason.
         """
@@ -936,7 +933,7 @@ class MatchingService:
         The table in the module docstring, in one place. `pending` **restores**
         both sides to what the link recorded rather than moving nothing: for a
         fresh proposal the recorded statuses are the current ones and the
-        restore is a no-op — a question moves nothing (D140) — but a link
+        restore is a no-op — a question moves nothing — but a link
         *revised down* to pending (an `auto_high` whose re-score fell below the
         threshold) is holding the pre-link statuses, and an early return would
         strand the session at `matched` under an unanswered proposal.
@@ -1020,8 +1017,8 @@ def _evidence(
 ) -> MatchEvidence:
     """Everything the domain compares, read off the two sides.
 
-    Strength and endurance take different halves of the same three components
-    (D139): an endurance prescription has seconds, a power or heart-rate target
+    Strength and endurance take different halves of the same three components:
+    an endurance prescription has seconds, a power or heart-rate target
     and work steps; a strength one has none of the first two and counts **sets**
     instead of intervals. Nothing is substituted for what is missing — the
     domain renormalises over what it was given.

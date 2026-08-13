@@ -587,7 +587,7 @@ interface FormState {
  * **ordered by primacy**: clicking a reason appends it, so the list reads in
  * the order it was built and the first one is the main one.
  *
- * Closing it with edits in hand asks first (D82): the picker is a dismissible
+ * Closing it with edits in hand asks first: the picker is a dismissible
  * editing surface like any other.
  */
 function DeclareForm({

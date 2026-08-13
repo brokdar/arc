@@ -44,7 +44,7 @@ import { ZONE_COLORS } from "@/lib/workout-profile";
  *
  * Every absolute number on this page comes from the session's own
  * `resolved_steps` — resolved by the backend against the anchor versions the
- * intent **pinned** (D49), never against whatever anchor is in force now. The
+ * intent **pinned**, never against whatever anchor is in force now. The
  * page therefore says what the plan said on the day it was written, and the
  * provenance line under the profile says whose FTP that was.
  */
@@ -342,6 +342,15 @@ function SessionPanel({
           </div>
         </Panel>
 
+        {/*
+          A plain Panel in the ordinary ink, not the violet coach tokens the
+          mockup draws here. `--color-coach` marks text an *agent* wrote, so
+          that computed findings and generated prose are never mistaken for one
+          another; `SessionIntent.coach_notes` is written by the athlete when
+          planning. Tinting it would spend the one signal that distinguishes
+          agent output on the athlete's own words, and leave nothing to say it
+          with when a real agent note lands on this page.
+        */}
         <Panel className="flex min-w-0 flex-[1_1_300px] flex-col gap-2.5 px-4 py-3.5">
           <SectionLabel level={3}>Watch for</SectionLabel>
           {intent?.coach_notes ? (

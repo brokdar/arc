@@ -136,7 +136,7 @@ class CompletionState(StrEnum):
     recorded some seconds before it is scored, and every session spends the
     gap between ingest and its first score in a state that is neither
     ``planned`` nor any verdict. Rendering it as ``completed-as_intended``
-    would be the machine declaring a verdict nobody computed (D152).
+    would be the machine declaring a verdict nobody computed.
     """
 
     PLANNED = "planned"
@@ -464,7 +464,7 @@ def trailing_mean(values: Sequence[float | None], window_s: int) -> list[float |
     re-summing cost 1.7 s on a five-hour column at
     `app.domain.criteria.MAX_SMOOTHING_S`, per channel and window, and
     :func:`score_session` is a synchronous call awaited on the ingest and match
-    paths — that time was the API's event loop, blocked (D163).
+    paths — that time was the API's event loop, blocked.
 
     The carried sum counts **only readings**, exactly as the slice did: a row
     with no reading changes neither the total nor the count, and a window
@@ -1048,7 +1048,7 @@ def _score_pacing(inputs: ScoringInputs) -> Assessment:
     followed by ``3 × 5 min`` at threshold would put sprint 1 and threshold 1
     into one "rep 1" and compare that concatenation against a rep 3 made the
     same way — a fade measured between two efforts that were never the same
-    effort (D162). Nesting is not a problem: ``5 × (4 min + 1 min)`` is five
+    effort. Nesting is not a problem: ``5 × (4 min + 1 min)`` is five
     repetitions of one block however its recoveries sit inside it.
 
     Each block is compared **against itself**, and the axis is the **worst** of

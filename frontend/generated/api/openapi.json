@@ -961,7 +961,7 @@
         "type": "string"
       },
       "CompletionState": {
-        "description": "What the calendar's week strip colours one day, or one card, by.\n\nThe build plan's list (WP-7.5) plus one member it does not name and the\ncalendar cannot do without: :attr:`COMPLETED`. A session is matched and\nrecorded some seconds before it is scored, and every session spends the\ngap between ingest and its first score in a state that is neither\n``planned`` nor any verdict. Rendering it as ``completed-as_intended``\nwould be the machine declaring a verdict nobody computed (D152).",
+        "description": "What the calendar's week strip colours one day, or one card, by.\n\nThe build plan's list (WP-7.5) plus one member it does not name and the\ncalendar cannot do without: :attr:`COMPLETED`. A session is matched and\nrecorded some seconds before it is scored, and every session spends the\ngap between ingest and its first score in a state that is neither\n``planned`` nor any verdict. Rendering it as ``completed-as_intended``\nwould be the machine declaring a verdict nobody computed.",
         "enum": [
           "planned",
           "completed",
@@ -2752,7 +2752,7 @@
         "type": "object"
       },
       "PinnedAnchorRead": {
-        "description": "One anchor version this session's percentages resolve against.\n\nThe pin is the product's most distinctive invariant (build-plan invariant\n4, D49) and it is worth nothing invisible: showing the provenance is what\nmakes an `estimated` FTP read as an estimate rather than a fact.",
+        "description": "One anchor version this session's percentages resolve against.\n\nThe pin is the product's most distinctive invariant (build-plan invariant\n4) and it is worth nothing invisible: showing the provenance is what\nmakes an `estimated` FTP read as an estimate rather than a fact.",
         "properties": {
           "anchor_type": {
             "$ref": "#/components/schemas/AnchorType"
@@ -3272,7 +3272,7 @@
         "type": "object"
       },
       "PlannedSessionListItem": {
-        "description": "One planned session as a **list row**: everything but the expensive parts.\n\nDeliberately not `PlannedSessionRead` (D79, superseding that half of D74).\nA page of this collection is a page of *sessions*, and serving the resolved\nstep tree and the load explanation for every one of them costs megabytes\nof body and seconds of CPU that no list view spends. What is dropped is\ndropped whole rather than emptied: `resolved_steps`, `predicted_load` and\n`predicted_volume` are **absent from this shape**, not null in it, so a\nclient cannot mistake a list row for a session that has no prediction.\n\n`GET /planned-sessions/{id}` \u2014 and every write route, which answers with\nthe session it wrote \u2014 returns the full `PlannedSessionRead`.",
+        "description": "One planned session as a **list row**: everything but the expensive parts.\n\nDeliberately not `PlannedSessionRead`.\nA page of this collection is a page of *sessions*, and serving the resolved\nstep tree and the load explanation for every one of them costs megabytes\nof body and seconds of CPU that no list view spends. What is dropped is\ndropped whole rather than emptied: `resolved_steps`, `predicted_load` and\n`predicted_volume` are **absent from this shape**, not null in it, so a\nclient cannot mistake a list row for a session that has no prediction.\n\n`GET /planned-sessions/{id}` \u2014 and every write route, which answers with\nthe session it wrote \u2014 returns the full `PlannedSessionRead`.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -3900,7 +3900,7 @@
         "type": "object"
       },
       "ProposalSessionSnapshot": {
-        "description": "One planned session as it stands, or as a change would leave it.\n\nThe two prediction axes are both here and exactly one is ever populated:\nan endurance session has a TSS-equivalent and no kilograms, a strength one\nhas kilograms and no TSS. They are different quantities and must never be\nadded or shown in one column.\n\n**Every field a change can touch is here, on both sides** (D185). A\nsnapshot that carried only the cheap scalars let a revision of the success\ncriteria or of the prescription itself render as \"no field differs\" above\nan enabled Accept button \u2014 the athlete answering a question the diff had\nnot asked. The two size fields are here for the same reason: a bodyweight\nlift and an unstructured ride have no computable cost at all, and the\nsets and the seconds are then the only honest way to say how much of it\nthere is.",
+        "description": "One planned session as it stands, or as a change would leave it.\n\nThe two prediction axes are both here and exactly one is ever populated:\nan endurance session has a TSS-equivalent and no kilograms, a strength one\nhas kilograms and no TSS. They are different quantities and must never be\nadded or shown in one column.\n\n**Every field a change can touch is here, on both sides**. A\nsnapshot that carried only the cheap scalars let a revision of the success\ncriteria or of the prescription itself render as \"no field differs\" above\nan enabled Accept button \u2014 the athlete answering a question the diff had\nnot asked. The two size fields are here for the same reason: a bodyweight\nlift and an unstructured ride have no computable cost at all, and the\nsets and the seconds are then the only honest way to say how much of it\nthere is.",
         "properties": {
           "coach_notes": {
             "anyOf": [
@@ -5354,7 +5354,7 @@
         "type": "object"
       },
       "SessionMatchStatus": {
-        "description": "Where a completed session stands relative to the plan.\n\nWP-6 fills the lifecycle the column was sized for (D81 \u2014 every member here\nis at most as long as ``unmatched``, so no migration widened it).\n\n``UNMATCHED`` is the state every session is written in and the state a\n**pending** proposal leaves it in: a proposal is a question, and a session\nwith an unanswered question about it has not been matched. ``UNPLANNED``\nis an answer \u2014 nothing was planned that this could be, or the athlete said\nso \u2014 and is what distinguishes \"we have not decided\" from \"there is\nnothing to decide\". ``DISPLACED`` is the executed-instead-of case\n(`app.domain.matching`): the athlete trained, deliberately not the thing on\nthe calendar, and the session is scored standalone.",
+        "description": "Where a completed session stands relative to the plan.\n\nWP-6 fills the lifecycle the column was sized for \u2014 every member here\nis at most as long as ``unmatched``, so no migration widened it.\n\n``UNMATCHED`` is the state every session is written in and the state a\n**pending** proposal leaves it in: a proposal is a question, and a session\nwith an unanswered question about it has not been matched. ``UNPLANNED``\nis an answer \u2014 nothing was planned that this could be, or the athlete said\nso \u2014 and is what distinguishes \"we have not decided\" from \"there is\nnothing to decide\". ``DISPLACED`` is the executed-instead-of case\n(`app.domain.matching`): the athlete trained, deliberately not the thing on\nthe calendar, and the session is scored standalone.",
         "enum": ["unmatched", "matched", "unplanned", "displaced"],
         "title": "SessionMatchStatus",
         "type": "string"
@@ -5881,7 +5881,7 @@
       },
       "SessionUpdate": {
         "additionalProperties": false,
-        "description": "Corrections to a session's guessed facts, and its measurement context.\n\nTwo kinds of field, with different null semantics \u2014 and in both cases an\n**omitted** field is left untouched (the route dumps with\n``exclude_unset``):\n\n* **Corrections** (``discipline``, ``timezone``) override something\n  inferred from a file: setting the discipline records that the athlete\n  decided it, and setting the timezone re-derives ``local_date``, which\n  is what puts a late-evening ride back on the right day. Neither can be\n  *cleared* \u2014 a session always has both \u2014 so the service refuses an\n  explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the\n  Python-side ``= None`` \"unset\" default while dropping the ``null``\n  branch from the contract, so the schema promises exactly what the\n  parser accepts (the rule of\n  `.claude/rules/api-optional-query-params.md`, applied to a body).\n* **Measurement context** (``rpe``, ``temperature_c``, #23) is what the\n  athlete reports about the conditions of a session \u2014 including an\n  ingested one, which is the point: a device file never carries an RPE.\n  These are ``X | None`` on purpose, like ``AthleteUpdate``'s fields:\n  an explicit ``null`` *clears* the value, because \"nobody said\" is\n  their honest empty state.",
+        "description": "Corrections to a session's guessed facts, and its measurement context.\n\nTwo kinds of field, with different null semantics \u2014 and in both cases an\n**omitted** field is left untouched (the route dumps with\n``exclude_unset``):\n\n* **Corrections** (``discipline``, ``timezone``) override something\n  inferred from a file: setting the discipline records that the athlete\n  decided it, and setting the timezone re-derives ``local_date``, which\n  is what puts a late-evening ride back on the right day. Neither can be\n  *cleared* \u2014 a session always has both \u2014 so the service refuses an\n  explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the\n  Python-side ``= None`` \"unset\" default while dropping the ``null``\n  branch from the contract, so the schema promises exactly what the\n  parser accepts. In a body, omitting a field means \"leave it alone\" and\n  ``null`` would mean \"clear it\" \u2014 which is not an operation these two have.\n* **Measurement context** (``rpe``, ``temperature_c``, #23) is what the\n  athlete reports about the conditions of a session \u2014 including an\n  ingested one, which is the point: a device file never carries an RPE.\n  These are ``X | None`` on purpose, like ``AthleteUpdate``'s fields:\n  an explicit ``null`` *clears* the value, because \"nobody said\" is\n  their honest empty state.",
         "properties": {
           "discipline": {
             "$ref": "#/components/schemas/SessionDiscipline",
@@ -9504,7 +9504,7 @@
     },
     "/api/v1/planned-sessions": {
       "get": {
-        "description": "List planned sessions in date order, optionally within a date range.\n\nA list row is lighter than the session it names (D79): no resolved step\ntree and no predicted-load explanation, because a page of two hundred\nsessions carrying either is measured in megabytes and in seconds of\nsynchronous CPU. The pins stay \u2014 they are one query for the whole page \u2014\nand the whole session is one request away at\n`GET /planned-sessions/{id}`.",
+        "description": "List planned sessions in date order, optionally within a date range.\n\nA list row is lighter than the session it names: no resolved step\ntree and no predicted-load explanation, because a page of two hundred\nsessions carrying either is measured in megabytes and in seconds of\nsynchronous CPU. The pins stay \u2014 they are one query for the whole page \u2014\nand the whole session is one request away at\n`GET /planned-sessions/{id}`.",
         "operationId": "planned-sessions-list_planned_sessions",
         "parameters": [
           {
@@ -9892,7 +9892,7 @@
     },
     "/api/v1/planned-sessions/{planned_session_id}/copy": {
       "post": {
-        "description": "Copy a planned session onto another date.\n\nThe copy is a **new** planned session: status `planned`, its own intent\nchain starting at version 1, and its anchors pinned at the versions in\nforce now \u2014 a prescription freezes when it is planned, and this one is\nbeing planned now (invariant 4, D57).",
+        "description": "Copy a planned session onto another date.\n\nThe copy is a **new** planned session: status `planned`, its own intent\nchain starting at version 1, and its anchors pinned at the versions in\nforce now \u2014 a prescription freezes when it is planned, and this one is\nbeing planned now (invariant 4).",
         "operationId": "planned-sessions-copy_planned_session",
         "parameters": [
           {
@@ -10122,7 +10122,7 @@
     },
     "/api/v1/planned-sessions/{planned_session_id}/move": {
       "post": {
-        "description": "Move a planned session to another date.\n\nIts own verb rather than `PATCH ... {\"date\": ...}`, which does the same\nthing: dragging a card across the calendar is one intention, and the audit\ntrail should be able to say so (D56). Nothing about the prescription\nchanges \u2014 no intent version, no re-pinning.",
+        "description": "Move a planned session to another date.\n\nIts own verb rather than `PATCH ... {\"date\": ...}`, which does the same\nthing: dragging a card across the calendar is one intention, and the audit\ntrail should be able to say so. Nothing about the prescription\nchanges \u2014 no intent version, no re-pinning.",
         "operationId": "planned-sessions-move_planned_session",
         "parameters": [
           {
@@ -10953,7 +10953,7 @@
         "tags": ["sessions"]
       },
       "patch": {
-        "description": "Correct a session's guessed facts, or record its measurement context.\n\nA discipline override is recorded as one (`discipline_overridden`), so no\nlater re-classification can quietly undo it. A timezone override\n**re-derives** `local_date`, which is the point of storing the zone rather\nthan the offset that happened to be true once (D93). `rpe` and\n`temperature_c` record the conditions the session was performed under \u2014\nsettable on any session, ingested ones included (#23), and clearable with\nan explicit null; an omitted field is always left untouched.",
+        "description": "Correct a session's guessed facts, or record its measurement context.\n\nA discipline override is recorded as one (`discipline_overridden`), so no\nlater re-classification can quietly undo it. A timezone override\n**re-derives** `local_date`, which is the point of storing the zone rather\nthan the offset that happened to be true once. `rpe` and\n`temperature_c` record the conditions the session was performed under \u2014\nsettable on any session, ingested ones included (#23), and clearable with\nan explicit null; an omitted field is always left untouched.",
         "operationId": "sessions-update_session",
         "parameters": [
           {
@@ -11440,7 +11440,7 @@
     },
     "/api/v1/sessions/{session_id}/score": {
       "get": {
-        "description": "The score version in force for one session.\n\n404 when nothing has been scored \u2014 an unlinked session, one whose link is\nstill an unanswered proposal, or one ingested before scoring existed. The\ndetail says which, because that sentence is the empty state the page\nrenders.\n\nAlso 404 once the link a score was computed against is **gone** \u2014 unlinked,\nrejected, called unplanned, or pointed at a different plan entry. The\nversions stay on `/score/history`, where they are the record of what was\nmeasured; what they stop being is this session's standing judgement (D161).",
+        "description": "The score version in force for one session.\n\n404 when nothing has been scored \u2014 an unlinked session, one whose link is\nstill an unanswered proposal, or one ingested before scoring existed. The\ndetail says which, because that sentence is the empty state the page\nrenders.\n\nAlso 404 once the link a score was computed against is **gone** \u2014 unlinked,\nrejected, called unplanned, or pointed at a different plan entry. The\nversions stay on `/score/history`, where they are the record of what was\nmeasured; what they stop being is this session's standing judgement.",
         "operationId": "scores-get_session_score",
         "parameters": [
           {

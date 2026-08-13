@@ -49,7 +49,7 @@ title, which no local hook can see; see the `commit-push-pr` skill.
 | `feat` | Added | new capability |
 | `fix` | Fixed | bug fix |
 | `perf`, `refactor`, `revert` | Changed | behaviour-preserving rework, reverts |
-| `docs` | Documentation | docs, guides, decision log |
+| `docs` | Documentation | README, guides, rules files |
 | `chore`, `build`, `ci`, `test`, `style` | Internal | deps, tooling, CI, tests, formatting |
 
 The list is duplicated in `.pre-commit-config.yaml`, `cliff.toml` and
@@ -74,8 +74,8 @@ Be aware the local hook is **lax**: it only rejects subjects it cannot parse.
 enforces lowercase-start and no-trailing-period. Write to the stricter rule.
 
 **Body** — required for anything beyond a trivial fix. Wrap at ~76 columns. Say
-what changed and why; name the setting, route, file or service; cite the
-decision-log id (`D12`) when one applies. Do not list files — the diff does that.
+what changed and why; name the setting, route, file or service. Do not list
+files — the diff does that.
 
 Do not open the body with a `Word: value` line; the Conventional Commits parser
 reads it as a footer.
@@ -93,9 +93,12 @@ the user does not want this in commits or PRs.
   regenerated `frontend/generated/api/`. Enforced by CI.
 - **New setting** → `app/core/config.py` **and** `.env.example`. Enforced by
   `backend/tests/unit/test_env_example_completeness.py`.
-- **Resolved ambiguity or a departure from `docs/mvp-build-plan.md`** → append
-  to `docs/decisions.md` (append-only: what, what it displaced, why). This one
-  is convention only — nothing checks it.
+- **A non-obvious choice** → the reasoning goes in the docstring or comment at
+  the code site it binds, and, where a future edit could violate it silently, a
+  test that fails when it does. A convention spanning a class of files goes in
+  `.claude/rules/`; a machine-catchable mistake goes in a hook. What the change
+  is *for* goes in the PR description, which squash-merge makes the commit body
+  on `main`.
 
 ## 5. Commit
 

@@ -19,13 +19,15 @@ PYPROJECT = Path(__file__).parents[2] / "pyproject.toml"
 #: Import names the domain MAY use, with the reason it is not a purity risk.
 #: Keep this minimal — an entry here is a permanent hole in the contract.
 DOMAIN_MAY_IMPORT = {
-    # Plain data modelling: no I/O and no framework coupling. The domain uses
-    # it for value objects; `pydantic_settings` (which reads the environment)
-    # stays forbidden.
-    "pydantic": "pure data modelling — validation and value objects, no I/O",
+    # Plain data modelling: no I/O and no framework coupling, so importing it
+    # would not breach purity. Permitted but deliberately unused — domain values
+    # are frozen, slotted dataclasses (see `app/domain/__init__.py`), and this
+    # entry only keeps the classification honest rather than blessing a switch.
+    # `pydantic_settings` (which reads the environment) stays forbidden.
+    "pydantic": "pure data modelling — no I/O; permitted, deliberately unused",
     # This list anticipated polars/pyarrow being allowlisted when WP-5 moved
     # metrics into the domain. It was not needed and the entry was never
-    # written (D112): the WP-5 metric functions are plain Python over
+    # written: the WP-5 metric functions are plain Python over
     # `Sequence[float | None]`, exactly as `normalized_power` already was, and
     # `app.ingest` reads the parquet file and hands the domain plain tuples.
     # pyarrow stays on the *forbidden* side of the contract, where it has been

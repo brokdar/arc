@@ -28,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // `dark` is unconditional: arc is a dark-only application (D59). The class
+    // `dark` is unconditional: arc is a dark-only application. The class
     // is what keeps the `dark:` rules in the vendored shadcn components live.
     <html
       lang="en"

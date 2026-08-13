@@ -13,7 +13,7 @@ ATHLETE = "/api/v1/athlete"
 async def test_the_profile_is_bootstrapped_empty_on_first_read(
     client: AsyncClient,
 ) -> None:
-    # No migration seeds the row (see docs/decisions.md): the first caller
+    # No migration seeds the row: the first caller
     # creates it, so a fresh database and a restored dump behave the same.
     response = await client.get(ATHLETE)
 
@@ -123,7 +123,7 @@ async def test_the_profile_needs_a_session(anon_client: AsyncClient) -> None:
 #
 # `paused` suppresses missed-session marking (WP-6) and nothing else. Nothing
 # reads it yet, so what is pinned here is the field, its default and its audit
-# trail — the things a later work package cannot add retroactively (D58).
+# trail — the things a later work package cannot add retroactively.
 
 
 async def test_a_new_profile_is_on_an_active_plan(client: AsyncClient) -> None:

@@ -552,7 +552,7 @@ const SEEDS: readonly SessionSeed[] = [
       predicted_load: VO2_PREDICTED_LOAD.load,
       predicted_intensity_factor: VO2_PREDICTED_LOAD.intensity_factor,
       // The card's coverage is the session's own, not a second measurement
-      // of it: both come out of `predict_endurance_load` (D88).
+      // of it: both come out of `predict_endurance_load`.
       predicted_load_coverage: VO2_PREDICTED_LOAD.coverage,
       predicted_volume_load_kg: null,
       matched_session_id: null,
@@ -672,7 +672,7 @@ const SEEDS: readonly SessionSeed[] = [
  * The status leads, because it is the fact: a session the sweep marked
  * `missed` is missed whatever anyone later computes. Only a `completed`
  * session asks the verdict, and only then does the absence of one mean
- * `completed` — judged by nobody yet (D152).
+ * `completed` — judged by nobody yet.
  */
 function completionState(
   status: Schemas["WeekSessionRead"]["status"],
@@ -859,7 +859,7 @@ export function plannedSessionFixture(
     updated_at: "2026-07-27T18:30:00Z",
     intent: {
       id: intentId(seed.session.id, seed.session.intent_version),
-      // The versioned artefact *is* the planned session (D49): every version
+      // The versioned artefact *is* the planned session: every version
       // of the intent hangs off the session's own id.
       artefact_id: seed.session.id,
       version: seed.session.intent_version,
@@ -1048,13 +1048,13 @@ const STRENGTH_PURPOSES = new Set<Schemas["Purpose"]>([
  *   session pins an *estimated* 250 W. A screen that resolves a prescription
  *   against "now" instead of against its pins therefore renders visibly
  *   different numbers and says "tested" about a value that was guessed — the
- *   fixture exists so a test can prove no screen does that (D49);
+ *   fixture exists so a test can prove no screen does that;
  * * the 250 W estimate is *in the history*, as the version the 265 W test
  *   corrected. That is what makes this a history rather than a list of
  *   current values: the pinned version is still there, still readable, still
  *   explaining the watts on a session that was planned against it.
  *
- * `resting_hr` is deliberately absent. It is writable (D114) and nothing has
+ * `resting_hr` is deliberately absent. It is writable and nothing has
  * ever entered one, which is the state the settings page's empty slot and the
  * "no zones yet" panel are about.
  */
@@ -1382,14 +1382,14 @@ export function workoutFixture(workoutId: string): Schemas["WorkoutRead"] {
  *   wall clock and its `recording_time_s` is null, because there were no
  *   pauses to subtract;
  * * `elapsed_time_s − recording_time_s` equals the total length of the
- *   `recording_stops`, which are half-open row ranges on the 1 Hz grid (D89) —
+ *   `recording_stops`, which are half-open row ranges on the 1 Hz grid —
  *   so the coffee stop below is 600 rows and 600 seconds;
  * * `end_time − start_time` is the **elapsed** time, not the recording time;
  * * `local_date` is the date of `start_time` read in `timezone`;
  * * a channel absent from `channels` has a null source and no candidates, and
  *   a source that had one candidate carries the rule `"only candidate"` —
  *   the strings are `app.ingest.parsers.base`'s own;
- * * `anomaly_count` counts **repairs**, so a clean trainer file is 0 (D99).
+ * * `anomaly_count` counts **repairs**, so a clean trainer file is 0.
  */
 export const ACTIVITY_IDS = {
   outdoorRide: "0199a000-0000-7000-8000-000000000101",
@@ -1462,7 +1462,7 @@ const OUTDOOR_RECORDING: Schemas["RecordingRead"] = {
   moving_time_s: 8712,
   power_source_candidates: ["Quarq DZero", "Garmin Edge 830"],
   power_source: "Quarq DZero",
-  // The tie-break FIT forces on us, spelled as the parser spells it (D96).
+  // The tie-break FIT forces on us, spelled as the parser spells it.
   power_source_rule: "lowest device_index among 2 candidates",
   hr_source_candidates: ["Garmin HRM-Pro"],
   hr_source: "Garmin HRM-Pro",
@@ -1604,7 +1604,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       local_date: "2026-08-03",
       start_time: "2026-08-03T16:02:00Z",
       end_time: "2026-08-03T17:02:00Z",
-      // The offset form a head unit's local_timestamp implies (D93).
+      // The offset form a head unit's local_timestamp implies.
       timezone: "UTC+02:00",
       discipline: "cycling",
       classification_source: "heuristic",

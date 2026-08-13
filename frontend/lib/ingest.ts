@@ -94,7 +94,7 @@ export const INGEST_OUTCOMES: Readonly<Record<IngestOutcome, string>> = {
 /**
  * What "overrule this verdict" is called, per verdict that can be overruled.
  *
- * Two of them can (D107, which generalised D98's "only a `suspected_duplicate`"):
+ * Two of them can (generalising the earlier "only a `suspected_duplicate`"):
  * `suspected_duplicate` waives the duplicate checks, and
  * `implausible_channel` waives the implausible-channel check and nothing else
  * — the cleaner nulls what it cannot believe, so the ride is ingested with the
@@ -183,7 +183,7 @@ export function waitingLabel(queue: {
  * What an upload achieved, as a sentence the panel can print.
  *
  * Branches on `outcome`, never on the status code: the API answers 200 for a
- * file it refused, because a quarantined file is a *result* (D97). A client
+ * file it refused, because a quarantined file is a *result*. A client
  * that read the status instead would report "uploaded" and show nothing.
  */
 export function describeReport(report: IngestReport): string {

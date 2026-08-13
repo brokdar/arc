@@ -110,7 +110,7 @@ export const RIDE_METRICS: Schemas["SessionMetricsRead"] = {
           "mean power": "187 W over the 1140 recorded rows",
         },
         assumptions: [
-          "both terms are taken over the same recorded rows, which is what keeps the ratio at or above 1 \u2014 it is deliberately not the average power shown beside it, which is divided by moving time (D194)",
+          "both terms are taken over the same recorded rows, which is what keeps the ratio at or above 1 \u2014 it is deliberately not the average power shown beside it, which is divided by moving time",
         ],
         citation: "Allen & Coggan, Training and Racing with a Power Meter",
       },

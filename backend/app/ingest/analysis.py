@@ -131,9 +131,11 @@ def _read(path: Path) -> StoredStreams | None:
     carries a column this one has no `app.domain.streams.StreamChannel` for,
     `app.ingest.parquet.read_streams` raises ``ValueError`` naming it, and
     without this line a whole store of good streams would read as "the stream
-    file is missing" with nothing anywhere saying why (see D201's ordering
-    note). Degrading rather than raising is still right — one unreadable file
-    must not take the metric run down — but it must not be silent.
+    file is missing" with nothing anywhere saying why. (This is why the
+    ``rebuild-streams`` recipe in the justfile says to deploy the new code
+    *before* rebuilding.) Degrading rather than raising is still right — one
+    unreadable file must not take the metric run down — but it must not be
+    silent.
     """
     try:
         return read_streams(path)
@@ -191,7 +193,7 @@ class _Segment:
 class _Durations:
     """The durations a session's metrics are computed against (A4.4).
 
-    Moving time is deliberately **not** here (D196): the artefact derives it
+    Moving time is deliberately **not** here: the artefact derives it
     from the cleaned speed column of the same joined grid the metrics run over,
     so that the seconds an average is divided by and the seconds it is summed
     over are one set. The recordings' own device-derived ``moving_time_s``
@@ -221,7 +223,7 @@ class _Joined:
             including the gaps this join padded.
         segments: ``[start, end)`` row range of each recording, in order.
             Carried because a **cumulative** channel cannot be read off the
-            joined column without them (D202): every recording's odometer
+            joined column without them: every recording's odometer
             counts from its own zero, so a session's distance is the sum of
             each segment's own span, and only the join knows where they are.
     """
@@ -282,7 +284,7 @@ def _join(segments: Sequence[_Segment]) -> _Joined:
     reading them as zero, and the load's duration term is the recordings' own
     recording time summed, never the length of this grid (A5.1).
 
-    With one exception, and it is why :attr:`_Joined.segments` exists (D202).
+    With one exception, and it is why :attr:`_Joined.segments` exists.
     That reasoning holds for every channel that is an *instantaneous reading*
     and for none that is cumulative. Each recording's odometer counts from its
     own zero, so laying two of them on one grid produces a column that runs
@@ -366,7 +368,7 @@ class SessionAnalyser:
         """Compute and store a new metric version for one session.
 
         Reads the session's stored stream when it has one, resolves every
-        pinnable anchor that is **in force now** (D115) and records exactly
+        pinnable anchor that is **in force now** and records exactly
         which versions those were, then runs the domain over the cleaned
         columns with the recording's ``recording_time_s`` — A5.1's duration
         term, not elapsed and not moving time.
@@ -439,7 +441,7 @@ class SessionAnalyser:
         the join to remember what it padded.
 
         The boundaries come back beside the columns because the odometer is
-        cumulative and the join is what breaks it (D202); see :func:`_join`.
+        cumulative and the join is what breaks it; see :func:`_join`.
 
         A session with no recording, or whose stream files are all unreadable,
         answers with no columns and the reasons the domain writes for them.

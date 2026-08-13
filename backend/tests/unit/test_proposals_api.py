@@ -1327,7 +1327,7 @@ async def test_the_scheduled_sweep_lapses_through_its_own_session(
 async def test_no_proposal_can_declare_a_session_completed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # D174: a planned session's status is derived from what the athlete did.
+    # A planned session's status is derived from what the athlete did.
     # The red flag cannot catch this one either — a status carries neither a
     # purpose nor a load — so the vocabulary refuses it instead.
     await append_ftp(client)
@@ -1358,7 +1358,7 @@ def test_no_plan_change_can_touch_an_anchor() -> None:
     ]
 
 
-# --- the diff is what accepting produces (D185) -----------------------------------
+# --- the diff is what accepting produces -----------------------------------
 
 
 @pytest.fixture
@@ -1504,7 +1504,7 @@ async def test_a_structure_only_revision_is_a_visible_diff(
     assert entry["before"]["duration_s"] == entry["after"]["duration_s"] == 3_600
 
 
-# --- the red flag refuses what it cannot show to be safe (D186) -------------------
+# --- the red flag refuses what it cannot show to be safe -------------------
 
 
 async def test_more_sets_are_refused_while_the_flag_is_up(
@@ -1627,7 +1627,7 @@ async def test_a_change_nothing_can_be_compared_on_is_refused_while_the_flag_is_
         )
 
 
-# --- a day the athlete has already trained (D188) ---------------------------------
+# --- a day the athlete has already trained ---------------------------------
 
 
 async def test_a_recording_a_day_off_still_resolves_the_proposal(
@@ -1698,7 +1698,7 @@ async def test_accepting_a_change_to_a_matched_session_is_refused(
     assert row.status is ProposalStatus.PENDING
 
 
-# --- the agent may not destroy testimony (D189) -----------------------------------
+# --- the agent may not destroy testimony -----------------------------------
 
 
 async def test_deleting_a_session_the_athlete_executed_is_refused(
@@ -1771,7 +1771,7 @@ async def test_deleting_a_plain_planned_session_is_still_allowed(
     assert (await client.get(f"{SESSIONS}/{session['id']}")).status_code == 404
 
 
-# --- bounds on what an agent may write (D187) -------------------------------------
+# --- bounds on what an agent may write -------------------------------------
 
 
 async def test_an_expiry_beyond_the_horizon_is_refused(

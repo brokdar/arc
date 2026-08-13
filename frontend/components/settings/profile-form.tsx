@@ -33,7 +33,7 @@ const athleteQueryKey = $api.queryOptions("get", "/api/v1/athlete").queryKey;
  * Who the athlete is: the four facts the profile holds and nothing else.
  *
  * Not on this form, deliberately: `plan_state` is edited where the plan is
- * (the calendar's pause control, D58) and the illness flag has its own panel,
+ * (the calendar's pause control) and the illness flag has its own panel,
  * because both change what the *application does* and neither is a fact about
  * the person. `capabilities` is an unmodelled stub the MVP stores and never
  * interprets (`app.domain.athlete`), so there is nothing here to edit it with.

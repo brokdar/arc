@@ -153,8 +153,8 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
 
     They come from the same golden file the load does, so this also pins the
     relationship between them: the distance is the **odometer** channel that
-    file carries, differenced end to end (D197), and the average speed is that
-    distance over the moving time the same artefact reports (D194) — not over
+    file carries, differenced end to end, and the average speed is that
+    distance over the moving time the same artefact reports — not over
     its recording time, which is longer.
     """
     await full_anchor_set(client)
@@ -194,10 +194,10 @@ async def test_a_ride_reports_the_basics_a_ride_log_is_read_for(
 async def test_average_power_is_divided_by_moving_time_not_recording_time(
     data_root: Path, client: AsyncClient
 ) -> None:
-    """D194 and D196, re-derived from the stream the same session serves.
+    """The averaging rules, re-derived from the stream the same session serves.
 
     Which divisor was used is half of it; the other half is that the sum above
-    the divisor covers **exactly** the seconds the divisor counted (D196). Both
+    the divisor covers **exactly** the seconds the divisor counted. Both
     are recomputed here from the cleaned speed and power columns the streams
     endpoint returns — the same grid the artefact was computed over — so a
     numerator and a denominator that came to describe different stretches of
@@ -235,7 +235,7 @@ async def test_average_power_is_divided_by_moving_time_not_recording_time(
 async def test_the_variability_index_is_a_ratio_over_one_series(
     data_root: Path, client: AsyncClient
 ) -> None:
-    """D196: VI cannot mix the moving-time average with an NP over every row.
+    """VI cannot mix the moving-time average with an NP over every row.
 
     Its two terms are statistics of the same recorded series, which is what
     puts it at or above 1; the average power beside it on the page is a

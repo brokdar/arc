@@ -8,7 +8,7 @@ is the MCP tool over `app.services.agent_notes`, the same service these routes
 call.
 
 Disputing is a `POST` to a sub-resource rather than a `PATCH` setting a field
-(D56, and the same shape as accepting a proposal): it is one tap that means
+(and the same shape as accepting a proposal): it is one tap that means
 one thing, and the body carries only what that tap said.
 """
 
@@ -53,8 +53,8 @@ def get_service(session: SessionDep) -> AgentNoteService:
 
 ServiceDep = Annotated[AgentNoteService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 SessionFilter = Annotated[
     uuid.UUID | SkipJsonSchema[None],
     Query(description="Notes about this recorded session."),

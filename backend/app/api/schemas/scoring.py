@@ -2,7 +2,7 @@
 
 **Every axis is one shape**, the same one every metric already has: a value
 with its explanation, *or* a `not_assessed` reason, never both and never
-neither (`.claude/rules/frontend-ui-conventions.md` rule 4). The UI branches
+neither. The UI branches
 once and renders the reason in the slot the number would have occupied,
 instead of inventing an empty state per axis.
 

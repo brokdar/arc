@@ -178,8 +178,8 @@ class WorkoutService:
         """Build and validate the workout :meth:`create` would write.
 
         The dry run of a create, and a **separate read-only method rather than
-        a flag on the writer** — the shape `AnchorService.preview` established
-        (D178). Every rule `create` applies is applied here, because `create`
+        a flag on the writer** — the shape `AnchorService.preview` established.
+        Every rule `create` applies is applied here, because `create`
         calls this to build its row: there is no second code path to disagree
         with, and a dry run that ran only *some* of the validation would tell
         an agent its call is fine and then refuse it.
@@ -387,7 +387,7 @@ def _bounded[T: str | None](field: str, value: T, cap: int) -> T:
     tags, and an over-long name reached Postgres as a
     `StringDataRightTruncation` — an agent-triggerable 500 where a 422 naming
     the field belongs. The bounds are the column widths themselves, imported
-    rather than restated (D190).
+    rather than restated.
 
     Raises:
         ValidationError: When ``value`` is over ``cap``.

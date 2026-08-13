@@ -3,6 +3,13 @@
 # needed) and derive the frontend TypeScript types from it. The output in
 # frontend/generated/api/ is committed; CI fails if it drifts from the
 # backend (see check-api-schema-sync.sh).
+#
+# Why the frontend carries two TypeScript compilers: type-checking runs on
+# `tsgo` (the native Go port — the TypeScript 7 line), but `openapi-typescript`
+# below and Next's own compiler call into the JavaScript API, which the native
+# build does not expose yet. So TypeScript 5.9 stays installed for the tools
+# that need the JS API while checking happens on the fast native compiler.
+# Neither is redundant; removing 5.9 breaks this script.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

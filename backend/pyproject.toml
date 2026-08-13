@@ -4,6 +4,11 @@ description = "arc API service"
 readme = "README.md"
 requires-python = ">=3.14"
 dynamic = ["version"]
+# Deliberately absent: the Anthropic SDK. This backend is the coaching agent's
+# *tool surface*, not a model client — the agent connects from outside over
+# MCP, and nothing here calls a model. An unused dependency would also have to
+# be classified by the domain-purity contract below and its completeness test,
+# so it would be permanent noise in two places.
 dependencies = [
     "fastapi[standard]>=0.141.1",
     "sqlalchemy[asyncio]>=2.0.51",

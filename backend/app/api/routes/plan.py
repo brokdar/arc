@@ -26,8 +26,8 @@ def get_service(session: SessionDep) -> PlanService:
 
 ServiceDep = Annotated[PlanService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 WeekStart = Annotated[
     dt.date | SkipJsonSchema[None],
     Query(

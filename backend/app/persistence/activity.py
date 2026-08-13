@@ -120,7 +120,7 @@ class SessionRow(Base):
     #: Ambient temperature during the session, °C, athlete-reported (#23) —
     #: the conditions the measurement was taken under, not a device channel.
     #: One number for the whole session: the cheapest queryable slice of
-    #: "conditions", ahead of the MMP's observed-conditions model (D210).
+    #: "conditions", ahead of the MMP's observed-conditions model.
     temperature_c: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(String(MAX_NOTES_LENGTH))
 
@@ -211,6 +211,20 @@ class RecordingRow(Base):
     #: A4.3: which meter produced the numbers, and why that one. A file with a
     #: crank meter and a smart trainer carries two power traces that can differ
     #: by 15 %, and choosing silently makes the number unexplainable.
+    #:
+    #: Power and heart rate only, deliberately — these are the columns that
+    #: record a *choice between devices*, which is the ambiguity A4.3 is about:
+    #: a bike with two power meters, and a strap that may or may not be the
+    #: watch's own. Hence the trio of columns each: what was on offer, what won,
+    #: and the rule that picked it. Cadence, speed, altitude and temperature
+    #: come from one sensor per file in practice, so a candidate list and a
+    #: rule would always repeat the device — cost without a question it
+    #: answers. One of them gains columns when a file is found that disagrees.
+    #:
+    #: Distance is the exception that proves the shape: it carries a source
+    #: label too (``app.ingest.pipeline.source_labels``), but the label names a
+    #: *field* rather than a device, so there is no tie-break to store and no
+    #: column here — it lives in the parquet metadata alone.
     power_source_candidates: Mapped[list[str]] = mapped_column(JSONColumn, default=list)
     power_source: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))
     power_source_rule: Mapped[str | None] = mapped_column(String(MAX_SOURCE_LENGTH))

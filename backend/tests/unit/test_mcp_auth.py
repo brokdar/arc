@@ -208,7 +208,7 @@ def test_a_label_that_would_not_survive_being_written_down_is_refused(
     # The label becomes `agent:<label>` in every audit row this key writes, so
     # it has to be one token, short enough for the column, and not the name of
     # another kind of actor. A newline in it also splits a log line in two,
-    # which is the cheap way to forge a trail (D191).
+    # which is the cheap way to forge a trail.
     with pytest.raises(ValueError, match=expected):
         parse_api_keys(f"{label}:write:{COACH_KEY}")
 

@@ -69,7 +69,7 @@ export interface LocalStamp {
   readonly time: string;
 }
 
-/** `UTC+02:00` / `UTC-05:30` — the offset form the backend writes (D93). */
+/** `UTC+02:00` / `UTC-05:30` — the offset form the backend writes. */
 const FIXED_OFFSET = /^UTC([+-])(\d{2}):(\d{2})$/;
 
 /**

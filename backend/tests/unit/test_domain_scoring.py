@@ -227,12 +227,12 @@ def test_the_carried_sum_agrees_with_re_slicing_the_window(
 ) -> None:
     """The O(n) window is the O(n × window) definition, gaps and all.
 
-    The implementation carries a running sum rather than re-summing each row
-    (D163), which is a rewrite of arithmetic that was already correct — so the
-    property worth stating is that it did not change the answer. The `None`
-    handling is the delicate half: a row with no reading must count as neither
-    a zero nor a sample, and a window holding none of them must stay `None`
-    rather than divide by nothing.
+    The implementation carries a running sum rather than re-summing each row,
+    which is a rewrite of arithmetic that was already correct — so the property
+    worth stating is that it did not change the answer. The `None` handling is
+    the delicate half: a row with no reading must count as neither a zero nor a
+    sample, and a window holding none of them must stay `None` rather than
+    divide by nothing.
 
     Compared with a tolerance, not for equality: a carried sum and a fresh sum
     over the same floats differ in the last bits, and pinning those would be
@@ -1040,7 +1040,7 @@ def test_every_row_of_the_table_is_reachable() -> None:
     [
         (SessionStatus.PLANNED, None, CompletionState.PLANNED),
         # A pending proposal leaves the session `planned`, so the strip shows a
-        # question rather than a completion (D140).
+        # question rather than a completion.
         (SessionStatus.PLANNED, Verdict.AS_INTENDED, CompletionState.PLANNED),
         (SessionStatus.MISSED, None, CompletionState.MISSED),
         (SessionStatus.DISPLACED, None, CompletionState.DISPLACED),

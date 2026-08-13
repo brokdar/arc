@@ -16,7 +16,7 @@ Build-plan invariant 4, in one place:
   The pins are kept because the athlete executed against them; changing them
   would rewrite the prescription the ride was actually judged by. Kept, not
   frozen wholesale: a pin the new version no longer needs is dropped, and an
-  anchor the new version introduces is pinned at today's version (D54).
+  anchor the new version introduces is pinned at today's version.
 * Editing a session's *date* or *status* is not an intent edit and writes no
   version. Those are facts about the calendar, not about what the session is
   for — which is also why **moving** a session (`move`) touches nothing but
@@ -425,7 +425,7 @@ class PlannedSessionService:
         prescription and runs the 1 Hz expansion behind
         :func:`~app.domain.prediction.predict_endurance_load` **per row**, so
         it is for the routes that answer with one whole session, not for a
-        page of fifty (D79).
+        page of fifty.
         """
         anchors_by_session = await self.pins(rows)
         resolved: dict[uuid.UUID, SessionResolution] = {}
@@ -989,7 +989,7 @@ class PlannedSessionService:
             # keeping one would claim a resolution this prescription has no
             # use for), and an anchor the edit *introduced* is pinned at
             # today's version, because there is no older answer to keep: it
-            # was never part of what the athlete executed against (D54).
+            # was never part of what the athlete executed against.
             pins = {
                 anchor: version
                 for anchor, version in parse_pins(
@@ -1243,11 +1243,11 @@ def _anchor_sources(
 def _missing_anchor_message(anchor: AnchorType, sources: frozenset[str]) -> str:
     """Explain which half of the prescription needs an anchor nobody entered.
 
-    D49 gave this refusal one wording, and it misleads whenever the anchor is
-    required by the template's criteria alone: an athlete who prescribed
-    nothing but absolute watts was told "this prescription is expressed as a
-    percentage of ftp", and the remedy it offered — use absolute targets — was
-    the thing they had already done.
+    The wording has to name the half that needs it. An athlete who prescribed
+    nothing but absolute watts, where the anchor is required by the template's
+    criteria alone, would otherwise be told "this prescription is expressed as
+    a percentage of ftp" — and offered a remedy, use absolute targets, that
+    they had already followed.
     """
     name = anchor.value
     if sources == frozenset({FROM_TARGETS}):

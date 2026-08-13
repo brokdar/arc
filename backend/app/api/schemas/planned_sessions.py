@@ -165,7 +165,7 @@ class PinnedAnchorRead(BaseModel):
     """One anchor version this session's percentages resolve against.
 
     The pin is the product's most distinctive invariant (build-plan invariant
-    4, D49) and it is worth nothing invisible: showing the provenance is what
+    4) and it is worth nothing invisible: showing the provenance is what
     makes an `estimated` FTP read as an estimate rather than a fact.
     """
 
@@ -231,7 +231,7 @@ class PredictedVolumeRead(BaseModel):
 class PlannedSessionListItem(BaseModel):
     """One planned session as a **list row**: everything but the expensive parts.
 
-    Deliberately not `PlannedSessionRead` (D79, superseding that half of D74).
+    Deliberately not `PlannedSessionRead`.
     A page of this collection is a page of *sessions*, and serving the resolved
     step tree and the load explanation for every one of them costs megabytes
     of body and seconds of CPU that no list view spends. What is dropped is

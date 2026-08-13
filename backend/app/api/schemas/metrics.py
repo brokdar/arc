@@ -9,8 +9,7 @@ that merely lists sessions should pay for that.
 **Every metric is one shape.** `MetricRead` carries a value with its
 explanation *or* a `not_assessed` reason, never both and never neither. The UI
 branches on that once — `NotAssessed` renders the reason in the slot the value
-would have occupied — instead of inventing an empty state per number
-(`.claude/rules/frontend-ui-conventions.md` rule 4).
+would have occupied — instead of inventing an empty state per number.
 
 The field names mirror `app.domain.session_analysis.analysis_to_json` exactly,
 so the stored payload validates straight into these models. Extra keys are
@@ -66,8 +65,7 @@ def predates(metric: str) -> MetricRead:
     for a number added later, and the honest answer is neither a zero nor a
     silently missing field: it is "these numbers predate this one, recompute to
     get it" — which is a `not_assessed` reason like any other, rendered in the
-    slot by the same component (`.claude/rules/frontend-ui-conventions.md` rule
-    4) and fixed by the button already on the page.
+    slot by the same component, and fixed by the button already on the page.
     """
     return MetricRead(
         not_assessed=(
@@ -81,14 +79,14 @@ class PowerMetricsRead(BaseModel):
     """Everything derived from the power channel."""
 
     normalized_power: MetricRead
-    #: Work done **while moving**, over moving time (D194, D196) — the basis a
+    #: Work done **while moving**, over moving time — the basis a
     #: head unit averages over, summed across the same seconds it divides by,
     #: and *not* the duration the load was computed over. Its explanation
     #: carries all of that; render it.
     average_power: MetricRead
     max_power: MetricRead
     intensity_factor: MetricRead
-    #: NP over the mean of the **same recorded rows** (D196), never over the
+    #: NP over the mean of the **same recorded rows**, never over the
     #: moving-time average power above: two divisors would let the ratio fall
     #: below 1, which no ride can do.
     variability_index: MetricRead
@@ -124,7 +122,7 @@ class SpeedMetricsRead(BaseModel):
 
     #: Integrated from the speed channel, not from the GPS track.
     distance_km: MetricRead = Field(default_factory=lambda: predates("distance"))
-    #: Over moving time, the same basis as average power (D194).
+    #: Over moving time, the same basis as average power.
     average_speed_kmh: MetricRead = Field(
         default_factory=lambda: predates("average speed")
     )
@@ -247,7 +245,7 @@ class SessionMetricsRead(BaseModel):
     computed_at: dt.datetime
     #: Why this version exists. Null on version 1.
     recompute_reason: str | None
-    #: The anchor versions in force when this was computed (D115).
+    #: The anchor versions in force when this was computed.
     pins: list[AnchorPinRead]
     power_zone_model: ZoneModel | None
     hr_zone_model: ZoneModel | None
@@ -256,8 +254,8 @@ class SessionMetricsRead(BaseModel):
     #: computed over** (A4.4, A5.1).
     recording_time_s: float
     elapsed_time_s: float
-    #: Rows of the cleaned speed column at or above 1 km/h, one second each
-    #: (D196). The basis every *average* here is taken over (D194) — and the
+    #: Rows of the cleaned speed column at or above 1 km/h, one second each.
+    #: The basis every *average* here is taken over — and the
     #: rows they are summed over — whenever the speed channel covered enough of
     #: the ride to be one; where it did not, this still reports what the column
     #: showed and each average's explanation names the recording time it fell
@@ -277,7 +275,7 @@ class SessionMetricsRead(BaseModel):
     load: LoadRead
     time_in_zone: TimeInZoneBlockRead
     #: Deterministic from the stream alone, so it is versioned with the
-    #: metrics rather than recomputed per consumer (D118).
+    #: metrics rather than recomputed per consumer.
     intervals: list[IntervalRead]
     strength: StrengthRead
 

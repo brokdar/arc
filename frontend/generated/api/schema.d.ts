@@ -605,7 +605,7 @@ export interface paths {
      * List Planned Sessions
      * @description List planned sessions in date order, optionally within a date range.
      *
-     *     A list row is lighter than the session it names (D79): no resolved step
+     *     A list row is lighter than the session it names: no resolved step
      *     tree and no predicted-load explanation, because a page of two hundred
      *     sessions carrying either is measured in megabytes and in seconds of
      *     synchronous CPU. The pins stay — they are one query for the whole page —
@@ -673,7 +673,7 @@ export interface paths {
      *     The copy is a **new** planned session: status `planned`, its own intent
      *     chain starting at version 1, and its anchors pinned at the versions in
      *     force now — a prescription freezes when it is planned, and this one is
-     *     being planned now (invariant 4, D57).
+     *     being planned now (invariant 4).
      */
     post: operations["planned-sessions-copy_planned_session"];
     delete?: never;
@@ -740,7 +740,7 @@ export interface paths {
      *
      *     Its own verb rather than `PATCH ... {"date": ...}`, which does the same
      *     thing: dragging a card across the calendar is one intention, and the audit
-     *     trail should be able to say so (D56). Nothing about the prescription
+     *     trail should be able to say so. Nothing about the prescription
      *     changes — no intent version, no re-pinning.
      */
     post: operations["planned-sessions-move_planned_session"];
@@ -965,7 +965,7 @@ export interface paths {
      *     A discipline override is recorded as one (`discipline_overridden`), so no
      *     later re-classification can quietly undo it. A timezone override
      *     **re-derives** `local_date`, which is the point of storing the zone rather
-     *     than the offset that happened to be true once (D93). `rpe` and
+     *     than the offset that happened to be true once. `rpe` and
      *     `temperature_c` record the conditions the session was performed under —
      *     settable on any session, ingested ones included (#23), and clearable with
      *     an explicit null; an omitted field is always left untouched.
@@ -1109,7 +1109,7 @@ export interface paths {
      *     Also 404 once the link a score was computed against is **gone** — unlinked,
      *     rejected, called unplanned, or pointed at a different plan entry. The
      *     versions stay on `/score/history`, where they are the record of what was
-     *     measured; what they stop being is this session's standing judgement (D161).
+     *     measured; what they stop being is this session's standing judgement.
      */
     get: operations["scores-get_session_score"];
     put?: never;
@@ -1877,7 +1877,7 @@ export interface components {
      *     recorded some seconds before it is scored, and every session spends the
      *     gap between ingest and its first score in a state that is neither
      *     ``planned`` nor any verdict. Rendering it as ``completed-as_intended``
-     *     would be the machine declaring a verdict nobody computed (D152).
+     *     would be the machine declaring a verdict nobody computed.
      * @enum {string}
      */
     CompletionState:
@@ -2764,7 +2764,7 @@ export interface components {
      * @description One anchor version this session's percentages resolve against.
      *
      *     The pin is the product's most distinctive invariant (build-plan invariant
-     *     4, D49) and it is worth nothing invisible: showing the provenance is what
+     *     4) and it is worth nothing invisible: showing the provenance is what
      *     makes an `estimated` FTP read as an estimate rather than a fact.
      */
     PinnedAnchorRead: {
@@ -2958,7 +2958,7 @@ export interface components {
      * PlannedSessionListItem
      * @description One planned session as a **list row**: everything but the expensive parts.
      *
-     *     Deliberately not `PlannedSessionRead` (D79, superseding that half of D74).
+     *     Deliberately not `PlannedSessionRead`.
      *     A page of this collection is a page of *sessions*, and serving the resolved
      *     step tree and the load explanation for every one of them costs megabytes
      *     of body and seconds of CPU that no list view spends. What is dropped is
@@ -3213,7 +3213,7 @@ export interface components {
      *     has kilograms and no TSS. They are different quantities and must never be
      *     added or shown in one column.
      *
-     *     **Every field a change can touch is here, on both sides** (D185). A
+     *     **Every field a change can touch is here, on both sides**. A
      *     snapshot that carried only the cheap scalars let a revision of the success
      *     criteria or of the prescription itself render as "no field differs" above
      *     an enabled Accept button — the athlete answering a question the diff had
@@ -3885,8 +3885,8 @@ export interface components {
      * SessionMatchStatus
      * @description Where a completed session stands relative to the plan.
      *
-     *     WP-6 fills the lifecycle the column was sized for (D81 — every member here
-     *     is at most as long as ``unmatched``, so no migration widened it).
+     *     WP-6 fills the lifecycle the column was sized for — every member here
+     *     is at most as long as ``unmatched``, so no migration widened it.
      *
      *     ``UNMATCHED`` is the state every session is written in and the state a
      *     **pending** proposal leaves it in: a proposal is a question, and a session
@@ -4123,8 +4123,8 @@ export interface components {
      *       explicit ``null`` with a 422, and ``SkipJsonSchema[None]`` keeps the
      *       Python-side ``= None`` "unset" default while dropping the ``null``
      *       branch from the contract, so the schema promises exactly what the
-     *       parser accepts (the rule of
-     *       `.claude/rules/api-optional-query-params.md`, applied to a body).
+     *       parser accepts. In a body, omitting a field means "leave it alone" and
+     *       ``null`` would mean "clear it" — which is not an operation these two have.
      *     * **Measurement context** (``rpe``, ``temperature_c``, #23) is what the
      *       athlete reports about the conditions of a session — including an
      *       ingested one, which is the point: a device file never carries an RPE.

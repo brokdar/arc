@@ -118,7 +118,7 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
   // printing it under "Duration" beside "Recording time" showed one number
   // twice in two formats and hid the pauses. End minus start is the other
   // number — and the two now differ by exactly the paused total the recording
-  // panel prints below (D101: elapsed − recording = Σ stop rows).
+  // panel prints below (elapsed − recording = Σ stop rows).
   const elapsedS =
     (Date.parse(session.end_time) - Date.parse(session.start_time)) / 1000;
 
@@ -171,7 +171,7 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
         {/* And directly under the judgement, because it is a *second opinion*
             on it: the axes above are computed and the note below is written,
             and the coach's purple is what says which is which. Absent when
-            the coach has said nothing (D183). */}
+            the coach has said nothing. */}
         <SessionCoachNotes sessionId={session.id} />
 
         <section className="flex flex-col gap-2.5">
@@ -328,7 +328,7 @@ function Metric({
  * One device file's account of the session.
  *
  * The paused total is **derived** from the stop ranges rather than read from a
- * field: a stop is a half-open row range on the 1 Hz grid (D89), so its length
+ * field: a stop is a half-open row range on the 1 Hz grid, so its length
  * in seconds is `end - start`, and their sum is exactly what separates elapsed
  * from recording time. Printing it is how the page shows its arithmetic
  * instead of asserting it.
@@ -418,7 +418,7 @@ function RecordingPanel({ recording }: { recording: Recording }) {
  * Which meter produced one channel, and how that was decided.
  *
  * The rule is printed beside the source because FIT names every candidate and
- * nothing that chose between them (D96): "only candidate" and "the one the
+ * nothing that chose between them: "only candidate" and "the one the
  * ride was recorded with" are different claims, and a page that showed just
  * the winner would make them look like the same one.
  */

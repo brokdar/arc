@@ -157,7 +157,7 @@ describe("a pending proposal", () => {
     const panel = await ready();
     await within(panel).findByText("Proposed");
 
-    // D140: a proposal is a question. The session is still `unmatched` and the
+    // A proposal is a question. The session is still `unmatched` and the
     // planned session still `planned` while it stands — the badge says
     // "Proposed" because that is the more useful truth about a row waiting on
     // an answer, and the stored status is the one asserted here.

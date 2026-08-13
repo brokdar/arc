@@ -7,7 +7,7 @@ set -euo pipefail
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 echo "Configuring $REPO..."
 
-# squash_merge_commit_title/message are load-bearing, not cosmetic (D19): the
+# squash_merge_commit_title/message are load-bearing, not cosmetic: the
 # squashed commit's subject becomes the changelog entry, so it must come from
 # the PR title that `pr-title.yml` lints, and its body from the curated PR
 # description rather than a bullet dump of branch commits. GitHub rejects

@@ -108,8 +108,8 @@ STOP = (700, 760)
 #: A traffic light in the middle of a recovery, as a `[start, end)` row range.
 #: Twenty-five seconds — under `GAP_THRESHOLD_S`, so the head unit kept
 #: recording through it and it is **not** a recording stop. That is the whole
-#: point of it: it is the difference between recording time and moving time
-#: (D194), so a fixture without one cannot tell an average over the first from
+#: point of it: it is the difference between recording time and moving time,
+#: so a fixture without one cannot tell an average over the first from
 #: an average over the second, and the header's stopped-time slot would have
 #: nothing but the pause above to show.
 STANDSTILL = (400, 425)
@@ -127,7 +127,7 @@ FREEWHEEL = (1_130, 1_170)
 #: A head unit integrates wheel revolutions far faster than the once-a-second
 #: speed it writes, so its cumulative `distance` field is a percent or two
 #: above anything reconstructed from that column — 1.5 % on the real ride this
-#: system was checked against (D197). The fixture carries the gap so that a
+#: system was checked against. The fixture carries the gap so that a
 #: component rendering "distance" is rendering the odometer's kilometres,
 #: which is what the API now serves, and not the speed integral it used to.
 ODOMETER_RATIO = 1.015

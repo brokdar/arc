@@ -80,7 +80,7 @@ export const MATCH_STATUS_REASONS: Readonly<
  *
  * `manual` covers both a hand-entered session and an athlete's correction of a
  * guessed one: both are "because you said so", which is neither a file's sport
- * field nor an inference over channels (D99).
+ * field nor an inference over channels.
  */
 export const CLASSIFICATION_LABELS: Readonly<
   Record<ClassificationSource, string>

@@ -92,8 +92,8 @@ class RecordingKind(StrEnum):
 class SessionMatchStatus(StrEnum):
     """Where a completed session stands relative to the plan.
 
-    WP-6 fills the lifecycle the column was sized for (D81 — every member here
-    is at most as long as ``unmatched``, so no migration widened it).
+    WP-6 fills the lifecycle the column was sized for — every member here
+    is at most as long as ``unmatched``, so no migration widened it.
 
     ``UNMATCHED`` is the state every session is written in and the state a
     **pending** proposal leaves it in: a proposal is a question, and a session

@@ -50,7 +50,7 @@ const EVENTS_PAGE = 20;
  * for when nothing is waiting: "did it see my ride at all?".
  *
  * Nothing here branches on an HTTP status to decide what happened. An upload
- * that was refused is a 200 carrying `outcome: "quarantined"` (D97), and a
+ * that was refused is a 200 carrying `outcome: "quarantined"`, and a
  * client reading the status instead would report success and show nothing.
  */
 export function Inbox() {
@@ -299,7 +299,7 @@ function QuarantineCard({ record }: { record: QuarantineRecord }) {
   const queryClient = useQueryClient();
   const copy = QUARANTINE_REASONS[record.reason];
   // What overruling *this* verdict is called, or nothing where the API would
-  // answer 409 (D107). Undefined is the whole condition for the second button.
+  // answer 409. Undefined is the whole condition for the second button.
   const offer = REJECT_OFFERS[record.reason];
   const pending = record.status === "pending";
 

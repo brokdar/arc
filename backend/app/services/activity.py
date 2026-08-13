@@ -427,7 +427,7 @@ class SessionService:
         await self._session.refresh(row)
         row = await self._recompute_strength(row, actor=actor, reason=None)
         # Matching first, then the proposals: a link is one of the two things
-        # that resolve a pending proposal (D188), and WP-6 links a recording
+        # that resolve a pending proposal, and WP-6 links a recording
         # up to a day either side of the plan entry — so resolving before the
         # matcher has run would miss exactly the cases the date test cannot
         # see.

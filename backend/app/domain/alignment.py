@@ -26,7 +26,7 @@ on the result, so the control WP-7 puts on the screen changes the answer
 rather than the picture.
 
 Nothing here persists anything: an alignment describes a *match*, and matches
-do not exist until WP-6 (D116). The tests are the only consumer today.
+do not exist until WP-6. The tests are the only consumer today.
 """
 
 import statistics
@@ -40,7 +40,7 @@ from app.domain.workout import FlatStep, StepRole
 #: corner is not an interval, short enough that a 30 s effort survives.
 SMOOTHING_S = 10
 
-#: Shortest run above the threshold that counts as a work interval (D122).
+#: Shortest run above the threshold that counts as a work interval.
 #: Below it the "interval" is a hill, a sprint out of a junction or a gear
 #: change, and an intervals table full of them is unreadable.
 MIN_INTERVAL_S = 30
@@ -126,7 +126,7 @@ def smooth(values: Sequence[float | None], window_s: int) -> list[float | None]:
 
 
 def default_threshold(smoothed: Sequence[float | None]) -> float | None:
-    """The threshold used when the caller names none (D122).
+    """The threshold used when the caller names none.
 
     The midpoint of the series' 25th and 90th percentiles, floored at
     :data:`THRESHOLD_FLOOR_FACTOR` times its overall average. The percentile

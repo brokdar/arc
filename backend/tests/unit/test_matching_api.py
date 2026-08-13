@@ -473,7 +473,7 @@ async def test_unlinking_restores_both_sides_exactly(client: AsyncClient) -> Non
 
 
 async def test_confirming_a_proposal_moves_both_sides(client: AsyncClient) -> None:
-    """The pending band: a proposal changes nothing until it is answered (D140)."""
+    """The pending band: a proposal changes nothing until it is answered."""
     await append_ftp(client)
     planned = await plan(client, MONDAY)
 
@@ -593,7 +593,7 @@ async def test_a_link_revised_down_to_pending_releases_both_sides(
     client: AsyncClient,
 ) -> None:
     """An auto link whose re-score falls into the proposal band becomes a
-    question again — and a question moves nothing (D140), so the statuses the
+    question again — and a question moves nothing, so the statuses the
     link had set are restored rather than stranded at `matched`."""
     await append_ftp(client)
     planned = await plan(client, MONDAY)
@@ -624,7 +624,7 @@ async def test_a_link_revised_down_to_pending_releases_both_sides(
 async def test_a_rematch_reconsiders_a_session_called_unplanned(
     client: AsyncClient,
 ) -> None:
-    """D142: an explicit re-run overrules an automatic verdict, on request."""
+    """An explicit re-run overrules an automatic verdict, on request."""
     done = await record(client, MONDAY, duration_s=RIDE_DURATION_S)
     assert done["status"] == "unplanned"  # nothing was planned yet
 
@@ -640,7 +640,7 @@ async def test_a_rematch_reconsiders_a_session_called_unplanned(
 async def test_a_typed_in_gym_session_matches_on_its_set_list(
     client: AsyncClient,
 ) -> None:
-    """The strength half of the score (D139): sets, not seconds, not watts."""
+    """The strength half of the score: sets, not seconds, not watts."""
     planned = await plan(client, MONDAY, purpose="hypertrophy", structure=LIFT)
 
     done = await record(
@@ -658,7 +658,7 @@ async def test_a_typed_in_gym_session_matches_on_its_set_list(
     assert done["match"]["similarity"] == pytest.approx(1.0)
     link = (await client.get(f"{MATCHES}/{done['match']['id']}")).json()
     # One component only, and the other two say why they are absent rather
-    # than being scored 1.0 or 0.0 (D138).
+    # than being scored 1.0 or 0.0.
     assert [part["component"] for part in link["breakdown"]["components"]] == [
         "structure"
     ]
@@ -741,7 +741,7 @@ async def test_an_intent_edit_after_a_proposal_is_a_post_hoc_edit(
     assert after.status_code == 200, after.text
     assert after.json()["intent"]["edited_post_hoc"] is True
     # The pins were kept rather than re-pinned — the athlete executed against
-    # them (D54) — which is what the flag exists to make visible.
+    # them — which is what the flag exists to make visible.
     assert (
         after.json()["intent"]["pinned_anchor_versions"]
         == before.json()["intent"]["pinned_anchor_versions"]

@@ -87,8 +87,8 @@ def get_matching(session: SessionDep) -> MatchingService:
 ServiceDep = Annotated[PlannedSessionService, Depends(get_service)]
 MatchingDep = Annotated[MatchingService, Depends(get_matching)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 StartFilter = Annotated[
     dt.date | SkipJsonSchema[None],
     Query(description="Earliest athlete-local date to include (inclusive)."),
@@ -212,7 +212,7 @@ def to_list_item(
     anchors: Mapping[AnchorType, PinnedAnchor],
     link: SessionMatchRow | None = None,
 ) -> PlannedSessionListItem:
-    """Project a stored planned session onto its list-row shape (D79)."""
+    """Project a stored planned session onto its list-row shape."""
     return PlannedSessionListItem(
         match=to_summary(link) if link is not None else None,
         id=row.id,
@@ -278,7 +278,7 @@ async def list_planned_sessions(
 ) -> PlannedSessionsPage:
     """List planned sessions in date order, optionally within a date range.
 
-    A list row is lighter than the session it names (D79): no resolved step
+    A list row is lighter than the session it names: no resolved step
     tree and no predicted-load explanation, because a page of two hundred
     sessions carrying either is measured in megabytes and in seconds of
     synchronous CPU. The pins stay — they are one query for the whole page —
@@ -385,7 +385,7 @@ async def move_planned_session(
 
     Its own verb rather than `PATCH ... {"date": ...}`, which does the same
     thing: dragging a card across the calendar is one intention, and the audit
-    trail should be able to say so (D56). Nothing about the prescription
+    trail should be able to say so. Nothing about the prescription
     changes — no intent version, no re-pinning.
     """
     return await one_to_read(
@@ -412,7 +412,7 @@ async def copy_planned_session(
     The copy is a **new** planned session: status `planned`, its own intent
     chain starting at version 1, and its anchors pinned at the versions in
     force now — a prescription freezes when it is planned, and this one is
-    being planned now (invariant 4, D57).
+    being planned now (invariant 4).
     """
     return await one_to_read(
         service,

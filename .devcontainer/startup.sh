@@ -61,7 +61,7 @@ prek install -t pre-commit -t pre-push -t commit-msg
 
 echo "🔎 Installing language servers for Claude Code..."
 # Each language server is the tool the build type-checks with, launched through
-# the project's package manager (D21): pyrefly, not pyright, and tsgo, not
+# the project's package manager: pyrefly, not pyright, and tsgo, not
 # tsserver — the repo checks with pyrefly and tsgo (`just typecheck`, pre-push,
 # CI), and a second checker means editor diagnostics that contradict the build.
 # `.claude/marketplace/` holds both plugins; each runs its server out of the

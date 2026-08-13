@@ -56,7 +56,7 @@ describe("the ingest vocabulary", () => {
   });
 
   it("offers reject for both verdicts the API lets you overrule", () => {
-    // D107 generalised D98: `implausible_channel` is overrulable too, because
+    // Generalised from duplicates-only: `implausible_channel` is overrulable too,
     // the cleaner nulls what it cannot believe — so the ride survives its
     // broken strap. Everything else is still a 409.
     expect(canReject("suspected_duplicate")).toBe(true);

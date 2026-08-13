@@ -62,7 +62,7 @@ describe("PURPOSE_TONES", () => {
 
 /**
  * Purple belongs to the coach and to the over-target verdict, and to nothing
- * else (build-plan invariant 7, D84).
+ * else (build-plan invariant 7).
  *
  * `max_strength` was once byte-identical to both of them, which is exactly the
  * failure a table of eighteen hand-picked hexes invites: nobody diffs a colour

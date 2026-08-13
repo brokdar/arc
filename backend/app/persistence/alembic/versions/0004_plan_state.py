@@ -28,7 +28,7 @@ depends_on: str | Sequence[str] | None = None
 #: compiles to `VARCHAR(6)` — the length of `paused`/`active` — on either
 #: dialect. Adding a member needs a migration only if its value is longer
 #: than every existing one, and then a batch one, because it widens the
-#: column (D81).
+#: column.
 PLAN_STATE = sa.Enum("active", "paused", name="planstate", native_enum=False)
 
 

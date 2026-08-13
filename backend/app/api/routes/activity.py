@@ -1,14 +1,14 @@
 """HTTP endpoints for completed sessions. Thin over `app.services.activity`.
 
-Named `activity`, not `sessions`, for the reason D92 gives: `sessions` in this
-codebase means the *planned* one, and no name is used for both. The routes it
+Named `activity`, not `sessions`: `sessions` in this codebase means the
+*planned* one, and no name is used for both. The routes it
 serves are `/api/v1/sessions` — the athlete-facing noun, where there is no
 ambiguity to protect against.
 
 Manual entry lives at `/api/v1/manual-sessions` rather than
 `/api/v1/sessions/manual`: a facet of the collection under the id namespace
 shadows `GET /sessions/{id}`, which then answers 422 about uuid syntax where
-405 is the truth (`.claude/rules/api-collection-facets.md`, D50).
+405 is the truth.
 
 `GET /sessions/{id}` answers with the session, the metadata of the recordings
 behind it — sources, stops, repairs — and the **current metric version**. The
@@ -18,7 +18,7 @@ them otherwise.
 
 Recompute is `POST /sessions/{id}/metrics/recompute` — a sub-resource of one
 member, which has one more path segment than the id route and therefore
-collides with nothing (`.claude/rules/api-collection-facets.md`). It appends a
+collides with nothing. It appends a
 version; it never overwrites one.
 """
 
@@ -117,8 +117,8 @@ MetricsDep = Annotated[SessionMetricsService, Depends(get_metrics)]
 MatchingDep = Annotated[MatchingService, Depends(get_matching)]
 AnalyserDep = Annotated[SessionAnalyser, Depends(get_analyser)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 StartFilter = Annotated[
     dt.date | SkipJsonSchema[None],
     Query(description="Earliest athlete-local date to include (inclusive)."),
@@ -451,7 +451,7 @@ async def update_session(
     A discipline override is recorded as one (`discipline_overridden`), so no
     later re-classification can quietly undo it. A timezone override
     **re-derives** `local_date`, which is the point of storing the zone rather
-    than the offset that happened to be true once (D93). `rpe` and
+    than the offset that happened to be true once. `rpe` and
     `temperature_c` record the conditions the session was performed under —
     settable on any session, ingested ones included (#23), and clearable with
     an explicit null; an omitted field is always left untouched.

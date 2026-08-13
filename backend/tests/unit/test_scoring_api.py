@@ -264,7 +264,7 @@ async def test_a_short_session_is_suggested_under(client: AsyncClient) -> None:
 async def test_a_pending_proposal_is_not_scored(client: AsyncClient) -> None:
     # Half the prescribed duration proposes rather than links, and a proposal
     # is a question: putting a verdict on the answer before the athlete has
-    # given it is the mistake the status table refuses to make (D140).
+    # given it is the mistake the status table refuses to make.
     await append_ftp(client)
     await plan(client)
     done = await record(client, duration_s=RIDE_DURATION_S // 2)
@@ -384,7 +384,7 @@ async def test_unlinking_keeps_the_score_history(
 async def test_unlinking_withdraws_the_standing_judgement(
     client: AsyncClient,
 ) -> None:
-    """A score is about a link, and the link is gone (D161).
+    """A score is about a link, and the link is gone.
 
     The week strip already stopped showing a verdict — it reads through the
     link — and `GET /score` went on answering "as intended" against a
@@ -461,7 +461,7 @@ async def test_a_swap_moves_the_judgement_onto_the_new_prescription(
 async def test_a_scoring_failure_leaves_the_match_standing(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """The docstring's promise, kept end to end (D159).
+    """The docstring's promise, kept end to end.
 
     Scoring runs after the match commits so that a failure costs the score and
     not the athlete's answer to a proposal. It ran on the *same* session,
@@ -662,7 +662,7 @@ async def test_revising_reasons_appends_rather_than_edits(
 async def test_two_writers_cannot_both_append_the_same_reasons_version(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """The chain is closed by the database, like both sibling chains (D165).
+    """The chain is closed by the database, like both sibling chains.
 
     `next_version` reads the chain and adds one, which two concurrent revisions
     can both compute as 2. Without a uniqueness constraint both land, and
@@ -865,7 +865,7 @@ async def test_an_implausible_offset_is_refused(client: AsyncClient) -> None:
 async def test_a_displaced_link_has_no_alignment_to_slide(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A displaced session is scored standalone, so it is never aligned (D160).
+    """A displaced session is scored standalone, so it is never aligned.
 
     The offset used to be accepted here: it wrote alignment version *n+1*, the
     rescore took the standalone branch and stored `alignment_version_id=None`,
@@ -1081,7 +1081,7 @@ async def test_the_sweep_reaches_an_overdue_prompt_behind_a_full_batch(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The batch is taken over what has expired, not over what is newest (D164).
+    """The batch is taken over what has expired, not over what is newest.
 
     The sweep used to page the pending prompts newest-first and *then* check
     the deadline. With more pending prompts than the batch size it therefore

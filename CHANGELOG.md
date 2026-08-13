@@ -50,7 +50,7 @@ this round of changes, measured against the baseline now recorded in
   makes strength scorable; the exercise catalogue gained the single-leg calf
   raise and reverse fly (#26).
 
-### Metric accuracy against the head unit (D197–D203)
+### Metric accuracy against the head unit
 
 Three numbers computed differently from the athlete's own device, checked
 against one real Wahoo ELEMNT BOLT V2 ride and the same ride on Strava and
@@ -63,7 +63,7 @@ intervals.icu.
   reference ride, matching the device, Strava and intervals.icu, where
   integrating the speed column gave 40.32. It is differenced **per recording**
   and summed, because every device counts from its own zero and a merged
-  session lays several on one grid (D202). Files with no odometer, an odometer
+  session lays several on one grid. Files with no odometer, an odometer
   that resets, one that covers less than 90 % of its recording, or a stream
   stored before this existed fall back to integrating speed — per recording —
   and say so on the number. Average speed keeps its definition — the whole
@@ -74,7 +74,7 @@ intervals.icu.
   number, so the exclusion is visible rather than assumed.
 - **Elevation gain smooths before it thresholds.** The altitude trace is
   averaged over a centred 15 s window — reflected at the two ends, so a ride
-  that starts or finishes mid-climb keeps those metres (D203) — and climbs are
+  that starts or finishes mid-climb keeps those metres — and climbs are
   banked whole once they clear 3 m (GoldenCheetah's default). 82.5 m on the
   reference ride, between the device's 78 and intervals.icu's 84, where the old
   2 m band counted barometric noise up to 88.6.
@@ -86,7 +86,7 @@ intervals.icu.
   rebuild second: an older image cannot read a channel it predates, so a
   rollback after a rebuild is an outage until it is undone.
 
-### Settings — the anchors page (D193)
+### Settings — the anchors page
 
 The anchors API has been complete since WP-1 with no screen behind it: until
 now the athlete could not enter an FTP through the UI at all. `/settings` is
@@ -102,7 +102,7 @@ that screen, and the Settings nav row is live.
   else the domain refuses is printed as the sentence the service sent.
 - **History** — every version ever appended, newest first, filtered through the
   API's own `anchor_type` parameter and paged. A version dated ahead of today
-  is marked "not in force yet" (D195), so the row that sorts to the top never
+  is marked "not in force yet", so the row that sorts to the top never
   reads as the current value. There is no edit and no delete anywhere: the API
   answers 405 by design, and the page says so.
 - **Zones in force** — the Coggan 7 power zones and the 5-zone heart-rate
@@ -121,7 +121,7 @@ they page, and each page's filter on the same line as its range.
 
 The coaching agent can now act — through thirteen MCP tools that delegate to
 the same services the API uses, with every write guarded in the service layer,
-never in the adapter. Decisions D166–D183.
+never in the adapter.
 
 **Plan-change proposals (`plan_proposals`, migration `0009`)**
 
@@ -150,8 +150,7 @@ never in the adapter. Decisions D166–D183.
   (provenance required, `tested` demands a protocol), `create_workout`,
   `propose_plan_change`, `write_session_evaluation`, `annotate`. No tool
   touches recordings, streams, declared verdicts or reasons — the surface is
-  pinned by an exhaustive test. Refusals name the offending argument;
-  `docs/agent-setup.md` shows how to connect Claude.
+  pinned by an exhaustive test. Refusals name the offending argument.
 
 **Coach notes and the UI**
 
@@ -166,7 +165,6 @@ never in the adapter. Decisions D166–D183.
 
 A matched session is now scored against its frozen intent, given a suggested
 verdict the athlete rules on, and asked for reasons when it deviated.
-Decisions D149–D158.
 
 **The axes (`backend/app/domain/scoring.py`)**
 
@@ -193,7 +191,7 @@ Decisions D149–D158.
 - The verdict declaration is athlete-only — the service refuses any other
   actor (403) — and is never auto-rewritten: a rescore whose new suggestion
   contradicts both the declaration and what was suggested at declaration time
-  sets `contested` (D150); re-declaring clears it. Reasons (1–3, ordered by
+  sets `contested`; re-declaring clears it. Reasons (1–3, ordered by
   primacy, controlled list + free text) are append-only revisions. Evening
   prompts expire after 72 h into the auto-reason `not_provided` via a
   scheduler job.
@@ -214,7 +212,7 @@ Decisions D149–D158.
 ### WP-6 — matching engine
 
 A completed session now finds the plan entry it answers — as a proposal, never
-a silent commitment. Decisions D138–D147.
+a silent commitment.
 
 **The similarity score (`backend/app/domain/matching.py`)**
 
@@ -224,32 +222,32 @@ a silent commitment. Decisions D138–D147.
   the prescription's **frozen** pins via `predict_endurance_load`, never
   against today's anchors (invariant 4). Structure counts detected work
   intervals against prescribed work steps — or logged sets against prescribed
-  sets for strength, whose structure is its set list (D139).
-- **A component with no inputs is renormalised away, never defaulted** (D138):
+  sets for strength, whose structure is its set list.
+- **A component with no inputs is renormalised away, never defaulted**:
   1.0 invents agreement, 0.0 invents disagreement, so the remaining weights
   rescale and the stored breakdown carries both what was and was not assessed,
   with reasons. Nothing assessable at all scores `None` and becomes a question
-  for the athlete, not a refusal. One prescribed work unit is not a structure
-  (D139), so a steady ride is not punished for detecting no intervals.
+  for the athlete, not a refusal. One prescribed work unit is not a structure,
+  so a steady ride is not punished for detecting no intervals.
 
 **The lifecycle (link table, service, sweep)**
 
 - Similarity ≥ 0.75 auto-links (`auto_high`, revocable); 0.4–0.75 raises a
-  `pending` proposal that **moves neither side's status until answered**
-  (D140); below 0.4 the activity stands `unplanned`. Candidates are same
+  `pending` proposal that **moves neither side's status until answered**;
+  below 0.4 the activity stands `unplanned`. Candidates are same
   discipline within ±1 day, athlete-local dates.
 - Links live in a link table, not an FK — the one-to-one uniques are exactly
-  what a set-to-set increment later drops (D141). Manual operations always
+  what a set-to-set increment later drops. Manual operations always
   available: link, link-as-`displaced` (executed-instead-of; the planned
   session is neither missed nor completed), unlink, swap, mark-unplanned, and
-  merge of two device recordings into one session over one joined 1 Hz grid
-  (D143). Confirmed and displaced links are **sticky**: re-matching never
+  merge of two device recordings into one session over one joined 1 Hz grid.
+  Confirmed and displaced links are **sticky**: re-matching never
   touches them, and automatic matching runs exactly once per session — a
-  re-match is an explicit override (D142). Unlink restores both sides to
+  re-match is an explicit override. Unlink restores both sides to
   exactly the statuses the link recorded; history lives in `audit_log`, and
   every mutation writes an audit row.
 - An hourly idempotent sweep marks a planned session `missed` at the end of
-  day + 1 in the athlete's timezone (`MATCHING__TIMEZONE`, D144) and raises the
+  day + 1 in the athlete's timezone (`MATCHING__TIMEZONE`) and raises the
   evening-prompt record WP-7 consumes; a paused plan is never swept.
 
 **The surface (`frontend/components/sessions/match-panel.tsx`)**
@@ -259,7 +257,7 @@ a silent commitment. Decisions D138–D147.
   in their fixed slots with the domain's reason — plus confirm/reject on a
   proposal, the swap and manual-link pickers with both link kinds explained in
   plain language, a standing "record it as done instead" offer on a
-  low-similarity confirmed link (D146), and a merge dialog that states what
+  low-similarity confirmed link, and a merge dialog that states what
   merging does. Session list and calendar cards carry the match state; a
   pending proposal is a visible "Proposed", not a premature "Completed".
 - Mock similarities are generated by the backend domain over the same fixtures
@@ -269,7 +267,7 @@ a silent commitment. Decisions D138–D147.
 ### WP-5 — metrics, session analysis and stream charts
 
 A recorded session now has numbers, and every one of them says where it came
-from. Decisions D112–D133.
+from.
 
 **The metric set (`backend/app/domain/`)**
 
@@ -278,7 +276,7 @@ from. Decisions D112–D133.
   (Appendix A.1's convention, and deliberately not the average a head unit
   shows), variability index, efficiency factor, work, work above FTP, coasting
   (moving ≥ 1 km/h at ≤ 10 W, display only), per-channel average and maximum,
-  and elevation gain against a 2 m hysteresis band (D120). The duration term in
+  and elevation gain against a 2 m hysteresis band. The duration term in
   training load is **recording time** — elapsed minus every stop over 30 s
   (A5.1) — stated at the call site, in the docstring, and in the number's own
   explanation.
@@ -288,8 +286,7 @@ from. Decisions D112–D133.
   square-wave HR series and a constant one with the same mean produce different
   numbers, and the square wave is higher. Every guard names the input it is
   missing. Resting heart rate becomes an **anchor** for it — with provenance,
-  an effective date and append-only history — rather than a profile field
-  (D114).
+  an effective date and append-only history — rather than a profile field.
 - **Both load models are computed and both are stored**, with the one selected,
   the rule that chose it, and enough to render A5.2's counterfactual (*"Load
   79, from power. Had power been unavailable, the heart-rate model would have
@@ -299,15 +296,15 @@ from. Decisions D112–D133.
 - **Time in zone** per channel with the three-zone collapse and Treff's
   polarization index (A5.4). A degenerate split is `not_assessed`, not `-inf`.
   The five-zone HR model collapses Z1–2 / Z3 / Z4–5, which is where the
-  boundary physiologically sits rather than where the integers line up (D121).
+  boundary physiologically sits rather than where the integers line up.
 - **Interval detection and structure alignment** (`app/domain/alignment.py`):
   threshold crossing over a 10 s centred smoothing, then an order-preserving
   dynamic-programming assignment of detected intervals to planned work steps.
   Confidence is duration and intensity agreement; pairs below 0.5 are excluded
   with `alignment_low_confidence`. `offset_s` is a **real input** from day one
   (A7.1): it moves the assignment through a proximity term while confidence
-  keeps measuring agreement alone (D123). Nothing persists it yet — an
-  alignment describes a match, and matches arrive with WP-6 (D116).
+  keeps measuring agreement alone. Nothing persists it yet — an
+  alignment describes a match, and matches arrive with WP-6.
 - `NotAssessed(reason)` is the shape a metric answers with when it cannot: the
   reason, never `None` and never a zero standing in for a missing channel.
   WP-7's scoring axes will reuse it.
@@ -324,7 +321,7 @@ from. Decisions D112–D133.
   version" cannot be a JSON scan. The numbers are one JSON payload, each value
   beside its rendered explanation and each absence beside its reason.
 - Metrics are computed **after** the ingest transaction commits, per session,
-  inside a `try` (D125): a metric failure leaves an ingested ride with no
+  inside a `try`: a metric failure leaves an ingested ride with no
   numbers rather than un-ingesting the file, and the file is the irreplaceable
   half. A manual strength session takes the stream-free path on create and on
   correction.
@@ -341,7 +338,7 @@ from. Decisions D112–D133.
   The plan week carries **completed** duration and load per day and per
   discipline with their own coverage pairs, plus a weekly polarization index
   counting exactly one channel per session and stating which rule chose it
-  (A5.4, D127). Planned and completed stay in separate columns and are never
+  (A5.4). Planned and completed stay in separate columns and are never
   summed.
 
 **The session analysis page (`/sessions/{id}`)**
@@ -350,7 +347,7 @@ from. Decisions D112–D133.
   cadence, elevation) with a synced cursor, zoom, drag-selection statistics, an
   FTP reference line from the artefact's own pin, and recording stops drawn as
   breaks rather than as zero watts. uPlot is the only chart dependency added —
-  the zone bar is SVG from the shared ramp (D113).
+  the zone bar is SVG from the shared ramp.
 - The detected-intervals table, the strength card for a session with no stream,
   and a "not computed yet" state that offers the action rather than describing
   the absence.
@@ -359,12 +356,12 @@ from. Decisions D112–D133.
   would have occupied. The planned-band overlay on the power chart is a prop
   that renders nothing until WP-6 fills it.
 - The frontend's metric and stream fixtures are **generated** by running the
-  real domain over a synthetic stream (`just metrics-fixture`, D132), so the
+  real domain over a synthetic stream (`just metrics-fixture`), so the
   numbers in a test agree with the trace beneath them.
 
 ### WP-4 — ingestion: watched folder, FIT parsing, sessions & streams
 
-Device files become sessions. Decisions D89–D100.
+Device files become sessions.
 
 **Streams and the session model (`backend/app/domain/`, `app/persistence/`)**
 
@@ -385,15 +382,15 @@ Device files become sessions. Decisions D89–D100.
   plausible range. A channel that needed nothing stores a `resampled_only` row,
   so "clean" is distinguishable from "not checked".
 - Systemic garbage is **quarantined, not repaired**: no samples, more than
-  10 % of samples repeating a timestamp (a handful collapse by last-wins,
-  D91), under two minutes of elapsed *or recorded* time, or more than 10 % of
+  10 % of samples repeating a timestamp (a handful collapse by last-wins),
+  under two minutes of elapsed *or recorded* time, or more than 10 % of
   a channel implausible.
 - New tables: `sessions`, `recordings`, `stream_anomalies`,
   `quarantine_records`, `ingest_events`, `logged_sets`. The **dedup key is
   `(file_hash, file_sport_index)`** — one file may hold more than one sport
   (A4.5). A session stores its athlete-local timezone (IANA name, `UTC+02:00`,
   or `UTC`) and the `local_date` derived from it, so a midnight-crosser belongs
-  to the day it began (D93).
+  to the day it began.
 
 **Ingestion (`backend/app/ingest/`)**
 
@@ -402,10 +399,10 @@ Device files become sessions. Decisions D89–D100.
   TrackPointExtension sensors) and **TCX** (`tcxreader`). Each file yields one
   activity per sport. Power and HR **source candidates are enumerated** from
   FIT `device_info` and the rule that chose one is recorded verbatim, including
-  when it is only a tie-break (A4.3, D96).
+  when it is only a tie-break (A4.3).
 - A per-file pipeline: sha256 → dedup by hash against ingested recordings *and*
   unresolved quarantine → parse → validate → overlap dedup (>70 % of the longer
-  range, D98) → file the original under `data/originals/YYYY/MM/<hash>.<ext>` →
+  range) → file the original under `data/originals/YYYY/MM/<hash>.<ext>` →
   session and recording rows → resample, clean, and write
   `data/streams/<recording_id>.parquet`. Re-seeing a file is a `duplicate_file`
   log line, never a second session. **Nothing under `data/originals/` is ever
@@ -421,11 +418,11 @@ Device files become sessions. Decisions D89–D100.
 - `POST /api/v1/ingest/upload` (multipart) writes into the inbox and runs the
   pipeline synchronously, answering with the outcome: sessions created,
   quarantine records raised, or the sessions the file already existed as. A
-  file it cannot use is a **200 with a reason**, not an error (D97).
+  file it cannot use is a **200 with a reason**, not an error.
 - `GET /api/v1/ingest/quarantine` (pending first) and
   `POST /api/v1/ingest/quarantine/{id}/confirm` | `/reject`. Confirm discards
   the quarantined copy and never an original; reject overrules the verdict it
-  disagrees with (D107): a suspected duplicate re-ingests as its own session,
+  disagrees with: a suspected duplicate re-ingests as its own session,
   an implausible-channel refusal ingests with the broken channel nulled and
   its anomalies recorded. Rejecting anything else is a 409 — a corrupt
   file has nothing safe to ingest. `GET /api/v1/ingest/events` is the
@@ -436,7 +433,7 @@ Device files become sessions. Decisions D89–D100.
   those are WP-5's. `PATCH /api/v1/sessions/{id}` corrects the discipline
   (recorded as an override) or the timezone (which re-derives `local_date`).
 - `POST /api/v1/manual-sessions` records a session performed without a device
-  file — a gym session — with its logged sets (D99).
+  file — a gym session — with its logged sets.
 
 **Frontend (`frontend/`)**
 
@@ -448,7 +445,7 @@ Device files become sessions. Decisions D89–D100.
   the API accepts a reject. Below the queue, the paginated ingest log. An
   upload control posts a file and reports the outcome — a quarantined file
   included, because that is a 200 with a reason and the page branches on the
-  outcome rather than the status (D97, D100).
+  outcome rather than the status.
 - **`/sessions`** — the log, newest first, filtered by discipline on the
   server. Each row: local date, discipline, duration, recording kind, the
   match badge (taken as a prop, not assumed), and a **load column that holds
@@ -461,18 +458,17 @@ Device files become sessions. Decisions D89–D100.
   the discipline and the timezone, the second re-deriving the session's date.
   Every absent value keeps its slot and says why it is absent.
 - The sidebar gains **Sessions** and **Inbox**; eight sections now, and only
-  three of them still dimmed (D100).
+  three of them still dimmed.
 
 **Dependencies**
 
 - Added `garmin-fit-sdk`, `fitdecode`, `gpxpy`, `tcxreader` and `pyarrow`, all
-  forbidden in `app/domain` (D95), plus the dev-only `fit-tool` that builds the
-  committed synthetic golden FIT files (D94).
+  forbidden in `app/domain`, plus the dev-only `fit-tool` that builds the
+  committed synthetic golden FIT files.
 
 ### WP-3 — calendar & plan API, design system, week UI
 
-The plan becomes something you can look at, rearrange, and fill. Decisions
-D55–D88.
+The plan becomes something you can look at, rearrange, and fill.
 
 **API (`backend/app/`)**
 
@@ -480,26 +476,26 @@ D55–D88.
   included, each carrying flat session cards (discipline, purpose, status,
   title, planned duration, step count, sets, the one-line intent and its
   version). `start` is taken literally so a client can page by a day; omitted,
-  it defaults to the Monday of the current week (D55). Everything a card cannot
+  it defaults to the Monday of the current week. Everything a card cannot
   show stays behind `GET /planned-sessions/{id}`.
 - `WeekSessionRead` carries `predicted_load_coverage` beside its
   `predicted_load` — the same fraction `PredictedLoadRead.coverage` reports on
   the session itself, passed through from the one prediction rather than
-  recomputed, and null exactly when the load is (D88). Without it a client
+  recomputed, and null exactly when the load is. Without it a client
   rendering card-level loads cannot tell a fully covered prediction from a
-  40 %-covered one, which is the rule D78 set for week totals applied one level
+  40 %-covered one, which is the rule for week totals applied one level
   down. Nothing renders it yet; card-level load arrives with WP-5's week strip.
 - Added `POST /planned-sessions/{id}/move` and `/copy`: the calendar's two
   gestures get their own verbs and their own audit actions rather than being
-  folded into the PATCH that can already change a date (D56). A copy is a *new*
+  folded into the PATCH that can already change a date. A copy is a *new*
   session planned now — fresh intent chain, anchors pinned at what is in force
-  today, criteria carried over as they stand (D57).
+  today, criteria carried over as they stand.
 - Added `athlete.plan_state` (`active | paused`), read and written through the
-  existing athlete endpoints rather than a plan table and two verbs (D58).
+  existing athlete endpoints rather than a plan table and two verbs.
   Paused means missed-session marking stops; ingestion and scoring carry on.
 - Success criteria declare their own **smoothing window**: `Band.smoothing_s`
   (default 30 s) and `Ceiling.smoothing_s` (default 0 — raw) say how long a
-  trailing rolling mean is applied before the channel is compared (D73). The
+  trailing rolling mean is applied before the channel is compared. The
   window freezes with the intent instead of living in WP-7's scorer, so a
   scoring change cannot rewrite what an already-scored session was judged
   against. Every band and ceiling in `purpose_templates.json` states its own
@@ -513,21 +509,21 @@ D55–D88.
   `load_sessions_counted` / `load_sessions_uncounted`, and a `by_discipline`
   row (sessions, duration, load, sets). TSS and kilograms stay in separate
   columns and are never summed. Everything is computed on read from the frozen
-  intent and its pins — no column, no migration, no cache (D72) — with the
+  intent and its pins — no column, no migration, no cache — with the
   week's pins loaded in one query. The prediction resolves against
   `PinnedAnchor` pairs — an anchor version together with the id it was pinned
   by — rather than bare versions, so the number can name what it resolved
   against without an id being pushed onto the domain's id-free
-  `AnchorVersion` (D64); and it refuses to expand a prescription longer than
+  `AnchorVersion`; and it refuses to expand a prescription longer than
   a day (`MAX_PREDICTABLE_DURATION_S`), because the workout model bounds steps
   and step counts but not their product, and a legal tree can describe 43
-  million seconds of 1 Hz series on a read path (D65).
+  million seconds of 1 Hz series on a read path.
 - **Every week total says what it covers, and a total nothing contributed to
   is null.** `planned_duration_s` is nullable — week-wide and per discipline —
   and travels with `duration_sessions_counted` / `duration_sessions_uncounted`,
   the way `planned_load` already travelled with its own pair; each
   `by_discipline` row now carries **both** pairs, so a row explains its own
-  missing number instead of leaving a client to invent a reason (D78). A week
+  missing number instead of leaving a client to invent a reason. A week
   of two distance rides and a lift used to total `0` seconds and read as rest.
   `session_count` reports the repository's true total, and any session past the
   `MAX_WEEK_SESSIONS` render cap counts as uncounted on both axes rather than
@@ -538,18 +534,20 @@ D55–D88.
   resolved them), `pinned_anchors` (type, version id, value, unit, provenance,
   effective date), `predicted_load` with a `MetricExplanation` — formula,
   inputs naming the *version's* value and provenance, assumptions, citation
-  (D74) — and `predicted_volume` for a strength session (volume load in
+  — and `predicted_volume` for a strength session (volume load in
   kilograms, total sets, coverage), the other axis, never summed with the
   first. Appending a new FTP anchor changes nothing on a session already
   planned, which is invariant 4 finally made visible.
 - **`GET /planned-sessions` answers with a lighter row** than the session it
   names: no `resolved_steps` and no predicted fields at all — absent from the
   shape, not null in it — because a page of 200 sessions carrying them is
-  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request (D79, superseding
-  that half of D74). The pins stay, since the whole page's pins are one query.
+  ≈ 19 MB of body and ~3.8 s of synchronous CPU per request. This supersedes
+  the earlier rule that put the resolved fields on *every* endpoint answering
+  with a whole session; the member route and the writes still carry them. The
+  pins stay, since the whole page's pins are one query.
 - A success criterion's smoothing window is now bounded **above** as well as
   below: `MAX_SMOOTHING_S` is an hour, longer than any window that could mean
-  something, and the API answers 422 past it (D80). The field previously took
+  something, and the API answers 422 past it. The field previously took
   any non-negative integer the JSON carried.
 - A prediction's explanation no longer rounds its coverage to a flat `100%` or
   `0%`: full coverage is said in words, and a partial one renders to one
@@ -564,11 +562,11 @@ D55–D88.
   docstrings claiming one — in `persistence/types.py` and in the `0004`
   migration — now describe the emitted DDL and the consequence it was hiding:
   a future member with a longer value widens the column and needs a batch
-  `ALTER COLUMN` (D81).
+  `ALTER COLUMN`.
 
 **Web — design system (`frontend/`)**
 
-- The application is **dark-only** (D59). `app/globals.css` holds one `@theme`
+- The application is **dark-only**. `app/globals.css` holds one `@theme`
   block of semantically named tokens — surfaces, hairlines, ink, accent,
   session status, the coach/intent tint, the zone ramp, radii and a
   dense type scale — with the shadcn vocabulary aliased onto them so the
@@ -584,7 +582,7 @@ D55–D88.
   (`PURPOSE_TONES` in `lib/purpose.ts`: edge, foreground, tint per purpose),
   applied through `style` rather than as fifty-four `--color-purpose-*` custom
   properties — Tailwind cannot emit a utility whose class name is assembled at
-  runtime, so CSS tokens would have needed a safelist anyway (D63). Keyed by
+  runtime, so CSS tokens would have needed a safelist anyway. Keyed by
   the generated `Purpose` union, the table cannot miss a purpose without
   failing the type-check, and its test reads the vocabulary out of the
   committed `openapi.json`. The *semantic* palette stays in `@theme`.
@@ -595,7 +593,7 @@ D55–D88.
 - The **zone ramp has seven stops**, `--color-zone-1` … `--color-zone-7`, and
   `lib/workout-profile.ts` buckets a %-of-FTP fraction through the backend's
   own `coggan_7` boundaries (`0.55 / 0.75 / 0.90 / 1.05 / 1.20 / 1.50`) rather
-  than the display-only ones the mockup's five colours implied (D75). A test
+  than the display-only ones the mockup's five colours implied. A test
   fails if either table grows a stop the other has not. Heart rate maps its
   five zones onto the same ramp, so a power chart and an HR chart will mean the
   same thing at a glance; the top two stops are crimson and berry, never
@@ -612,10 +610,10 @@ D55–D88.
 - Added `/calendar`: a Mon–Sun grid of session cards with prev / this week /
   next navigation, today's column and card in the accent treatment, and a
   purpose-coloured left edge on every card. `/` now redirects there — there is
-  no separate home page (D60).
-- **The week you are looking at is part of the address**: `/calendar?week=2026-08-03`
-  (D77). The param is an ISO date taken literally, the way the endpoint takes
-  `start` (D55); an unreadable one and an absent one both mean this week, so a
+  no separate home page.
+- **The week you are looking at is part of the address**: `/calendar?week=2026-08-03`.
+  The param is an ISO date taken literally, the way the endpoint takes
+  `start`; an unreadable one and an absent one both mean this week, so a
   bare `/calendar` is the evergreen bookmark and is where "This week" returns
   to. Stepping replaces the history entry rather than pushing one, so the back
   button still means "leave the calendar" after a minute of paging. The page
@@ -635,7 +633,7 @@ D55–D88.
   three non-tested provenances marked differently from `tested`, because an
   estimate should read as an estimate. Predicted load renders with its coverage
   and, behind a quiet disclosure, the `MetricExplanation` the API attaches to
-  it: formula, inputs naming the anchor *version*, assumptions, citation (D76).
+  it: formula, inputs naming the anchor *version*, assumptions, citation.
   A session with no predictable load gets the not-assessed placeholder and the
   honest reason — no FTP pinned, no power target, or prescribed by distance —
   never a zero.
@@ -655,8 +653,8 @@ D55–D88.
 - A paused plan shows a banner with a resume action, and the toolbar carries an
   unobtrusive pause control.
 - Sections whose pages have not landed yet are listed dimmed rather than linked
-  to a 404 (D61); calendar cards carry no bar profile, because the week payload
-  deliberately carries no step trees (D62).
+  to a 404; calendar cards carry no bar profile, because the week payload
+  deliberately carries no step trees.
 
 **Web — workout library and creator**
 
@@ -666,7 +664,7 @@ D55–D88.
   folder/tag filters that go to the server (`q`, `folder`, `tag`) rather than
   filtering one fetched page. A card carries **no purpose badge**: a workout has
   no purpose, because purpose is a property of planning a session, not of the
-  prescription (D66). The empty state names the remedy and carries the control.
+  prescription. The empty state names the remedy and carries the control.
 - Added `/workouts/new` and `/workouts/{id}` — one route, one form, two verbs
   (POST / PATCH) — with name, folder (autocompleting from labels in use), tags,
   description, and a discipline switch that is fixed once a workout is saved.
@@ -687,10 +685,10 @@ D55–D88.
   picker resolves real names from `GET /exercises`, which the calendar sheet now
   uses too instead of prettifying a slug.
 - The builder's state is a string-typed client draft with client-side node ids,
-  translated to and from the API's structure document by three pure functions
-  (D70). It mirrors the domain's plausibility bounds so an obvious mistake is
+  translated to and from the API's structure document by three pure functions.
+  It mirrors the domain's plausibility bounds so an obvious mistake is
   caught without a round trip, and renders the API's 422 verbatim when the
-  server refuses something the browser could not have known about (D68).
+  server refuses something the browser could not have known about.
 
 **Web — planning a session**
 
@@ -700,7 +698,7 @@ D55–D88.
   the library — with a picker that previews the profile — **or** the inline
   builder, an intent line, notes to self, and the success criteria.
 - **Success criteria follow the purpose's template until the athlete touches
-  them** (D67): the template is loaded from `GET /purposes/{purpose}` and
+  them**: the template is loaded from `GET /purposes/{purpose}` and
   re-derived whenever the purpose changes, until the first edit; a reset action
   puts the list back under the template's control. Criteria are shown and edited
   as the English sentences `describeCriterion` produces, and only the kinds the
@@ -709,7 +707,7 @@ D55–D88.
   the fields that changed, so a note fixed in place does not re-pin anchors and
   a body never carries both `workout_id` and `structure`. The session sheet's
   Edit now edits the *session*; the library workout behind it is a separate,
-  quieter link (D69).
+  quieter link.
 
 **Web — Today**
 
@@ -724,7 +722,7 @@ D55–D88.
   came from; with no anchor entered, the panel stays in percentages rather than
   inventing a number.
 - The athlete's own notes render on a neutral surface: the design system's
-  violet stays reserved for agent-written text (D71).
+  violet stays reserved for agent-written text.
 - A day with nothing planned is a deliberate rest-day state with a way out of
   it, and a day with two sessions renders both, the one still to do first.
 - Weather, readiness/HRV/TSB, RPE logging, load numbers and coach proposals are
@@ -793,9 +791,9 @@ D55–D88.
   for the typing to stop; and `ProvenanceMark` gained the `NotAssessed`
   treatment so its note reaches a screen reader.
 - **The open session sheet lives in the address too** —
-  `/calendar?session=<uuid>`, beside `?week=` (D88). It was
+  `/calendar?session=<uuid>`, beside `?week=`. It was
   `useState<WeekSession | null>`: a sheet nobody could reload, bookmark or send
-  to their coach, which is the gap D77's wording claimed the week param had
+  to their coach, which is the gap the week param's wording claimed to have
   closed. Opening a card *pushes* a history entry so the browser's Back gesture
   closes the sheet; closing *replaces*, so paging through a dozen cards does
   not bury the page the athlete arrived from. Open-state is derived from
@@ -813,28 +811,28 @@ D55–D88.
   `` `${exercise_id}-${sets}-${reps}` `` keys are gone; these lists are
   replaced wholesale, so the index is the identity and says so in a comment.
 
-**Web — design-system corrections (D84–D87)**
+**Web — design-system corrections**
 
 - **The strength purposes leave purple.** `max_strength` was byte-identical to
   `--color-status-over` and `--color-coach`, and four neighbours were the same
-  violet family; all five move to a cyan-through-azure "steel" family (D84).
+  violet family; all five move to a cyan-through-azure "steel" family.
   Distance from the reserved coach/verdict tones goes from ΔE00 0.00 to 11.92
   across the whole eighteen-tone palette, and the strength family's own floor
   from 2.16 to 8.72. `lib/purpose.test.ts` now *measures* the reservation, so
   the next purpose cannot re-spend purple; a companion test checks every tone's
-  badge contrast. Figures are CIEDE2000 — D75's are CIE76, which flatters
+  badge contrast. Figures are CIEDE2000; the earlier ramp's were CIE76, which flatters
   saturated colours by roughly a factor of two.
-- **Every ink is WCAG AA on every surface it lands on** (D85).
+- **Every ink is WCAG AA on every surface it lands on**.
   `--color-ink-faint` was 3.01:1 on a card while carrying every uppercase
   label, the provenance line and the coverage notes; it is now `#7d848f`,
   4.54:1 at its worst. `--color-ink-disabled` stays below AA and is narrowed to
   inactive controls, which WCAG 1.4.3 exempts — a missed session's struck-out
   duration is content and moves to `ink-muted`, which is what the mockup uses
   for it. `tests/ink-contrast.test.ts` parses the palette and enforces both.
-- **D59's "no colour outside `globals.css`" is now a test.** Ten inline hex and
+- **"No colour outside `globals.css`" is now a test.** Ten inline hex and
   `rgb()` literals are gone, replaced by the tokens they were re-encoding —
   missed surface and border, danger surface and border, warn surface and
-  border, accent wash, accent surface hover, chrome active (D86).
+  border, accent wash, accent surface hover, chrome active.
   `tests/no-literal-colours.test.ts` fails any colour literal under
   `components/` or `app/`, with one documented allowlist entry.
 - Added the two stops the mockup uses and the palette had skipped:
@@ -849,15 +847,14 @@ D55–D88.
   after the MVP) instead of the stale "arrives with the next slice of WP-3".
   The active nav item gets its own `--color-chrome-active` token so it no
   longer shares a colour with hover.
-- **D75's cross-language guard is real.** `lib/workout-profile.test.ts` reads
+- **The zone ramp's cross-language guard is real.** `lib/workout-profile.test.ts` reads
   `backend/app/domain/zones.py` off disk and compares the extracted `coggan_7`
   boundaries against `COGGAN_7_LOWER`; it used to assert the frontend table
   had seven entries against itself.
 - Today's header carries the planned load (`planned 1:15 · 78 TSS`) when the
   session has one, and the detail workout profile gained the mockup's time axis
   beneath the bars — both absent rather than invented when the prescription
-  does not support them. The mockup modules WP-3 deliberately does not build
-  are listed in D87.
+  does not support them. Several mockup modules are deliberately not built.
 
 **Web — testing**
 
@@ -891,7 +888,6 @@ D55–D88.
 
 The prescription half of the loop: what a session *is*, what it is *for*, and
 the machinery that freezes both at planning time (build-plan invariant 4).
-Decisions D42–D54.
 
 **Domain (`backend/app/domain/`, pure)**
 
@@ -900,12 +896,12 @@ Decisions D42–D54.
   hr, cadence) that are either a percentage range of an anchor or an absolute
   range in the channel's own unit. `flatten()` expands repeat blocks — each
   flat step remembering which iteration of which block it came from — and
-  leaves ramps whole, carrying a start and an end target set (D42). Rules are
+  leaves ramps whole, carrying a start and an end target set. Rules are
   enforced at construction: exactly one of duration or distance, a channel may
   only be a percentage of an anchor it derives from, an absolute target must
   use the channel's unit and lie in a plausible range, and a ramp's two ends
   must be the same kind of target — no interpolating from a fraction of an
-  unresolved anchor to an absolute number (D53).
+  unresolved anchor to an absolute number.
 - The nesting bound is enforced *while* a step tree is decoded, not once it is
   built: decoding is recursive, so a deep enough document exhausted the
   interpreter stack before there was a workout to check.
@@ -922,7 +918,7 @@ Decisions D42–D54.
 - Added **success criteria** (`criteria.py`): the MVP five — `time_in_band`,
   `duration_floor`, `ceiling`, `sets_completed`, `load_within` — as a
   tagged-union value set with (de)serialization. A band is a tolerance around
-  the step's *own* prescribed target rather than an absolute range (D44), which
+  the step's *own* prescribed target rather than an absolute range, which
   is what lets a purpose template state one at all. Evaluation is WP-7.
 - Added **purpose templates** (`templates.py`) and the `ScoringAxis`
   vocabulary WP-7 will compute (`completion, adherence, discipline, pacing,
@@ -930,9 +926,9 @@ Decisions D42–D54.
 - Added the **planned-session intent** (`sessions.py`): purpose, prescription
   snapshot, criteria, pinned anchor versions, and the rule that every anchor a
   prescription refers to must be pinned.
-- Percentages are fractions everywhere, matching the zone model (D43), and
+- Percentages are fractions everywhere, matching the zone model, and
   domain JSON is decoded by shared helpers that refuse unknown fields and
-  locate every error in the document (D52).
+  locate every error in the document.
 
 **Data in the repository**
 
@@ -940,20 +936,20 @@ Decisions D42–D54.
   scoring axes that apply and the success criteria a session starts with.
   Loaded and validated at startup, so a file that omits a purpose, names an
   unknown axis, or carries a criterion that purpose could never evaluate stops
-  the boot rather than surfacing at scoring time (D45).
+  the boot rather than surfacing at scoring time.
 - Added `backend/app/resources/exercise_catalogue.json`: 98 hand-curated
   movements across nine families (the plan's `DECIDE:` default). The
   `exercises` table is keyed by slug and seeded from it **lazily and
   idempotently on first access** — not by a migration, which a truncating test
   fixture or a restore would defeat, and not by the lifespan, which would make
-  a successful boot depend on a writable database (D46).
+  a successful boot depend on a writable database.
 
 **Persistence**
 
 - Added the `exercises`, `workouts`, `workout_tags`, `planned_sessions` and
   `planned_session_intents` tables with migration `0003`. Prescriptions are one
   JSON document; tags get a table because "which workouts are tagged X" is a
-  query and array containment is dialect-specific; folders stay a column (D50).
+  query and array containment is dialect-specific; folders stay a column.
 - Intent versions are append-only and carry WP-1's versioning vocabulary
   verbatim, so `app.domain.versioning`'s chain helpers work on the ORM rows
   unchanged.
@@ -973,25 +969,25 @@ Decisions D42–D54.
   criteria from the purpose template and pins the anchor versions in force; a
   prescription referring to an anchor with none in force is refused with a 422
   that names which half of it — the targets, the criteria or both — asked for
-  the anchor, and what to do about it (D49).
+  the anchor, and what to do about it.
 - `PATCH /api/v1/planned-sessions/{id}` refuses an explicit `null` for
   `purpose`, `date` or `status` with a 422, and refuses an empty body rather
   than answering 200 with an audit row saying nothing changed. A patch that
   moves the session *and* edits its intent now leaves both audit rows.
-- Implemented the freeze rule (D47): an intent edit before a match exists
+- Implemented the freeze rule: an intent edit before a match exists
   writes a new version and re-pins; an edit after a match exists writes a new
   version flagged `edited_post_hoc`, **keeps** the pins the athlete executed
   against, and triggers a rescore. Editing only a session's date or status
   versions nothing. Matching and rescoring do not exist yet, so both are
   explicit, tested seams the later work packages replace with one function
-  each (D48).
+  each.
 - The whole step tree and criterion set are typed end to end: recursive
   discriminated unions in the API schemas, regenerated into
   `frontend/generated/api/`.
 - Schemathesis found that `/workouts/folders` and `/workouts/tags` were
   shadowed by `/workouts/{workout_id}`, so an undocumented method on them
   answered 422 about uuid syntax instead of 405. The facet moved to
-  `/workout-labels`, outside the id namespace (D50); the four new write
+  `/workout-labels`, outside the id namespace; the four new write
   operations that refuse schema-valid input by domain rule are narrowed per
   operation in `backend/schemathesis.toml`.
 
@@ -1006,14 +1002,14 @@ Decisions D42–D54.
   edit produces a new version, the flag, kept pins, a rescore call and a
   retrievable original; pre-match edit produces a new version, no flag, and
   re-pinned anchors.
-- The unit suite now turns SQLite's foreign keys on (D51), so `ON DELETE
+- The unit suite now turns SQLite's foreign keys on, so `ON DELETE
   CASCADE`/`SET NULL` behave there as they do on Postgres — the divergence
   that hid a real failure until the pragma went in.
 
 ### WP-1 — domain core: athlete, anchors, zones, versioning primitives
 
 The first real entities, and the first code the build plan's invariants are
-enforced by rather than described in. Decisions D31–D37.
+enforced by rather than described in.
 
 **Domain (`backend/app/domain/`, pure)**
 
@@ -1031,18 +1027,18 @@ enforced by rather than described in. Decisions D31–D37.
 - Added **anchors** (`anchors.py`): `AnchorType` (FTP, LTHR, MAX_HR, with CP
   and W′ reserved and unused), `Provenance`, `AnchorSource`, `AnchorUnit`,
   `StalenessState` (hardcoded `fresh`; `aging`/`stale` reserved), and the
-  immutable `AnchorVersion`. Legality is enforced where it belongs (D35): the
+  immutable `AnchorVersion`. Legality is enforced where it belongs: the
   unit must be the anchor type's own, values must be plausible per type,
   `tested` provenance requires a protocol, and a confidence interval must
   bracket its value. `anchor_as_of` computes which version was in force at a
   moment — effective date *and* creation time — so a back-dated correction
   changes the present without rewriting the past.
 - Added **zones** (`zones.py`): `zones_for(anchor_version, model)`, with
-  `coggan_7` (%FTP) and `lthr_5` (%LTHR) boundary tables documented in D32.
+  `coggan_7` (%FTP) and `lthr_5` (%LTHR) boundary tables documented in `zones.py`.
   Zones are always computed, never stored. Bands are half-open and contiguous,
   the top zone is open-ended, and a model may only be applied to the anchor
   type it derives from.
-- Domain values are frozen dataclasses rather than pydantic models (D31);
+- Domain values are frozen dataclasses rather than pydantic models;
   `app.core.exceptions.domain_rules()` translates their `ValueError`s into the
   documented 422 envelope.
 
@@ -1051,11 +1047,11 @@ enforced by rather than described in. Decisions D31–D37.
 - Added the `athlete`, `anchor_versions` and `audit_log` tables with their
   repositories, and migration `0002` creating them. The athlete row is a
   singleton with a fixed primary key, bootstrapped on first access rather than
-  seeded by the migration (D33). Neither the anchor nor the audit repository
+  seeded by the migration. Neither the anchor nor the audit repository
   offers an update or a delete.
 - `enum_column` now stores the enum member's **value** (`max_hr`), not
   SQLAlchemy's default of its name (`MAX_HR`), so the database, the API and the
-  generated frontend types share one vocabulary (D34). WP-1 is its first user,
+  generated frontend types share one vocabulary. WP-1 is its first user,
   so nothing needed migrating.
 
 **API**
@@ -1063,21 +1059,21 @@ enforced by rather than described in. Decisions D31–D37.
 - Added `GET`/`PATCH /api/v1/athlete`, `GET`/`POST /api/v1/anchors`,
   `GET /api/v1/anchors/current` and `GET /api/v1/anchors/{id}`, all on the
   guarded router.
-- Added zones as two endpoints, each addressed by what it derives from (D38):
+- Added zones as two endpoints, each addressed by what it derives from:
   `GET /api/v1/zones?anchor_type=…` uses the version in force,
   `GET /api/v1/anchors/{id}/zones` uses one pinned version. The zone model is
   derived from the anchor type or named explicitly.
 - `PUT`, `PATCH` and `DELETE` on an anchor version return **405 with an
   explanation** and an `Allow` header, because FastAPI answers an undefined
-  method+path with 404 — which reads as "wrong id" (D36).
-- The reserved anchor types `cp` and `w_prime` cannot be appended (D40): the
+  method+path with 404 — which reads as "wrong id".
+- The reserved anchor types `cp` and `w_prime` cannot be appended: the
   create contract only offers the MVP three, and the service refuses them for
   callers that bypass the schema.
 - The singleton athlete bootstrap is race-tolerant and never a side effect of
-  a rejected write (D41): a lost first-access race returns the winner's row
+  a rejected write: a lost first-access race returns the winner's row
   instead of a 409, and a 422'd first-ever `PATCH` leaves the database
   untouched — bootstrap and update happen in one transaction, both audited.
-- Hardened the new surface against what Schemathesis found (D39): the 422
+- Hardened the new surface against what Schemathesis found: the 422
   contract now admits both shapes the status really has
   (`ValidationErrorDetail`), the append-only refusals answer 405 for any id
   rather than 422 for a malformed one, and free-form `capabilities` JSON is
@@ -1103,7 +1099,7 @@ enforced by rather than described in. Decisions D31–D37.
 
 **Testing**
 
-- Added `hypothesis` (dev-only, D37) and the repo's first property tests: zone
+- Added `hypothesis` (dev-only) and the repo's first property tests: zone
   schemes must partition, stay ordered, scale linearly with the anchor, and
   keep percentages and absolute bounds in agreement — properties that hold for
   any scheme added later, not just the two shipped.
@@ -1112,8 +1108,7 @@ enforced by rather than described in. Decisions D31–D37.
 
 The scaffold was built by adapting the full-stack template rather than
 scaffolding the build plan's `apps/`+`packages/` workspace monorepo; the
-reasoning for this and every other departure is in `docs/decisions.md`
-(D1–D19).
+reasoning for this and every other departure is recorded at the code site.
 
 **Backend architecture**
 
@@ -1126,17 +1121,17 @@ reasoning for this and every other departure is in `docs/decisions.md`
   `api|mcp → ingest → services → persistence → domain` — are enforced by
   import-linter contracts (`uv run lint-imports`) wired into CI, `just lint`
   and pre-push. The OpenAPI contract is unchanged.
-- Upgraded the backend from Python 3.13 to 3.14 (D4) across `pyproject.toml`,
+- Upgraded the backend from Python 3.13 to 3.14 across `pyproject.toml`,
   `.python-version`, `pyrefly.toml`, both `Dockerfile` stages and the
   devcontainer image, and relocked `uv.lock`.
-- Removed the ARQ worker and its Redis service (D5), replacing them with an
+- Removed the ARQ worker and its Redis service, replacing them with an
   in-process APScheduler started by the API lifespan
   (`backend/app/core/scheduler.py`); dropped the `redis` and `worker` compose
   services, the `dev-worker` recipe and the `REDIS__URL` setting.
 
 **Authentication**
 
-- Added single-user session-cookie authentication end to end (D6). The
+- Added single-user session-cookie authentication end to end. The
   credential store is one setting, `AUTH__PASSWORD_HASH` (a bcrypt hash —
   there is no user table); `POST /api/v1/auth/login` swaps it for a signed
   session cookie issued by Starlette's `SessionMiddleware` (`arc_session`,
@@ -1144,7 +1139,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
   with `POST /api/v1/auth/logout` and an always-open
   `GET /api/v1/auth/session` alongside it. Everything else under `/api/v1` is
   mounted on a router carrying `Depends(require_session)` and a declared 401,
-  so new routers are protected by default (D12); `/health` stays open. Failed
+  so new routers are protected by default; `/health` stays open. Failed
   logins sleep ~0.3s to blunt guessing, and production refuses to boot without
   `AUTH__PASSWORD_HASH` and `AUTH__SESSION__SECRET_KEY`. The unused
   `AUTH__JWT__*` shell is gone.
@@ -1154,7 +1149,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
 - Schemathesis found an undocumented 400 on login (unparseable body); the
   contract now declares it and a unit test pins it. The fuzz job supplies a
   session cookie and excludes the `ignored_auth` check, which cannot strip a
-  raw header (D13).
+  raw header.
 
 **MCP server**
 
@@ -1164,7 +1159,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
   `/mcp*`). Every request must present a bearer key from `MCP__API_KEYS`
   (`label:scope:key,...`, scope `read` or `write`); keys are parsed by the
   framework-free `app/mcp/auth.py` and compared with `secrets.compare_digest`
-  in a `TokenVerifier` subclass (D10), which puts the caller's label and scope
+  in a `TokenVerifier` subclass, which puts the caller's label and scope
   on the request identity for per-tool scope checks in WP-8. The server
   refuses to start (exit 1) with no keys, so `MCP__API_KEYS` is required for
   `docker compose up`. The surface is one `ping` tool plus an unauthenticated
@@ -1180,7 +1175,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
   `NEXT_PUBLIC_API_BASE_URL`, so the browser calls the API same-origin through
   the proxy, and the `@fullstack` smoke suite runs against `http://localhost`.
   Caddy deliberately does not depend on `mcp`, so a missing MCP key set cannot
-  take the site down (D9).
+  take the site down.
 - Upgraded Postgres from 17 to 18 (dev stack and the integration-test
   database). Postgres 18 moved the image's `VOLUME` to `/var/lib/postgresql`
   (`PGDATA` is now `/var/lib/postgresql/18/docker`), so the `postgres-data`
@@ -1190,8 +1185,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
 - Added the runtime data tree: `DATA__ROOT` (default `data`) with `inbox/`,
   `originals/`, `streams/`, `quarantine/` created on API startup and
   bind-mounted into the api container at `/app/data`; a one-shot `data-init`
-  service hands the root-owned bind mount to the api's non-root user first
-  (D8).
+  service hands the root-owned bind mount to the api's non-root user first.
 
 **Developer workflow**
 
@@ -1201,21 +1195,21 @@ reasoning for this and every other departure is in `docs/decisions.md`
   twice) for the login password it bcrypt-hashes into `AUTH__PASSWORD_HASH`.
   Values are substituted with Python rather than `sed`, so the `$` and `/` in
   bcrypt hashes survive; the script is idempotent and degrades to a
-  placeholder hash plus instructions when there is no terminal to prompt on
-  (D15). `just hash-password` prints a ready-to-paste single-quoted hash for
+  placeholder hash plus instructions when there is no terminal to prompt on.
+  `just hash-password` prints a ready-to-paste single-quoted hash for
   rotating the password later.
 - `just check` now also runs `api-check`, so API-contract drift is part of the
   one local gate, and the devcontainer installs `just` itself
-  (`uv tool install rust-just`, D16) — the whole workflow depended on a tool
+  (`uv tool install rust-just`) — the whole workflow depended on a tool
   that was not in the image.
 - The Playwright `@fullstack` suite logs in once in a `setup` project and
-  replays the session via `storageState` (D14).
+  replays the session via `storageState`.
 - Repo hygiene: tracked `docs/`, removed orphaned build artifacts
   (`packages/`, root `node_modules/`), ignored `/data/` and `.schemathesis/`,
   and bumped the `ruff-pre-commit` hook to v0.16.1 to match the backend
   lockfile.
 
-- Added changelog tooling (D18). `just changelog` runs git-cliff (`cliff.toml`)
+- Added changelog tooling. `just changelog` runs git-cliff (`cliff.toml`)
   over the conventional commits since the last tag and prints a **draft** —
   commit bodies included, grouped under Keep a Changelog headings — whose
   entries are edited down by hand into the `## [Unreleased]` section above;
@@ -1230,8 +1224,8 @@ reasoning for this and every other departure is in `docs/decisions.md`
   `filter_unconventional` would otherwise drop an unparseable subject from
   every draft with no error. git-cliff installs in the devcontainer via
   `uv tool install git-cliff`.
-- Switched the repository's squash-merge settings to `PR_TITLE` + `PR_BODY`
-  (D19), so a merged PR's description — not a bullet dump of its commits —
+- Switched the repository's squash-merge settings to `PR_TITLE` + `PR_BODY`,
+  so a merged PR's description — not a bullet dump of its commits —
   becomes the commit body on `main` and the raw material for a changelog entry.
   The `protect-main` ruleset gained a `required_status_checks` rule naming the
   `pr-title` check, so a non-conventional title now blocks the merge instead of
@@ -1247,18 +1241,18 @@ reasoning for this and every other departure is in `docs/decisions.md`
 
 **Documentation**
 
-- Seeded `CHANGELOG.md` and the decision log `docs/decisions.md` (D1–D18).
-- Aligned `docs/mvp-build-plan.md` (stack, repository layout, WP-0),
-  `docs/tech-stack.md`, `README.md`, `AGENTS.md`, `backend/README.md` and
+- Seeded `CHANGELOG.md`.
+- Aligned the build plan (stack, repository layout, WP-0), the tech-stack
+  notes, `README.md`, `AGENTS.md`, `backend/README.md` and
   `frontend/README.md` with what was actually built, and corrected the stale
   references in WP-1…WP-9 (`packages/*` paths, `make` targets) so later work
   packages execute against the real repository.
 - Folded `AGENTS.md` and `frontend/AGENTS.md` into `CLAUDE.md` and
   `frontend/CLAUDE.md`, which previously only `@`-included them, and dropped the
-  `AGENTS.md` files — this project is worked on with Claude Code only (D17).
+  `AGENTS.md` files — this project is worked on with Claude Code only.
 - Re-verified the WP-0 scaffold against the running stack and corrected the
   drift it exposed. `scripts/setup-repo.sh` did not reproduce the repository
-  configuration D19 describes — it left `squash_merge_commit_title`/`_message`
+  configuration the squash-merge settings require — it left `squash_merge_commit_title`/`_message`
   at their defaults and created a `protect-main` ruleset with no
   `required_status_checks` rule, so a fresh clone of this template got neither
   `PR_TITLE`+`PR_BODY` squash commits nor a blocking `pr-title` check; both are
@@ -1270,7 +1264,7 @@ reasoning for this and every other departure is in `docs/decisions.md`
   integration job's throwaway Postgres as a service container and the
   full-stack smoke job as "Docker Compose validation"; and WP-0 gained the
   repo-governance/dev-workflow item (devcontainer, prek hooks, squash-only
-  ruleset, changelog tooling) that D16–D19 recorded but the plan never listed.
+  ruleset, changelog tooling) that the plan never listed.
   Documented the first-run trap that `just init` + a pre-existing
   `postgres-data` volume produces: a new random `POSTGRES__PASSWORD` that
   Postgres ignores, surfacing as an api crash-loop on `InvalidPasswordError`.

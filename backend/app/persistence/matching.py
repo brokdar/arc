@@ -23,7 +23,7 @@ how to render.
 as they stood the instant before the link was made, which is what makes
 build-plan WP-6.8's reversibility exact rather than approximate: unlinking a
 match on a session that was already `displaced` puts it back to `displaced`,
-not to `unmatched`. The link row is **deleted** on unlink (D141) — the history
+not to `unmatched`. The link row is **deleted** on unlink — the history
 lives in `audit_log`, which is append-only and outlives the entity by design,
 and a table that kept dead links would have to express "the active one" as a
 partial index instead of a plain constraint.
@@ -310,8 +310,8 @@ class SessionMatchRepository:
 
         Open means `planned`: a session already marked missed has been swept,
         and one that is completed or displaced has been answered. **Any link
-        at all keeps a session out of the sweep, a pending proposal included**
-        (D148): a proposal is a standing question in the UI, and marking the
+        at all keeps a session out of the sweep, a pending proposal included**:
+        a proposal is a standing question in the UI, and marking the
         session missed underneath it would both nag the athlete about a ride
         the machine has already found and corrupt the statuses the link is
         holding for its restore. Answering the proposal settles the session
@@ -400,7 +400,7 @@ class EveningPromptRepository:
         the freshest prompts — the ones least likely to have expired — and
         discarded most of them. With more pending prompts than the batch size,
         the genuinely overdue ones were never in the page at all and were
-        starved until the backlog fell below the limit (D164).
+        starved until the backlog fell below the limit.
         """
         result = await self._session.execute(
             select(EveningPromptRow)

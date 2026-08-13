@@ -34,8 +34,8 @@ def get_service(session: SessionDep) -> ExerciseService:
 
 ServiceDep = Annotated[ExerciseService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`.
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
 CategoryFilter = Annotated[
     ExerciseCategory | SkipJsonSchema[None],
     Query(description="Restrict to one movement family; omit for all of them."),

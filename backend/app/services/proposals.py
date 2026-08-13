@@ -407,7 +407,7 @@ class ProposalService:
         it is the plan continuing.
 
         Idempotent, and batched **over what has expired, oldest deadline
-        first** (D164): paging before filtering starves the overdue rows the
+        first**: paging before filtering starves the overdue rows the
         sweep exists for whenever the pending backlog is larger than a batch.
 
         Returns:
@@ -455,7 +455,7 @@ class ProposalService:
         implies the day is still open.
 
         Two things close a proposal here, and the second exists because the
-        first is not enough (D188):
+        first is not enough:
 
         * the recording lands on a **day and discipline** the proposal has
           something to say about — the pairing a plan entry is placed by, in
@@ -604,7 +604,7 @@ class ProposalService:
         an approximation of it.
 
         The pins are the subtle half, and getting them from the same place is
-        the whole fix (D185). Invariant 4 freezes a prescription at creation
+        the whole fix. Invariant 4 freezes a prescription at creation
         **or last pre-execution edit**, so revising a session nobody has ridden
         yet re-pins it to the anchors in force now: a note-only edit written
         after an FTP test really does re-price the session, and the diff has to
@@ -625,7 +625,7 @@ class ProposalService:
             "date": _as_date(change.updates.get("date", row.date)),
             "purpose": preview.purpose.value,
             "discipline": preview.discipline.value,
-            # Not proposable (D174): a session's status is derived from what
+            # Not proposable: a session's status is derived from what
             # the athlete actually did, so it passes through untouched.
             "status": _as_text(row.status),
             "intent_text": change.updates.get("intent_text", current.intent_text),
@@ -688,7 +688,7 @@ class ProposalService:
         Three questions, all of them about the world having moved since the
         proposal was written: does the target still exist, is its concurrency
         token still in force, and — the one a token cannot answer — has the
-        athlete meanwhile *trained* it (D188). A match is the truest form of
+        athlete meanwhile *trained* it. A match is the truest form of
         "this day is spent": the recording is already being scored against the
         prescription as it stands, and rewriting or moving that prescription
         now would rewrite what the ride is judged by. A 409, because the
@@ -724,7 +724,7 @@ class ProposalService:
 
         Deleting a planned session cascades: the match link goes, the reasons
         the athlete wrote about it go, and the scores that named it are left
-        pointing at nothing (D189). None of that is a plan change, and none of
+        pointing at nothing. None of that is a plan change, and none of
         it is the agent's to make — the agent may argue with the plan and never
         with the record of what happened. A plain unridden planned session
         stays deletable, which is what the verb is for.
@@ -908,7 +908,7 @@ def _sizes(duration_s: int | None, total_sets: int | None) -> dict[str, Any]:
     Seconds for a ride and working sets for a lift: the sizes that survive the
     cases where neither cost axis can be computed, which is where a diff that
     carried costs alone stopped being able to say anything at all — and where
-    the red-flag rule stopped being able to refuse (D186).
+    the red-flag rule stopped being able to refuse.
     """
     return {"duration_s": duration_s, "total_sets": total_sets}
 
@@ -923,7 +923,7 @@ def _snapshot(row: PlannedSessionRow, resolution: SessionResolution) -> dict[str
     Every field a change may touch is here, on both sides, including the two
     documents: a diff that omitted ``success_criteria`` and ``structure``
     showed an athlete "nothing differs" above an enabled Accept button for a
-    change that rewrote how the session is judged (D185).
+    change that rewrote how the session is judged.
     """
     intent = row.current_intent
     return {
@@ -1106,7 +1106,7 @@ def _clean_note(reason: str | None) -> str | None:
 def _check_expiry(expires_at: dt.datetime) -> None:
     """Reject a deadline that is naive, already past, or absurdly far off.
 
-    The horizon is not decoration (D187). Nothing pages
+    The horizon is not decoration. Nothing pages
     :meth:`PlanProposalRepository.pending`, and it is scanned on every propose
     **and** on every recorded session, so a proposal dated year 9999 is a row
     the expiry sweep never reaches and every later write pays for. It is also

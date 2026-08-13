@@ -290,7 +290,7 @@ async def test_optional_query_params_do_not_advertise_null(
     assert offenders == []
 
 
-# Reserved anchor types (D40): `cp` and `w_prime` exist as vocabulary so that
+# Reserved anchor types: `cp` and `w_prime` exist as vocabulary so that
 # WP-5 can add the critical-power model without migrating stored values, but
 # nothing may write them yet. The contract's create enum only offers the MVP
 # three, and the service refuses the reserved two for callers that do not come

@@ -27,7 +27,7 @@ import type { WritableAnchorType } from "@/lib/anchors";
  *
  * The profile and the illness flag come after, and are smaller on purpose.
  * The flag in particular is *not* re-implemented here — it is the same control
- * Today carries and the same dialog, mounted a second time (D182 put it in the
+ * Today carries and the same dialog, mounted a second time (the banner is in the
  * shell so a raised flag is visible everywhere; this is where an athlete goes
  * looking for it when it is down).
  */

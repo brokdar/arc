@@ -1,7 +1,7 @@
 """The athlete: profile and per-discipline capability stubs.
 
 Single-athlete application — there is exactly one of these and no user table
-(see `docs/decisions.md` D6). Every field is optional: the profile is
+— a single-user application. Every field is optional: the profile is
 bootstrapped empty on first access and filled in from the UI, so nothing here
 may assume a value is present.
 

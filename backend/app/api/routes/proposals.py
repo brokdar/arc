@@ -7,7 +7,7 @@ routes call. An athlete who wants to change the plan changes the plan
 (`/planned-sessions`); proposing to oneself is not a workflow.
 
 Accepting is a `POST` to a sub-resource rather than a `PATCH` setting a status,
-for the reason `move` is its own verb (D56): accepting applies a set of plan
+for the reason `move` is its own verb: accepting applies a set of plan
 changes in one transaction, and that is an action, not a field.
 """
 
@@ -58,8 +58,9 @@ def get_service(session: SessionDep) -> ProposalService:
 
 ServiceDep = Annotated[ProposalService, Depends(get_service)]
 
-# `SkipJsonSchema[None]`: optional by omission, never `null` — see
-# `.claude/rules/api-optional-query-params.md`. Aliased because `status` is
+# `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
+# delivers `?x=null` as the four-letter string, which the parser refuses.
+# Aliased because `status` is
 # conventionally `fastapi.status` in a route module; clients see `?status=`.
 StatusFilter = Annotated[
     ProposalStatus | SkipJsonSchema[None],

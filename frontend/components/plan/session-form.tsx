@@ -66,7 +66,7 @@ export interface SessionFormProps {
  * re-derives them. The moment the athlete edits, adds or removes one, the list
  * stops following — because from then on it is *their* rule, and silently
  * replacing it on the next purpose change would throw away an edit they made
- * on purpose (D67).
+ * on purpose.
  *
  * **A PATCH sends only what changed.** The backend refuses a body carrying
  * both `workout_id` and `structure` (a prescription has one source) and treats

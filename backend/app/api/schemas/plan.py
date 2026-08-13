@@ -4,7 +4,7 @@ Read-only, and deliberately flat: a card is a row of facts, not a nested
 document. What a card cannot show — the step tree, the success criteria, the
 pins, the intent history — is one request away at
 `GET /api/v1/planned-sessions/{id}`, which is what opening the session sheet
-does (D55).
+does.
 
 `from_attributes` throughout: the service returns the projection as frozen
 dataclasses, so the route validates them straight through instead of restating
@@ -61,7 +61,7 @@ class WeekSessionRead(BaseModel):
     #: ``GET /planned-sessions/{id}``, from the same computation. Null exactly
     #: when ``predicted_load`` is. **Never render a card's load without it**:
     #: below 1.0 the load is an under-estimate, and a 40%-covered prediction
-    #: is indistinguishable from a complete one otherwise (D88).
+    #: is indistinguishable from a complete one otherwise.
     predicted_load_coverage: float | None
     #: Σ ``sets × reps × kg`` for a strength session whose loads are in
     #: kilograms. **Kilograms, not a load** — never add it to

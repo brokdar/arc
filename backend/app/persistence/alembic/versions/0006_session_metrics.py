@@ -19,7 +19,7 @@ payload: the set grows every work package and nothing queries an individual
 metric.
 
 **`anchor_versions.anchor_type` widens** from VARCHAR(7) to VARCHAR(10).
-`AnchorType.RESTING_HR` (D114) is the first member longer than ``w_prime``,
+`AnchorType.RESTING_HR` is the first member longer than ``w_prime``,
 and the enum columns this codebase uses are non-native VARCHARs sized to the
 longest member value. Inside ``batch_alter_table`` because SQLite cannot alter
 a column in place; on PostgreSQL the same call emits a plain ``ALTER COLUMN
@@ -90,7 +90,7 @@ def upgrade() -> None:
         # Not a foreign key; see the module docstring.
         sa.Column("superseded_by", sa.Uuid(), nullable=True),
         sa.Column("recompute_reason", sa.String(length=200), nullable=True),
-        # The pins (D115, A5.5). All nullable: a session with no power pins no
+        # The pins (A5.5). All nullable: a session with no power pins no
         # FTP, and an athlete with no resting-HR anchor pins none.
         sa.Column("ftp_anchor_version_id", sa.Uuid(), nullable=True),
         sa.Column("lthr_anchor_version_id", sa.Uuid(), nullable=True),

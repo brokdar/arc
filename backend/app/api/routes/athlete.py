@@ -1,7 +1,7 @@
 """HTTP endpoints for the athlete profile. Thin layer over the service.
 
 Singular path (`/athlete`, not `/athletes/{id}`): there is exactly one
-athlete and no user table (D6), so a collection and an id in the URL would be
+athlete and no user table, so a collection and an id in the URL would be
 inventing a plurality the application does not have.
 
 This router carries no auth dependency of its own: `app.main` mounts it on the

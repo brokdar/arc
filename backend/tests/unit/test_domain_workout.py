@@ -85,7 +85,7 @@ def target_maps(draw: st.DrawFn) -> Targets:
 def matching_targets(draw: st.DrawFn, start: Target) -> Target:
     """The far end of a ramp: same kind, same anchor, different numbers.
 
-    A ramp's ends must agree channel by channel (D53), so the end target is
+    A ramp's ends must agree channel by channel, so the end target is
     generated *from* the start one rather than drawn independently — which
     also means the strategy never discards.
     """
@@ -433,7 +433,7 @@ def test_a_ramp_must_start_and_end_on_the_same_channels() -> None:
 def test_a_ramp_cannot_change_what_kind_of_target_it_prescribes() -> None:
     # There is no interpolation from "60 % of a number nobody has resolved
     # yet" to "250 W", so a prescription whose meaning would depend on when
-    # the anchor resolves is refused rather than frozen (D53).
+    # the anchor resolves is refused rather than frozen.
     with pytest.raises(ValueError, match="same kind of target"):
         RampStep(
             start_targets={

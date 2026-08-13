@@ -26,9 +26,8 @@ actually went in.
 **And what happens when it cannot.** :class:`NotAssessed` is the third shape:
 a metric that has no honest answer returns the *reason* it has none, never
 ``None`` and never a zero standing in for a missing channel. The UI holds the
-slot and renders the reason (`.claude/rules/frontend-ui-conventions.md` rule
-4); WP-7's scoring axes reuse the same type, so "not assessed" means one thing
-across the product.
+slot and renders the reason; WP-7's scoring axes reuse the same type, so
+"not assessed" means one thing across the product.
 
 **Nulls are stops.** Every function here takes a ``*_fixed`` column exactly as
 `app.domain.streams` produced it: ``Sequence[float | None]`` on the 1 Hz grid,
@@ -36,7 +35,7 @@ with ``None`` for a recording stop, a dropout the cleaner declined to repair,
 or a channel that simply was not recording yet. Null rows are **excluded**
 everywhere — never read as zero.
 
-**Two durations, and which number gets which** (D194). An *average* is divided
+**Two durations, and which number gets which**. An *average* is divided
 by :class:`AveragingBasis` — moving time, the seconds the athlete was actually
 travelling — because that is the quantity "average power" and "average speed"
 name on every head unit and every other platform, and a divisor nobody else
@@ -45,7 +44,7 @@ NP is still a rolling window over the recorded series and TSS's duration term
 is still `recording time` (A4.4, A5.1). The split is deliberate and each
 explanation says which side of it its number stands on.
 
-**And one series per ratio** (D196). The basis counts its own rows and hands
+**And one series per ratio**. The basis counts its own rows and hands
 them to :meth:`AveragingBasis.integrate`, so an average's numerator covers
 exactly the seconds its denominator did — the speed channel cannot dropout its
 way into doubling an average or into inventing a standstill. The one number
@@ -232,8 +231,8 @@ COASTING_MAX_W = 10.0
 #: conversion happens once, here, rather than in whichever adapter renders it.
 MS_TO_KMH = 3.6
 
-#: Metres a climb must gain before it is counted at all (D120, retuned by
-#: D200). Barometric altimeters wander by a metre or two while standing still,
+#: Metres a climb must gain before it is counted at all. Barometric
+#: altimeters wander by a metre or two while standing still,
 #: and summing raw positive deltas turns that wander into hundreds of metres
 #: of "climbing" on a flat ride.
 #:
@@ -246,7 +245,7 @@ MS_TO_KMH = 3.6
 ELEVATION_HYSTERESIS_M = 3.0
 
 #: Seconds of altitude averaged together, centred on each row, before the
-#: threshold above is applied (D200).
+#: threshold above is applied.
 #:
 #: A threshold alone cannot separate a hill from an altimeter: pressure noise
 #: at 1 Hz is a few tenths of a metre per sample and wanders several metres
@@ -285,7 +284,7 @@ def _absent(channel: str) -> NotAssessed:
     return NotAssessed(f"no {channel} was recorded")
 
 
-# --- the averaging basis (D194) -----------------------------------------------
+# --- the averaging basis -----------------------------------------------
 
 
 #: What the load chain's duration term is, restated wherever an average has to
@@ -298,7 +297,7 @@ LOAD_DURATION_NOTE = (
 )
 
 #: How much of the recorded time the cleaned speed column has to cover before
-#: moving time may be a divisor at all (D196).
+#: moving time may be a divisor at all.
 #:
 #: The failure this line exists for is not proportional, so it cannot be
 #: absorbed by a wider assumption string. A speed sensor that dies halfway
@@ -323,7 +322,7 @@ class AveragingBasis:
     a divisor nobody else uses is reported as a bug about a number that is
     arithmetically fine.
 
-    **The basis carries its own rows** (D196), and that is the point of the
+    **The basis carries its own rows**, and that is the point of the
     type rather than a convenience. Moving time used to be counted off the raw
     device samples while every numerator integrated the cleaned 1 Hz column;
     nothing tied the two together, so a speed channel that dropped out for half
@@ -509,10 +508,10 @@ def _fallback_assumption(*, covered_s: float, coverage: float, moving_rows: int)
 def average_power(
     power_fixed: Sequence[float | None], basis: AveragingBasis | NotAssessed
 ) -> Assessment:
-    """Work done over the averaging basis, divided by it — moving time (D194).
+    """Work done over the averaging basis, divided by it — moving time.
 
-    ``average_power = Σ P × Δt / basis`` (Appendix A.1, with D194's divisor),
-    where the sum runs over **exactly the seconds the basis counted** (D196).
+    ``average_power = Σ P × Δt / basis`` (Appendix A.1, over moving time),
+    where the sum runs over **exactly the seconds the basis counted**.
     That coupling is the whole of it: the numerator and the denominator are
     both taken from :class:`AveragingBasis`, so no dropout, no repair and no
     noisy GPS can leave one describing more of the ride than the other. Over a
@@ -613,7 +612,7 @@ def work_above_ftp_kj(
 def variability_index(
     np_watts: float, power_fixed: Sequence[float | None]
 ) -> Assessment:
-    """``NP / the mean of the same series NP was taken over`` (D196).
+    """``NP / the mean of the same series NP was taken over``.
 
     1.0 is a perfectly steady effort; a criterium sits well above 1.1. Below
     1.0 is not a ragged ride, it is a broken ratio — and that is what this
@@ -625,8 +624,8 @@ def variability_index(
     arithmetic mean of those same rows. By the power-mean inequality the fourth
     power mean dominates the first, so the ratio sits at or above 1 and reads
     as "how much more the ride cost than its average suggests". Hand it the
-    **published** average power instead and it stops meaning that: since D194
-    that number is divided by moving time, so on a ride with recorded traffic
+    **published** average power instead and it stops meaning that: that
+    number is divided by moving time, so on a ride with recorded traffic
     lights the denominator grows while NP does not, and a steady 200 W hour
     interrupted by ten minutes of lights reports a variability index of 0.92 —
     a number no definition of VI can produce, presented with no assumption
@@ -665,7 +664,7 @@ def variability_index(
                     "both terms are taken over the same recorded rows, which is "
                     "what keeps the ratio at or above 1 — it is deliberately "
                     "not the average power shown beside it, which is divided "
-                    "by moving time (D194)"
+                    "by moving time"
                 ),
             ),
             citation=_COGGAN,
@@ -763,7 +762,7 @@ SPEED_INTEGRATION_NOTE = (
 )
 
 #: The source sentence for a session merged from several recordings, every one
-#: of which had an odometer of its own (D202).
+#: of which had an odometer of its own.
 MERGED_ODOMETER_NOTE = (
     "the distance is each recording's own odometer span — the device's "
     "cumulative distance field, differenced from that recording's first "
@@ -790,7 +789,7 @@ NO_ODOMETER_REASON = (
 )
 
 #: How much of a recording's own recorded seconds its odometer has to cover
-#: before the span of that odometer may stand for the whole of it (D202).
+#: before the span of that odometer may stand for the whole of it.
 #:
 #: The mirror of :data:`SPEED_COVERAGE_FLOOR`, and it exists for the same
 #: shape of failure. A cumulative channel that stops halfway through a ride —
@@ -811,7 +810,7 @@ NO_ODOMETER_REASON = (
 ODOMETER_COVERAGE_FLOOR = 0.9
 
 #: Consecutive readings below the running maximum that are read as a glitch
-#: rather than as a reset (D202).
+#: rather than as a reset.
 #:
 #: A cumulative channel must not go backwards, but a *reading* of one may: a
 #: sensor that reports a garbled packet, or a device that corrects its own
@@ -983,7 +982,7 @@ def distance_km(
 ) -> Assessment:
     """How far the ride went — the odometer where there is one, speed otherwise.
 
-    **The odometer wins** (D197). A head unit carries a cumulative ``distance``
+    **The odometer wins**. A head unit carries a cumulative ``distance``
     channel that it integrates internally from wheel revolutions at a far
     higher rate than the once-a-second speed it writes out, so the last reading
     minus the first is the distance the device displayed — and the distance
@@ -993,7 +992,7 @@ def distance_km(
     gap far too large to be quantisation and exactly the size that makes an
     athlete distrust every other number on the page.
 
-    **Differenced per recording, then summed** (D202). A merged session lays
+    **Differenced per recording, then summed**. A merged session lays
     several recordings on one 1 Hz grid (`app.ingest.analysis`), and each
     device's odometer counts from **its own** zero — so the joined column runs
     0 → 40 950, gap, 0 → 30 000. Differencing *that* end to end is not a
@@ -1027,7 +1026,7 @@ def distance_km(
         speed_fixed: The cleaned speed column, in m/s.
         distance_fixed: The cleaned odometer column, in cumulative metres.
             Empty for a file that carried none, which is the ordinary case for
-            GPX and for anything ingested before D197.
+            GPX and for anything ingested before the odometer was stored.
         segments: ``[start, end)`` row ranges, one per recording on the joined
             grid, in order. Empty — the ordinary single-recording case — means
             one segment spanning everything.
@@ -1086,7 +1085,7 @@ def _distance_assumptions(
     from_odometer: Sequence[_Leg],
     integrated: Sequence[_Leg],
 ) -> tuple[str, ...]:
-    """What the distance had to assume, source sentence first (D197, D202)."""
+    """What the distance had to assume, source sentence first."""
     notes: list[str] = []
     if from_odometer and integrated:
         notes.append(
@@ -1133,7 +1132,7 @@ def _distance_assumptions(
 def average_speed_kmh(
     distance: Assessment, basis: AveragingBasis | NotAssessed
 ) -> Assessment:
-    """``distance / moving time``, in km/h — the ride-log average (D194).
+    """``distance / moving time``, in km/h — the ride-log average.
 
     Divided by the same :class:`AveragingBasis` as average power, which is what
     keeps "average speed 25.6" beside "average power 130" a single consistent
@@ -1142,15 +1141,15 @@ def average_speed_kmh(
     speed with no distance behind it should say "no speed was recorded", not
     invent a second sentence for the same fact.
 
-    **The numerator is the whole ride and the denominator is not** (D198), and
-    that asymmetry is deliberate rather than an oversight D196 missed. D196's
-    row-set invariant applies to averages that are a *rate integrated over the
+    **The numerator is the whole ride and the denominator is not**, and
+    that asymmetry is deliberate rather than an oversight. The row-set
+    invariant applies to averages that are a *rate integrated over the
     same rows they are divided by* — average power sums watts over exactly the
     seconds :meth:`AveragingBasis.integrate` counted, so no dropout can leave
     numerator and denominator describing different stretches. Distance is not
     that kind of numerator. It is a **total for the ride**: every metre the
     wheel turned, including the metres rolled below the moving threshold, and
-    since D197 it is read off the device's odometer, which has no per-row
+    it is read off the device's odometer, which has no per-row
     decomposition at all — the odometer knows where the ride ended, not which
     seconds of it were spent moving.
 
@@ -1165,7 +1164,7 @@ def average_speed_kmh(
     their seconds being in the divisor.
 
     The load-duration note that average power carries is deliberately **not**
-    here (D196): average speed has no duration term in any load model, and
+    here: average speed has no duration term in any load model, and
     attaching "TSS is still computed over recording time" to it answered a
     question nobody reading a km/h figure had asked.
     """
@@ -1186,7 +1185,7 @@ def average_speed_kmh(
             ),
             assumptions=(
                 # The distance's own first assumption says which source
-                # produced it (D197); repeating it here is what stops a km/h
+                # produced it; repeating it here is what stops a km/h
                 # figure from being the one number on the page whose provenance
                 # a reader has to go and look up.
                 *distance.explanation.assumptions[:1],
@@ -1264,7 +1263,7 @@ def stopped_time_s(
     recording through. Those are one number to an athlete asking why a
     90-minute ride took two hours, and two numbers only to the ingest pipeline.
 
-    What it refuses to count as standing still (D196) is a second the speed
+    What it refuses to count as standing still is a second the speed
     channel had **no reading** for. A dropout is not a standstill, and
     ``elapsed − moving`` alone cannot tell them apart: a sensor that dies for
     half a ride would be reported as half an hour spent at the kerb. Those
@@ -1333,7 +1332,7 @@ def channel_average(label: str, values: Sequence[float | None]) -> Assessment:
 
 
 def average_cadence(cadence_fixed: Sequence[float | None]) -> Assessment:
-    """Mean cadence over the rows the athlete was **pedalling** (D199).
+    """Mean cadence over the rows the athlete was **pedalling**.
 
     Zero-rpm rows are coasting, and every head unit, Strava and intervals.icu
     leave them out of the average — so arc does too. The difference is not
@@ -1479,7 +1478,7 @@ def elevation_gain_m(
     Summing every positive delta of a barometric altimeter counts its noise —
     a metre of drift each way, once a second, is hundreds of metres of
     imaginary climbing over a flat four-hour ride. Two filters in series, and
-    they catch different things (D200):
+    they catch different things:
 
     1. **Averaged** over a centred :data:`ELEVATION_SMOOTHING_S` window, which
        removes the high-frequency part of the wander. Terrain does not change
@@ -1801,7 +1800,7 @@ def select_training_load(
 #: hard begins above it at Z5.
 #:
 #: `lthr_5` has five bands, and the same rule places them differently from a
-#: naive re-use of those integers (D121). Its Z4 is `SubThreshold`
+#: naive re-use of those integers. Its Z4 is `SubThreshold`
 #: (94-100 %LTHR) — below LTHR, so moderate — and Z5 (`SuperThreshold`) is the
 #: only band above threshold, so hard is Z5 alone. Putting Z4 in hard, as an
 #: earlier version of this table did, counted every tempo-to-threshold minute

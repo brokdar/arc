@@ -85,7 +85,7 @@ ZONE_MODEL_CHANNEL: dict[ZoneModel, StreamChannel] = {
 class SessionInputs:
     """Everything the metric set is computed from. No I/O has touched it.
 
-    **Moving time is not an input** (D196). It used to be, counted off the raw
+    **Moving time is not an input**. It used to be, counted off the raw
     device samples by `app.domain.streams.resample` and passed through here
     while every numerator integrated the cleaned columns — two derivations of
     one ride that nothing kept in step, and a speed channel that dropped out
@@ -103,7 +103,7 @@ class SessionInputs:
         elapsed_time_s: Last sample minus first.
         columns: Channel -> that channel's cleaned (``_fixed``) column on the
             1 Hz grid. Absent channels are simply absent — including
-            ``DISTANCE``, which every stream stored before D197 lacks and which
+            ``DISTANCE``, which streams stored before it lack and which
             :func:`app.domain.metrics.distance_km` therefore treats as an
             ordinary fallback rather than an error.
         sex: The athlete's sex; HRSS's coefficient depends on it.
@@ -113,7 +113,7 @@ class SessionInputs:
         segments: ``[start, end)`` row ranges of ``columns``, one per recording
             the session was merged from, in order. Empty for the ordinary
             single-recording session, which is one segment spanning
-            everything. Only the **cumulative** channel needs them (D202): a
+            everything. Only the **cumulative** channel needs them: a
             merged session's odometer counts from each recording's own zero, so
             the joined column has to be differenced per segment and summed,
             and no per-row metric can tell that from the column alone.
@@ -165,7 +165,7 @@ class HeartRateMetrics:
 class CadenceMetrics:
     """Everything derived from the cadence column.
 
-    The average excludes coasting rows (D199) while the maximum is over every
+    The average excludes coasting rows while the maximum is over every
     reading, which is not an inconsistency: a maximum has nothing to exclude,
     and a mean has the whole freewheeling descent.
     """
@@ -181,11 +181,11 @@ class SpeedMetrics:
     The ride log's basics, and the reason they are a block of their own rather
     than three loose slots: distance, average speed and maximum speed are one
     account of the same channel, and the average is only readable beside the
-    basis it was taken over (D194).
+    basis it was taken over.
 
-    "The same channel" is now approximate: since D197 the distance prefers the
+    "The same channel" is now approximate: the distance prefers the
     device's own odometer where the file carried one — differenced per
-    recording and summed (D202) — and only falls back to integrating speed. The
+    recording and summed — and only falls back to integrating speed. The
     block stays together because the *average* is still distance ÷ the
     speed-derived basis, so the three numbers still have to be read as one
     claim.
@@ -228,8 +228,8 @@ class SessionAnalysis:
 
     recording_time_s: float
     elapsed_time_s: float
-    #: Rows of the **cleaned** speed column at or above 1 km/h, one second each
-    #: (D196). Exactly the divisor and exactly the row set every average here
+    #: Rows of the **cleaned** speed column at or above 1 km/h, one second each.
+    #: Exactly the divisor and exactly the row set every average here
     #: was taken over, whenever the speed channel covered enough of the ride to
     #: be one; where it did not, this still reports what the column showed and
     #: the averages' own explanations name the recording time they fell back to.
@@ -237,8 +237,7 @@ class SessionAnalysis:
     #: Elapsed minus moving minus the seconds the speed channel said nothing
     #: about — every second the athlete is *known* to have been standing,
     #: whether or not the device paused for it. Derived here so no client has
-    #: to subtract two durations and hope it picked the pair the server meant
-    #: (D194, D196).
+    #: to subtract two durations and hope it picked the pair the server meant.
     stopped_time_s: Assessment
     power: PowerMetrics
     heart_rate: HeartRateMetrics
@@ -256,7 +255,7 @@ class SessionAnalysis:
 def _normalized_power(
     power: Sequence[float | None], present: Sequence[float]
 ) -> Assessment:
-    """NP over the recorded rows, concatenated across recording stops (D117)."""
+    """NP over the recorded rows, concatenated across recording stops."""
     if not present:
         return NotAssessed("no power was recorded")
     stops = len(power) - len(present)
@@ -288,14 +287,14 @@ def _power_load(
     load whose IF was not assessed is not a load: ``TSS = duration × IF² /
     36``, so the two either both exist or neither does.
 
-    **The duration term stays recording time** — D194 moved the *averages* onto
+    **The duration term stays recording time** — the *averages* moved onto
     moving time and deliberately stopped there. Two reasons, both about staying
     correct against the definition in the docstrings' citation. Coggan's TSS is
     the whole session's cost, and freewheeling down a descent or rolling to a
     stop at a light is time the body spends recovering *inside* the session; A5.1
     already measured what removing such time does — subtracting coasting alone
     put this system's TSS 7 % under the reference platform's. And IF comes from
-    NP, which is a rolling window over the recorded series (D117): the pair
+    NP, which is a rolling window over the recorded series: the pair
     ``(NP, duration)`` has to describe the same stretch of ride, so dividing an
     NP computed over every recorded second by a duration that excludes some of
     them would be a load for a session nobody rode.
@@ -379,15 +378,15 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
     present_watts = [value for value in power if value is not None]
     np_assessment = _normalized_power(power, present_watts)
     np_watts = value_of(np_assessment)
-    # One basis for every average in the artefact (D194), resolved once from
-    # the cleaned speed column and the recording time (D196): two averages
+    # One basis for every average in the artefact, resolved once from
+    # the cleaned speed column and the recording time: two averages
     # divided by two different clocks would not describe one ride, and a
     # divisor counted off a different series from its numerator would not
     # describe one either.
     basis = averaging_basis(speed, recording_time_s=inputs.recording_time_s)
     average = average_power(power, basis)
     average_beats = channel_average("heart rate", heart_rate)
-    # Per recording, then summed (D202): the odometer is the one cumulative
+    # Per recording, then summed: the odometer is the one cumulative
     # channel here, and a joined grid lays several of them — each counting from
     # its own zero — end to end.
     distance = distance_km(speed, odometer, segments=inputs.segments)
@@ -417,7 +416,7 @@ def analyse_session(inputs: SessionInputs) -> SessionAnalysis:
             intensity_factor=factor,
             # Over the recorded series, not over the published average power:
             # NP and the mean it is divided by have to be two statistics of one
-            # series or the ratio is not a variability index at all (D196).
+            # series or the ratio is not a variability index at all.
             variability_index=(
                 variability_index(np_watts, power)
                 if np_watts is not None

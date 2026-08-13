@@ -87,7 +87,7 @@ describe("a device session", () => {
     renderDetail(ACTIVITY_IDS.trainerRide);
     await ready();
 
-    // 16:02 UTC at UTC+02:00 is 18:02, without an IANA name in sight (D93).
+    // 16:02 UTC at UTC+02:00 is 18:02, without an IANA name in sight.
     expect(metric("Timezone")).toHaveTextContent("UTC+02:00");
     expect(metric("Started")).toHaveTextContent("18:02");
   });
@@ -111,7 +111,7 @@ describe("a device session", () => {
     await ready();
 
     expect(screen.getByText("Quarq DZero")).toBeInTheDocument();
-    // FIT names candidates and nothing that chose between them (D96), so the
+    // FIT names candidates and nothing that chose between them, so the
     // tie-break is printed as a tie-break.
     expect(
       screen.getByText("chosen: lowest device_index among 2 candidates"),
@@ -225,7 +225,7 @@ describe("correcting a session", () => {
     await ready();
 
     // 16:02 UTC is the 4th in Auckland, not the 3rd — which is the whole
-    // point of storing the zone rather than the date (D93).
+    // point of storing the zone rather than the date.
     const field = screen.getByLabelText(/Timezone/);
     await user.clear(field);
     await user.type(field, "Pacific/Auckland");

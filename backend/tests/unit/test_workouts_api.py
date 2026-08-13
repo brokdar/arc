@@ -328,7 +328,7 @@ async def test_folders_and_tags_in_use_are_listable(client: AsyncClient) -> None
 # and `/workouts/tags`, which also match `/workouts/{workout_id}`. An
 # undocumented method on them therefore fell through to the id route and
 # answered 422 about uuid syntax, where 405 is the true answer — the same
-# mismatch D39 fixed for the append-only refusals. They are a sibling
+# mismatch already fixed for the append-only refusals. They are a sibling
 # collection now, so the collision does not exist to be papered over.
 
 
@@ -462,7 +462,7 @@ async def test_tags_cascade_in_the_database_not_the_orm(
     # because the ORM deletes the rows it has loaded whatever the schema says.
     # This statement goes around the ORM, leaving `ON DELETE CASCADE` as the
     # only thing that can — and the unit suite runs with SQLite's foreign keys
-    # on (D51), so the clause is exercised on both dialects.
+    # on, so the clause is exercised on both dialects.
     created = await create(client, tags=["bike", "z2"])
 
     await db_session.execute(

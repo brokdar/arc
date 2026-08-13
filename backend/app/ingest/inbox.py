@@ -177,8 +177,8 @@ def register_inbox_job(scheduler: BaseScheduler) -> None:
     """Register the sweep on the application scheduler.
 
     The job lives here rather than in `app.core.scheduler`, which owns no jobs
-    of its own (see its module docstring): each work package registers what it
-    needs. The first run is one interval away — a boot is busy enough already
+    of its own (see its module docstring): the module that owns the work
+    registers it. The first run is one interval away — a boot is busy enough
     — and ``max_instances=1`` plus ``coalesce`` mean a slow sweep delays the
     next one instead of running two over the same directory.
     """

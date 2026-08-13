@@ -13,9 +13,9 @@
  * - `deltaE00` — **CIEDE2000**, not CIE76. The distinction matters: CIE76 is
  *   plain Euclidean distance in CIE L\*a\*b\*, which badly overstates the
  *   separation of saturated colours, and a threshold set against it lets
- *   near-identical high-chroma tones through. Every ΔE figure in the decisions
- *   from D84 onward is CIEDE2000 with kL = kC = kH = 1; D75's figures predate
- *   this helper and are CIE76.
+ *   near-identical high-chroma tones through. Every ΔE figure asserted against
+ *   this helper is CIEDE2000 with kL = kC = kH = 1, so a threshold quoted from
+ *   somewhere that measured in CIE76 does not transfer — re-measure it here.
  */
 
 type Rgb = readonly [number, number, number];

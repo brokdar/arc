@@ -4,8 +4,8 @@ import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * The palette lives in two files and nowhere else (D59, made enforceable in
- * D86).
+ * The palette lives in two files and nowhere else, and this test is what
+ * makes that enforceable.
  *
  * `app/globals.css` holds the tokens and `lib/purpose.ts` holds the eighteen
  * purpose tones — a runtime lookup Tailwind cannot see, so it has to be data.
@@ -14,8 +14,9 @@ import { describe, expect, it } from "vitest";
  * next `#171C24` from being invented three pixels away from an existing token.
  *
  * A literal here is a lint failure rather than a review comment because the
- * seven that D59 already claimed did not exist were all added *after* it was
- * written, one arbitrary-value class at a time.
+ * seven literals that the palette rule already claimed did not exist were
+ * every one of them added after it was written, one arbitrary-value class at
+ * a time.
  */
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -26,8 +27,10 @@ const SCANNED = ["components", "app"];
 /**
  * The one file allowed to name a colour, plus anything generated.
  *
- * Additions need a reason in `docs/decisions.md`, not just an entry here: an
- * allowlist that grows silently is the thing this test exists to prevent.
+ * An addition needs its reason written here beside it, not just an entry: an
+ * allowlist that grows silently is the thing this test exists to prevent, and
+ * the next person has to be able to tell a considered exception from a
+ * shortcut someone took to make the suite pass.
  */
 const ALLOWED = new Set(["app/globals.css"]);
 

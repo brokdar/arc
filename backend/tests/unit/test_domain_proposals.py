@@ -155,7 +155,7 @@ def test_an_update_with_no_fields_is_refused() -> None:
 
 
 def test_an_update_may_not_carry_a_status() -> None:
-    # D174: a planned session's status is derived from what the athlete did,
+    # A planned session's status is derived from what the athlete did,
     # so it is not something anyone proposes — and it is named rather than
     # lumped in with the typos, because it *is* a planned-session field.
     assert "status" not in UPDATE_FIELDS
@@ -359,7 +359,7 @@ def test_lowering_the_purpose_does_not() -> None:
 
 
 def test_a_lower_purpose_alone_does_not_clear_a_change() -> None:
-    # D186: the flag is up, nothing about the amount of work can be compared,
+    # The flag is up, nothing about the amount of work can be compared,
     # and a purpose named `recovery` is a promise rather than a measurement.
     reason = intensifies(before_purpose=Purpose.VO2MAX, after_purpose=Purpose.RECOVERY)
     assert reason is not None
@@ -433,9 +433,9 @@ def test_the_same_purpose_with_less_load_does_not() -> None:
 def test_an_unpredictable_side_is_refused_rather_than_waved_through(
     before_load: float | None, after_load: float | None
 ) -> None:
-    # D186, superseding D170's fail-open half: "we could not compute it" is
-    # not evidence of a reduction, and while the athlete is ill the benefit of
-    # that doubt goes to the athlete. The rank says the session got easier and
+    # The rule fails closed: "we could not compute it" is not evidence of a
+    # reduction, and while the athlete is ill the benefit of that doubt goes to
+    # the athlete. The rank says the session got easier and
     # that is not enough on its own.
     reason = intensifies(
         before_purpose=Purpose.THRESHOLD,

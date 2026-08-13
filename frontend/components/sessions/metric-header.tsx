@@ -46,7 +46,7 @@ export interface MetricHeaderProps {
  * explanation* or holds the reason it does not (UI convention 4). The
  * explanation is the point rather than a nicety: NP over a ride with a coffee
  * stop, an IF against an FTP that was an estimate, an average power divided by
- * moving time while the load beside it is divided by recording time (D194) —
+ * moving time while the load beside it is divided by recording time —
  * each is a number an athlete would otherwise report as a bug.
  */
 export function MetricHeader({
@@ -219,7 +219,7 @@ export function MetricHeader({
               format={(value) => value.toFixed(2)}
             />
           }
-          // Not "NP ÷ average power": since D196 the denominator is the mean
+          // Not "NP ÷ average power": the denominator is the mean
           // over the *recorded* rows, not the moving-time average shown two
           // slots to the left, and a VI that looked like a ratio of two
           // numbers on the same screen would not divide into one of them.
@@ -374,7 +374,7 @@ function Stat({
 /**
  * The zone mini-bar: one stacked strip, painted from the shared ramp.
  *
- * Plain flexbox rather than a charting runtime (D113): one horizontal stacked
+ * Plain flexbox rather than a charting runtime: one horizontal stacked
  * bar does not justify a second chart library beside uPlot, and the same
  * vocabulary already draws `WorkoutProfileBars`. Colours come only from
  * `--color-zone-*`, so a zone means one colour everywhere in the product.

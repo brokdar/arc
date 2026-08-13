@@ -160,7 +160,7 @@ scoring-fixture:
 # Rebuild stored streams from the original files: just rebuild-streams [args]
 # Runs inside the api container: the recording rows store originals-relative
 # paths resolved against /app, and data/ belongs to the container's uid — a
-# host-side run fails on both. Deploy new code BEFORE rebuilding (D201).
+# host-side run fails on both. Deploy new code BEFORE rebuilding.
 rebuild-streams *args:
 	docker compose exec api /app/.venv/bin/python /app/scripts/rebuild_streams.py {{args}}
 

@@ -1,6 +1,6 @@
 """The singleton athlete row and its repository. No business logic here.
 
-There is exactly one athlete (D6: single-user application, no user table), so
+There is exactly one athlete (single-user application, no user table), so
 the row has a **fixed primary key**, :data:`SINGLETON_ATHLETE_ID`. That is what
 makes "at most one athlete" true at the database level without a second column
 or a dialect-specific check constraint: every write path goes through this

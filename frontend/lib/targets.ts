@@ -9,8 +9,8 @@
  *
  * **Nothing here resolves a percentage.** A band's absolute numbers come from
  * the API's already-resolved steps (`PlannedSessionRead.resolved_steps`),
- * which the backend computed against the anchor versions the session *pinned*
- * (D49). There is deliberately no function that multiplies a prescribed
+ * which the backend computed against the anchor versions the session *pinned*.
+ * There is deliberately no function that multiplies a prescribed
  * percentage by an anchor value, because the only anchor value a client can
  * easily reach is the one in force *now* — and a screen that resolves against
  * "now" silently rewrites every planned session the next time the athlete

@@ -36,9 +36,10 @@ export interface PurposeTone {
  * The five barbell purposes are a **steel** family — cyan through azure — and
  * not the mockup's violet, because violet is `--color-coach` and
  * `--color-status-over` and those are reserved for interpretive content (build
- * plan invariant 7). D84 records the swap and its numbers; `purpose.test.ts`
- * enforces the reservation mechanically, so the next purpose cannot spend
- * purple again by accident.
+ * plan invariant 7). `purpose.test.ts` enforces the reservation mechanically —
+ * measuring separation in CIEDE2000, not CIE76, which flatters saturated
+ * colours by roughly a factor of two — so the next purpose cannot spend purple
+ * again by accident.
  */
 export const PURPOSE_TONES: Readonly<Record<Purpose, PurposeTone>> = {
   recovery: {
@@ -226,8 +227,7 @@ const STRENGTH_PURPOSES: ReadonlySet<Purpose> = new Set<Purpose>([
  * same tokens `COMPLETION_TONES` (lib/scoring.ts) uses for the states these
  * statuses map onto, so one fact never wears two colours depending on which
  * component drew it — `displaced` in particular is **not** purple, which
- * belongs to the over verdict and to the coach and to nothing else (D84,
- * D156).
+ * belongs to the over verdict and to the coach and to nothing else.
  */
 export const STATUS_TONES: Readonly<
   Record<SessionStatus, { label: string; color: string }>

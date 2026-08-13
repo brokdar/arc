@@ -207,9 +207,9 @@ def riding(seconds: int, *, recording_time_s: float | None = None) -> AveragingB
 
 
 def test_the_averaging_basis_is_moving_time_when_there_is_any() -> None:
-    # D194: an average divides by the seconds the athlete was travelling,
+    # An average divides by the seconds the athlete was travelling,
     # which is what a head unit does and what every other platform reports.
-    # D196: counted off the cleaned column, one second per row, so it is the
+    # Counted off the cleaned column, one second per row, so it is the
     # same series the numerators are integrated over.
     basis = averaging_basis([9.0] * 1_150 + [0.0] * 50, recording_time_s=1_200.0)
 
@@ -235,7 +235,7 @@ def test_the_averaging_basis_falls_back_to_recording_time_without_speed() -> Non
 
 
 def test_a_speed_channel_that_covers_half_the_ride_is_refused_as_a_divisor() -> None:
-    """D196, the case that used to double an average power.
+    """The case that used to double an average power.
 
     The sensor dies halfway through: the column that remains is perfectly
     plausible — 1 800 real moving seconds — and dividing a whole hour's
@@ -297,7 +297,7 @@ def test_average_power_is_work_over_moving_time_not_the_device_average() -> None
 
 
 def test_average_power_sums_only_the_seconds_its_divisor_counted() -> None:
-    """D196's invariant, stated as arithmetic.
+    """The averaging invariant, stated as arithmetic.
 
     Half an hour at 200 W and half an hour at a red light, still pedalling at
     200 W into the turbo of a trainer that reports speed. The average is 200 W
@@ -351,7 +351,7 @@ def test_distance_integrates_the_speed_channel_when_there_is_no_odometer() -> No
 
     assert isinstance(assessed, Measured)
     assert assessed.value == pytest.approx(6.0)
-    # And it says which of the two distances this is, first (D197).
+    # And it says which of the two distances this is, first.
     assert (
         "integrated from the 1 Hz speed channel"
         in (assessed.explanation.assumptions[0])
@@ -425,7 +425,7 @@ def test_distance_rides_over_a_self_correcting_odometer_glitch() -> None:
 
 
 def test_distance_refuses_an_odometer_that_covers_too_little_of_the_ride() -> None:
-    # The failure a monotonicity check cannot see (D202). A device that stops
+    # The failure a monotonicity check cannot see. A device that stops
     # writing its distance field 60 % of the way through a 10 km ride leaves a
     # perfectly ordered column whose span is 6.08 km — a real number of metres,
     # just not this ride's, and reported with an assumption that used to claim
@@ -482,7 +482,7 @@ def test_a_partly_covered_odometer_says_what_it_actually_covered() -> None:
 
 
 def test_a_merged_sessions_distance_sums_each_recordings_own_odometer() -> None:
-    # D202. Two recordings on one grid, each odometer counting from its own
+    # Two recordings on one grid, each odometer counting from its own
     # zero, with a 100-row gap between them: the joined column runs
     # 0 -> 6 080, gap, 0 -> 4 000. Read end to end that is not a smaller
     # number, it is a different ride — and it is arc's own join that made it,
@@ -574,7 +574,7 @@ def test_average_speed_is_distance_over_the_same_basis_as_average_power() -> Non
 
 
 def test_average_speed_divides_the_whole_rides_distance_by_moving_time() -> None:
-    # D198: the numerator is the ride's total — the odometer's span, which has
+    # The numerator is the ride's total — the odometer's span, which has
     # no per-row decomposition to restrict — and the divisor is moving time.
     # 6.08 km in 600 s of moving time, with 600 s standing still that the
     # odometer did not advance through.
@@ -585,7 +585,7 @@ def test_average_speed_divides_the_whole_rides_distance_by_moving_time() -> None
     assessed = average_speed_kmh(distance_km(speed, odometer), basis)
 
     assert isinstance(assessed, Measured)
-    # 6.07985 km / (600 s / 3600) — not / 1 200 s, which is D198's whole point.
+    # 6.07985 km / (600 s / 3600) — not / 1 200 s, which is the whole point.
     assert assessed.value == pytest.approx(36.479, abs=1e-3)
     # The source sentence travels with it, so a km/h figure is not the one
     # number on the page whose provenance has to be looked up elsewhere.
@@ -733,7 +733,7 @@ def test_variability_index_is_one_for_a_perfectly_steady_ride() -> None:
 
 
 def test_variability_index_stays_above_one_on_a_ride_full_of_traffic_lights() -> None:
-    """The ratio's definition, pinned against the case that broke it (D196).
+    """The ratio's definition, pinned against the case that broke it.
 
     An hour at a steady 200 W with twenty-four 25-second lights the head unit
     recorded through: NP comes out around 184 W, and the *published* average
@@ -798,7 +798,7 @@ def test_the_maximum_is_taken_over_the_repaired_column() -> None:
 
 
 def test_average_cadence_excludes_the_seconds_spent_coasting() -> None:
-    # D199, in the reference ride's proportions: 356 freewheeling seconds out
+    # In the reference ride's proportions: 356 freewheeling seconds out
     # of 5 738 drag a mean-over-everything from 82.8 rpm to 77.7, which is the
     # gap between arc's old number and every other platform's.
     ride = [83.0] * 5_382 + [0.0] * 356
