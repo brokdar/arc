@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import type { components } from "@/generated/api/schema";
 import {
   COGGAN_7_LOWER,
+  describeSets,
   flattenSteps,
   profileBars,
+  type StrengthItem,
   totalDurationS,
   totalSets,
   type WorkoutStep,
@@ -362,8 +364,67 @@ describe("totals", () => {
     ).toBe(7);
   });
 
+  it("counts a per-side round as the two working sets it is", () => {
+    // The client's number has to agree with `summary.total_sets` from the
+    // backend — they sit next to each other on the week rail.
+    expect(
+      totalSets({
+        discipline: "strength",
+        groups: [
+          {
+            label: null,
+            items: [
+              {
+                exercise_id: "single_arm_dumbbell_row",
+                sets: 3,
+                reps: 11,
+                duration_s: null,
+                per_side: true,
+                load: { kind: "kg", value: 15 },
+                rir: null,
+                rest_s: null,
+                tempo: null,
+                notes: null,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe(6);
+  });
+
   it("has no opinion about the other discipline", () => {
     expect(totalSets({ discipline: "cycling", steps: [] })).toBeNull();
     expect(totalDurationS({ discipline: "strength", groups: [] })).toBeNull();
+  });
+});
+
+describe("describeSets", () => {
+  const line = (over: Partial<StrengthItem>): StrengthItem => ({
+    exercise_id: "back_squat",
+    sets: 3,
+    reps: 8,
+    duration_s: null,
+    per_side: null,
+    load: { kind: "kg", value: 100 },
+    rir: null,
+    rest_s: null,
+    tempo: null,
+    notes: null,
+    ...over,
+  });
+
+  it("says rounds by reps for an ordinary line", () => {
+    expect(describeSets(line({}))).toBe("3×8");
+  });
+
+  it("names the side, because a bare 3×11 reads as half the work", () => {
+    expect(describeSets(line({ reps: 11, per_side: true }))).toBe(
+      "3×11 per side",
+    );
+  });
+
+  it("renders a hold in seconds, with no invented rep count", () => {
+    expect(describeSets(line({ reps: null, duration_s: 45 }))).toBe("3×45 s");
   });
 });

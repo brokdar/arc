@@ -487,7 +487,7 @@ function LoggedSets({ sets }: { sets: Session["logged_sets"] }) {
                   scope="col"
                   className="w-[72px] px-3.5 py-2 font-semibold text-ink-faint text-label uppercase tracking-[0.09em]"
                 >
-                  Reps
+                  Reps / hold
                 </th>
                 <th
                   scope="col"
@@ -519,7 +519,13 @@ function LoggedSets({ sets }: { sets: Session["logged_sets"] }) {
                     ) : null}
                   </td>
                   <td className="px-3.5 py-2 font-mono text-ink text-sm">
-                    {set.reps}
+                    {/* Reps or a hold, never both — and `per_side` says the
+                        row was worked twice, once per limb, which is what the
+                        volume and completion numbers above are counted in. */}
+                    {set.duration_s === null ? set.reps : `${set.duration_s} s`}
+                    {set.per_side ? (
+                      <span className="text-ink-faint"> per side</span>
+                    ) : null}
                   </td>
                   <td className="px-3.5 py-2 font-mono text-ink text-sm">
                     {set.load_kg === null ? (

@@ -319,6 +319,55 @@ describe("draftFromStructure", () => {
       });
     }
   });
+
+  it("round-trips a per-side round and a timed hold", () => {
+    const structure = {
+      discipline: "strength" as const,
+      groups: [
+        {
+          label: null,
+          items: [
+            {
+              exercise_id: "single_arm_dumbbell_row",
+              sets: 3,
+              reps: 11,
+              duration_s: null,
+              per_side: true,
+              load: { kind: "kg" as const, value: 15 },
+              rir: null,
+              rest_s: null,
+              tempo: null,
+              notes: null,
+            },
+            {
+              exercise_id: "front_plank",
+              sets: 3,
+              reps: null,
+              duration_s: 45,
+              per_side: null,
+              load: { kind: "bodyweight" as const, value: null },
+              rir: null,
+              rest_s: null,
+              tempo: null,
+              notes: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    const draft = draftFromStructure(structure);
+    const back = draft ? structureFromDraft(draft) : null;
+
+    expect(draft?.discipline).toBe("strength");
+    if (draft?.discipline === "strength") {
+      const [row, hold] = draft.groups[0]?.items ?? [];
+      expect(row).toMatchObject({ mode: "reps", reps: "11", perSide: true });
+      // A hold's rep box is empty rather than holding a `1` nobody typed.
+      expect(hold).toMatchObject({ mode: "hold", reps: "", durationS: "45" });
+    }
+    expect(back).toEqual(structure);
+  });
 });
 
 describe("validateDraft", () => {

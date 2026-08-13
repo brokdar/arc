@@ -337,7 +337,12 @@ def _strength_inputs(
         sex=sex,
         anchors={anchor_type: version for anchor_type, (version, _) in anchors.items()},
         sets=[
-            PerformedSet(reps=logged.reps, load_kg=logged.load_kg)
+            PerformedSet(
+                reps=logged.reps,
+                load_kg=logged.load_kg,
+                duration_s=logged.duration_s,
+                per_side=logged.per_side,
+            )
             for logged in session_row.logged_sets
         ],
     )

@@ -37,7 +37,7 @@ import {
   formatSets,
 } from "@/lib/format";
 import { purposeLabel, STATUS_TONES } from "@/lib/purpose";
-import type { StrengthStructure } from "@/lib/workout-profile";
+import { describeSets, type StrengthStructure } from "@/lib/workout-profile";
 
 type Schemas = components["schemas"];
 type PredictedLoad = Schemas["PredictedLoadRead"];
@@ -804,7 +804,7 @@ function StrengthGroups({ structure }: { structure: StrengthStructure }) {
                 {nameOf(item.exercise_id)}
               </span>
               <span className="font-mono text-ink text-xs">
-                {item.sets}×{item.reps}
+                {describeSets(item)}
                 {" · "}
                 {/* The load column holds its slot even when the prescription
                     states no load: a blank there reads as bodyweight, which

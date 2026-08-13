@@ -165,6 +165,11 @@ function ItemRow({
 }) {
   const base = useId();
   const bodyweight = item.loadKind === "bodyweight";
+  const hold = item.mode === "hold";
+  // What the athlete wrote is rounds; what everything downstream counts is
+  // working sets. The hint says so at the point of entry rather than leaving
+  // the difference to be discovered on the week rail.
+  const workingSets = (Number(item.sets) || 0) * 2;
 
   return (
     <FieldRow
@@ -184,7 +189,12 @@ function ItemRow({
         />
       </Field>
 
-      <Field label="Sets" htmlFor={`${base}-sets`} className="w-[58px]">
+      <Field
+        label="Rounds"
+        hint={item.perSide ? `${workingSets} sets` : undefined}
+        htmlFor={`${base}-sets`}
+        className="w-[70px]"
+      >
         <Input
           id={`${base}-sets`}
           inputMode="numeric"
@@ -194,14 +204,71 @@ function ItemRow({
         />
       </Field>
 
-      <Field label="Reps" htmlFor={`${base}-reps`} className="w-[58px]">
-        <Input
-          id={`${base}-reps`}
-          inputMode="numeric"
-          className="h-7 font-mono"
-          value={item.reps}
-          onChange={(event) => onChange({ ...item, reps: event.target.value })}
-        />
+      <Field label="Each" htmlFor={`${base}-mode`} className="w-[86px]">
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-mode`}
+          value={item.mode}
+          onChange={(event) =>
+            // The other field is cleared on the way across: a line prescribes
+            // reps or a hold, and a value left behind in the one not in use
+            // would be sent as soon as the mode changed back.
+            onChange(
+              event.target.value === "hold"
+                ? { ...item, mode: "hold", reps: "" }
+                : { ...item, mode: "reps", durationS: "" },
+            )
+          }
+        >
+          <NativeSelectOption value="reps">Reps</NativeSelectOption>
+          <NativeSelectOption value="hold">Hold</NativeSelectOption>
+        </NativeSelect>
+      </Field>
+
+      {hold ? (
+        <Field
+          label="Seconds"
+          htmlFor={`${base}-duration`}
+          className="w-[68px]"
+        >
+          <Input
+            id={`${base}-duration`}
+            inputMode="numeric"
+            className="h-7 font-mono"
+            value={item.durationS}
+            onChange={(event) =>
+              onChange({ ...item, durationS: event.target.value })
+            }
+          />
+        </Field>
+      ) : (
+        <Field label="Reps" htmlFor={`${base}-reps`} className="w-[58px]">
+          <Input
+            id={`${base}-reps`}
+            inputMode="numeric"
+            className="h-7 font-mono"
+            value={item.reps}
+            onChange={(event) =>
+              onChange({ ...item, reps: event.target.value })
+            }
+          />
+        </Field>
+      )}
+
+      <Field label="Per side" htmlFor={`${base}-per-side`} className="w-[74px]">
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-per-side`}
+          value={item.perSide ? "yes" : "no"}
+          onChange={(event) =>
+            onChange({ ...item, perSide: event.target.value === "yes" })
+          }
+        >
+          <NativeSelectOption value="no">Both</NativeSelectOption>
+          <NativeSelectOption value="yes">Per side</NativeSelectOption>
+        </NativeSelect>
       </Field>
 
       <Field label="Load" htmlFor={`${base}-load-kind`} className="w-[104px]">

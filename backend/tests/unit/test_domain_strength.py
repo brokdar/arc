@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,6 +23,7 @@ from app.domain.strength import (
 )
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.services.templates import EXERCISE_CATALOGUE_FILE
+from tests.unit.prescriptions import LIFT, bodyweight
 
 
 def squat(**overrides: object) -> StrengthSet:
@@ -53,7 +55,7 @@ def workout() -> StrengthWorkout:
                     StrengthSet(
                         exercise_id="front_plank",
                         sets=3,
-                        reps=1,
+                        duration_s=45,
                         load=Load.bodyweight(),
                     ),
                 ),
@@ -88,8 +90,97 @@ def test_total_sets_counts_every_line() -> None:
     assert workout().total_sets == 5 + 3 + 3
 
 
-def test_a_unilateral_line_still_prescribes_the_stated_reps_per_side() -> None:
+def test_a_bilateral_line_works_the_rounds_it_prescribes() -> None:
+    assert squat(sets=3, reps=8).working_sets == 3
     assert squat(sets=3, reps=8).total_reps == 24
+
+
+def test_a_per_side_round_is_two_working_sets() -> None:
+    # Issue #25's own case, by number: three rounds of eleven single-arm reps
+    # is six worked sets and 66 reps, not three and 33. `sets` stays what the
+    # athlete wrote on the card.
+    line = StrengthSet(
+        exercise_id="single_arm_dumbbell_row",
+        sets=3,
+        reps=11,
+        per_side=True,
+        load=Load(LoadKind.KG, 15.0),
+    )
+
+    assert line.sets == 3
+    assert line.working_sets == 6
+    assert line.total_reps == 66
+
+
+def test_total_sets_counts_working_sets_not_rounds() -> None:
+    per_side = StrengthWorkout(
+        groups=(
+            StrengthGroup(
+                items=(
+                    StrengthSet(
+                        exercise_id="split_squat",
+                        sets=4,
+                        reps=8,
+                        per_side=True,
+                        load=Load.bodyweight(),
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert per_side.total_sets == 8
+
+
+# --- reps or a hold, never both -----------------------------------------------
+
+
+def test_a_timed_hold_carries_seconds_and_no_rep_count() -> None:
+    plank = StrengthSet(
+        exercise_id="front_plank", sets=3, duration_s=45, load=Load.bodyweight()
+    )
+
+    assert plank.reps is None
+    assert plank.total_reps is None
+    assert plank.total_hold_s == 135
+
+
+def test_a_per_side_hold_holds_for_both_sides() -> None:
+    side_plank = StrengthSet(
+        exercise_id="side_plank",
+        sets=2,
+        duration_s=30,
+        per_side=True,
+        load=Load.bodyweight(),
+    )
+
+    assert side_plank.working_sets == 4
+    assert side_plank.total_hold_s == 120
+
+
+def test_a_rep_based_line_holds_for_no_seconds() -> None:
+    assert squat().total_hold_s is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"reps": None}, id="neither"),
+        pytest.param({"duration_s": 45}, id="both"),
+    ],
+)
+def test_a_line_prescribes_reps_or_a_hold_and_not_the_other_combination(
+    overrides: dict[str, object],
+) -> None:
+    # A 45-second plank written as `reps: 1` puts an invented number into
+    # volume arithmetic; a line with neither is not a prescription at all.
+    with pytest.raises(ValueError, match="exactly one of reps or duration_s"):
+        squat(**overrides)
+
+
+def test_an_implausible_hold_is_rejected() -> None:
+    with pytest.raises(ValueError, match="duration_s must be between"):
+        squat(reps=None, duration_s=100_000)
 
 
 def test_the_exercises_a_workout_references_are_discoverable() -> None:
@@ -163,6 +254,68 @@ def test_a_group_and_a_workout_both_need_content() -> None:
 
 def test_serialization_round_trips() -> None:
     assert strength_workout_from_json(strength_workout_to_json(workout())) == workout()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param(LIFT, id="lift"),
+        pytest.param(bodyweight(3), id="bodyweight"),
+    ],
+)
+def test_a_prescription_stored_before_per_side_existed_still_parses(
+    document: dict[str, Any],
+) -> None:
+    # AC-20. Every document already in the database has `reps` and neither
+    # `per_side` nor `duration_s`, and the meaning it always had is a
+    # bilateral, rep-based set.
+    body = workout_body_from_json(document)
+
+    assert isinstance(body, StrengthWorkout)
+    assert all(not item.per_side for item in body.prescriptions)
+    assert all(item.duration_s is None for item in body.prescriptions)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param(LIFT, id="lift"),
+        pytest.param(bodyweight(3), id="bodyweight"),
+    ],
+)
+def test_re_serializing_an_old_document_does_not_grow_the_new_keys(
+    document: dict[str, Any],
+) -> None:
+    # AC-20's second half, and the one a reader would not think to write: a
+    # serializer that emits `"per_side": false` makes every stored
+    # prescription's next diff a lie about what changed.
+    body = workout_body_from_json(document)
+
+    assert workout_body_to_json(body) == document
+
+
+def test_the_new_fields_survive_a_round_trip_when_they_are_set() -> None:
+    line = StrengthSet(
+        exercise_id="single_arm_dumbbell_row",
+        sets=3,
+        reps=11,
+        per_side=True,
+        load=Load(LoadKind.KG, 15.0),
+    )
+    hold = StrengthSet(
+        exercise_id="side_plank",
+        sets=2,
+        duration_s=30,
+        per_side=True,
+        load=Load.bodyweight(),
+    )
+    original = StrengthWorkout(groups=(StrengthGroup(items=(line, hold)),))
+
+    document = strength_workout_to_json(original)
+
+    assert document["groups"][0]["items"][0]["per_side"] is True
+    assert "reps" not in document["groups"][0]["items"][1]
+    assert strength_workout_from_json(document) == original
 
 
 def test_the_body_envelope_names_the_strength_discipline() -> None:

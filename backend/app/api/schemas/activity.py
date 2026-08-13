@@ -40,6 +40,7 @@ from app.services.activity import (
     EARLIEST_SESSION,
     LATEST_SESSION,
     MAX_EXERCISE_NAME,
+    MAX_HOLD_S,
     MAX_LOAD_KG,
     MAX_MANUAL_DURATION_S,
     MAX_REPS,
@@ -125,7 +126,15 @@ class LoggedSetRead(BaseModel):
     #: logging, or the athlete's own words.
     exercise_name: str
     set_index: int
-    reps: int
+    #: Repetitions performed, or null for a timed hold. Exactly one of ``reps``
+    #: and ``duration_s`` is set.
+    reps: int | None
+    #: Seconds held, for a timed set.
+    duration_s: int | None
+    #: Whether the row is one side of a bilateral movement — and so **two**
+    #: working sets, which is the unit volume and completion count in.
+    per_side: bool
+    #: External load. For a per-side row, the load on **that side**.
     load_kg: float | None
     #: Reps in reserve, as reported after the set.
     rir: int | None
@@ -253,7 +262,15 @@ class SessionUpdate(BaseModel):
 
 
 class LoggedSetCreate(BaseModel):
-    """One set of a manually entered session."""
+    """One set of a manually entered session.
+
+    ``reps`` and ``duration_s`` are both optional *here* and exactly one of
+    them is required by the service: the exactly-one-of rule cannot be stated
+    in a JSON schema without an ``oneOf`` the generated client would render as
+    two unrelated shapes, and the #17 lesson says a bound that lives only in
+    the API schema is a bound a dry run passes and the write then fails. One
+    rule, one message, one place.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -262,7 +279,13 @@ class LoggedSetCreate(BaseModel):
     exercise_name: PostgresText | None = Field(
         default=None, min_length=1, max_length=MAX_EXERCISE_NAME
     )
-    reps: int = Field(ge=1, le=MAX_REPS)
+    #: Repetitions performed. Exactly one of ``reps`` and ``duration_s``.
+    reps: int | None = Field(default=None, ge=1, le=MAX_REPS)
+    #: Seconds held, for a timed set.
+    duration_s: int | None = Field(default=None, ge=1, le=MAX_HOLD_S)
+    #: Whether the set is one side of a bilateral movement, making it two
+    #: working sets. Refused on a movement the catalogue marks bilateral.
+    per_side: bool = False
     load_kg: float | None = Field(default=None, ge=0, le=MAX_LOAD_KG)
     rir: int | None = Field(default=None, ge=MIN_RIR, le=MAX_RIR)
     notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)

@@ -339,10 +339,12 @@ const LONG_PREDICTED_LOAD: Schemas["PredictedLoadRead"] = {
   },
 };
 
-/** Σ sets × reps × kg over the kilogram sets only: 3 × 8 × 80. */
+/** Σ working sets × reps × kg over the kilogram sets only: 3 × 8 × 80. */
 const STRENGTH_PREDICTED_VOLUME: Schemas["PredictedVolumeRead"] = {
   volume_load_kg: 1920,
   total_sets: 10,
+  // Nothing in this prescription is held rather than repeated.
+  total_hold_s: null,
   // Three of the ten sets are prescribed in kilograms.
   coverage: 0.3,
 };
@@ -350,6 +352,7 @@ const STRENGTH_PREDICTED_VOLUME: Schemas["PredictedVolumeRead"] = {
 const CORE_PREDICTED_VOLUME: Schemas["PredictedVolumeRead"] = {
   volume_load_kg: null,
   total_sets: 4,
+  total_hold_s: null,
   coverage: 0,
 };
 
@@ -986,6 +989,24 @@ export const EXERCISES: Schemas["ExerciseRead"][] = [
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   },
+  {
+    // The one the catalogue marks unilateral, so a `per_side` prescription
+    // has a movement it is legal on.
+    id: "single_arm_dumbbell_row",
+    name: "Single-Arm Dumbbell Row",
+    category: "pull",
+    unilateral: true,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "front_plank",
+    name: "Front Plank",
+    category: "core",
+    unilateral: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
 ];
 
 const ENDURANCE_DEFAULTS: Schemas["PurposeTemplateRead"]["default_criteria"] =
@@ -1502,6 +1523,8 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
     exercise_id: "back_squat",
     exercise_name: "Back Squat",
     reps: 5,
+    duration_s: null,
+    per_side: false,
     load_kg: 100,
     rir: 2,
     notes: null,
@@ -1512,6 +1535,8 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
     exercise_id: "back_squat",
     exercise_name: "Back Squat",
     reps: 5,
+    duration_s: null,
+    per_side: false,
     load_kg: 102.5,
     rir: 1,
     notes: null,
@@ -1524,9 +1549,38 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
     exercise_id: null,
     exercise_name: "Pull-up",
     reps: 8,
+    duration_s: null,
+    per_side: false,
     load_kg: null,
     rir: null,
     notes: "strict",
+  },
+  {
+    // A per-side row and a hold, so the detail table's two new columns are
+    // exercised by a payload the real API could produce: one row per round,
+    // `load_kg` the load on one arm, and a plank with no rep count at all.
+    id: "0199a000-0000-7000-8000-000000000404",
+    set_index: 3,
+    exercise_id: "single_arm_dumbbell_row",
+    exercise_name: "Single-Arm Dumbbell Row",
+    reps: 11,
+    duration_s: null,
+    per_side: true,
+    load_kg: 15,
+    rir: 2,
+    notes: null,
+  },
+  {
+    id: "0199a000-0000-7000-8000-000000000405",
+    set_index: 4,
+    exercise_id: "front_plank",
+    exercise_name: "Front Plank",
+    reps: null,
+    duration_s: 45,
+    per_side: false,
+    load_kg: null,
+    rir: null,
+    notes: null,
   },
 ];
 

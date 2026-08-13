@@ -542,6 +542,7 @@ def _strength_to_json(volume: StrengthVolume | NotAssessed) -> dict[str, Any]:
         "not_assessed": None,
         "volume_load_kg": volume.volume_load_kg,
         "sets_completed": volume.sets_completed,
+        "total_hold_s": volume.total_hold_s,
         "coverage": volume.coverage,
         "explanation": explanation_to_json(volume.explanation),
     }

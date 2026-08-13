@@ -181,6 +181,77 @@ async def test_a_strength_prescription_must_reference_the_catalogue(
     assert "unknown exercise(s): kettlebell_juggling" in response.json()["detail"]
 
 
+async def test_per_side_on_a_bilateral_movement_is_refused_by_name(
+    client: AsyncClient,
+) -> None:
+    # AC-22. `per_side` is stored on the prescription so a stored document
+    # stays self-describing when the catalogue changes under it; this is what
+    # stops the two disagreeing in the direction that doubles the session's
+    # working sets and its volume load.
+    structure = {
+        "discipline": "strength",
+        "groups": [
+            {
+                "items": [
+                    {
+                        "exercise_id": "back_squat",
+                        "sets": 3,
+                        "reps": 8,
+                        "per_side": True,
+                        "load": {"kind": "kg", "value": 100.0},
+                    }
+                ]
+            }
+        ],
+    }
+
+    response = await client.post(
+        WORKOUTS, json={"name": "One-legged squat, apparently", "structure": structure}
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "back_squat" in detail
+    assert "both sides at once" in detail
+
+
+async def test_per_side_and_a_hold_survive_the_library_round_trip(
+    client: AsyncClient,
+) -> None:
+    structure = {
+        "discipline": "strength",
+        "groups": [
+            {
+                "items": [
+                    {
+                        "exercise_id": "single_arm_dumbbell_row",
+                        "sets": 3,
+                        "reps": 11,
+                        "per_side": True,
+                        "load": {"kind": "kg", "value": 15.0},
+                    },
+                    {
+                        "exercise_id": "front_plank",
+                        "sets": 3,
+                        "duration_s": 45,
+                        "load": {"kind": "bodyweight"},
+                    },
+                ]
+            }
+        ],
+    }
+
+    created = await create(client, structure=structure, name="Unilateral day")
+
+    [row, hold] = created["structure"]["groups"][0]["items"]
+    assert row["per_side"] is True
+    assert hold["duration_s"] == 45
+    assert hold["reps"] is None
+    # Six working sets from the rows, three from the holds — `total_sets` is
+    # the working-set count, not the round count.
+    assert created["summary"]["total_sets"] == 9
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

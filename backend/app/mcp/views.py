@@ -247,6 +247,8 @@ def logged_set(row: LoggedSetRow) -> dict[str, Any]:
         "exercise_id": row.exercise_id,
         "exercise_name": row.exercise_name,
         "reps": row.reps,
+        "duration_s": row.duration_s,
+        "per_side": row.per_side,
         "load_kg": row.load_kg,
         "rir": row.rir,
         "notes": row.notes,

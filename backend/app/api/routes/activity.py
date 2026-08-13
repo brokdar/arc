@@ -374,6 +374,8 @@ def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
     return [
         LoggedSetInput(
             reps=entry.reps,
+            duration_s=entry.duration_s,
+            per_side=entry.per_side,
             exercise_id=entry.exercise_id,
             exercise_name=entry.exercise_name,
             load_kg=entry.load_kg,

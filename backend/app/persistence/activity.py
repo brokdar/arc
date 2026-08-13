@@ -37,6 +37,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     delete,
+    false,
     func,
     select,
 )
@@ -298,7 +299,21 @@ class LoggedSetRow(Base):
     exercise_name: Mapped[str] = mapped_column(String(160))
     #: 0-based position within the session.
     set_index: Mapped[int] = mapped_column(Integer)
-    reps: Mapped[int] = mapped_column(Integer)
+    #: Repetitions performed, or null for a timed hold. Exactly one of `reps`
+    #: and `duration_s` is set — the domain states the rule
+    #: (`app.domain.metrics.PerformedSet`) and the service enforces it, because
+    #: a check constraint here could not be written once for both dialects
+    #: without a batch migration on every future change to it.
+    reps: Mapped[int | None] = mapped_column(Integer)
+    #: Seconds held, for a timed set. Null for a rep-based one.
+    duration_s: Mapped[int | None] = mapped_column(Integer)
+    #: Whether the row is one side of a bilateral movement, making it **two**
+    #: working sets. Carried on the logged row as well as the prescription
+    #: because completion divides logged sets by prescribed sets, and the two
+    #: have to be the same unit or the ratio is nonsense.
+    per_side: Mapped[bool] = mapped_column(
+        Boolean, server_default=false(), default=False
+    )
     load_kg: Mapped[float | None] = mapped_column(Float)
     #: Reps in reserve, as reported after the set.
     rir: Mapped[int | None] = mapped_column(Integer)
@@ -306,6 +321,20 @@ class LoggedSetRow(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
+
+
+def logged_working_sets(row: LoggedSetRow) -> int:
+    """How many working sets one logged row is: a per-side row is two.
+
+    Here rather than in a service for the reason `session_duration_s` gives
+    just below: three callers need the same answer — the matcher's evidence,
+    the scorer's load expansion and the metric artefact's set count — and a
+    session that counted two of them in rounds and one in working sets would
+    report a completion ratio nobody could reproduce. The prescription's half
+    of this rule is `app.domain.strength.StrengthSet.working_sets`, and the
+    two exist to be the same number.
+    """
+    return 2 if row.per_side else 1
 
 
 def session_duration_s(row: SessionRow) -> float:

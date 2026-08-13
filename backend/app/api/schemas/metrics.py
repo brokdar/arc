@@ -197,11 +197,17 @@ class StrengthRead(BaseModel):
     """What a strength session moved. Kilograms, **never** a training load."""
 
     not_assessed: str | None = None
-    #: Σ ``reps × kg`` over the sets logged in kilograms. Never add this to
-    #: ``training_load`` and never render the two in one column (v2 §5.4).
+    #: Σ ``working sets × reps × kg`` over the rep-based sets logged in
+    #: kilograms. Never add this to ``training_load`` and never render the two
+    #: in one column (v2 §5.4).
     volume_load_kg: float | None = None
+    #: Working sets, so a per-side row counts twice — the same unit the
+    #: prescription's ``total_sets`` is in.
     sets_completed: int | None = None
-    #: Fraction of the logged sets that carried kilograms.
+    #: Σ ``working sets × duration_s`` over the timed holds, in seconds. Null
+    #: when none was logged. Seconds beside the kilograms, never summed.
+    total_hold_s: int | None = None
+    #: Fraction of the logged working sets that carried kilograms.
     coverage: float | None = None
     explanation: ExplanationRead | None = None
 

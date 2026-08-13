@@ -203,7 +203,22 @@ export function totalDurationS(
   return total > 0 ? total : null;
 }
 
-/** Total prescribed sets of a strength structure. */
+export type StrengthItem = Schemas["StrengthSetSchema"];
+
+/**
+ * Sets actually worked by one prescription line: a per-side round is two.
+ *
+ * The same rule as `app.domain.strength.StrengthSet.working_sets`, restated
+ * here because this file's `totalSets` has to agree with the backend's
+ * `summary.total_sets` — the two numbers sit next to each other on the week
+ * rail, and a client that counted rounds while the server counted working
+ * sets would disagree about a unilateral session and about nothing else.
+ */
+export function workingSets(item: StrengthItem): number {
+  return item.per_side ? item.sets * 2 : item.sets;
+}
+
+/** Total prescribed **working** sets of a strength structure. */
 export function totalSets(
   structure: WorkoutStructure | null | undefined,
 ): number | null {
@@ -211,9 +226,26 @@ export function totalSets(
     return null;
   }
   return structure.groups.reduce(
-    (sum, group) => sum + group.items.reduce((s, item) => s + item.sets, 0),
+    (sum, group) =>
+      sum + group.items.reduce((s, item) => s + workingSets(item), 0),
     0,
   );
+}
+
+/**
+ * One prescription line's rounds and what each holds — `3×11 per side`,
+ * `3×45 s`.
+ *
+ * One function because three surfaces render it (Today, the calendar sheet,
+ * the week rail's tooltip) and a per-side line rendered as a bare `3×11` on
+ * any of them says the athlete does half the work the plan asked for.
+ */
+export function describeSets(item: StrengthItem): string {
+  const each =
+    item.duration_s === null || item.duration_s === undefined
+      ? `${item.reps ?? "?"}`
+      : `${item.duration_s} s`;
+  return `${item.sets}×${each}${item.per_side ? " per side" : ""}`;
 }
 
 type Intensity =
