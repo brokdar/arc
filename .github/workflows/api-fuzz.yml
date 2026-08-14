@@ -89,43 +89,80 @@ jobs:
         # validation), and for the operations whose domain rules the schema
         # cannot express. Warnings, not failures.
         #
-        # schemathesis runs unpinned via `uvx` (floats to the latest release),
-        # and current versions intermittently hang on exit AFTER finishing
-        # every check: the CLI prints its summary and writes the JUnit report,
-        # but the process never returns. Bound it with `timeout`; if that
-        # teardown hang trips the guard, trust the JUnit report (already on
-        # disk) for the verdict instead of letting the job hang.
+        # This step used to look hung and was not. It runs four phases over
+        # every operation in the schema — examples, coverage, fuzzing,
+        # stateful — and **prints nothing between them**, because there is no
+        # TTY in CI and the live progress bar is suppressed. The fuzzing phase
+        # alone was 278 s of silence after "Coverage ✅", which reads exactly
+        # like a hung process and is really ~15 000 HTTP requests.
+        #
+        # The comment that used to live here diagnosed that silence as
+        # schemathesis "intermittently hanging on exit" and built a fallback
+        # that treated a killed run as a pass if the JUnit report looked clean.
+        # It was wrong twice over: no run in this repo's history has ever hit
+        # the guard (they land at 280-420 s against an 8 m limit, and the CLI
+        # prints its summary and exits 0), and the fallback meant a genuine
+        # timeout — the one thing the guard exists to catch — would have been
+        # reported as success off a partial report.
+        #
+        # So: the timeout stays as a real backstop and now **fails** when it
+        # fires, and the run is parallel so the silence is roughly halved.
+        #
+        # `--workers auto` is one worker per vCPU, and roughly halves the wall
+        # clock (278 s -> 184 s measured on a full run at four workers).
+        #
+        # `auto` rather than a literal, because the literal is a fact about the
+        # runner that this file has no business asserting: a standard
+        # `ubuntu-latest` is 4 vCPU while this repo is **public** and 2 vCPU if
+        # it ever goes private, and a hardcoded 4 would quietly over-subscribe
+        # the day that changed. The step prints `nproc` so the log says what it
+        # actually chose rather than leaving the next reader to assume.
+        #
+        # Concurrency here is load, not just speed: the same run at 28 workers
+        # on a developer machine produced failures that four never sees. If
+        # this job starts flaking, check the worker count in the log before
+        # anything else.
+        #
+        # Parallelism is also why `POST /auth/logout` is excluded. It calls
+        # `session.clear()`, so fuzzing it destroys the one credential every
+        # other operation depends on — serially that is survivable, in parallel
+        # it 401s whatever else is in flight. It is covered directly by
+        # tests/unit/test_auth.py, which is the same trade the `ignored_auth`
+        # exclusion above already makes.
+        #
+        # Worth keeping: the concurrency is a test in its own right. Turning it
+        # on immediately found two read-then-insert races in the wellness
+        # upsert that a serial run could never reach, so a flake here is a bug
+        # worth chasing rather than noise worth retrying.
+        #
+        # The version is pinned. `uvx schemathesis` floats to the latest
+        # release, so CI behaviour could change with no commit — every action
+        # above is pinned to a SHA for exactly that reason, and the fuzzer
+        # deserves the same. Bump it deliberately.
         run: |
-          set +e
+          # `|| st=$?` rather than a bare call: Actions runs this with
+          # `bash -e`, so a non-zero exit would abort the script before the
+          # annotation below could explain it.
+          echo "runner has $(nproc) vCPU; --workers auto takes one each"
+          st=0
           timeout --signal=INT --kill-after=30s 8m \
-            uvx schemathesis run http://localhost:8000/openapi.json \
+            uvx schemathesis==4.24.3 run http://localhost:8000/openapi.json \
               --max-examples 100 \
+              --workers auto \
+              --exclude-path /api/v1/auth/logout \
               --header "Cookie: $SESSION_COOKIE" \
               --exclude-checks negative_data_rejection,ignored_auth \
               --report junit \
-              --report-dir schemathesis-report
-          st=$?
-          set -e
+              --report-dir schemathesis-report || st=$?
 
-          # A normal exit is authoritative: 0 = all checks passed, any other
-          # value below the timeout codes = real findings. Use it directly.
-          if [ "$st" -ne 124 ] && [ "$st" -ne 130 ] && [ "$st" -ne 137 ]; then
-            exit "$st"
+          # 124/130/137 mean the guard fired. That is a real failure — either
+          # the API stopped answering or the suite has outgrown the limit — and
+          # the honest response is to say so, not to go looking for a report
+          # that describes an incomplete run.
+          if [ "$st" -eq 124 ] || [ "$st" -eq 130 ] || [ "$st" -eq 137 ]; then
+            echo "::error::schemathesis did not finish within 8 minutes (status $st). If the run is simply growing, raise the limit here deliberately; if it stopped making progress, that is the bug."
           fi
-
-          # 124/130/137 = the timeout guard fired on the teardown hang. The run
-          # itself completed, so fall back to the JUnit report for the verdict.
-          echo "::warning::schemathesis did not exit within the time limit (status $st); consulting the JUnit report."
-          if ! ls schemathesis-report/*.xml >/dev/null 2>&1; then
-            echo "::error::schemathesis hung before writing its JUnit report"
-            exit 1
-          fi
-          bad=$(grep -ohE '(failures|errors)="[0-9]+"' schemathesis-report/*.xml | grep -cvE '="0"' || true)
-          if [ "${bad:-0}" -ne 0 ]; then
-            echo "::error::schemathesis reported failures/errors"
-            exit 1
-          fi
-          echo "schemathesis completed all checks cleanly but hung on exit; treating as pass."
+          exit "$st"
 
       - name: Upload report on failure
         if: failure()

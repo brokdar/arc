@@ -55,7 +55,15 @@ logs/
 # repository root. Anchored: an unanchored `data/` also swallows
 # `backend/tests/data/`, where WP-4's committed golden FIT files live.
 /data/
+# ...and the same tree under `backend/`, which is where it lands whenever the
+# API is run from that directory — which is how CI runs it and how CLAUDE.md
+# says to reproduce the fuzz job locally. Anchored for the same reason: it must
+# not swallow `backend/tests/data/`.
+/backend/data/
 .data-dev/
+# `--report-dir` output from a local `schemathesis run`. The CI job uploads it
+# as an artifact on failure; nobody should ever commit one.
+schemathesis-report/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .claude/worktrees/
