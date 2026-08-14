@@ -220,3 +220,16 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 [[operations]]
 include-name = "POST /api/v1/agent-notes/{note_id}/dispute"
 generation.max-examples = 5
+
+# `POST /wellness/prompt` answers the day's standing question, so it carries
+# every refusal the dated PATCH does — a future date is impossible here, but an
+# HRV reading without its statistic and context, and a body that sets nothing,
+# are both 422s a JSON schema cannot express. Pinned in `test_wellness_api.py`
+# (`test_a_write_that_fails_validation_leaves_the_prompt_pending`). The 404 and
+# 409 the operation also returns — no prompt standing, and a prompt that
+# already expired — are in the default list and need no entry.
+
+[[operations]]
+include-name = "POST /api/v1/wellness/prompt"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

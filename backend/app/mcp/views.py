@@ -66,6 +66,7 @@ from app.persistence.scoring import (
     VerdictDeclarationRow,
 )
 from app.persistence.wellness import WellnessDayRow
+from app.persistence.wellness_prompt import WellnessPromptRow
 from app.persistence.workouts import WorkoutRow
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary
@@ -1136,4 +1137,26 @@ def wellness_trend(trend: WellnessTrend) -> dict[str, Any]:
             for name, found in trend.metrics.items()
         },
         "readiness": wellness_readiness(trend.readiness),
+    }
+
+
+def wellness_prompt(row: WellnessPromptRow | None) -> Any:
+    """The standing of today's question, or null when nobody was asked.
+
+    Null is an answer and not a gap, the same way `weight_in_force` is null
+    before the first weigh-in. What this field exists for is the difference
+    between the three states: a coach that cannot tell "the athlete felt fine"
+    from "nobody asked" will read an empty morning as assent, which is the one
+    reading of silence this surface is built to prevent.
+
+    `expired` is therefore a *fact* and not a missing answer: we asked, the
+    window closed, and no follow-up was raised.
+    """
+    if row is None:
+        return None
+    return {
+        "local_date": row.local_date.isoformat(),
+        "status": row.status.value,
+        "expires_at": row.expires_at.isoformat(),
+        "resolved_at": None if row.resolved_at is None else row.resolved_at.isoformat(),
     }

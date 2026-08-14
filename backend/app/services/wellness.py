@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Self
 
+from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -49,6 +50,7 @@ from app.core.exceptions import (
     ValidationError,
     domain_rules,
 )
+from app.core.logging import get_logger
 from app.domain.activity import parse_timezone
 from app.domain.actor import Actor
 from app.domain.plan import week_start
@@ -56,11 +58,13 @@ from app.domain.wellness import (
     MAX_BACKFILL_DAYS,
     OBJECTIVE_FIELDS,
     SUBJECTIVE_FIELDS,
+    TERMINAL_PROMPT_STATUSES,
     WRITABLE_FIELDS,
     BodyRegion,
     Confounder,
     WeightInForce,
     WellnessDay,
+    WellnessPromptStatus,
     WellnessProvenance,
     WellnessSource,
     is_late_entry,
@@ -79,12 +83,26 @@ from app.domain.wellness_baseline import (
     trend_for,
 )
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit
+from app.persistence.db import commit, session_scope
 from app.persistence.wellness import WellnessDayRow, WellnessRepository
+from app.persistence.wellness_prompt import (
+    WellnessPromptRepository,
+    WellnessPromptRow,
+)
 from app.services.guardrails import check_write_cap
+
+logger = get_logger(__name__)
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "wellness_day"
+
+#: `entity_type` written on the daily prompt's audit rows.
+PROMPT_ENTITY_TYPE = "wellness_prompt"
+
+#: Scheduler id of the raise-and-expire sweep. One job, because the two halves
+#: read the same clock and the same table, and a second job would be a second
+#: place the prompt hour has to be agreed on.
+PROMPT_SWEEP_JOB_ID = "wellness_prompt_sweep"
 
 #: Longest range a weekly fold will read in one call. The same bound
 #: `app.services.history` puts on a training summary, and for the same reason:
@@ -241,16 +259,23 @@ class WellnessService:
         self,
         session: AsyncSession,
         repository: WellnessRepository,
+        prompts: WellnessPromptRepository,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._repository = repository
+        self._prompts = prompts
         self._audit = audit
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and its repositories to one session."""
-        return cls(session, WellnessRepository(session), AuditRepository(session))
+        return cls(
+            session,
+            WellnessRepository(session),
+            WellnessPromptRepository(session),
+            AuditRepository(session),
+        )
 
     # --- reads ----------------------------------------------------------------
 
@@ -623,6 +648,11 @@ class WellnessService:
                     raise
                 return None
             await self._audit_day(actor, result, entity_id=row.id)
+        # Inside this transaction, after the day has been validated and
+        # written: the answer and the day it answers land together or not at
+        # all. A retracted day still counts — the athlete answered and then
+        # cleared it, which is not the same as never having answered.
+        await self._answer_standing_prompt(local_date)
         await commit(self._session)
         return result
 
@@ -732,6 +762,15 @@ class WellnessService:
         nothing behind — the failed flush rolls the whole attempt back, which
         is exactly the guarantee `record_many` already promises for an invalid
         day. Re-reading from scratch is therefore the whole of the retry.
+
+        **This path touches no prompt at all** — it raises none for the days it
+        writes, and it answers none that already stand. Raising them would turn
+        a migration of sixty days of history into sixty mornings the athlete
+        was asked about and did not answer, which is precisely the opposite of
+        what the file records; answering them would let an import that happens
+        to include today silently close a question the athlete has not looked
+        at yet. A backfill is history arriving, not a morning being reported —
+        see :meth:`_answer_standing_prompt` for the path that is.
         """
         existing = await self._repository.get_many([entry.local_date for entry in days])
         today = self.local_today()
@@ -794,6 +833,205 @@ class WellnessService:
         )
         await commit(self._session)
         return results
+
+    # --- the daily prompt -----------------------------------------------------
+
+    async def prompt(
+        self, local_date: dt.date | None = None
+    ) -> WellnessPromptRow | None:
+        """The prompt standing for ``local_date`` (today by default), or None.
+
+        ``None`` is an answer and not a gap: nobody has been asked yet. Reading
+        this **never raises one** — a question the athlete only gets because
+        they happened to open the app is exactly the intermittent capture the
+        prompt exists to replace, and it would also make "was the athlete
+        asked?" depend on who read the page.
+        """
+        return await self._prompts.get(local_date or self.local_today())
+
+    async def raise_prompt(
+        self,
+        local_date: dt.date,
+        *,
+        actor: Actor,
+        now: dt.datetime | None = None,
+    ) -> WellnessPromptRow:
+        """Raise the day's prompt if it has not been raised before.
+
+        Idempotent, and idempotent the honest way: the caller is an hourly
+        sweep, so this is called over the same date many times a day. An
+        existing prompt is returned untouched **whatever its status** — an
+        answered day is not asked again, and an expired one is not resurrected.
+        Nor is the deadline moved: the athlete's window runs from when the
+        question was first put to them.
+
+        The unique constraint on ``local_date`` is what makes "one prompt per
+        day" true; the pre-read here only keeps the ordinary path off the
+        constraint. A genuine race loses the insert, re-reads and returns the
+        winner's row, so the caller never sees a 409 about a database index.
+        """
+        existing = await self._prompts.get(local_date)
+        if existing is not None:
+            return existing
+        moment = now or dt.datetime.now(dt.UTC)
+        hours = get_settings().wellness.prompt_expiry_hours
+        row = WellnessPromptRow(
+            local_date=local_date,
+            status=WellnessPromptStatus.PENDING,
+            expires_at=moment + dt.timedelta(hours=hours),
+        )
+        try:
+            row = await self._prompts.add(row)
+        except ConflictError:
+            # Lost the raise race — two sweeps, or a sweep and a boot. The
+            # failed flush has rolled this session back, so the winner's row is
+            # what a re-read finds.
+            won = await self._prompts.get(local_date)
+            if won is None:
+                raise
+            return won
+        await self._audit.record(
+            actor=actor,
+            action="wellness_prompt.raised",
+            entity_type=PROMPT_ENTITY_TYPE,
+            entity_id=row.id,
+            payload={
+                "local_date": row.local_date.isoformat(),
+                "expires_at": row.expires_at.isoformat(),
+            },
+        )
+        await commit(self._session)
+        return row
+
+    async def raise_due_prompt(
+        self, *, actor: Actor, now: dt.datetime | None = None
+    ) -> WellnessPromptRow | None:
+        """Raise today's prompt once the athlete's own clock has reached the hour.
+
+        ``None`` before `WELLNESS__PROMPT_HOUR_LOCAL`: the day is asked about
+        once, in the evening, rather than at every tick since midnight. The
+        clock is the athlete's (`MATCHING__TIMEZONE`), the same one
+        :meth:`local_today` and the missed-session sweep read.
+        """
+        moment = now or dt.datetime.now(dt.UTC)
+        zone = parse_timezone(get_settings().matching.timezone)
+        local = moment.astimezone(zone)
+        if local.hour < get_settings().wellness.prompt_hour_local:
+            return None
+        return await self.raise_prompt(local.date(), actor=actor, now=moment)
+
+    async def answer_prompt(
+        self,
+        updates: Mapping[str, Any],
+        *,
+        actor: Actor,
+        source: WellnessSource,
+        local_date: dt.date | None = None,
+    ) -> tuple[WellnessPromptRow, DayResult]:
+        """Answer the standing prompt: write the day, and close the question.
+
+        One transaction, and in this order: the day is validated and written
+        first, and the prompt is resolved by :meth:`record` inside the same
+        commit. A write that breaks a domain rule therefore leaves the prompt
+        **pending** — the athlete was asked, they have not answered yet, and a
+        rejected payload must not spend the day's one question.
+
+        Raises:
+            NotFoundError: When no prompt was ever raised for the date. The day
+                is still writable through :meth:`record`; what does not exist
+                is a question to answer.
+            ConflictError: When the prompt already expired. The day closed
+                unanswered and that is a recorded fact; a late reading goes
+                through the ordinary dated write, which marks it as recalled.
+            ValidationError: For any rule the resulting day breaks.
+        """
+        date = local_date or self.local_today()
+        standing = await self._prompts.get(date)
+        if standing is None:
+            raise NotFoundError(
+                f"No wellness prompt is standing for {date.isoformat()}; record "
+                "the day directly instead"
+            )
+        if standing.status is WellnessPromptStatus.EXPIRED:
+            raise ConflictError(
+                f"The wellness prompt for {date.isoformat()} expired at "
+                f"{standing.expires_at.isoformat()} and the day closed "
+                "unanswered; record the day directly to enter it from memory"
+            )
+        result = await self.record(date, updates, actor=actor, source=source)
+        resolved = await self._prompts.get(date)
+        assert resolved is not None  # noqa: S101 — checked above, same session
+        return resolved, result
+
+    async def expire_prompts(
+        self, *, actor: Actor, now: dt.datetime | None = None
+    ) -> Sequence[WellnessPromptRow]:
+        """Close every wellness prompt whose window has run out.
+
+        **The day closes into "not provided", and no follow-up is ever raised.**
+        A reminder cascade is what an application built for the compliant
+        athlete does; the athlete this exists for is the one who did not answer
+        because the week is already going badly, and a second prompt asks them
+        to feel worse about it. What the record needs is not another question
+        but the fact that this one went unanswered — which is what lets a coach
+        tell "the athlete felt fine" from "nobody asked".
+
+        Idempotent: an already-terminal prompt is not a candidate, so a second
+        run over the same data changes no status and no ``resolved_at``. The
+        deadline is stored on each prompt, so this job agrees with no constant
+        of its own, and the batch is taken over what **has** expired, oldest
+        deadline first — the starvation lesson `ScoringService.expire_prompts`
+        records.
+
+        Returns:
+            The prompts expired, oldest deadline first.
+        """
+        moment = now or dt.datetime.now(dt.UTC)
+        due = await self._prompts.expired(
+            now=moment, limit=get_settings().wellness.prompt_scan_batch
+        )
+        expired: list[WellnessPromptRow] = []
+        for row in due:
+            row.status = WellnessPromptStatus.EXPIRED
+            row.resolved_at = moment
+            await self._prompts.add(row)
+            await self._audit.record(
+                actor=actor,
+                action="wellness_prompt.expired",
+                entity_type=PROMPT_ENTITY_TYPE,
+                entity_id=row.id,
+                payload={
+                    "local_date": row.local_date.isoformat(),
+                    "expires_at": row.expires_at.isoformat(),
+                },
+            )
+            expired.append(row)
+        if expired:
+            await commit(self._session)
+        return expired
+
+    async def _answer_standing_prompt(
+        self, local_date: dt.date, *, now: dt.datetime | None = None
+    ) -> None:
+        """Mark the day's prompt answered, if one is standing for that date.
+
+        Called from the **per-day** write and from nowhere else. Filling in a
+        day *is* the answer to the question about it, so a prompt left pending
+        beside a recorded day would expire into "not provided" while the day
+        sits there — silence the coach would read as an athlete who could not
+        be bothered. The batch path deliberately does not do this; see
+        :meth:`_write_many`.
+
+        A terminal prompt is left alone: a day entered after its question
+        closed is a late entry, not an answer arriving on time, and the record
+        should keep saying that nobody answered when they were asked.
+        """
+        standing = await self._prompts.get(local_date)
+        if standing is None or standing.status in TERMINAL_PROMPT_STATUSES:
+            return
+        standing.status = WellnessPromptStatus.ANSWERED
+        standing.resolved_at = now or dt.datetime.now(dt.UTC)
+        await self._prompts.add(standing)
 
     # --- internals ------------------------------------------------------------
 
@@ -1083,3 +1321,50 @@ def parse_soreness_by_region(mapping: Mapping[str, Any]) -> dict[BodyRegion, int
             )
         parsed[key] = rating
     return parsed
+
+
+# --- the scheduled sweep ---------------------------------------------------------
+
+
+async def run_wellness_prompt_sweep() -> None:
+    """Raise the day's prompt when its hour comes, and close what has run out.
+
+    One job for both halves: they read the same clock and the same table, and
+    two jobs would be two places the prompt hour has to be agreed on.
+
+    Never raises — a scheduler job that raises stops running, and a prompt
+    surface that silently stopped raising would look exactly like an athlete
+    who stopped being asked.
+    """
+    try:
+        async with session_scope() as session:
+            service = WellnessService.from_session(session)
+            raised = await service.raise_due_prompt(actor=Actor.system())
+            expired = await service.expire_prompts(actor=Actor.system())
+        logger.info(
+            "wellness_prompt_sweep_ran",
+            raised=None if raised is None else raised.local_date.isoformat(),
+            expired=len(expired),
+        )
+    except Exception:  # noqa: BLE001 — a scheduler job that raises stops running
+        logger.exception("wellness_prompt_sweep_failed")
+
+
+def register_wellness_prompt_job(scheduler: BaseScheduler) -> None:
+    """Register the daily prompt's raise-and-expire sweep on the scheduler.
+
+    Registered by the increment that needs it, like the inbox, missed and
+    prompt-expiry sweeps, rather than in `app.core.scheduler`, which owns no
+    jobs of its own. ``coalesce`` and ``max_instances=1`` because the sweep is
+    idempotent and two of them over one day would race for nothing — and
+    because "one prompt a day" must not depend on that race being won.
+    """
+    scheduler.add_job(
+        run_wellness_prompt_sweep,
+        "interval",
+        seconds=get_settings().wellness.prompt_scan_interval_seconds,
+        id=PROMPT_SWEEP_JOB_ID,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )

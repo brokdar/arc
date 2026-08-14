@@ -41,6 +41,7 @@ from app.services.matching import register_missed_sessions_job
 from app.services.proposals import register_proposal_expiry_job
 from app.services.scoring import register_prompt_expiry_job
 from app.services.templates import verify_bundled_resources
+from app.services.wellness import register_wellness_prompt_job
 
 #: Runtime data tree created on startup, relative to `settings.data.root`.
 DATA_SUBDIRECTORIES = ("inbox", "originals", "streams", "quarantine")
@@ -78,6 +79,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # like the two above; nothing is applied on expiry — a lapsed proposal
     # means the committed plan stands.
     register_proposal_expiry_job(app.state.scheduler)
+    # The daily wellness prompt (Increment 1). One job that both raises the
+    # day's question at `WELLNESS__PROMPT_HOUR_LOCAL` and closes the ones whose
+    # window has run out; hourly and idempotent like the three above, and the
+    # unique constraint on `wellness_prompts.local_date` — not this schedule —
+    # is what makes "one prompt a day" true.
+    register_wellness_prompt_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)

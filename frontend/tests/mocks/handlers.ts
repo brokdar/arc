@@ -6,6 +6,7 @@ import {
   AGENT_NOW,
   alignmentRead,
   anchorHistory,
+  answerWellnessPrompt,
   appendAnchorVersion,
   applyLinkStatuses,
   athleteRecord,
@@ -51,6 +52,7 @@ import {
   WORKOUTS,
   wellnessDay,
   wellnessInputs,
+  wellnessPrompt,
   wellnessRange,
   wellnessTrend,
   wellnessWeightInForce,
@@ -1284,6 +1286,20 @@ export const handlers = [
       ),
     ),
   ),
+  http.get("/api/v1/wellness/prompt", ({ response }) =>
+    // 200 with a null body when nobody has been asked: absence is an answer
+    // here, and the card has to tell it from an unanswered question.
+    response(200).json(wellnessPrompt(todayIsoDate())),
+  ),
+  http.post("/api/v1/wellness/prompt", async ({ request, response }) => {
+    const result = answerWellnessPrompt(todayIsoDate(), await request.json());
+    if ("answer" in result) {
+      return response(200).json(result.answer);
+    }
+    return result.status === 422
+      ? response(422).json({ detail: result.detail })
+      : response(result.status).json({ detail: result.detail });
+  }),
   http.get("/api/v1/wellness/weight", ({ query, response }) => {
     const on = query.get("on") ?? "";
     const resolved = wellnessWeightInForce(on);

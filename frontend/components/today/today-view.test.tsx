@@ -10,6 +10,7 @@ import {
   planWeekFixture,
   SESSION_IDS,
   seedWellnessDay,
+  seedWellnessPrompt,
 } from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
@@ -350,6 +351,50 @@ describe("TodayView wellness card", () => {
     expect(
       within(card).getByText(/not actionable today: Alcohol/),
     ).toBeInTheDocument();
+  });
+
+  it("renders the standing prompt as a control beside the input it asks for", async () => {
+    seedWellnessPrompt(today, "pending");
+
+    renderToday();
+
+    // UI convention 3: the empty state names the missing input and puts the
+    // action beside it. The prompt is what makes this a question the day
+    // asked, not a slot the athlete happened to notice.
+    expect(
+      await screen.findByText(/asked about this morning and has not/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Record this morning" }),
+    ).toHaveAttribute("href", "/wellness");
+  });
+
+  it("says the day closed unanswered, and offers the backfill path", async () => {
+    seedWellnessPrompt(today, "expired");
+
+    renderToday();
+
+    // "We asked and got no answer" is a fact, and the card says it rather
+    // than rendering the same blank an unasked day would.
+    expect(await screen.findByText(/closed unanswered/i)).toBeInTheDocument();
+    // The remedy is still named: a late entry is marked as recalled, not lost.
+    expect(screen.getByRole("link", { name: /from memory/i })).toHaveAttribute(
+      "href",
+      "/wellness",
+    );
+  });
+
+  it("shows the day's values and no prompt control once it is answered", async () => {
+    seedWellnessPrompt(today, "answered");
+    seedWellnessDay(today, { resting_hr_bpm: 44 });
+
+    renderToday();
+
+    expect(await screen.findByText("44")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Record this morning" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/closed unanswered/i)).not.toBeInTheDocument();
   });
 
   it("holds a marker's slot with the placeholder rather than a zero", async () => {

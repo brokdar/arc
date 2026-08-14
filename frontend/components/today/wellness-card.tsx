@@ -8,6 +8,7 @@ import { SectionLabel } from "@/components/design/section-label";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
 import { addDays, weekdayLabel } from "@/lib/dates";
+import { formatUtcStamp } from "@/lib/format";
 import {
   confounderLabel,
   MARKER_FIELDS,
@@ -51,10 +52,21 @@ export function WellnessCard({
     params: { query: { start, end: addDays(today, 1), limit: RECENT_DAYS } },
   });
 
+  // The day's own question, read beside the series: "the athlete reported
+  // nothing" and "nobody asked" render as the same blank otherwise, and the
+  // second one is a defect in this application rather than a fact about the
+  // athlete.
+  const prompt = $api.useQuery("get", "/api/v1/wellness/prompt");
+
   const days = new Map(
     (series.data?.items ?? []).map((item) => [item.local_date, item]),
   );
   const day = days.get(today) ?? null;
+  // Only a prompt about *this* card's day speaks for it. The read answers on
+  // the athlete's clock (`MATCHING__TIMEZONE`) and this component is given the
+  // browser's; where the two disagree over a midnight, a prompt about
+  // yesterday must not be rendered as a question about this morning.
+  const standing = prompt.data?.local_date === today ? prompt.data : null;
 
   return (
     <Panel className={className}>
@@ -73,6 +85,10 @@ export function WellnessCard({
           <p className="text-ink-muted text-sm">Loading…</p>
         ) : day ? (
           <RecordedDay day={day} />
+        ) : standing?.status === "expired" ? (
+          <ClosedUnanswered />
+        ) : standing?.status === "pending" ? (
+          <StandingPrompt expiresAt={standing.expires_at} />
         ) : (
           <NothingYet />
         )}
@@ -139,6 +155,61 @@ function RecordedDay({ day }: { readonly day: WellnessDay }) {
         variant="secondary"
         className="self-start"
         render={<Link href="/wellness">Edit today</Link>}
+      />
+    </div>
+  );
+}
+
+/**
+ * The day's question is standing and unanswered.
+ *
+ * The empty-state convention (UI convention 3) with the *question* stated:
+ * "nothing recorded" is a description of a blank, and "arc asked and has not
+ * heard back" is the thing the athlete can act on. The deadline is shown
+ * because the window is real — the day closes into "not provided" and no
+ * second prompt is ever raised, so a reader who assumes they will be asked
+ * again is wrong in a way this card can prevent.
+ */
+function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-ink-muted text-sm">
+        arc asked about this morning and has not heard back. Sleep, resting
+        heart rate, HRV, weight and how you feel — whatever you have.
+      </p>
+      <p className="text-ink-faint text-xs">
+        Open until{" "}
+        <span className="font-mono">{formatUtcStamp(expiresAt)}</span>; after
+        that the day closes unanswered and is not asked again.
+      </p>
+      <Button
+        size="sm"
+        render={<Link href="/wellness">Record this morning</Link>}
+      />
+    </div>
+  );
+}
+
+/**
+ * The window closed and nobody answered.
+ *
+ * Said out loud rather than rendered as the same blank an unasked day gets:
+ * "we asked and got no answer" is a recorded fact, and it is what stops a
+ * later reader — the athlete or the coach — from taking the gap for a morning
+ * that was fine. The remedy is still named, because a late entry is marked as
+ * recalled rather than lost.
+ */
+function ClosedUnanswered() {
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-ink-muted text-sm">
+        This morning closed unanswered — arc asked and nothing was recorded. It
+        will not ask again for today.
+      </p>
+      <Button
+        size="sm"
+        variant="secondary"
+        render={<Link href="/wellness">Record it from memory</Link>}
       />
     </div>
   );

@@ -15,6 +15,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
+from app.domain.actor import Actor
+from app.persistence.db import session_scope
+from app.services.wellness import WellnessService
 
 DAYS = "/api/v1/wellness/days"
 BACKFILL = "/api/v1/wellness/backfill"
@@ -162,3 +165,55 @@ async def test_two_writes_racing_to_create_one_day_both_land(
     assert body["fatigue"] == 3
     [(count,)] = await raw("SELECT count(*) FROM wellness_days")
     assert count == 1
+
+
+# --- the daily prompt: one row per date, held by the database ---------------------
+
+
+async def raise_prompt(local_date: dt.date) -> None:
+    """Raise one day's prompt through the service, on a real connection."""
+    async with session_scope() as session:
+        await WellnessService.from_session(session).raise_prompt(
+            local_date, actor=Actor.system()
+        )
+
+
+async def test_one_prompt_per_day_is_held_by_the_database() -> None:
+    """The decision: a unique constraint, not scheduler discipline.
+
+    Here rather than only in the unit suite because this is what the constraint
+    *is* on the dialect it will run on — an index Postgres refuses to duplicate
+    a row in, not a pre-check the sweep performs on itself.
+    """
+    await raise_prompt(TODAY)
+    await raise_prompt(TODAY)
+
+    [(count,)] = await raw("SELECT count(*) FROM wellness_prompts")
+    assert count == 1
+
+    [(unique,)] = await raw(
+        "SELECT indisunique FROM pg_index "
+        "WHERE indexrelid = 'uq_wellness_prompts_local_date'::regclass"
+    )
+    assert unique is True
+
+
+async def test_two_sweeps_racing_to_raise_one_day_leave_one_row() -> None:
+    """Two connections, both finding no prompt, both inserting.
+
+    The unit suite cannot stage this: it shares one in-memory SQLite
+    connection, so two "concurrent" raises serialize on it. The loser here
+    re-reads the winner's row rather than surfacing a constraint violation.
+    """
+    await asyncio.gather(raise_prompt(TODAY), raise_prompt(TODAY))
+
+    [(count,)] = await raw("SELECT count(*) FROM wellness_prompts")
+    assert count == 1
+
+
+async def test_the_prompt_status_column_stores_the_member_value() -> None:
+    await raise_prompt(TODAY)
+
+    [(status,)] = await raw("SELECT status FROM wellness_prompts")
+
+    assert status == "pending"

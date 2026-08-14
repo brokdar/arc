@@ -15,6 +15,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.actor import Actor
 from app.domain.wellness import (
     BOUNDS,
     INPUT_TIERS,
@@ -24,10 +25,13 @@ from app.domain.wellness import (
     Confounder,
 )
 from app.persistence.wellness import WellnessDayRow
+from app.persistence.wellness_prompt import WellnessPromptRow
+from app.services.wellness import WellnessService
 
 DAYS = "/api/v1/wellness/days"
 INPUTS = "/api/v1/wellness/inputs"
 WEIGHT = "/api/v1/wellness/weight"
+PROMPT = "/api/v1/wellness/prompt"
 
 TODAY = dt.date.today()
 YESTERDAY = TODAY - dt.timedelta(days=1)
@@ -451,6 +455,8 @@ async def test_a_value_outside_its_bound_is_refused(
         ("patch", f"{DAYS}/{TODAY.isoformat()}"),
         ("post", "/api/v1/wellness/backfill"),
         ("get", WEIGHT),
+        ("get", PROMPT),
+        ("post", PROMPT),
     ],
 )
 async def test_the_wellness_surface_is_behind_the_session(
@@ -1116,3 +1122,108 @@ async def test_the_trend_read_needs_a_session(anon_client: AsyncClient) -> None:
     )
 
     assert response.status_code == 401
+
+
+# --- the standing prompt (AC-60) ----------------------------------------------
+
+
+async def raise_todays_prompt(db_session: AsyncSession) -> None:
+    """Raise today's prompt the way the scheduled sweep does."""
+    await WellnessService.from_session(db_session).raise_prompt(
+        TODAY, actor=Actor.system()
+    )
+    await db_session.commit()
+
+
+async def stored_prompt(db_session: AsyncSession) -> Any:
+    """The one prompt row, read fresh."""
+    db_session.expire_all()
+    rows = (await db_session.execute(select(WellnessPromptRow))).scalars().all()
+    assert len(rows) == 1, f"expected one prompt row, found {len(rows)}"
+    return rows[0]
+
+
+async def test_the_standing_prompt_is_read_with_its_status_and_deadline(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await raise_todays_prompt(db_session)
+
+    body = (await client.get(PROMPT)).json()
+
+    assert body["local_date"] == TODAY.isoformat()
+    assert body["status"] == "pending"
+    # The deadline is a fact about *this* prompt, stored when it was raised, so
+    # nothing downstream has to agree with a constant.
+    assert body["expires_at"] is not None
+    assert body["resolved_at"] is None
+
+
+async def test_no_prompt_today_reads_as_absence_rather_than_an_error(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(PROMPT)
+
+    # 200 with a null body: "nobody has been asked yet" is an answer, and a 500
+    # or a 404 would make the Today view treat it as a failure.
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+
+async def test_answering_the_prompt_writes_the_day_and_closes_the_question(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await raise_todays_prompt(db_session)
+
+    body = (await client.post(PROMPT, json={"fatigue": 3, "motivation": 4})).json()
+
+    assert body["prompt"]["status"] == "answered"
+    assert body["prompt"]["resolved_at"] is not None
+    assert body["day"]["fatigue"] == 3
+    # On the stored row, not just in the response: the coach reads the database.
+    row = await stored_prompt(db_session)
+    assert row.status.value == "answered"
+    assert row.resolved_at is not None
+    assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).json()["motivation"] == 4
+
+
+async def test_a_write_that_fails_validation_leaves_the_prompt_pending(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """One transaction: the day and the prompt move together or not at all."""
+    await raise_todays_prompt(db_session)
+
+    # An HRV reading with no statistic and no context is a domain refusal.
+    response = await client.post(PROMPT, json={"hrv_ms": 61.0})
+
+    assert response.status_code == 422, response.text
+    assert (await stored_prompt(db_session)).status.value == "pending"
+    assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).status_code == 404
+
+
+async def test_answering_an_expired_prompt_is_refused_by_name(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await raise_todays_prompt(db_session)
+    await WellnessService.from_session(db_session).expire_prompts(
+        actor=Actor.system(),
+        now=dt.datetime.now(dt.UTC) + dt.timedelta(days=30),
+    )
+    await db_session.commit()
+
+    response = await client.post(PROMPT, json={"fatigue": 3})
+
+    assert response.status_code == 409, response.text
+    assert "expired" in response.json()["detail"].lower()
+    # And the day write does not land: the closed question is not a back door
+    # into today, and the backfill path is where a late entry belongs.
+    assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).status_code == 404
+    assert (await stored_prompt(db_session)).status.value == "expired"
+
+
+async def test_answering_when_nothing_was_asked_is_refused_by_name(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(PROMPT, json={"fatigue": 3})
+
+    assert response.status_code == 404, response.text
+    assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).status_code == 404

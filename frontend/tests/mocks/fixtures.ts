@@ -3756,6 +3756,7 @@ function wellnessStore(): Map<string, Schemas["WellnessDayRead"]> {
 /** Put the wellness series back to empty. Wired into the global reset. */
 export function resetWellnessState(): void {
   wellnessDays = null;
+  wellnessPrompts = null;
 }
 
 /** Seed one day directly, for a test that needs history it did not type in. */
@@ -3873,7 +3874,25 @@ export function patchWellnessDay(
     updated_at: AGENT_NOW,
   } satisfies Schemas["WellnessDayRead"];
   store.set(localDate, day);
+  // The per-day write answers that day's standing question, exactly as
+  // `WellnessService._answer_standing_prompt` does — filling in the day *is*
+  // the answer. A handler that skipped this would let a component test render
+  // a standing prompt beside a recorded day, which the real API cannot produce.
+  answerStandingPrompt(localDate);
   return { day };
+}
+
+/** Close a pending prompt for a date. A terminal one is left alone. */
+function answerStandingPrompt(localDate: string): void {
+  const standing = promptStore().get(localDate);
+  if (standing?.status !== "pending") {
+    return;
+  }
+  promptStore().set(localDate, {
+    ...standing,
+    status: "answered",
+    resolved_at: AGENT_NOW,
+  });
 }
 
 /** One recorded day, or null. */
@@ -3881,6 +3900,89 @@ export function wellnessDay(
   localDate: string,
 ): Schemas["WellnessDayRead"] | null {
   return wellnessStore().get(localDate) ?? null;
+}
+
+let wellnessPrompts: Map<string, Schemas["WellnessPromptRead"]> | null = null;
+
+function promptStore(): Map<string, Schemas["WellnessPromptRead"]> {
+  wellnessPrompts ??= new Map();
+  return wellnessPrompts;
+}
+
+/**
+ * Raise one day's prompt, the way the scheduled sweep does.
+ *
+ * `expires_at` is computed from the raise the way the service computes it —
+ * `WELLNESS__PROMPT_EXPIRY_HOURS` after — rather than typed in, so a test
+ * cannot describe a prompt whose deadline the real sweep would never produce.
+ */
+export function seedWellnessPrompt(
+  localDate: string,
+  status: Schemas["WellnessPromptStatus"] = "pending",
+): Schemas["WellnessPromptRead"] {
+  const raisedAt = `${localDate}T19:00:00Z`;
+  const prompt: Schemas["WellnessPromptRead"] = {
+    local_date: localDate,
+    status,
+    raised_at: raisedAt,
+    expires_at: new Date(
+      Date.parse(raisedAt) + WELLNESS_PROMPT_EXPIRY_HOURS * 3_600_000,
+    ).toISOString(),
+    // A terminal prompt carries the instant it reached that state; a pending
+    // one carries null, exactly as the column does.
+    resolved_at: status === "pending" ? null : AGENT_NOW,
+  };
+  promptStore().set(localDate, prompt);
+  return prompt;
+}
+
+/** `app.core.config.WellnessSettings.prompt_expiry_hours`, the default. */
+const WELLNESS_PROMPT_EXPIRY_HOURS = 36;
+
+/** `GET /wellness/prompt` — the standing prompt for a date, or null. */
+export function wellnessPrompt(
+  localDate: string,
+): Schemas["WellnessPromptRead"] | null {
+  return promptStore().get(localDate) ?? null;
+}
+
+/**
+ * `POST /wellness/prompt` — write the day and close the question, or refuse.
+ *
+ * Honours the request the way the service does: the day is written through the
+ * same store the PATCH path writes, and the prompt only moves if that write
+ * succeeded. A rejected payload leaves the prompt `pending`.
+ */
+export function answerWellnessPrompt(
+  localDate: string,
+  body: Schemas["WellnessDayWrite"],
+):
+  | { answer: Schemas["WellnessPromptAnswer"] }
+  | { status: 404 | 409 | 422; detail: string } {
+  const standing = promptStore().get(localDate);
+  if (!standing) {
+    return {
+      status: 404,
+      detail: `No wellness prompt is standing for ${localDate}; record the day directly instead`,
+    };
+  }
+  if (standing.status === "expired") {
+    return {
+      status: 409,
+      detail: `The wellness prompt for ${localDate} expired at ${standing.expires_at} and the day closed unanswered; record the day directly to enter it from memory`,
+    };
+  }
+  const result = patchWellnessDay(localDate, body);
+  if ("detail" in result) {
+    return { status: 422, detail: result.detail };
+  }
+  const answered: Schemas["WellnessPromptRead"] = {
+    ...standing,
+    status: "answered",
+    resolved_at: standing.resolved_at ?? AGENT_NOW,
+  };
+  promptStore().set(localDate, answered);
+  return { answer: { prompt: answered, day: result.day } };
 }
 
 /** `GET /wellness/days?start=&end=` over the half-open range. */

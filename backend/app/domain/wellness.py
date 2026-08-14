@@ -76,6 +76,30 @@ class WellnessSource(StrEnum):
     AGENT = "agent"
 
 
+class WellnessPromptStatus(StrEnum):
+    """The standing of one day's question: asked, answered, or closed unasked.
+
+    The same three states :class:`app.domain.matching.EveningPromptStatus` has,
+    and deliberately the same shape: a dated row, a stored deadline, and a
+    terminal member the sweep writes. What matters is that ``EXPIRED`` is a
+    *recorded fact* — "we asked and got no answer" — rather than the absence of
+    a row, because a coach reading silence cannot tell the athlete who felt
+    fine from the athlete nobody asked.
+    """
+
+    PENDING = "pending"
+    ANSWERED = "answered"
+    #: The day closed with no answer. Terminal: no follow-up is ever raised.
+    EXPIRED = "expired"
+
+
+#: The statuses a prompt never leaves. A raise over one of these is a no-op —
+#: an answered day is not asked again and an expired one is not resurrected.
+TERMINAL_PROMPT_STATUSES = frozenset(
+    {WellnessPromptStatus.ANSWERED, WellnessPromptStatus.EXPIRED}
+)
+
+
 # Why `HrvMetric` exists, in a comment rather than in the docstring below.
 #
 # RMSSD and SDNN are different statistics over the same beat intervals — **not
