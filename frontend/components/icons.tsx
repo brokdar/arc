@@ -160,6 +160,21 @@ export function SettingsIcon(props: IconProps) {
   );
 }
 
+/** Wellness — a resting-heart trace, the one line a morning is read from. */
+export function WellnessIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path
+        d="M1.6 8.4h2.6L5.6 5l2 6 1.6-4.2 1.1 1.6h4.1"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Glyph>
+  );
+}
+
 /** Cycling — two wheels and a frame. */
 export function BikeIcon(props: IconProps) {
   return (

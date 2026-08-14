@@ -1279,6 +1279,167 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/wellness/backfill": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Backfill Wellness
+     * @description Record many days in **one transaction** — the migration path.
+     *
+     *     Either the whole batch lands or none of it does: a partial migration leaves
+     *     the athlete unable to tell which days made it, and the retry then has to
+     *     reason about overlap. A day that breaks a rule is refused **by date and
+     *     field**, because "validation failed" over three hundred days is
+     *     unactionable.
+     *
+     *     Days that already exist are updated, not replaced — a field the batch does
+     *     not mention is left alone — and the answer says per day whether it was
+     *     created or updated. `dry_run` reports exactly those outcomes without
+     *     writing, which is what a migration wants before committing to itself.
+     */
+    post: operations["wellness-backfill_wellness"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/wellness/days": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Wellness Days
+     * @description Read the series over the half-open range ``[start, end)``, oldest first.
+     *
+     *     Oldest first because a wellness series is read the way a chart is drawn —
+     *     the opposite of the session log, which reads backwards from the most recent
+     *     thing that happened.
+     *
+     *     Days with nothing recorded are **absent from `items` and listed in
+     *     `missing`**. They are not synthesized as null-filled days: "the athlete
+     *     reported nothing" and "the athlete was not asked" must not render as the
+     *     same object. `missing` is over the **whole range**, not the page — a
+     *     recorded day on page two is not a day the athlete was silent on.
+     *
+     *     `end` equal to `start` is a legal empty range; `end` before it is a 422, as
+     *     is a range longer than a year and a week — the answer names every
+     *     unanswered date in it, so an unbounded range is an unbounded answer.
+     */
+    get: operations["wellness-list_wellness_days"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/wellness/days/{local_date}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Wellness Day
+     * @description Read one day.
+     *
+     *     404 when nothing was recorded that day — see `GET /wellness/days` for why
+     *     a day of nulls would be the wrong answer.
+     */
+    get: operations["wellness-get_wellness_day"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Record Wellness Day
+     * @description Record or correct one day. Creates it if it does not exist.
+     *
+     *     An omitted field is left unchanged; an explicit `null` **clears** it. A day
+     *     is corrigible — the athlete who typed 6.5 h of sleep as 65 can fix it — and
+     *     every write appends an audit row carrying what it used to say.
+     *
+     *     **Any past or present date** is a legal target, which is what makes
+     *     backfilling a single day need nothing added. A future date is refused by
+     *     name: a reading for tomorrow is not a late entry, it is a typo, and storing
+     *     it would put a value in the baseline window before the morning it claims to
+     *     report has happened.
+     *
+     *     The response is **`null`** when the write cleared the day's last value: the
+     *     day was retracted, and `null` says the same thing the dated read's 404 says
+     *     — there is nothing here now. It is a 200 rather than a 204 so the contract
+     *     stays one status and one model, and a client can tell "retracted" from
+     *     "failed" without inspecting a header.
+     */
+    patch: operations["wellness-record_wellness_day"];
+    trace?: never;
+  };
+  "/api/v1/wellness/inputs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Wellness Inputs
+     * @description Read the whole vocabulary of the wellness surface.
+     *
+     *     The tiers, the subjective scales with their polarity and anchor
+     *     descriptors, the confounder vocabulary with its invalidating half marked,
+     *     and the body regions. Served so no consumer has to carry a private copy of
+     *     what a 3 means — or discover the confounder list by submitting guesses.
+     *
+     *     Bundled reference data, unpaged and identical on every deployment.
+     */
+    get: operations["wellness-get_wellness_inputs"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/wellness/weight": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Weight In Force
+     * @description The body weight governing ``on``, with the day it was recorded.
+     *
+     *     The most recent weight on or before that date — which is why appending a
+     *     later one never changes what an earlier date resolves to.
+     *
+     *     A date before the first recorded weight is a **404**, and watts per
+     *     kilogram is then absent rather than computed against a default nobody has.
+     */
+    get: operations["wellness-get_weight_in_force"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/workout-labels": {
     parameters: {
       query?: never;
@@ -1779,6 +1940,72 @@ export interface components {
       value?: number | null;
     };
     /**
+     * BackfillDay
+     * @description One dated day inside a batch write.
+     */
+    BackfillDay: {
+      /** Confounders */
+      confounders?: components["schemas"]["Confounder"][] | null;
+      /** Fatigue */
+      fatigue?: number | null;
+      hrv_context?: components["schemas"]["HrvContext"] | null;
+      hrv_metric?: components["schemas"]["HrvMetric"] | null;
+      /** Hrv Ms */
+      hrv_ms?: number | null;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      /** Motivation */
+      motivation?: number | null;
+      /** Note */
+      note?: string | null;
+      /** Respiratory Rate Brpm */
+      respiratory_rate_brpm?: number | null;
+      /** Resting Hr Bpm */
+      resting_hr_bpm?: number | null;
+      /** Sleep Duration S */
+      sleep_duration_s?: number | null;
+      /** Sleep End Local */
+      sleep_end_local?: string | null;
+      /** Sleep Quality */
+      sleep_quality?: number | null;
+      /** Sleep Start Local */
+      sleep_start_local?: string | null;
+      /** Soreness */
+      soreness?: number | null;
+      /** Soreness By Region */
+      soreness_by_region?: {
+        [key: string]: number;
+      } | null;
+      /** Spo2 */
+      spo2?: number | null;
+      /** Stress */
+      stress?: number | null;
+      /** Weight Kg */
+      weight_kg?: number | null;
+      /** Wrist Temperature Delta C */
+      wrist_temperature_delta_c?: number | null;
+    };
+    /**
+     * BackfillDayResult
+     * @description What one day of a batch was, or would have been.
+     */
+    BackfillDayResult: {
+      /** Changed */
+      changed: {
+        [key: string]: unknown;
+      };
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      /** Outcome */
+      outcome: string;
+    };
+    /**
      * BandSchema
      * @description An acceptable range around a step's prescribed target, as fractions.
      */
@@ -1794,6 +2021,32 @@ export interface components {
        */
       smoothing_s: number;
     };
+    /**
+     * BodyRegion
+     * @description Where soreness was felt. Keys of ``soreness_by_region``.
+     *
+     *     A closed vocabulary for the same reason :class:`Confounder` is one: free
+     *     text cannot answer "is the left knee thing recurring". Coarse on purpose —
+     *     this is a phone form answered before coffee, not an anatomy chart.
+     * @enum {string}
+     */
+    BodyRegion:
+      | "neck"
+      | "shoulders"
+      | "upper_back"
+      | "lower_back"
+      | "chest"
+      | "arms"
+      | "forearms"
+      | "abdomen"
+      | "hips"
+      | "glutes"
+      | "quads"
+      | "hamstrings"
+      | "calves"
+      | "knees"
+      | "ankles"
+      | "feet";
     /** Body_ingest-upload_activity_file */
     "Body_ingest-upload_activity_file": {
       /**
@@ -1891,6 +2144,46 @@ export interface components {
       | "missed"
       | "displaced"
       | "unplanned";
+    /**
+     * Confounder
+     * @description Things that were true about a night, in a vocabulary something can gate on.
+     *
+     *     The list exists because of one documented failure: a deload week was once
+     *     triggered by an alcohol artefact. Peripheral vasodilation produces the same
+     *     temperature-up / resting-HR-down dissociation that otherwise reads as
+     *     illness onset, and free text alone cannot gate anything — "two beers" in a
+     *     note is invisible to every query that matters the next morning.
+     *
+     *     Members are the athlete's own pre-check, copied out of their head rather
+     *     than invented: :data:`INVALIDATES_MARKERS` says which of them make the
+     *     morning's objective numbers *unusable* (logged, not acted on) as opposed to
+     *     merely context. ``OTHER`` is legitimate and analyzable — reviewing the
+     *     free-text and ``other`` volume and proposing new codes is the growth path,
+     *     not a reason to leave the vocabulary open now.
+     * @enum {string}
+     */
+    Confounder:
+      | "alcohol"
+      | "late_meal"
+      | "poor_sleep_timing"
+      | "short_sleep"
+      | "hot_room"
+      | "travel"
+      | "altitude"
+      | "illness_onset"
+      | "first_session_after_layoff"
+      | "hard_session_previous_day"
+      | "menstrual_phase_noted"
+      | "other";
+    /**
+     * ConfounderRead
+     * @description One confounder tag, and whether it voids the morning's markers.
+     */
+    ConfounderRead: {
+      /** Invalidates Markers */
+      invalidates_markers: boolean;
+      value: components["schemas"]["Confounder"];
+    };
     /**
      * CriterionKind
      * @description The five MVP criterion types, as they appear in the ``kind`` tag.
@@ -2101,6 +2394,18 @@ export interface components {
       max_hr: components["schemas"]["MetricRead"];
     };
     /**
+     * HrvContext
+     * @description How an HRV reading was taken. Baselines stay within one context.
+     * @enum {string}
+     */
+    HrvContext: "sleeping" | "waking_spot" | "manual";
+    /**
+     * HrvMetric
+     * @description Which HRV statistic a reading is. Not interchangeable: see above.
+     * @enum {string}
+     */
+    HrvMetric: "rmssd" | "sdnn";
+    /**
      * IngestEventRead
      * @description One file the pipeline looked at. Append-only.
      */
@@ -2156,6 +2461,30 @@ export interface components {
       quarantine_ids: string[];
       /** Session Ids */
       session_ids: string[];
+    };
+    /**
+     * InputTier
+     * @description How much a consumer should want an input, as data rather than as prose.
+     *
+     *     Graceful degradation is a promise nothing enforces if the tier lives in a
+     *     document: every manual input is tiered and every consumer defines its
+     *     absent-input behaviour, so the tier is served
+     *     (`GET /wellness/inputs`, `get_wellness_inputs`) and the UI orders the form
+     *     by it while the agent learns what is worth asking for.
+     *
+     *     **Nothing is ``REQUIRED``** — see :data:`INPUT_TIERS`. The member exists so
+     *     that a later input which genuinely cannot be omitted has a word for it.
+     * @enum {string}
+     */
+    InputTier: "required" | "valuable" | "optional";
+    /**
+     * InputTierRead
+     * @description One writable field and how much a consumer should want it.
+     */
+    InputTierRead: {
+      /** Field */
+      field: string;
+      tier: components["schemas"]["InputTier"];
     };
     /**
      * IntervalRead
@@ -2337,6 +2666,24 @@ export interface components {
        * @default UTC
        */
       timezone: string;
+    };
+    /**
+     * MarkerStandingRead
+     * @description Whether this day's objective markers may be acted on, and why not.
+     *
+     *     On the **same object as the readings**, deliberately: a coach that has to
+     *     remember to look somewhere else for last night's beer will one day not
+     *     remember, and the cost is a training week. The numbers themselves are
+     *     always returned — they are real, and they matter to the history. What is
+     *     withheld is their standing as evidence today.
+     */
+    MarkerStandingRead: {
+      /** Actionable */
+      actionable: boolean;
+      /** Invalidated By */
+      invalidated_by: components["schemas"]["Confounder"][];
+      /** Statement */
+      statement: string;
     };
     /**
      * MatchBreakdownRead
@@ -3108,6 +3455,24 @@ export interface components {
       workout_id?: string | null;
     };
     /**
+     * Polarity
+     * @description Which way a subjective scale points.
+     *
+     *     Fatigue, soreness, stress and motivation are all 1-5 and they do not all
+     *     point the same way: 5 motivation is good, 5 fatigue is not. A reader that
+     *     assumes one direction is a bug nothing catches, because both readings are
+     *     plausible numbers — so every scale declares its own, and no consumer may
+     *     hardcode a direction.
+     *
+     *     ``HIGHER_IS_NEITHER`` is the third answer and it is session RPE's: a 9 is a
+     *     hard session, not a bad one. Forcing RPE into ``higher_is_worse`` to keep
+     *     the enum binary would invent exactly the direction this table exists to
+     *     stop being invented, and a reader would flag every genuinely hard session
+     *     as a problem.
+     * @enum {string}
+     */
+    Polarity: "higher_is_better" | "higher_is_worse" | "higher_is_neither";
+    /**
      * PowerMetricsRead
      * @description Everything derived from the power channel.
      */
@@ -3694,6 +4059,16 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * ScaleAnchorRead
+     * @description One point on a declared subjective scale, and what it means.
+     */
+    ScaleAnchorRead: {
+      /** Label */
+      label: string;
+      /** Value */
+      value: number;
+    };
+    /**
      * ScoreRecompute
      * @description Why a recomputation was asked for. The body is optional.
      *
@@ -4031,6 +4406,8 @@ export interface components {
        * Format: date-time
        */
       updated_at: string;
+      weight_kg_in_force: components["schemas"]["WeightInForceRead"] | null;
+      wellness: components["schemas"]["WellnessDayRead"] | null;
     };
     /**
      * SessionScoreRead
@@ -4400,6 +4777,28 @@ export interface components {
       groups: components["schemas"]["StrengthGroupSchema"][];
     };
     /**
+     * SubjectiveScaleRead
+     * @description A declared subjective scale: range, direction and anchor words.
+     *
+     *     Served so that neither the UI nor the agent carries a private copy of what
+     *     a 3 means. ``polarity`` is the load-bearing field: 5 motivation is good and
+     *     5 fatigue is not, and a reader that assumes one direction is a bug nothing
+     *     catches, because both are plausible numbers.
+     */
+    SubjectiveScaleRead: {
+      /** Anchors */
+      anchors: components["schemas"]["ScaleAnchorRead"][];
+      /** Field */
+      field: string;
+      /** High */
+      high: number;
+      /** Low */
+      low: number;
+      polarity: components["schemas"]["Polarity"];
+      /** Prompt */
+      prompt: string;
+    };
+    /**
      * TemperatureMetricsRead
      * @description What the device's own sensor read, in degrees Celsius.
      */
@@ -4635,6 +5034,255 @@ export interface components {
       /** Workout Id */
       workout_id: string | null;
     };
+    /**
+     * WeightInForceRead
+     * @description The body weight governing a date, and the day it was recorded on.
+     *
+     *     ``effective_date`` rides along because watts per kilogram computed against
+     *     a three-week-old weight should say so.
+     */
+    WeightInForceRead: {
+      /**
+       * Effective Date
+       * Format: date
+       */
+      effective_date: string;
+      /**
+       * On
+       * Format: date
+       */
+      on: string;
+      /** Weight Kg */
+      weight_kg: number;
+    };
+    /**
+     * WellnessBackfill
+     * @description Many days in one transaction — the migration shape.
+     *
+     *     A batch either lands whole or not at all: a partial migration leaves the
+     *     athlete unable to tell which days made it, and the retry then has to reason
+     *     about overlap.
+     */
+    WellnessBackfill: {
+      /** Days */
+      days: components["schemas"]["BackfillDay"][];
+      /**
+       * Dry Run
+       * @default false
+       */
+      dry_run: boolean;
+    };
+    /**
+     * WellnessBackfillResult
+     * @description The outcome of a batch write, per day.
+     */
+    WellnessBackfillResult: {
+      /** Days */
+      days: components["schemas"]["BackfillDayResult"][];
+      /** Dry Run */
+      dry_run: boolean;
+      /** Outcomes */
+      outcomes: {
+        [key: string]: number;
+      };
+    };
+    /**
+     * WellnessDayRead
+     * @description One recorded day as the API returns it.
+     *
+     *     A null value means **not provided**, never zero. A day that was never
+     *     recorded at all is a 404 on the dated route and simply absent from a range
+     *     — it is never synthesized as a day of nulls, because "reported nothing" and
+     *     "was not asked" must not render as the same thing.
+     */
+    WellnessDayRead: {
+      /** Confounders */
+      confounders: components["schemas"]["Confounder"][];
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Fatigue */
+      fatigue: number | null;
+      hrv_context: components["schemas"]["HrvContext"] | null;
+      hrv_metric: components["schemas"]["HrvMetric"] | null;
+      /** Hrv Ms */
+      hrv_ms: number | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      markers: components["schemas"]["MarkerStandingRead"];
+      /** Motivation */
+      motivation: number | null;
+      /** Note */
+      note: string | null;
+      provenance: components["schemas"]["WellnessProvenance"];
+      /** Respiratory Rate Brpm */
+      respiratory_rate_brpm: number | null;
+      /** Resting Hr Bpm */
+      resting_hr_bpm: number | null;
+      /** Sleep Duration S */
+      sleep_duration_s: number | null;
+      /** Sleep End Local */
+      sleep_end_local: string | null;
+      /** Sleep Quality */
+      sleep_quality: number | null;
+      /** Sleep Start Local */
+      sleep_start_local: string | null;
+      /** Soreness */
+      soreness: number | null;
+      /** Soreness By Region */
+      soreness_by_region: {
+        [key: string]: number;
+      };
+      source: components["schemas"]["WellnessSource"];
+      /** Spo2 */
+      spo2: number | null;
+      /** Stress */
+      stress: number | null;
+      /** Subjective Recalled */
+      subjective_recalled: boolean;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Weight Kg */
+      weight_kg: number | null;
+      /** Wrist Temperature Delta C */
+      wrist_temperature_delta_c: number | null;
+    };
+    /**
+     * WellnessDayWrite
+     * @description The fields a wellness write may set, on any past or present date.
+     *
+     *     Every field is omittable and every field is nullable, and the two mean
+     *     different things: **omitted leaves the stored value alone, `null` clears
+     *     it.** A day is corrigible, so retracting a wrong reading has to be
+     *     expressible; a day is also written a field at a time over a morning, so a
+     *     partial payload must not wipe what came before it.
+     *
+     *     Clearing ``hrv_ms`` clears ``hrv_metric`` and ``hrv_context`` with it: they
+     *     describe a reading, and describing one that is no longer there is a claim
+     *     about nothing.
+     */
+    WellnessDayWrite: {
+      /** Confounders */
+      confounders?: components["schemas"]["Confounder"][] | null;
+      /** Fatigue */
+      fatigue?: number | null;
+      hrv_context?: components["schemas"]["HrvContext"] | null;
+      hrv_metric?: components["schemas"]["HrvMetric"] | null;
+      /** Hrv Ms */
+      hrv_ms?: number | null;
+      /** Motivation */
+      motivation?: number | null;
+      /** Note */
+      note?: string | null;
+      /** Respiratory Rate Brpm */
+      respiratory_rate_brpm?: number | null;
+      /** Resting Hr Bpm */
+      resting_hr_bpm?: number | null;
+      /** Sleep Duration S */
+      sleep_duration_s?: number | null;
+      /** Sleep End Local */
+      sleep_end_local?: string | null;
+      /** Sleep Quality */
+      sleep_quality?: number | null;
+      /** Sleep Start Local */
+      sleep_start_local?: string | null;
+      /** Soreness */
+      soreness?: number | null;
+      /** Soreness By Region */
+      soreness_by_region?: {
+        [key: string]: number;
+      } | null;
+      /** Spo2 */
+      spo2?: number | null;
+      /** Stress */
+      stress?: number | null;
+      /** Weight Kg */
+      weight_kg?: number | null;
+      /** Wrist Temperature Delta C */
+      wrist_temperature_delta_c?: number | null;
+    };
+    /**
+     * WellnessDaysPage
+     * @description A page of the series, with the gaps in it named.
+     *
+     *     ``missing`` is why this is not a bare `Page`: a range read returns the days
+     *     that exist, and a consumer that only sees those cannot tell a Tuesday
+     *     nobody answered from a Tuesday outside the page. Reporting the absences is
+     *     cheaper than synthesizing null-filled days that read as answers.
+     */
+    WellnessDaysPage: {
+      /** Items */
+      items: components["schemas"]["WellnessDayRead"][];
+      /** Limit */
+      limit: number;
+      /** Missing */
+      missing: string[];
+      /** Offset */
+      offset: number;
+      /** Total */
+      total: number;
+    };
+    /**
+     * WellnessInputsRead
+     * @description The self-describing vocabulary of the wellness surface.
+     *
+     *     One read that answers every "what may I send" question: the tiers, the
+     *     scales with their descriptors and polarity, the confounder vocabulary with
+     *     its invalidating half marked, and the body regions. It exists so that no
+     *     consumer ever discovers the vocabulary by submitting guesses and reading
+     *     the refusals.
+     */
+    WellnessInputsRead: {
+      /** Body Regions */
+      body_regions: components["schemas"]["BodyRegion"][];
+      /** Confounders */
+      confounders: components["schemas"]["ConfounderRead"][];
+      /**
+       * Max Backfill Days
+       * @default 366
+       */
+      max_backfill_days: number;
+      /** Scales */
+      scales: components["schemas"]["SubjectiveScaleRead"][];
+      /** Tiers */
+      tiers: components["schemas"]["InputTierRead"][];
+    };
+    /**
+     * WellnessProvenance
+     * @description Where a day's numbers came from. About the *value*, not the writer.
+     *
+     *     The same split :class:`app.domain.anchors.Provenance` makes, with the two
+     *     members a wellness reading can honestly claim. ``DEVICE_MEASURED`` is
+     *     reserved: nothing writes it in Increment 1, and it exists now so that
+     *     Increment 2's HealthKit path is a new caller rather than a migration of
+     *     stored values.
+     * @enum {string}
+     */
+    WellnessProvenance: "athlete_reported" | "device_measured";
+    /**
+     * WellnessSource
+     * @description Who wrote the row. Distinct from :class:`WellnessProvenance`.
+     *
+     *     Mirrors :class:`app.domain.anchors.AnchorSource`, and for the same reason:
+     *     the agent records what it was told and may never sign as the athlete. A
+     *     coach that cannot tell the athlete's report from its own transcription will
+     *     one day cite its own echo back to them as evidence.
+     * @enum {string}
+     */
+    WellnessSource: "athlete" | "agent";
     /**
      * WorkoutCreate
      * @description Payload for adding a workout to the library.
@@ -8097,6 +8745,283 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-backfill_wellness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WellnessBackfill"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessBackfillResult"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The day violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-list_wellness_days": {
+    parameters: {
+      query: {
+        /** @description First day of the range, inclusive. */
+        start: string;
+        /** @description First day *after* the range: it is half-open [start, end), like every range in this application. */
+        end: string;
+        offset?: number;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessDaysPage"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The day violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-get_wellness_day": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        local_date: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessDayRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Nothing recorded for that date */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "wellness-record_wellness_day": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        local_date: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["WellnessDayWrite"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessDayRead"] | null;
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The day violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-get_wellness_inputs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessInputsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-get_weight_in_force": {
+    parameters: {
+      query: {
+        /** @description The date to resolve the weight for. */
+        on: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WeightInForceRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Nothing recorded for that date */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

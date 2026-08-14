@@ -12,6 +12,7 @@ import {
   SessionsIcon,
   SettingsIcon,
   TodayIcon,
+  WellnessIcon,
   WorkoutsIcon,
 } from "@/components/icons";
 import { $api } from "@/lib/api/client";
@@ -57,6 +58,10 @@ interface NavItem {
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/today", label: "Today", icon: TodayIcon, ready: true },
   { href: "/calendar", label: "Calendar", icon: CalendarIcon, ready: true },
+  // Directly after Today, because it is answered at the same moment: the
+  // athlete opens the app in the morning, says how they slept, and then looks
+  // at what is planned.
+  { href: "/wellness", label: "Wellness", icon: WellnessIcon, ready: true },
   { href: "/sessions", label: "Sessions", icon: SessionsIcon, ready: true },
   { href: "/inbox", label: "Inbox", icon: InboxIcon, ready: true },
   { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },

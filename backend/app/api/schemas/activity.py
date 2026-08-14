@@ -24,6 +24,7 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.pagination import Page
 from app.api.schemas.matching import MatchSummary
 from app.api.schemas.metrics import SessionMetricsRead
+from app.api.schemas.wellness import WeightInForceRead, WellnessDayRead
 from app.api.validation import PostgresText
 from app.domain.activity import (
     MAX_TEMPERATURE_C,
@@ -203,6 +204,17 @@ class SessionRead(SessionListItem):
     #: The metric version in force, or null when nothing has been computed —
     #: which is a state the page has an action for, not an error.
     metrics: SessionMetricsRead | None
+    #: The body weight governing this session's `local_date`, so watts per
+    #: kilogram is derivable without a second call. Null before the first
+    #: weight was recorded — and w/kg is then **absent**, not computed against
+    #: a default nobody has.
+    weight_kg_in_force: WeightInForceRead | None
+    #: What the athlete reported on this session's own day. The question worth
+    #: answering is not "was HRV low on the 14th" but "does poor sleep predict
+    #: poor execution *for this athlete*", and after this the two halves are
+    #: joined rather than left to a manual date match per session, forever.
+    #: Null when nothing was recorded that day — the session still reads.
+    wellness: WellnessDayRead | None
     created_at: dt.datetime
     updated_at: dt.datetime
 

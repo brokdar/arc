@@ -27,6 +27,7 @@ from app.api.routes.proposals import router as proposals_router
 from app.api.routes.purposes import router as purposes_router
 from app.api.routes.scoring import planned_router as planned_reasons_router
 from app.api.routes.scoring import router as scores_router
+from app.api.routes.wellness import router as wellness_router
 from app.api.routes.workouts import labels_router as workout_labels_router
 from app.api.routes.workouts import router as workouts_router
 from app.api.routes.zones import router as zones_router
@@ -149,6 +150,7 @@ def create_app() -> FastAPI:
     )
     api.include_router(athlete_router)
     api.include_router(anchors_router)
+    api.include_router(wellness_router)
     api.include_router(zones_router)
     api.include_router(exercises_router)
     api.include_router(purposes_router)

@@ -25,6 +25,7 @@ import inspect
 import json
 import re
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,9 @@ EXPECTED_TOOLS = {
     "get_exercise_catalogue",
     "get_zones",
     "get_purposes",
+    "get_wellness_inputs",
+    "get_wellness",
+    "get_wellness_weeks",
     # writes
     "append_anchor",
     "create_workout",
@@ -97,6 +101,8 @@ EXPECTED_TOOLS = {
     "record_manual_session",
     "write_session_evaluation",
     "annotate",
+    "record_wellness",
+    "record_wellness_days",
 }
 
 #: Every read tool, with arguments that reach an answer. `{session}`,
@@ -119,6 +125,9 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_exercise_catalogue", {}),
     ("get_zones", {}),
     ("get_purposes", {}),
+    ("get_wellness_inputs", {}),
+    ("get_wellness", {"start": "2026-08-10", "end": "2026-08-17"}),
+    ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
 )
 
 
@@ -220,6 +229,55 @@ async def test_the_surface_is_exactly_this(session_factory: Any) -> None:
         names = {tool.name for tool in await client.list_tools()}
 
     assert names == EXPECTED_TOOLS
+
+
+#: Longest a class docstring inlined into a tool's parameter schema may be.
+#:
+#: Pydantic copies the docstring of an enum used as a parameter type into the
+#: generated JSON schema as that parameter's ``description``, and every client
+#: pays for it on **every** `tools/list` — before it has called anything. Four
+#: paragraphs of design reasoning on `HrvMetric` and `HrvContext` made
+#: `record_wellness` the largest tool on the server at 7.7 kB, over half of it
+#: prose the model does not need to decide whether to call.
+#:
+#: The bound is a ratchet rather than a target: the longest already on the
+#: surface is `SessionDiscipline` at 669 characters, so nothing new may be
+#: worse than the worst thing here. Reasoning that outgrows it belongs in a
+#: comment above the class, where the next editor reads it and the wire does
+#: not — see `app.domain.wellness.HrvMetric`.
+MAX_ENUM_DESCRIPTION_CHARS = 700
+
+
+def _enum_descriptions(node: Any) -> Iterator[str]:
+    """Every description pydantic attached to an enum inside a tool schema."""
+    if isinstance(node, dict):
+        if "enum" in node and isinstance(node.get("description"), str):
+            yield node["description"]
+        for value in node.values():
+            yield from _enum_descriptions(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _enum_descriptions(value)
+
+
+async def test_no_parameter_enum_puts_an_essay_on_the_wire(
+    session_factory: Any,
+) -> None:
+    async with connected_as(server_for(COACH, READER), COACH) as client:
+        tools = await client.list_tools()
+
+    oversized = [
+        (tool.name, len(description), description.splitlines()[0])
+        for tool in tools
+        for description in _enum_descriptions(tool.inputSchema)
+        if len(description) > MAX_ENUM_DESCRIPTION_CHARS
+    ]
+
+    assert oversized == [], (
+        "an enum used as a tool parameter is carrying its whole design "
+        "rationale into every tools/list; move the reasoning to a comment "
+        f"above the class and leave one line in the docstring: {oversized}"
+    )
 
 
 async def test_nothing_here_mutates_a_recording_a_stream_or_a_verdict(
@@ -357,6 +415,8 @@ async def test_the_read_tools_under_test_are_all_of_them(session_factory: Any) -
         "record_manual_session",
         "write_session_evaluation",
         "annotate",
+        "record_wellness",
+        "record_wellness_days",
     }
 
     assert {tool for tool, _ in READ_TOOLS} == EXPECTED_TOOLS - writes - {"ping"}
@@ -1590,6 +1650,11 @@ WRITE_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     (
         "annotate",
         {"text": "Quiet week.", "model_id": MODEL, "plan_week": MONDAY.isoformat()},
+    ),
+    ("record_wellness", {"fatigue": 3}),
+    (
+        "record_wellness_days",
+        {"days": [{"date": "2026-06-01", "resting_hr_bpm": 48}]},
     ),
 )
 

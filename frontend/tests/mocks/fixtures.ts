@@ -1614,11 +1614,23 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
  */
 export { RIDE_METRICS, RIDE_STREAMS };
 
+/**
+ * What a session read carries about the athlete's day before anything is
+ * recorded. Spread into every session fixture, and **overridden at response
+ * time** from the wellness store, so a test that seeds a day sees it on the
+ * session rather than on a canned null.
+ */
+export const NO_WELLNESS = {
+  weight_kg_in_force: null,
+  wellness: null,
+} as const;
+
 /** The three sessions the log starts with, newest first. */
 function seedSessions(): Schemas["SessionRead"][] {
   return [
     {
       id: ACTIVITY_IDS.gym,
+      ...NO_WELLNESS,
       local_date: "2026-08-06",
       start_time: "2026-08-06T16:30:00Z",
       end_time: "2026-08-06T17:30:00Z",
@@ -1645,6 +1657,7 @@ function seedSessions(): Schemas["SessionRead"][] {
     },
     {
       id: ACTIVITY_IDS.outdoorRide,
+      ...NO_WELLNESS,
       local_date: "2026-08-05",
       start_time: "2026-08-05T05:14:00Z",
       end_time: "2026-08-05T07:53:00Z",
@@ -1673,6 +1686,7 @@ function seedSessions(): Schemas["SessionRead"][] {
     },
     {
       id: ACTIVITY_IDS.trainerRide,
+      ...NO_WELLNESS,
       local_date: "2026-08-03",
       start_time: "2026-08-03T16:02:00Z",
       end_time: "2026-08-03T17:02:00Z",
@@ -1937,6 +1951,7 @@ export function resetMockState(): void {
   resetScoringState();
   resetAgentState();
   resetAnchorState();
+  resetWellnessState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -1999,6 +2014,7 @@ export function ingestedSessionFixture(
   const id = mintId();
   return {
     id,
+    ...NO_WELLNESS,
     local_date: "2026-08-07",
     start_time: start.toISOString().replace(".000", ""),
     end_time: new Date(start.getTime() + elapsed * 1000)
@@ -2128,6 +2144,7 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
     const id = `0199a000-0000-7000-8000-00000000${(0x8000 + index).toString(16)}`;
     return {
       id,
+      ...NO_WELLNESS,
       // Started at 06:00 UTC, so the UTC day and the local day agree.
       local_date: stamp(start).slice(0, 10),
       start_time: stamp(start),
@@ -2740,6 +2757,7 @@ export function withMatch<T extends { id: string }>(session: T): T {
 export function seedMergeCandidate(): Schemas["SessionRead"] {
   const half: Schemas["SessionRead"] = {
     id: "0199a000-0000-7000-8000-000000000701",
+    ...NO_WELLNESS,
     local_date: "2026-08-05",
     // Twelve minutes after the outdoor ride's 07:53 local finish: one ride,
     // recorded as two files, well inside the six hours a merge will bridge.
@@ -3585,4 +3603,326 @@ export function patchAthlete(
 /** Put the coach's proposals, notes and the profile back to their seed. */
 export function resetAgentState(): void {
   agentState = null;
+}
+
+// --- wellness ----------------------------------------------------------------
+
+/**
+ * The daily wellness series, as a stateful mock.
+ *
+ * Stateful and *honouring the request*, for the reason every mutating handler
+ * here is: a PATCH that answered with a canned day could not fail when the
+ * form drops a field, and the form's whole contract is which fields it sends.
+ * So this reimplements the three rules the real service applies — omitted
+ * leaves alone, `null` clears, clearing the last value retracts the day — and
+ * derives `markers` from the confounders rather than letting a fixture assert
+ * a standing that does not follow from its own tags.
+ */
+
+/** The five confounders the athlete's pre-check treats as voiding a morning. */
+const INVALIDATING_CONFOUNDERS: ReadonlySet<Schemas["Confounder"]> = new Set([
+  "alcohol",
+  "hot_room",
+  "poor_sleep_timing",
+  "short_sleep",
+  "first_session_after_layoff",
+]);
+
+/** Anchor descriptors for the 1-5 scales, as the real table declares them. */
+const FIVE_POINT: Schemas["ScaleAnchorRead"][] = [
+  { value: 1, label: "One" },
+  { value: 2, label: "Two" },
+  { value: 3, label: "Three" },
+  { value: 4, label: "Four" },
+  { value: 5, label: "Five" },
+];
+
+function fivePointScale(
+  field: string,
+  polarity: Schemas["Polarity"],
+): Schemas["SubjectiveScaleRead"] {
+  return {
+    field,
+    low: 1,
+    high: 5,
+    polarity,
+    prompt: `${field} on a five-point scale`,
+    anchors: FIVE_POINT,
+  };
+}
+
+/** `GET /wellness/inputs`, in the shape the real endpoint serves. */
+export function wellnessInputs(): Schemas["WellnessInputsRead"] {
+  const optional = (field: string): Schemas["InputTierRead"] => ({
+    field,
+    tier: "optional",
+  });
+  const valuable = (field: string): Schemas["InputTierRead"] => ({
+    field,
+    tier: "valuable",
+  });
+  return {
+    tiers: [
+      valuable("sleep_duration_s"),
+      optional("sleep_start_local"),
+      optional("sleep_end_local"),
+      optional("sleep_quality"),
+      valuable("resting_hr_bpm"),
+      valuable("hrv_ms"),
+      optional("hrv_metric"),
+      optional("hrv_context"),
+      optional("respiratory_rate_brpm"),
+      optional("spo2"),
+      optional("wrist_temperature_delta_c"),
+      valuable("weight_kg"),
+      valuable("fatigue"),
+      optional("soreness"),
+      optional("stress"),
+      valuable("motivation"),
+      optional("soreness_by_region"),
+      optional("confounders"),
+      optional("note"),
+    ],
+    scales: [
+      fivePointScale("sleep_quality", "higher_is_better"),
+      fivePointScale("fatigue", "higher_is_worse"),
+      fivePointScale("soreness", "higher_is_worse"),
+      fivePointScale("stress", "higher_is_worse"),
+      fivePointScale("motivation", "higher_is_better"),
+      {
+        field: "rpe",
+        low: 0,
+        high: 10,
+        polarity: "higher_is_neither",
+        prompt: "Session RPE, judged after the session. Not RIR.",
+        anchors: Array.from({ length: 11 }, (_, value) => ({
+          value,
+          label: `Level ${value}`,
+        })),
+      },
+    ],
+    confounders: (
+      [
+        "alcohol",
+        "late_meal",
+        "poor_sleep_timing",
+        "short_sleep",
+        "hot_room",
+        "travel",
+        "altitude",
+        "illness_onset",
+        "first_session_after_layoff",
+        "hard_session_previous_day",
+        "menstrual_phase_noted",
+        "other",
+      ] as const
+    ).map((value) => ({
+      value,
+      invalidates_markers: INVALIDATING_CONFOUNDERS.has(value),
+    })),
+    body_regions: ["lower_back", "quads", "hamstrings", "calves"],
+    max_backfill_days: 366,
+  };
+}
+
+const WELLNESS_VALUE_FIELDS = [
+  "sleep_duration_s",
+  "sleep_start_local",
+  "sleep_end_local",
+  "sleep_quality",
+  "resting_hr_bpm",
+  "hrv_ms",
+  "hrv_metric",
+  "hrv_context",
+  "respiratory_rate_brpm",
+  "spo2",
+  "wrist_temperature_delta_c",
+  "weight_kg",
+  "fatigue",
+  "soreness",
+  "stress",
+  "motivation",
+  "note",
+] as const;
+
+let wellnessDays: Map<string, Schemas["WellnessDayRead"]> | null = null;
+
+function wellnessStore(): Map<string, Schemas["WellnessDayRead"]> {
+  wellnessDays ??= new Map();
+  return wellnessDays;
+}
+
+/** Put the wellness series back to empty. Wired into the global reset. */
+export function resetWellnessState(): void {
+  wellnessDays = null;
+}
+
+/** Seed one day directly, for a test that needs history it did not type in. */
+export function seedWellnessDay(
+  localDate: string,
+  fields: Schemas["WellnessDayWrite"],
+): Schemas["WellnessDayRead"] {
+  const result = patchWellnessDay(localDate, fields);
+  if (!("day" in result) || result.day === null) {
+    throw new Error(`seed for ${localDate} did not produce a day`);
+  }
+  return result.day;
+}
+
+function markersFor(
+  confounders: readonly Schemas["Confounder"][],
+): Schemas["MarkerStandingRead"] {
+  const invalidated = confounders.filter((tag) =>
+    INVALIDATING_CONFOUNDERS.has(tag),
+  );
+  return {
+    actionable: invalidated.length === 0,
+    invalidated_by: invalidated,
+    statement:
+      invalidated.length === 0
+        ? "recorded"
+        : `recorded, not actionable: ${invalidated.join(", ")}`,
+  };
+}
+
+/**
+ * `PATCH /wellness/days/{date}` — omitted leaves alone, `null` clears.
+ *
+ * Returns `{ day: null }` when the write cleared the last value on the day, the
+ * way the real endpoint answers `null`: the day was retracted, and an absent
+ * row is how this surface spells "nothing was reported".
+ */
+export function patchWellnessDay(
+  localDate: string,
+  body: Schemas["WellnessDayWrite"],
+): { day: Schemas["WellnessDayRead"] | null } | { detail: string } {
+  const store = wellnessStore();
+  const existing = store.get(localDate);
+  const next: Record<string, unknown> = {
+    ...(existing ?? {}),
+  };
+  for (const field of WELLNESS_VALUE_FIELDS) {
+    const supplied = body[field];
+    if (supplied !== undefined) {
+      next[field] = supplied;
+    } else if (!(field in next)) {
+      next[field] = null;
+    }
+  }
+  if (next.hrv_ms === null) {
+    next.hrv_metric = null;
+    next.hrv_context = null;
+  }
+  const confounders =
+    body.confounders ??
+    existing?.confounders ??
+    ([] as Schemas["Confounder"][]);
+  const soreness =
+    body.soreness_by_region ?? existing?.soreness_by_region ?? {};
+
+  const empty =
+    WELLNESS_VALUE_FIELDS.every((field) => next[field] === null) &&
+    confounders.length === 0 &&
+    Object.keys(soreness).length === 0;
+  if (empty) {
+    if (!existing) {
+      return {
+        detail: `${localDate}: a wellness day must record something — give at least one reading, rating, confounder or note. There is no day here to retract.`,
+      };
+    }
+    store.delete(localDate);
+    return { day: null };
+  }
+  if (next.hrv_ms !== null && next.hrv_metric == null) {
+    return {
+      detail: `${localDate}: an HRV reading must state hrv_metric (rmssd or sdnn) and hrv_context (sleeping, waking_spot or manual)`,
+    };
+  }
+
+  const day = {
+    ...(next as Omit<
+      Schemas["WellnessDayRead"],
+      | "id"
+      | "local_date"
+      | "soreness_by_region"
+      | "confounders"
+      | "markers"
+      | "subjective_recalled"
+      | "provenance"
+      | "source"
+      | "created_at"
+      | "updated_at"
+    >),
+    id: existing?.id ?? mintId(),
+    local_date: localDate,
+    soreness_by_region: soreness,
+    confounders,
+    markers: markersFor(confounders),
+    // Derived from the dates rather than typed in, as the real read derives
+    // it: a day is recalled when it describes something more than two days
+    // before it was entered.
+    subjective_recalled:
+      (Date.parse(`${todayIsoDate()}T00:00:00Z`) -
+        Date.parse(`${localDate}T00:00:00Z`)) /
+        86_400_000 >
+      2,
+    provenance: "athlete_reported" as const,
+    source: "athlete" as const,
+    created_at: existing?.created_at ?? AGENT_NOW,
+    updated_at: AGENT_NOW,
+  } satisfies Schemas["WellnessDayRead"];
+  store.set(localDate, day);
+  return { day };
+}
+
+/** One recorded day, or null. */
+export function wellnessDay(
+  localDate: string,
+): Schemas["WellnessDayRead"] | null {
+  return wellnessStore().get(localDate) ?? null;
+}
+
+/** `GET /wellness/days?start=&end=` over the half-open range. */
+export function wellnessRange(
+  start: string,
+  end: string,
+): Schemas["WellnessDaysPage"] {
+  const dates: string[] = [];
+  for (let date = start; date < end; date = addOneDay(date)) {
+    dates.push(date);
+  }
+  const items = dates
+    .map((date) => wellnessStore().get(date))
+    .filter((day): day is Schemas["WellnessDayRead"] => day !== undefined);
+  return {
+    items,
+    total: items.length,
+    offset: 0,
+    limit: dates.length,
+    missing: dates.filter((date) => !wellnessStore().has(date)),
+  };
+}
+
+/** The weight governing a date: the latest recorded on or before it. */
+export function wellnessWeightInForce(
+  on: string,
+): Schemas["WeightInForceRead"] | null {
+  const candidates = [...wellnessStore().values()]
+    .filter((day) => day.weight_kg !== null && day.local_date <= on)
+    .sort((a, b) => a.local_date.localeCompare(b.local_date));
+  const latest = candidates.at(-1);
+  if (!latest || latest.weight_kg === null) {
+    return null;
+  }
+  return {
+    weight_kg: latest.weight_kg,
+    effective_date: latest.local_date,
+    on,
+  };
+}
+
+function addOneDay(isoDate: string): string {
+  const next = new Date(`${isoDate}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
 }

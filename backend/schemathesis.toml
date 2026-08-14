@@ -160,3 +160,35 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/agent-notes"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# Increment 1 adds four wellness operations whose rules a JSON schema cannot
+# express, each pinned by a unit test (test_wellness_api, test_wellness_backfill):
+#
+#   * a day is dated by the morning it describes, so any past date is legal and
+#     a **future** one is refused — a reading for tomorrow is a typo, not a
+#     late entry, and a schema has no way to say "not after today";
+#   * a write must set something: a body with every field omitted, or one that
+#     clears the last value on a day that does not exist, records nothing;
+#   * an HRV reading must state its statistic and its measurement context —
+#     three columns that are legal individually and only mean anything
+#     together;
+#   * a range is half-open and must be non-empty, and a backfill is refused
+#     whole when any one of its days breaks a rule, with the date named.
+#
+# `GET /wellness/days/{local_date}` and `GET /wellness/weight` need no entry:
+# they refuse only with 404, which the default already admits.
+
+[[operations]]
+include-name = "PATCH /api/v1/wellness/days/{local_date}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "POST /api/v1/wellness/backfill"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "GET /api/v1/wellness/days"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

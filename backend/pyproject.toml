@@ -193,6 +193,27 @@ type = "independence"
 modules = ["app.api", "app.mcp"]
 
 [[tool.importlinter.contracts]]
+# Increment 1's D6: arc stores readings, computes descriptive statistics and
+# states maturity. It emits no readiness verdict and gates no session on one —
+# thresholds are athlete-specific and rolling, and encoding them before the
+# baselines mature is confabulation with extra steps. Deterministic gating
+# belongs to the constraint engine of a later increment.
+#
+# The first draft of the plan proposed "a test asserting the constraint surface
+# is unchanged", which is not a test anyone can write. This is: the moment
+# somebody wires a wellness reading into the proposal rules or the guardrails,
+# the build fails, by the same mechanism that already enforces domain purity.
+# The red flag stays the only deterministic gate on the agent surface.
+name = "Wellness does not gate training (Increment 1, D6)"
+type = "forbidden"
+source_modules = [
+    "app.services.proposals",
+    "app.services.guardrails",
+    "app.domain.proposals",
+]
+forbidden_modules = ["app.domain.wellness"]
+
+[[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
 layers = [
