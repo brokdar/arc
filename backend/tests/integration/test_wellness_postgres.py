@@ -7,6 +7,7 @@ that has to store the member *value*, and the unique index that is the whole
 of the one-row-per-day promise.
 """
 
+import asyncio
 import datetime as dt
 
 from httpx import AsyncClient
@@ -125,3 +126,39 @@ async def test_a_rejected_backfill_leaves_the_table_empty(
     assert response.status_code == 422, response.text
     [(count,)] = await raw("SELECT count(*) FROM wellness_days")
     assert count == 0
+
+
+async def test_two_writes_racing_to_create_one_day_both_land(
+    client: AsyncClient,
+) -> None:
+    """Concurrent creates for one date merge instead of one of them failing.
+
+    Found by running the fuzzer with `--workers`: two writes for a date with no
+    row both read "absent", both INSERT, and `ix_wellness_days_local_date`
+    refused the second — which reached the client as a 409 quoting a Postgres
+    constraint. Two browser tabs, or the athlete's form saving while the agent
+    transcribes the same morning, is all it takes.
+
+    Here rather than in the unit suite because the unit suite is one in-memory
+    SQLite connection shared by every session: two "concurrent" requests
+    serialize on it and the race cannot happen. Two real connections is
+    dialect-specific behaviour, which is what this file is for.
+    """
+    date = (TODAY - dt.timedelta(days=1)).isoformat()
+
+    first, second = await asyncio.gather(
+        client.patch(f"{DAYS}/{date}", json={"resting_hr_bpm": 46}),
+        client.patch(f"{DAYS}/{date}", json={"fatigue": 3}),
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    # The loser re-read and applied itself on top of the winner, so the result
+    # is what arriving second sequentially would have produced: both fields
+    # present and neither write lost.
+    body = (await client.get(f"{DAYS}/{date}")).json()
+    assert body["resting_hr_bpm"] == 46
+    assert body["fatigue"] == 3
+    [(count,)] = await raw("SELECT count(*) FROM wellness_days")
+    assert count == 1

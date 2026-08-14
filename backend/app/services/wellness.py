@@ -43,7 +43,12 @@ from typing import Any, Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.exceptions import NotFoundError, ValidationError, domain_rules
+from app.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+    domain_rules,
+)
 from app.domain.activity import parse_timezone
 from app.domain.actor import Actor
 from app.domain.plan import week_start
@@ -435,6 +440,49 @@ class WellnessService:
             RateLimitedError: When an agent's hourly write cap is spent.
         """
         self._check_fields(updates)
+        result = await self._write_one(
+            local_date, updates, actor=actor, source=source, dry_run=dry_run
+        )
+        if result is not None:
+            return result
+        # Lost the create race — see :meth:`_write_one`. The winner's row is
+        # committed by now, so the retry folds these updates onto it and
+        # produces exactly what arriving second sequentially would have.
+        retried = await self._write_one(
+            local_date, updates, actor=actor, source=source, dry_run=dry_run
+        )
+        if retried is None:
+            raise ConflictError(
+                f"{local_date.isoformat()} was written concurrently twice while "
+                "this write was in flight; read the day and try again"
+            )
+        return retried
+
+    async def _write_one(
+        self,
+        local_date: dt.date,
+        updates: Mapping[str, Any],
+        *,
+        actor: Actor,
+        source: WellnessSource,
+        dry_run: bool,
+    ) -> DayResult | None:
+        """One attempt at recording a day; ``None`` when it lost a create race.
+
+        The race is real and the fuzzer found it: two writes for a date that
+        does not exist yet both read "absent", both INSERT, and the unique
+        index on ``local_date`` refuses the second — which reached the client
+        as a 409 about a database constraint. Two browser tabs, or the
+        athlete's form saving while the agent transcribes the same morning, is
+        all it takes.
+
+        Handled the way `AthleteService.get` handles the same race on the
+        singleton profile: the loser does not fail, it re-reads and applies
+        itself on top of the winner. Returning ``None`` rather than retrying
+        in place is what keeps that honest — the failed flush has already
+        rolled this session back, so the retry has to re-read *and* re-resolve
+        against what actually landed, not against the stale row it was holding.
+        """
         existing = await self._repository.get(local_date)
         result = self._resolve(
             local_date,
@@ -455,7 +503,14 @@ class WellnessService:
             await self._repository.delete(row)
         else:
             _apply(row, result.day)
-            row = await self._repository.add(row)
+            try:
+                row = await self._repository.add(row)
+            except ConflictError:
+                if existing is not None:
+                    # Not the create race: this row was already there, so a
+                    # constraint refusal is something the caller has to see.
+                    raise
+                return None
             await self._audit_day(actor, result, entity_id=row.id)
         await commit(self._session)
         return result
@@ -532,6 +587,41 @@ class WellnessService:
             seen.add(entry.local_date)
             self._check_fields(entry.updates, at=entry.local_date)
 
+        results = await self._write_many(
+            days, actor=actor, source=source, dry_run=dry_run
+        )
+        if results is not None:
+            return results
+        # Lost a create race against a concurrent write — the same one
+        # :meth:`_write_one` handles, and handled the same way. The retry
+        # re-reads every date in the batch, so days the winner created are
+        # updates this time round.
+        retried = await self._write_many(
+            days, actor=actor, source=source, dry_run=dry_run
+        )
+        if retried is None:
+            raise ConflictError(
+                "these days were written concurrently while this batch was in "
+                "flight; nothing was stored, so re-read the range and send it "
+                "again"
+            )
+        return retried
+
+    async def _write_many(
+        self,
+        days: Sequence[DayInput],
+        *,
+        actor: Actor,
+        source: WellnessSource,
+        dry_run: bool,
+    ) -> Sequence[DayResult] | None:
+        """One attempt at a batch; ``None`` when it lost a create race.
+
+        A batch is one transaction, so a lost race costs nothing and leaves
+        nothing behind — the failed flush rolls the whole attempt back, which
+        is exactly the guarantee `record_many` already promises for an invalid
+        day. Re-reading from scratch is therefore the whole of the retry.
+        """
         existing = await self._repository.get_many([entry.local_date for entry in days])
         today = self.local_today()
         results = [
@@ -561,7 +651,14 @@ class WellnessService:
             row = row or WellnessDayRow(local_date=entry.local_date)
             _apply(row, result.day)
             rows.append(row)
-        await self._repository.add_all(rows)
+        try:
+            await self._repository.add_all(rows)
+        except ConflictError:
+            if all(entry.local_date in existing for entry in days):
+                # Every date already had a row, so a constraint refusal is not
+                # the create race and the caller has to see it.
+                raise
+            return None
         # **One** audit row for the batch, carrying every day's diff. One row
         # per day would be complete in exactly the same way and would charge
         # the agent's hourly cap once per day, which is the thing this write
