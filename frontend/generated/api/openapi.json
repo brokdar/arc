@@ -1123,6 +1123,34 @@
         "title": "BackfillDayResult",
         "type": "object"
       },
+      "BandRead": {
+        "description": "The athlete's own normal range: the smallest worthwhile change.\n\n`low`/`high` are in the metric's analysis space (`ln` for HRV);\n`low_native`/`high_native` are the same edges in the metric's own unit,\nwhich is what a chart draws behind the series.",
+        "properties": {
+          "half_width": {
+            "title": "Half Width",
+            "type": "number"
+          },
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "high_native": {
+            "title": "High Native",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "low_native": {
+            "title": "Low Native",
+            "type": "number"
+          }
+        },
+        "required": ["low", "high", "half_width", "low_native", "high_native"],
+        "title": "BandRead",
+        "type": "object"
+      },
       "BandSchema": {
         "additionalProperties": false,
         "description": "An acceptable range around a step's prescribed target, as fractions.",
@@ -1146,6 +1174,168 @@
         },
         "required": ["channel", "low", "high"],
         "title": "BandSchema",
+        "type": "object"
+      },
+      "BandedBaselineRead": {
+        "description": "A mature baseline with a normal band and today's distance from it.",
+        "properties": {
+          "band": {
+            "$ref": "#/components/schemas/BandRead"
+          },
+          "cv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv"
+          },
+          "deviation_sd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deviation Sd"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Direction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "banded",
+            "default": "banded",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mature": {
+            "const": true,
+            "default": true,
+            "title": "Mature",
+            "type": "boolean"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "mean_native": {
+            "title": "Mean Native",
+            "type": "number"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/WellnessMetric"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "sd": {
+            "title": "Sd",
+            "type": "number"
+          },
+          "space": {
+            "$ref": "#/components/schemas/Space"
+          },
+          "span_days": {
+            "title": "Span Days",
+            "type": "integer"
+          },
+          "trend": {
+            "$ref": "#/components/schemas/SlopeRead"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "hrv_context",
+          "space",
+          "unit",
+          "n",
+          "span_days",
+          "mean",
+          "mean_native",
+          "sd",
+          "cv",
+          "trend",
+          "band",
+          "deviation_sd",
+          "direction"
+        ],
+        "title": "BandedBaselineRead",
+        "type": "object"
+      },
+      "BaselineAbstentionRead": {
+        "description": "No baseline yet, and exactly what it would take to have one.\n\nCarries no `mean`, no `band` and no `deviation_sd` **key**. What it does\ncarry is both counts and its own unlock condition, so \"not enough data\" can\nbe acted on rather than merely regretted.",
+        "properties": {
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "abstention",
+            "default": "abstention",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mature": {
+            "const": false,
+            "default": false,
+            "title": "Mature",
+            "type": "boolean"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/WellnessMetric"
+          },
+          "readings": {
+            "$ref": "#/components/schemas/CountRead"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "span_days": {
+            "$ref": "#/components/schemas/CountRead"
+          }
+        },
+        "required": [
+          "metric",
+          "hrv_context",
+          "readings",
+          "span_days",
+          "reason"
+        ],
+        "title": "BaselineAbstentionRead",
         "type": "object"
       },
       "BodyRegion": {
@@ -1318,6 +1508,26 @@
         "title": "ConfounderRead",
         "type": "object"
       },
+      "CountRead": {
+        "description": "A count against the bar it has to clear.",
+        "properties": {
+          "have": {
+            "title": "Have",
+            "type": "integer"
+          },
+          "need": {
+            "title": "Need",
+            "type": "integer"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": ["have", "need", "statement"],
+        "title": "CountRead",
+        "type": "object"
+      },
       "CriterionKind": {
         "description": "The five MVP criterion types, as they appear in the ``kind`` tag.",
         "enum": [
@@ -1392,6 +1602,12 @@
         "required": ["index", "kind", "detail"],
         "title": "CriterionOutcomeRead",
         "type": "object"
+      },
+      "Direction": {
+        "description": "Where the rolling mean sits relative to the band. Never a valence.\n\n``above`` and ``below`` are geometry, not judgement: a resting heart rate\nabove its band and an HRV above its band are opposite news, and a reader\nthat assumed one direction was good would be wrong half the time. The\npolarity table in `app.domain.wellness` is where direction acquires\nmeaning, and it does so in the reader, not here.",
+        "enum": ["below", "within", "above"],
+        "title": "Direction",
+        "type": "string"
       },
       "Discipline": {
         "description": "The two disciplines the MVP trains.",
@@ -1904,6 +2120,45 @@
         "title": "IntervalRead",
         "type": "object"
       },
+      "JointStateKey": {
+        "description": "The HRV x resting-HR quadrant, as a label and nothing more.\n\n**Read together or not at all.** HRV down on its own has at least three\nreadings and they are not distinguishable from one number: genuine\nparasympathetic withdrawal, *parasympathetic saturation* (in well-trained\nathletes HRV falls as resting HR falls, and the pair moving the same way is\nthe tell), and the alcohol artefact, where peripheral vasodilation produces\nthe same picture as illness onset for a reason that has nothing to do with\ntraining. Resting HR moving with or against HRV is what separates them, so\nthis is served as one named quadrant instead of two independent deviations\na reader has to remember to cross.\n\nIt is a **label with no verdict attached**. Which quadrant is bad depends\non the athlete, the block and yesterday's session, and encoding that here\nwould be the readiness score this surface exists not to emit.",
+        "enum": [
+          "hrv_low_rhr_low",
+          "hrv_low_rhr_high",
+          "hrv_high_rhr_low",
+          "hrv_high_rhr_high"
+        ],
+        "title": "JointStateKey",
+        "type": "string"
+      },
+      "JointStateRead": {
+        "description": "The HRV x resting-HR quadrant, as a plain label with no verdict.",
+        "properties": {
+          "hrv_deviation_sd": {
+            "title": "Hrv Deviation Sd",
+            "type": "number"
+          },
+          "key": {
+            "$ref": "#/components/schemas/JointStateKey"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "resting_hr_deviation_sd": {
+            "title": "Resting Hr Deviation Sd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "hrv_deviation_sd",
+          "resting_hr_deviation_sd"
+        ],
+        "title": "JointStateRead",
+        "type": "object"
+      },
       "LoadBasis": {
         "description": "Which model produced the training load that was selected (A5.2).",
         "enum": ["power", "hr"],
@@ -2358,6 +2613,33 @@
         },
         "required": ["actionable", "invalidated_by", "statement"],
         "title": "MarkerStandingRead",
+        "type": "object"
+      },
+      "MarkersOutsideBandRead": {
+        "description": "How many markers are outside their band, of how many that could say.\n\nThe denominator excludes markers whose baseline is immature and **says\nso** \u2014 `2 of 4`, not `2 of 5` \u2014 because a denominator that silently counts\nmarkers with no baseline makes two of five look calmer than it is.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "markers": {
+            "items": {
+              "$ref": "#/components/schemas/OutsideMarkerRead"
+            },
+            "title": "Markers",
+            "type": "array"
+          },
+          "of": {
+            "title": "Of",
+            "type": "integer"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": ["count", "of", "statement", "markers"],
+        "title": "MarkersOutsideBandRead",
         "type": "object"
       },
       "MatchBreakdownRead": {
@@ -2854,6 +3136,103 @@
         "title": "MetricRead",
         "type": "object"
       },
+      "MetricTrendRead": {
+        "description": "One metric over the requested range: readings, mean and baseline.",
+        "properties": {
+          "baseline": {
+            "discriminator": {
+              "mapping": {
+                "abstention": "#/components/schemas/BaselineAbstentionRead",
+                "banded": "#/components/schemas/BandedBaselineRead",
+                "trend": "#/components/schemas/TrendBaselineRead"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BandedBaselineRead"
+              },
+              {
+                "$ref": "#/components/schemas/TrendBaselineRead"
+              },
+              {
+                "$ref": "#/components/schemas/BaselineAbstentionRead"
+              }
+            ],
+            "title": "Baseline"
+          },
+          "by_context": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "abstention": "#/components/schemas/BaselineAbstentionRead",
+                  "banded": "#/components/schemas/BandedBaselineRead",
+                  "trend": "#/components/schemas/TrendBaselineRead"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/BandedBaselineRead"
+                },
+                {
+                  "$ref": "#/components/schemas/TrendBaselineRead"
+                },
+                {
+                  "$ref": "#/components/schemas/BaselineAbstentionRead"
+                }
+              ]
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/HrvContext"
+            },
+            "title": "By Context",
+            "type": "object"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/WellnessMetric"
+          },
+          "rolling_mean_7d": {
+            "$ref": "#/components/schemas/RollingMeanRead"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/TrendPointRead"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "space": {
+            "$ref": "#/components/schemas/Space"
+          },
+          "today": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Today"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "unit",
+          "space",
+          "series",
+          "today",
+          "rolling_mean_7d",
+          "baseline"
+        ],
+        "title": "MetricTrendRead",
+        "type": "object"
+      },
       "MetricsRecompute": {
         "additionalProperties": false,
         "description": "Why a recomputation was asked for. The body is optional.\n\nThe reason lands on the **new** version (`recompute_reason`) and is what a\nlater reader sees when two versions of one session's numbers disagree \u2014\n\"anchor changed\" and \"stream re-ingested\" are different stories, and\nneither is reconstructible from the numbers themselves.",
@@ -2913,6 +3292,24 @@
         "enum": ["evaluation", "annotation"],
         "title": "NoteKind",
         "type": "string"
+      },
+      "OutsideMarkerRead": {
+        "description": "One marker sitting outside its own band, named and directed.",
+        "properties": {
+          "deviation_sd": {
+            "title": "Deviation Sd",
+            "type": "number"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/WellnessMetric"
+          }
+        },
+        "required": ["metric", "direction", "deviation_sd"],
+        "title": "OutsideMarkerRead",
+        "type": "object"
       },
       "Page_AnchorVersionRead_": {
         "properties": {
@@ -4842,6 +5239,28 @@
         "title": "RampStepSchema",
         "type": "object"
       },
+      "ReadinessDict": {
+        "description": "The serialized shape of :class:`ReadinessRead`, and its contract.\n\nA `TypedDict` with a `NotRequired` member is the one way to say \"this key\nis **absent**, not null\" in both pydantic and the published schema: it is\nhanded to `model_serializer` as its `return_type`, so the OpenAPI document\ndescribes `joint_state` as an optional, non-nullable property rather than\nthe untyped object a bare `dict[str, Any]` return would collapse to.",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "joint_state": {
+            "$ref": "#/components/schemas/JointStateRead"
+          },
+          "markers_outside_band": {
+            "$ref": "#/components/schemas/MarkersOutsideBandRead"
+          }
+        },
+        "required": ["as_of", "markers_outside_band"],
+        "title": "ReadinessDict",
+        "type": "object"
+      },
+      "ReadinessRead": {
+        "$ref": "#/components/schemas/ReadinessDict"
+      },
       "Reason": {
         "description": "Why a session was not as intended \u2014 the controlled list (WP-7.3).\n\nControlled rather than free text because the point is to be able to count\nthem: \"three of your last five threshold sessions were cut short by\n``time``\" is a sentence the coaching agent can only write if the reason is\na value. The free-text note travels *beside* the list, never instead of it.\n\n``NOT_PROVIDED`` is the honest member: it is what an expired evening\nprompt records (WP-7.3) and what an athlete who declines to say picks. It\nis not a null \u2014 \"we asked and got no answer\" is a different fact from \"we\nnever asked\".",
         "enum": [
@@ -5349,6 +5768,40 @@
           "anchor_version_id"
         ],
         "title": "ResolvedTargetRead",
+        "type": "object"
+      },
+      "RollingMeanRead": {
+        "description": "The trailing seven-day mean, with the `n` it was computed over.\n\n`mean` is null exactly when `n` is zero \u2014 that is a genuine absence, not a\nwithheld number, and the two are told apart by the `n` beside it.",
+        "properties": {
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          },
+          "mean_native": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Native"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          }
+        },
+        "required": ["mean", "mean_native", "n"],
+        "title": "RollingMeanRead",
         "type": "object"
       },
       "ScaleAnchorRead": {
@@ -6454,6 +6907,32 @@
         "title": "Sex",
         "type": "string"
       },
+      "SlopeRead": {
+        "description": "A least-squares trend through the baseline window.",
+        "properties": {
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "per_day": {
+            "title": "Per Day",
+            "type": "number"
+          },
+          "per_week": {
+            "title": "Per Week",
+            "type": "number"
+          }
+        },
+        "required": ["per_day", "per_week", "n"],
+        "title": "SlopeRead",
+        "type": "object"
+      },
+      "Space": {
+        "description": "The space a marker's statistics are computed and reported in.\n\n**Only HRV is log-transformed.** RMSSD is right-skewed and multiplicative \u2014\na 10 ms drop from 90 and from 30 are not the same event \u2014 so its mean, SD,\nband and deviation all live in ``ln`` space, which is where the HRV\nliterature states them. Everything else is linear.\n\nThe space is *reported*, and every statistic on an object is in it, so\n``deviation_sd == (rolling_mean_7d - mean) / sd`` holds on the numbers a\nreader actually has. Native-unit twins (``mean_native``, ``low_native``)\nare carried beside them for the chart, and raw readings are always native.",
+        "enum": ["linear", "ln"],
+        "title": "Space",
+        "type": "string"
+      },
       "SpeedMetricsRead": {
         "description": "Distance and speed, in km and km/h.\n\nEvery field defaults to the \"recompute me\" reason so that an artefact\nwritten before these numbers existed still validates and still renders in\nits slot; see :func:`predates`.",
         "properties": {
@@ -7123,6 +7602,126 @@
           }
         },
         "title": "TimeInZoneRead",
+        "type": "object"
+      },
+      "TrendBaselineRead": {
+        "description": "A mature baseline with no band: body weight and the subjective ratings.\n\nWeight moves on a scale of weeks, so a daily SD deviation from it is a\nstatement nobody should make; a 1-5 rating has five ordinal points, where\nan SD is arithmetic dressed as precision. Both get a mean and a trend, and\nneither gets a `band` or a `deviation_sd` key.",
+        "properties": {
+          "cv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cv"
+          },
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "trend",
+            "default": "trend",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mature": {
+            "const": true,
+            "default": true,
+            "title": "Mature",
+            "type": "boolean"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "mean_native": {
+            "title": "Mean Native",
+            "type": "number"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/WellnessMetric"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "sd": {
+            "title": "Sd",
+            "type": "number"
+          },
+          "space": {
+            "$ref": "#/components/schemas/Space"
+          },
+          "span_days": {
+            "title": "Span Days",
+            "type": "integer"
+          },
+          "trend": {
+            "$ref": "#/components/schemas/SlopeRead"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "hrv_context",
+          "space",
+          "unit",
+          "n",
+          "span_days",
+          "mean",
+          "mean_native",
+          "sd",
+          "cv",
+          "trend"
+        ],
+        "title": "TrendBaselineRead",
+        "type": "object"
+      },
+      "TrendPointRead": {
+        "description": "One date of the requested range: a reading, or an explicit gap.\n\n`value` is null on a date with no reading \u2014 never zero and never\ninterpolated from its neighbours. `markers` rides on the same object,\nbecause a confounder standing the caller has to fetch separately is a\nconfounder standing the caller will one day not fetch.",
+        "properties": {
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "markers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarkerStandingRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": ["local_date", "value", "markers"],
+        "title": "TrendPointRead",
         "type": "object"
       },
       "ValidationError": {
@@ -8238,6 +8837,26 @@
         "title": "WellnessInputsRead",
         "type": "object"
       },
+      "WellnessMetric": {
+        "description": "Every metric a trend read may ask for, as a closed vocabulary.\n\nAn enum rather than a free string because it is a **query parameter**: a\npublished contract that admits any string advertises answers that do not\nexist, and the caller discovers the real list by submitting guesses and\nreading the refusals \u2014 the failure `get_wellness_inputs` exists to prevent\non the write side.\n\nMostly one member per model column. HRV is the exception and has two, one\nper statistic: RMSSD and SDNN are not on one scale, so a metric name is\nallowed to assert the statistic where the *column* name is not.",
+        "enum": [
+          "resting_hr_bpm",
+          "hrv_rmssd_ms",
+          "hrv_sdnn_ms",
+          "respiratory_rate_brpm",
+          "wrist_temperature_delta_c",
+          "spo2",
+          "sleep_duration_s",
+          "weight_kg",
+          "sleep_quality",
+          "fatigue",
+          "soreness",
+          "stress",
+          "motivation"
+        ],
+        "title": "WellnessMetric",
+        "type": "string"
+      },
       "WellnessProvenance": {
         "description": "Where a day's numbers came from. About the *value*, not the writer.\n\nThe same split :class:`app.domain.anchors.Provenance` makes, with the two\nmembers a wellness reading can honestly claim. ``DEVICE_MEASURED`` is\nreserved: nothing writes it in Increment 1, and it exists now so that\nIncrement 2's HealthKit path is a new caller rather than a migration of\nstored values.",
         "enum": ["athlete_reported", "device_measured"],
@@ -8249,6 +8868,42 @@
         "enum": ["athlete", "agent"],
         "title": "WellnessSource",
         "type": "string"
+      },
+      "WellnessTrendRead": {
+        "description": "The dated readings, rolling means and baselines over a range.",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricTrendRead"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/WellnessMetric"
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/ReadinessRead"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": ["start", "end", "as_of", "metrics", "readiness"],
+        "title": "WellnessTrendRead",
+        "type": "object"
       },
       "WorkoutCreate": {
         "additionalProperties": false,
@@ -13680,6 +14335,91 @@
           }
         ],
         "summary": "Get Wellness Inputs",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/trend": {
+      "get": {
+        "description": "Per metric: the dated readings, the seven-day mean and the baseline.\n\nWhat makes a stored reading interpretable. `54` is alarming for one athlete\nand a Tuesday for another, so every metric is answered against **this**\nathlete's own trailing-60-day baseline, with a normal band and today's\ndistance from it in standard deviations.\n\nFour things this read is careful about, each of them a way the same numbers\ncould be read as more than they are:\n\n* **An immature baseline abstains.** Under 14 readings spanning 28 days,\n  `baseline` carries no `mean`, no `band` and no `deviation_sd` \u2014 it names\n  both counts instead, so \"not enough data\" comes with its own unlock\n  condition rather than a caveat somebody drops.\n* **`deviation_sd` compares the seven-day mean to the baseline**, never\n  today to yesterday. A single bad night can move it by three sevenths of\n  an SD at most, which is the whole point.\n* **A date with no reading is a gap**: `value` is null, never zero and\n  never interpolated. A line drawn through it would be a week the athlete\n  did not have.\n* **A voided morning still returns its numbers**, with `markers` on the\n  same object saying they are not evidence about today.\n\n`readiness` counts how many markers sit outside their own band and names\nthem with a direction. It is a count, not a score: there is no verdict\nhere and there is not meant to be.\n\nThe baseline window reaches back sixty days from `end` whatever range you\nask for, so a fortnight's chart still carries a mature baseline behind it.",
+        "operationId": "wellness-get_wellness_trend",
+        "parameters": [
+          {
+            "description": "First day of the range, inclusive.",
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "description": "First day of the range, inclusive.",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "First day *after* the range: it is half-open [start, end), like every range in this application.",
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "description": "First day *after* the range: it is half-open [start, end), like every range in this application.",
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Metrics to answer for; repeat the parameter for several. Omit for all of them.",
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "description": "Metrics to answer for; repeat the parameter for several. Omit for all of them.",
+              "items": {
+                "$ref": "#/components/schemas/WellnessMetric"
+              },
+              "title": "Metric",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessTrendRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The day violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Wellness Trend",
         "tags": ["wellness"]
       }
     },

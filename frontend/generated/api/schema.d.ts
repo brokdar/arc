@@ -1414,6 +1414,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/wellness/trend": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Wellness Trend
+     * @description Per metric: the dated readings, the seven-day mean and the baseline.
+     *
+     *     What makes a stored reading interpretable. `54` is alarming for one athlete
+     *     and a Tuesday for another, so every metric is answered against **this**
+     *     athlete's own trailing-60-day baseline, with a normal band and today's
+     *     distance from it in standard deviations.
+     *
+     *     Four things this read is careful about, each of them a way the same numbers
+     *     could be read as more than they are:
+     *
+     *     * **An immature baseline abstains.** Under 14 readings spanning 28 days,
+     *       `baseline` carries no `mean`, no `band` and no `deviation_sd` — it names
+     *       both counts instead, so "not enough data" comes with its own unlock
+     *       condition rather than a caveat somebody drops.
+     *     * **`deviation_sd` compares the seven-day mean to the baseline**, never
+     *       today to yesterday. A single bad night can move it by three sevenths of
+     *       an SD at most, which is the whole point.
+     *     * **A date with no reading is a gap**: `value` is null, never zero and
+     *       never interpolated. A line drawn through it would be a week the athlete
+     *       did not have.
+     *     * **A voided morning still returns its numbers**, with `markers` on the
+     *       same object saying they are not evidence about today.
+     *
+     *     `readiness` counts how many markers sit outside their own band and names
+     *     them with a direction. It is a count, not a score: there is no verdict
+     *     here and there is not meant to be.
+     *
+     *     The baseline window reaches back sixty days from `end` whatever range you
+     *     ask for, so a fortnight's chart still carries a mature baseline behind it.
+     */
+    get: operations["wellness-get_wellness_trend"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/wellness/weight": {
     parameters: {
       query?: never;
@@ -2006,6 +2054,26 @@ export interface components {
       outcome: string;
     };
     /**
+     * BandRead
+     * @description The athlete's own normal range: the smallest worthwhile change.
+     *
+     *     `low`/`high` are in the metric's analysis space (`ln` for HRV);
+     *     `low_native`/`high_native` are the same edges in the metric's own unit,
+     *     which is what a chart draws behind the series.
+     */
+    BandRead: {
+      /** Half Width */
+      half_width: number;
+      /** High */
+      high: number;
+      /** High Native */
+      high_native: number;
+      /** Low */
+      low: number;
+      /** Low Native */
+      low_native: number;
+    };
+    /**
      * BandSchema
      * @description An acceptable range around a step's prescribed target, as fractions.
      */
@@ -2020,6 +2088,72 @@ export interface components {
        * @default 30
        */
       smoothing_s: number;
+    };
+    /**
+     * BandedBaselineRead
+     * @description A mature baseline with a normal band and today's distance from it.
+     */
+    BandedBaselineRead: {
+      band: components["schemas"]["BandRead"];
+      /** Cv */
+      cv: number | null;
+      /** Deviation Sd */
+      deviation_sd: number | null;
+      direction: components["schemas"]["Direction"] | null;
+      hrv_context: components["schemas"]["HrvContext"] | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "banded";
+      /**
+       * Mature
+       * @default true
+       * @constant
+       */
+      mature: true;
+      /** Mean */
+      mean: number;
+      /** Mean Native */
+      mean_native: number;
+      metric: components["schemas"]["WellnessMetric"];
+      /** N */
+      n: number;
+      /** Sd */
+      sd: number;
+      space: components["schemas"]["Space"];
+      /** Span Days */
+      span_days: number;
+      trend: components["schemas"]["SlopeRead"];
+      /** Unit */
+      unit: string;
+    };
+    /**
+     * BaselineAbstentionRead
+     * @description No baseline yet, and exactly what it would take to have one.
+     *
+     *     Carries no `mean`, no `band` and no `deviation_sd` **key**. What it does
+     *     carry is both counts and its own unlock condition, so "not enough data" can
+     *     be acted on rather than merely regretted.
+     */
+    BaselineAbstentionRead: {
+      hrv_context: components["schemas"]["HrvContext"] | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "abstention";
+      /**
+       * Mature
+       * @default false
+       * @constant
+       */
+      mature: false;
+      metric: components["schemas"]["WellnessMetric"];
+      readings: components["schemas"]["CountRead"];
+      /** Reason */
+      reason: string;
+      span_days: components["schemas"]["CountRead"];
     };
     /**
      * BodyRegion
@@ -2185,6 +2319,18 @@ export interface components {
       value: components["schemas"]["Confounder"];
     };
     /**
+     * CountRead
+     * @description A count against the bar it has to clear.
+     */
+    CountRead: {
+      /** Have */
+      have: number;
+      /** Need */
+      need: number;
+      /** Statement */
+      statement: string;
+    };
+    /**
      * CriterionKind
      * @description The five MVP criterion types, as they appear in the ``kind`` tag.
      * @enum {string}
@@ -2219,6 +2365,18 @@ export interface components {
       /** Required */
       required?: number | null;
     };
+    /**
+     * Direction
+     * @description Where the rolling mean sits relative to the band. Never a valence.
+     *
+     *     ``above`` and ``below`` are geometry, not judgement: a resting heart rate
+     *     above its band and an HRV above its band are opposite news, and a reader
+     *     that assumed one direction was good would be wrong half the time. The
+     *     polarity table in `app.domain.wellness` is where direction acquires
+     *     meaning, and it does so in the reader, not here.
+     * @enum {string}
+     */
+    Direction: "below" | "within" | "above";
     /**
      * Discipline
      * @description The two disciplines the MVP trains.
@@ -2505,6 +2663,43 @@ export interface components {
       start_index: number;
     };
     /**
+     * JointStateKey
+     * @description The HRV x resting-HR quadrant, as a label and nothing more.
+     *
+     *     **Read together or not at all.** HRV down on its own has at least three
+     *     readings and they are not distinguishable from one number: genuine
+     *     parasympathetic withdrawal, *parasympathetic saturation* (in well-trained
+     *     athletes HRV falls as resting HR falls, and the pair moving the same way is
+     *     the tell), and the alcohol artefact, where peripheral vasodilation produces
+     *     the same picture as illness onset for a reason that has nothing to do with
+     *     training. Resting HR moving with or against HRV is what separates them, so
+     *     this is served as one named quadrant instead of two independent deviations
+     *     a reader has to remember to cross.
+     *
+     *     It is a **label with no verdict attached**. Which quadrant is bad depends
+     *     on the athlete, the block and yesterday's session, and encoding that here
+     *     would be the readiness score this surface exists not to emit.
+     * @enum {string}
+     */
+    JointStateKey:
+      | "hrv_low_rhr_low"
+      | "hrv_low_rhr_high"
+      | "hrv_high_rhr_low"
+      | "hrv_high_rhr_high";
+    /**
+     * JointStateRead
+     * @description The HRV x resting-HR quadrant, as a plain label with no verdict.
+     */
+    JointStateRead: {
+      /** Hrv Deviation Sd */
+      hrv_deviation_sd: number;
+      key: components["schemas"]["JointStateKey"];
+      /** Label */
+      label: string;
+      /** Resting Hr Deviation Sd */
+      resting_hr_deviation_sd: number;
+    };
+    /**
      * LoadBasis
      * @description Which model produced the training load that was selected (A5.2).
      * @enum {string}
@@ -2682,6 +2877,24 @@ export interface components {
       actionable: boolean;
       /** Invalidated By */
       invalidated_by: components["schemas"]["Confounder"][];
+      /** Statement */
+      statement: string;
+    };
+    /**
+     * MarkersOutsideBandRead
+     * @description How many markers are outside their band, of how many that could say.
+     *
+     *     The denominator excludes markers whose baseline is immature and **says
+     *     so** — `2 of 4`, not `2 of 5` — because a denominator that silently counts
+     *     markers with no baseline makes two of five look calmer than it is.
+     */
+    MarkersOutsideBandRead: {
+      /** Count */
+      count: number;
+      /** Markers */
+      markers: components["schemas"]["OutsideMarkerRead"][];
+      /** Of */
+      of: number;
       /** Statement */
       statement: string;
     };
@@ -2951,6 +3164,33 @@ export interface components {
       value?: number | null;
     };
     /**
+     * MetricTrendRead
+     * @description One metric over the requested range: readings, mean and baseline.
+     */
+    MetricTrendRead: {
+      /** Baseline */
+      baseline:
+        | components["schemas"]["BandedBaselineRead"]
+        | components["schemas"]["TrendBaselineRead"]
+        | components["schemas"]["BaselineAbstentionRead"];
+      /** By Context */
+      by_context?: {
+        [key: string]:
+          | components["schemas"]["BandedBaselineRead"]
+          | components["schemas"]["TrendBaselineRead"]
+          | components["schemas"]["BaselineAbstentionRead"];
+      };
+      metric: components["schemas"]["WellnessMetric"];
+      rolling_mean_7d: components["schemas"]["RollingMeanRead"];
+      /** Series */
+      series: components["schemas"]["TrendPointRead"][];
+      space: components["schemas"]["Space"];
+      /** Today */
+      today: number | null;
+      /** Unit */
+      unit: string;
+    };
+    /**
      * MetricsRecompute
      * @description Why a recomputation was asked for. The body is optional.
      *
@@ -2995,6 +3235,16 @@ export interface components {
      * @enum {string}
      */
     NoteKind: "evaluation" | "annotation";
+    /**
+     * OutsideMarkerRead
+     * @description One marker sitting outside its own band, named and directed.
+     */
+    OutsideMarkerRead: {
+      /** Deviation Sd */
+      deviation_sd: number;
+      direction: components["schemas"]["Direction"];
+      metric: components["schemas"]["WellnessMetric"];
+    };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -3821,6 +4071,26 @@ export interface components {
       };
     };
     /**
+     * ReadinessDict
+     * @description The serialized shape of :class:`ReadinessRead`, and its contract.
+     *
+     *     A `TypedDict` with a `NotRequired` member is the one way to say "this key
+     *     is **absent**, not null" in both pydantic and the published schema: it is
+     *     handed to `model_serializer` as its `return_type`, so the OpenAPI document
+     *     describes `joint_state` as an optional, non-nullable property rather than
+     *     the untyped object a bare `dict[str, Any]` return would collapse to.
+     */
+    ReadinessDict: {
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      joint_state?: components["schemas"]["JointStateRead"];
+      markers_outside_band: components["schemas"]["MarkersOutsideBandRead"];
+    };
+    ReadinessRead: components["schemas"]["ReadinessDict"];
+    /**
      * Reason
      * @description Why a session was not as intended — the controlled list (WP-7.3).
      *
@@ -4057,6 +4327,21 @@ export interface components {
       /** Resolved Low */
       resolved_low: number | null;
       unit: components["schemas"]["ChannelUnit"];
+    };
+    /**
+     * RollingMeanRead
+     * @description The trailing seven-day mean, with the `n` it was computed over.
+     *
+     *     `mean` is null exactly when `n` is zero — that is a genuine absence, not a
+     *     withheld number, and the two are told apart by the `n` beside it.
+     */
+    RollingMeanRead: {
+      /** Mean */
+      mean: number | null;
+      /** Mean Native */
+      mean_native: number | null;
+      /** N */
+      n: number;
     };
     /**
      * ScaleAnchorRead
@@ -4565,6 +4850,34 @@ export interface components {
      */
     Sex: "female" | "male" | "unspecified";
     /**
+     * SlopeRead
+     * @description A least-squares trend through the baseline window.
+     */
+    SlopeRead: {
+      /** N */
+      n: number;
+      /** Per Day */
+      per_day: number;
+      /** Per Week */
+      per_week: number;
+    };
+    /**
+     * Space
+     * @description The space a marker's statistics are computed and reported in.
+     *
+     *     **Only HRV is log-transformed.** RMSSD is right-skewed and multiplicative —
+     *     a 10 ms drop from 90 and from 30 are not the same event — so its mean, SD,
+     *     band and deviation all live in ``ln`` space, which is where the HRV
+     *     literature states them. Everything else is linear.
+     *
+     *     The space is *reported*, and every statistic on an object is in it, so
+     *     ``deviation_sd == (rolling_mean_7d - mean) / sd`` holds on the numbers a
+     *     reader actually has. Native-unit twins (``mean_native``, ``low_native``)
+     *     are carried beside them for the chart, and raw readings are always native.
+     * @enum {string}
+     */
+    Space: "linear" | "ln";
+    /**
      * SpeedMetricsRead
      * @description Distance and speed, in km and km/h.
      *
@@ -4853,6 +5166,65 @@ export interface components {
        * @default []
        */
       zones: components["schemas"]["ZoneTimeRead"][];
+    };
+    /**
+     * TrendBaselineRead
+     * @description A mature baseline with no band: body weight and the subjective ratings.
+     *
+     *     Weight moves on a scale of weeks, so a daily SD deviation from it is a
+     *     statement nobody should make; a 1-5 rating has five ordinal points, where
+     *     an SD is arithmetic dressed as precision. Both get a mean and a trend, and
+     *     neither gets a `band` or a `deviation_sd` key.
+     */
+    TrendBaselineRead: {
+      /** Cv */
+      cv: number | null;
+      hrv_context: components["schemas"]["HrvContext"] | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "trend";
+      /**
+       * Mature
+       * @default true
+       * @constant
+       */
+      mature: true;
+      /** Mean */
+      mean: number;
+      /** Mean Native */
+      mean_native: number;
+      metric: components["schemas"]["WellnessMetric"];
+      /** N */
+      n: number;
+      /** Sd */
+      sd: number;
+      space: components["schemas"]["Space"];
+      /** Span Days */
+      span_days: number;
+      trend: components["schemas"]["SlopeRead"];
+      /** Unit */
+      unit: string;
+    };
+    /**
+     * TrendPointRead
+     * @description One date of the requested range: a reading, or an explicit gap.
+     *
+     *     `value` is null on a date with no reading — never zero and never
+     *     interpolated from its neighbours. `markers` rides on the same object,
+     *     because a confounder standing the caller has to fetch separately is a
+     *     confounder standing the caller will one day not fetch.
+     */
+    TrendPointRead: {
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      markers: components["schemas"]["MarkerStandingRead"] | null;
+      /** Value */
+      value: number | null;
     };
     /** ValidationError */
     ValidationError: {
@@ -5261,6 +5633,35 @@ export interface components {
       tiers: components["schemas"]["InputTierRead"][];
     };
     /**
+     * WellnessMetric
+     * @description Every metric a trend read may ask for, as a closed vocabulary.
+     *
+     *     An enum rather than a free string because it is a **query parameter**: a
+     *     published contract that admits any string advertises answers that do not
+     *     exist, and the caller discovers the real list by submitting guesses and
+     *     reading the refusals — the failure `get_wellness_inputs` exists to prevent
+     *     on the write side.
+     *
+     *     Mostly one member per model column. HRV is the exception and has two, one
+     *     per statistic: RMSSD and SDNN are not on one scale, so a metric name is
+     *     allowed to assert the statistic where the *column* name is not.
+     * @enum {string}
+     */
+    WellnessMetric:
+      | "resting_hr_bpm"
+      | "hrv_rmssd_ms"
+      | "hrv_sdnn_ms"
+      | "respiratory_rate_brpm"
+      | "wrist_temperature_delta_c"
+      | "spo2"
+      | "sleep_duration_s"
+      | "weight_kg"
+      | "sleep_quality"
+      | "fatigue"
+      | "soreness"
+      | "stress"
+      | "motivation";
+    /**
      * WellnessProvenance
      * @description Where a day's numbers came from. About the *value*, not the writer.
      *
@@ -5283,6 +5684,32 @@ export interface components {
      * @enum {string}
      */
     WellnessSource: "athlete" | "agent";
+    /**
+     * WellnessTrendRead
+     * @description The dated readings, rolling means and baselines over a range.
+     */
+    WellnessTrendRead: {
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      /**
+       * End
+       * Format: date
+       */
+      end: string;
+      /** Metrics */
+      metrics: {
+        [key: string]: components["schemas"]["MetricTrendRead"];
+      };
+      readiness: components["schemas"]["ReadinessRead"];
+      /**
+       * Start
+       * Format: date
+       */
+      start: string;
+    };
     /**
      * WorkoutCreate
      * @description Payload for adding a workout to the library.
@@ -8972,6 +9399,51 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "wellness-get_wellness_trend": {
+    parameters: {
+      query: {
+        /** @description First day of the range, inclusive. */
+        start: string;
+        /** @description First day *after* the range: it is half-open [start, end), like every range in this application. */
+        end: string;
+        /** @description Metrics to answer for; repeat the parameter for several. Omit for all of them. */
+        metric?: components["schemas"]["WellnessMetric"][];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WellnessTrendRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The day violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

@@ -8,6 +8,10 @@ import { SectionLabel } from "@/components/design/section-label";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { WellnessForm } from "@/components/wellness/wellness-form";
 import { WellnessHistory } from "@/components/wellness/wellness-history";
+import {
+  CHARTED_METRICS,
+  WellnessTrajectories,
+} from "@/components/wellness/wellness-trajectories";
 import { $api } from "@/lib/api/client";
 import { loadFailureMessage } from "@/lib/api-errors";
 import { addDays, isIsoDate, todayIsoDate } from "@/lib/dates";
@@ -26,9 +30,11 @@ const HISTORY_DAYS = 28;
  *
  * What is *not* here is any interpretation. There is no readiness score, no
  * verdict, no "you should rest" — arc stores what the athlete reported and
- * describes it, and reading it is the coach's job. The one derived thing on
- * the page is the confounder standing, which is a deterministic restatement of
- * what the athlete themselves declared.
+ * describes it, and reading it is the coach's job. What the page *does* derive
+ * is descriptive: the confounder standing, which restates what the athlete
+ * themselves declared, and the trajectory block, which says what is normal for
+ * this athlete and how far the last week sits from it — or abstains, in the
+ * API's own words, when the series is too short to bear a normal at all.
  */
 export function WellnessView() {
   const router = useRouter();
@@ -48,6 +54,19 @@ export function WellnessView() {
   const inputs = $api.useQuery("get", "/api/v1/wellness/inputs");
   const series = $api.useQuery("get", "/api/v1/wellness/days", {
     params: { query: { start, end, limit: HISTORY_DAYS } },
+  });
+  // The same window as the table, so the chart and the rows are one picture.
+  // The baseline behind it still reaches sixty days back — the read decides
+  // that, not the range asked for, which is what lets a four-week page carry a
+  // mature normal range.
+  const trend = $api.useQuery("get", "/api/v1/wellness/trend", {
+    params: {
+      query: {
+        start,
+        end,
+        metric: CHARTED_METRICS.map((charted) => charted.metric),
+      },
+    },
   });
 
   const select = useCallback(
@@ -127,6 +146,7 @@ export function WellnessView() {
               inputs={inputs.data}
               lastHrv={lastHrv}
             />
+            <WellnessTrajectories trend={trend.data} />
             <WellnessHistory
               dates={dates}
               days={days}

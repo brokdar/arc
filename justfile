@@ -74,9 +74,16 @@ lint:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run lint-imports
 	cd frontend && bun run lint
 
+# The two globs repeat `project-includes` in backend/pyrefly.toml, and they are
+# passed rather than left implicit because a worktree lives under
+# `.claude/worktrees/`: pyrefly skips a *hidden* path segment when it walks for
+# includes itself, so a bare `pyrefly check` there matched no files at all and
+# exited 1 — type checking silently absent from every worktree. Passing the
+# roots makes the walk start below the dot. `project-excludes` still applies.
+
 # Type-check backend + frontend
 typecheck:
-	cd backend && uv run pyrefly check
+	cd backend && uv run pyrefly check 'app/**' 'tests/**'
 	cd frontend && bun run type-check
 
 # Run unit tests (backend + frontend)
@@ -156,6 +163,15 @@ matching-fixture:
 scoring-fixture:
 	cd backend && uv run python scripts/emit_scoring_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-scoring.ts
+
+# Regenerate the frontend's wellness-trend fixture from the real domain.
+# Run after changing app/domain/wellness_baseline.py or the trend read shape,
+# and commit the result: every baseline mean, band, deviation and maturity
+# verdict in the fixture is the domain's own, and a hand-typed one would let a
+# component test agree with an answer the API cannot produce.
+wellness-trend-fixture:
+	cd backend && uv run python scripts/emit_wellness_trend_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-wellness-trend.ts
 
 # --- Maintenance -------------------------------------------------------------
 

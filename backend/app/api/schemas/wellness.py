@@ -19,9 +19,9 @@ through this schema at all, meets the same limit (the #17 lesson).
 
 import datetime as dt
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from app.api.pagination import Page
@@ -39,6 +39,12 @@ from app.domain.wellness import (
     Polarity,
     WellnessProvenance,
     WellnessSource,
+)
+from app.domain.wellness_baseline import (
+    Direction,
+    JointStateKey,
+    Space,
+    WellnessMetric,
 )
 
 # Every bound below is read from the domain rather than typed in again: the
@@ -374,3 +380,258 @@ class WellnessBackfillResult(BaseModel):
     #: of an import is legible without reading every day object.
     outcomes: dict[str, int]
     days: list[BackfillDayResult]
+
+
+# --- the trend read -----------------------------------------------------------
+#
+# Three baseline shapes rather than one nullable model, and that is the whole
+# design: `AC-9` requires an immature baseline to carry **no** `mean`, `band`
+# or `deviation_sd` key at all, and a single model with optional fields serves
+# them as `null`. A null mean is a number somebody eventually reads as zero,
+# and a caveat beside a number is advice a model under pressure to be helpful
+# drops. So the discriminator `kind` picks between an abstention, a
+# trend-only baseline (body weight, the subjective ratings) and a banded one.
+
+
+class CountRead(BaseModel):
+    """A count against the bar it has to clear."""
+
+    have: int
+    need: int
+    #: The same pair as one string — `11 of 14` — so a reader that renders the
+    #: object without arithmetic still says the actionable thing.
+    statement: str
+
+
+class BandRead(BaseModel):
+    """The athlete's own normal range: the smallest worthwhile change.
+
+    `low`/`high` are in the metric's analysis space (`ln` for HRV);
+    `low_native`/`high_native` are the same edges in the metric's own unit,
+    which is what a chart draws behind the series.
+    """
+
+    low: float
+    high: float
+    half_width: float
+    low_native: float
+    high_native: float
+
+
+class SlopeRead(BaseModel):
+    """A least-squares trend through the baseline window."""
+
+    per_day: float
+    per_week: float
+    n: int
+
+
+class RollingMeanRead(BaseModel):
+    """The trailing seven-day mean, with the `n` it was computed over.
+
+    `mean` is null exactly when `n` is zero — that is a genuine absence, not a
+    withheld number, and the two are told apart by the `n` beside it.
+    """
+
+    mean: float | None
+    mean_native: float | None
+    n: int
+
+
+class BaselineAbstentionRead(BaseModel):
+    """No baseline yet, and exactly what it would take to have one.
+
+    Carries no `mean`, no `band` and no `deviation_sd` **key**. What it does
+    carry is both counts and its own unlock condition, so "not enough data" can
+    be acted on rather than merely regretted.
+    """
+
+    kind: Literal["abstention"] = "abstention"
+    mature: Literal[False] = False
+    metric: WellnessMetric
+    #: Named when this abstention is about one HRV context.
+    hrv_context: HrvContext | None
+    readings: CountRead
+    span_days: CountRead
+    reason: str
+
+
+class TrendBaselineRead(BaseModel):
+    """A mature baseline with no band: body weight and the subjective ratings.
+
+    Weight moves on a scale of weeks, so a daily SD deviation from it is a
+    statement nobody should make; a 1-5 rating has five ordinal points, where
+    an SD is arithmetic dressed as precision. Both get a mean and a trend, and
+    neither gets a `band` or a `deviation_sd` key.
+    """
+
+    kind: Literal["trend"] = "trend"
+    mature: Literal[True] = True
+    metric: WellnessMetric
+    hrv_context: HrvContext | None
+    #: `linear` everywhere but HRV, whose statistics live in `ln`.
+    space: Space
+    unit: str
+    #: Readings **after** exclusions — a confounder-voided day and a recalled
+    #: rating are not in it, which is what makes a thin `n` a visible reason.
+    n: int
+    span_days: int
+    mean: float
+    mean_native: float
+    sd: float
+    #: `sd / mean`. Null when the mean is zero, where it is undefined.
+    cv: float | None
+    trend: SlopeRead
+
+
+class BandedBaselineRead(TrendBaselineRead):
+    """A mature baseline with a normal band and today's distance from it."""
+
+    kind: Literal["banded"] = "banded"  # pyright: ignore[reportIncompatibleVariableOverride]
+    band: BandRead
+    #: The **seven-day mean's** distance from the baseline in SDs — never today
+    #: against yesterday. Null when nothing was recorded in the seven-day
+    #: window, and in the degenerate case of a zero SD, where a distance in SD
+    #: units is undefined rather than infinite.
+    deviation_sd: float | None
+    direction: Direction | None
+
+
+#: The three shapes a baseline may take, discriminated by `kind`.
+BaselineRead = Annotated[
+    BandedBaselineRead | TrendBaselineRead | BaselineAbstentionRead,
+    Field(discriminator="kind"),
+]
+
+
+class TrendPointRead(BaseModel):
+    """One date of the requested range: a reading, or an explicit gap.
+
+    `value` is null on a date with no reading — never zero and never
+    interpolated from its neighbours. `markers` rides on the same object,
+    because a confounder standing the caller has to fetch separately is a
+    confounder standing the caller will one day not fetch.
+    """
+
+    local_date: dt.date
+    value: float | None
+    #: Null on a date with no day recorded; there is then no standing to state.
+    markers: MarkerStandingRead | None
+
+
+class MetricTrendRead(BaseModel):
+    """One metric over the requested range: readings, mean and baseline."""
+
+    metric: WellnessMetric
+    unit: str
+    space: Space
+    #: One entry per date in the range, oldest first, gaps included.
+    series: list[TrendPointRead]
+    #: The reading on `as_of`, in the metric's **native** unit, or null.
+    #: Distinct from `rolling_mean_7d` on purpose: conflating them is how one
+    #: bad night becomes a trend.
+    today: float | None
+    rolling_mean_7d: RollingMeanRead
+    baseline: BaselineRead
+    #: HRV only: one baseline per context that has readings. A context with no
+    #: readings is simply absent, and two contexts are never pooled — a mean
+    #: over an overnight average and a daytime spot sample belongs to neither.
+    by_context: dict[HrvContext, BaselineRead] = Field(default_factory=dict)
+
+
+class OutsideMarkerRead(BaseModel):
+    """One marker sitting outside its own band, named and directed."""
+
+    metric: WellnessMetric
+    direction: Direction
+    deviation_sd: float
+
+
+class MarkersOutsideBandRead(BaseModel):
+    """How many markers are outside their band, of how many that could say.
+
+    The denominator excludes markers whose baseline is immature and **says
+    so** — `2 of 4`, not `2 of 5` — because a denominator that silently counts
+    markers with no baseline makes two of five look calmer than it is.
+    """
+
+    count: int
+    of: int
+    statement: str
+    markers: list[OutsideMarkerRead]
+
+
+class JointStateRead(BaseModel):
+    """The HRV x resting-HR quadrant, as a plain label with no verdict."""
+
+    key: JointStateKey
+    label: str
+    hrv_deviation_sd: float
+    resting_hr_deviation_sd: float
+
+
+class ReadinessDict(TypedDict):
+    """The serialized shape of :class:`ReadinessRead`, and its contract.
+
+    A `TypedDict` with a `NotRequired` member is the one way to say "this key
+    is **absent**, not null" in both pydantic and the published schema: it is
+    handed to `model_serializer` as its `return_type`, so the OpenAPI document
+    describes `joint_state` as an optional, non-nullable property rather than
+    the untyped object a bare `dict[str, Any]` return would collapse to.
+    """
+
+    as_of: dt.date
+    markers_outside_band: MarkersOutsideBandRead
+    joint_state: NotRequired[JointStateRead]
+
+
+class ReadinessRead(BaseModel):
+    """What the markers say about today. No score, no recommendation.
+
+    `test_readiness_field_inventory` pins this key set closed and fails if a
+    key named `readiness_score`, `recommendation`, `verdict` or `score` ever
+    appears at any depth.
+    """
+
+    as_of: dt.date
+    markers_outside_band: MarkersOutsideBandRead
+    #: **Absent**, not null, when either half of the pair is missing or
+    #: immature. See :meth:`_omit_an_undrawable_quadrant`.
+    joint_state: JointStateRead | None = None
+
+    @model_serializer(mode="plain", return_type=ReadinessDict)
+    def _omit_an_undrawable_quadrant(self) -> ReadinessDict:
+        """Drop `joint_state` entirely when there is no quadrant to name.
+
+        A null here would be a guess wearing a key: a reader that sees the
+        field at all learns that a quadrant is a thing this object reports, and
+        the next reader fills it in from one of the two markers. The quadrant
+        exists precisely because neither marker means anything alone, so when
+        one of them cannot speak the honest answer is silence.
+
+        A serializer rather than `response_model_exclude_none`, which would
+        also drop the genuine nulls this response depends on — a gap in a
+        series is a null that has to survive.
+        """
+        data: ReadinessDict = {
+            "as_of": self.as_of,
+            "markers_outside_band": self.markers_outside_band,
+        }
+        if self.joint_state is not None:
+            data["joint_state"] = self.joint_state
+        return data
+
+
+class WellnessTrendRead(BaseModel):
+    """The dated readings, rolling means and baselines over a range."""
+
+    start: dt.date
+    end: dt.date
+    #: The day the baselines and rolling means are anchored to: the last day of
+    #: the range, so a historical range answers as it stood then.
+    as_of: dt.date
+    metrics: dict[WellnessMetric, MetricTrendRead]
+    #: Computed over **every** marker, not only the requested ones — a
+    #: denominator that depended on the query string would mean something
+    #: different on every call.
+    readiness: ReadinessRead

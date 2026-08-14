@@ -192,3 +192,14 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/wellness/days"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# `GET /wellness/trend` refuses the same two range rules `GET /wellness/days`
+# does — a range must not be inverted and must not exceed 371 days — and a
+# schema cannot express either. Both are pinned in `test_wellness_api.py`.
+# The metric parameter needs no narrowing: it is a closed enum in the contract,
+# so a schema-valid request cannot name a metric that does not exist.
+
+[[operations]]
+include-name = "GET /api/v1/wellness/trend"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

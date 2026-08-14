@@ -20,16 +20,30 @@ from collections.abc import Sequence
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from pydantic.json_schema import SkipJsonSchema
 
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.schemas.wellness import (
     BackfillDayResult,
+    BandedBaselineRead,
+    BandRead,
+    BaselineAbstentionRead,
     ConfounderRead,
+    CountRead,
     InputTierRead,
+    JointStateRead,
+    MarkersOutsideBandRead,
     MarkerStandingRead,
+    MetricTrendRead,
+    OutsideMarkerRead,
+    ReadinessRead,
+    RollingMeanRead,
     ScaleAnchorRead,
+    SlopeRead,
     SubjectiveScaleRead,
+    TrendBaselineRead,
+    TrendPointRead,
     WeightInForceRead,
     WellnessBackfill,
     WellnessBackfillResult,
@@ -37,6 +51,7 @@ from app.api.schemas.wellness import (
     WellnessDaysPage,
     WellnessDayWrite,
     WellnessInputsRead,
+    WellnessTrendRead,
 )
 from app.core.exceptions import ErrorDetail, NotFoundError, ValidationErrorDetail
 from app.domain.wellness import (
@@ -45,11 +60,25 @@ from app.domain.wellness import (
     SUBJECTIVE_SCALES,
     BodyRegion,
     Confounder,
+    MarkerStanding,
     WellnessSource,
+)
+from app.domain.wellness_baseline import (
+    Abstention,
+    Baseline,
+    Count,
+    MetricTrend,
+    Readiness,
+    WellnessMetric,
 )
 from app.persistence.db import SessionDep
 from app.persistence.wellness import WellnessDayRow
-from app.services.wellness import DayInput, DayResult, WellnessService
+from app.services.wellness import (
+    DayInput,
+    DayResult,
+    WellnessService,
+    WellnessTrend,
+)
 
 router = APIRouter(prefix="/wellness", tags=["wellness"])
 
@@ -88,6 +117,21 @@ def get_service(session: SessionDep) -> WellnessService:
 ServiceDep = Annotated[WellnessService, Depends(get_service)]
 
 RangeStart = Annotated[dt.date, Query(description="First day of the range, inclusive.")]
+
+#: Which metrics a trend read answers for. Optional **by omission** and never
+#: nullable — `?metric=null` is the four-letter string to a query parser, and a
+#: contract that advertised `null` here would fail Schemathesis on a request it
+#: said was legal (`.claude/rules/api-nullability.md`). Omitting it asks for
+#: every metric.
+TrendMetrics = Annotated[
+    list[WellnessMetric] | SkipJsonSchema[None],
+    Query(
+        description=(
+            "Metrics to answer for; repeat the parameter for several. Omit for "
+            "all of them."
+        )
+    ),
+]
 RangeEnd = Annotated[
     dt.date,
     Query(
@@ -248,6 +292,46 @@ async def get_weight_in_force(
     )
 
 
+@router.get("/trend", responses=INVALID)
+async def get_wellness_trend(
+    service: ServiceDep,
+    start: RangeStart,
+    end: RangeEnd,
+    metric: TrendMetrics = None,
+) -> WellnessTrendRead:
+    """Per metric: the dated readings, the seven-day mean and the baseline.
+
+    What makes a stored reading interpretable. `54` is alarming for one athlete
+    and a Tuesday for another, so every metric is answered against **this**
+    athlete's own trailing-60-day baseline, with a normal band and today's
+    distance from it in standard deviations.
+
+    Four things this read is careful about, each of them a way the same numbers
+    could be read as more than they are:
+
+    * **An immature baseline abstains.** Under 14 readings spanning 28 days,
+      `baseline` carries no `mean`, no `band` and no `deviation_sd` — it names
+      both counts instead, so "not enough data" comes with its own unlock
+      condition rather than a caveat somebody drops.
+    * **`deviation_sd` compares the seven-day mean to the baseline**, never
+      today to yesterday. A single bad night can move it by three sevenths of
+      an SD at most, which is the whole point.
+    * **A date with no reading is a gap**: `value` is null, never zero and
+      never interpolated. A line drawn through it would be a week the athlete
+      did not have.
+    * **A voided morning still returns its numbers**, with `markers` on the
+      same object saying they are not evidence about today.
+
+    `readiness` counts how many markers sit outside their own band and names
+    them with a direction. It is a count, not a score: there is no verdict
+    here and there is not meant to be.
+
+    The baseline window reaches back sixty days from `end` whatever range you
+    ask for, so a fortnight's chart still carries a mature baseline behind it.
+    """
+    return to_trend_read(await service.trend(start=start, end=end, metrics=metric))
+
+
 @router.get("/days", responses=INVALID)
 async def list_wellness_days(
     service: ServiceDep, page: PageParamsDep, start: RangeStart, end: RangeEnd
@@ -350,4 +434,145 @@ def _backfill_result(
             )
             for day in results
         ],
+    )
+
+
+def _standing(standing: MarkerStanding) -> MarkerStandingRead:
+    """Render a day's marker standing for the wire."""
+    return MarkerStandingRead(
+        actionable=standing.actionable,
+        invalidated_by=list(standing.invalidated_by),
+        statement=standing.statement,
+    )
+
+
+def _baseline(
+    value: Baseline | Abstention,
+) -> BandedBaselineRead | TrendBaselineRead | BaselineAbstentionRead:
+    """Render a baseline as whichever of the three shapes it is.
+
+    The shape is the abstention: an immature baseline becomes a model with no
+    ``mean``, ``band`` or ``deviation_sd`` **field**, so those keys are absent
+    from the JSON rather than null. Serving one model with optional fields
+    would put a null where a number goes, and a null in a number's slot is a
+    zero to the next reader.
+    """
+    if isinstance(value, Abstention):
+        return BaselineAbstentionRead(
+            metric=value.metric,
+            hrv_context=value.hrv_context,
+            readings=_count(value.readings),
+            span_days=_count(value.span_days),
+            reason=value.reason,
+        )
+    common: dict[str, Any] = {
+        "metric": value.metric,
+        "hrv_context": value.hrv_context,
+        "space": value.space,
+        "unit": value.unit,
+        "n": value.n,
+        "span_days": value.span_days,
+        "mean": value.mean,
+        "mean_native": value.mean_native,
+        "sd": value.sd,
+        "cv": value.cv,
+        "trend": SlopeRead(
+            per_day=value.trend.per_day, per_week=value.trend.per_week, n=value.trend.n
+        ),
+    }
+    if value.band is None:
+        return TrendBaselineRead(**common)
+    return BandedBaselineRead(
+        **common,
+        band=BandRead(
+            low=value.band.low,
+            high=value.band.high,
+            half_width=value.band.half_width,
+            low_native=value.band.low_native,
+            high_native=value.band.high_native,
+        ),
+        deviation_sd=value.deviation_sd,
+        direction=value.direction,
+    )
+
+
+def _count(count: Count) -> CountRead:
+    """Render a count against its bar, with the `have of need` line."""
+    return CountRead(have=count.have, need=count.need, statement=str(count))
+
+
+def to_trend_read(resolved: WellnessTrend) -> WellnessTrendRead:
+    """Project a computed trend onto its read shape.
+
+    Public, and called by `backend/scripts/emit_wellness_trend_fixture.py` as
+    well as by the endpoint: the frontend's trend fixture is generated by
+    running the real domain through *this* function, so a mock cannot describe
+    a payload the API could not produce.
+    """
+    return WellnessTrendRead(
+        start=resolved.start,
+        end=resolved.end,
+        as_of=resolved.as_of,
+        metrics={
+            name: _metric_trend(found) for name, found in resolved.metrics.items()
+        },
+        readiness=_readiness(resolved.readiness),
+    )
+
+
+def _metric_trend(found: MetricTrend) -> MetricTrendRead:
+    """Render one metric's series, rolling mean and baseline(s)."""
+    return MetricTrendRead(
+        metric=found.metric,
+        unit=found.unit,
+        space=found.space,
+        series=[
+            TrendPointRead(
+                local_date=point.local_date,
+                value=point.value,
+                markers=None if point.standing is None else _standing(point.standing),
+            )
+            for point in found.series
+        ],
+        today=found.today,
+        rolling_mean_7d=RollingMeanRead(
+            mean=found.rolling_mean_7d.mean,
+            mean_native=found.rolling_mean_7d.mean_native,
+            n=found.rolling_mean_7d.n,
+        ),
+        baseline=_baseline(found.baseline),
+        by_context={
+            context: _baseline(value) for context, value in found.by_context.items()
+        },
+    )
+
+
+def _readiness(projection: Readiness) -> ReadinessRead:
+    """Render the readiness projection: a count, names and a quadrant label."""
+    outside = projection.markers_outside_band
+    return ReadinessRead(
+        as_of=projection.as_of,
+        markers_outside_band=MarkersOutsideBandRead(
+            count=outside.count,
+            of=outside.of,
+            statement=str(outside),
+            markers=[
+                OutsideMarkerRead(
+                    metric=marker.metric,
+                    direction=marker.direction,
+                    deviation_sd=marker.deviation_sd,
+                )
+                for marker in outside.markers
+            ],
+        ),
+        joint_state=(
+            None
+            if projection.joint_state is None
+            else JointStateRead(
+                key=projection.joint_state.key,
+                label=projection.joint_state.label,
+                hrv_deviation_sd=projection.joint_state.hrv_deviation_sd,
+                resting_hr_deviation_sd=projection.joint_state.resting_hr_deviation_sd,
+            )
+        ),
     )

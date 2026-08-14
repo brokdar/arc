@@ -483,6 +483,22 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         "weight_in_force": views.weight_in_force(
                             await wellness_service.weight_in_force(today)
                         ),
+                        # The projection, not the whole trend: the opener says
+                        # how many markers are off their own normal and which,
+                        # and `get_wellness_trend` has the series behind it.
+                        # Computed here because the alternative is the coach
+                        # reconstructing this athlete's normal from memory
+                        # every morning, which is the guessing this surface
+                        # exists to end.
+                        "readiness": views.wellness_readiness(
+                            (
+                                await wellness_service.trend(
+                                    start=today,
+                                    end=today + dt.timedelta(days=1),
+                                    metrics=[],
+                                )
+                            ).readiness
+                        ),
                     },
                     "anchors": anchors,
                     "week": views.plan_week(week),
@@ -1166,6 +1182,73 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     "weight_in_force": views.weight_in_force(
                         await service.weight_in_force(last - dt.timedelta(days=1))
                     ),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_wellness_trend(
+        start: str, end: str, metrics: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Read what the athlete's numbers *mean*, not just what they are.
+
+        `resting_hr: 54` is not a fact you can act on: fifty-four is alarming
+        for one athlete and a Tuesday for another. This answers every metric
+        against **this** athlete's own trailing-60-day baseline — the mean, the
+        normal band, and how far the last seven days sit from it in standard
+        deviations. It is the read to use before saying anything about a
+        trend.
+
+        Four things it is careful about, each of them a way these numbers could
+        be read as more than they are:
+
+        * **An immature baseline abstains.** Under 14 readings spanning 28
+          days, `baseline.kind` is `abstention` and there is **no** `mean`, no
+          `band` and no `deviation_sd` on it — only both counts and what it
+          would take to have one. Do not fill that in from the series
+          yourself; nine readings do not make a trend, and saying so is the
+          most useful thing you can do with them.
+        * **`deviation_sd` compares the seven-day mean to the baseline**, never
+          today to yesterday. One bad night can move it by three sevenths of an
+          SD at most. Every mean carries the `n` it was computed over.
+        * **A gap is `null`, never zero.** A date the athlete did not answer is
+          in the series with a null value; averaging it in as a zero is how a
+          missed morning becomes a resting heart rate of nought.
+        * **A voided morning still shows its numbers**, with `markers` on the
+          same object saying they are not evidence about today. HRV is never
+          pooled across statistic or context: `hrv_rmssd_ms` and `hrv_sdnn_ms`
+          are separate metrics, and `by_context` splits sleeping from daytime
+          spot samples, which are different distributions.
+
+        `readiness` counts how many markers sit outside their own band and
+        names each with a direction, and `joint_state` names the HRV x
+        resting-HR quadrant when both are mature — a **label**, not a verdict.
+        There is no readiness score here and there is not meant to be: whether
+        today is a day to train is your call, made out loud, with the
+        confounders and the gaps visible.
+
+        Args:
+            start: First local date of the series, `YYYY-MM-DD`, inclusive.
+            end: First local date **after** it — half-open `[start, end)`. At
+                most 371 days. The baseline still reaches 60 days back from
+                the last day of the range whatever you ask for.
+            metrics: Which metrics to answer for. Omit for all of them.
+                `resting_hr_bpm`, `hrv_rmssd_ms`, `hrv_sdnn_ms`,
+                `respiratory_rate_brpm`, `wrist_temperature_delta_c`, `spo2`,
+                `sleep_duration_s`, `weight_kg`, `sleep_quality`, `fatigue`,
+                `soreness`, `stress`, `motivation`.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                resolved = await WellnessService.from_session(session).trend(
+                    start=views.as_date(start, field="start"),
+                    end=views.as_date(end, field="end"),
+                    metrics=metrics,
+                )
+                return {
+                    "trend": views.wellness_trend(resolved),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 

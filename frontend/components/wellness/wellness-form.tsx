@@ -207,7 +207,14 @@ function Fields({
   ];
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={submit}>
+    // Named, so it is a landmark: the page now carries a trajectory chart per
+    // metric beside this form, and "Resting HR" is the accessible name of two
+    // quite different things without it.
+    <form
+      aria-label="Record this day"
+      className="flex flex-col gap-4"
+      onSubmit={submit}
+    >
       <Group label="Overnight">
         {sleep.map((spec) => (
           <NumberField
