@@ -67,6 +67,17 @@ from app.domain.wellness import (
     missing_dates,
     weight_in_force,
 )
+from app.domain.wellness_baseline import (
+    BASELINE_WINDOW_DAYS,
+    MARKERS,
+    MARKERS_BY_METRIC,
+    DaySample,
+    MetricTrend,
+    Readiness,
+    WellnessMetric,
+    readiness,
+    trend_for,
+)
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.persistence.wellness import WellnessDayRow, WellnessRepository
@@ -187,6 +198,26 @@ class WellnessWeeks:
     #: compliance, and skipping the blanks would show two thin weeks as
     #: adjacent full ones.
     weeks: tuple[WellnessWeek, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WellnessTrend:
+    """What :meth:`WellnessService.trend` answers with.
+
+    ``metrics`` holds only what the caller asked for; ``readiness`` is computed
+    over **every** marker regardless, because a projection whose denominator
+    depended on which metrics the caller happened to request would say
+    something different every call.
+    """
+
+    start: dt.date
+    end: dt.date
+    #: The day the baseline and the rolling mean are anchored to — the last day
+    #: of the requested range, so a historical range gets the baseline as it
+    #: stood then rather than today's.
+    as_of: dt.date
+    metrics: Mapping[WellnessMetric, MetricTrend]
+    readiness: Readiness
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +370,86 @@ class WellnessService:
         """
         zone = get_settings().matching.timezone
         return is_late_entry(row.local_date, row.created_at, zone)
+
+    async def trend(
+        self, *, start: dt.date, end: dt.date, metrics: Sequence[str] | None = None
+    ) -> WellnessTrend:
+        """The dated readings, rolling means and baselines over ``[start, end)``.
+
+        **The window read is wider than the range asked for.** A baseline looks
+        back sixty days from the anchor date, so a caller asking for the last
+        fortnight still gets a mature baseline behind it — the alternative is a
+        trend whose maturity depends on how much of it you happened to request,
+        which is the same number meaning different things on different calls.
+        One indexed scan either way (`local_date` is unique and indexed), which
+        is also why nothing here is cached: see
+        `app.domain.wellness_baseline` for why a stored baseline would be a
+        stale one.
+
+        Every marker is computed, not only the requested ones, because
+        ``readiness``'s denominator has to be a fact about the athlete rather
+        than about the query string.
+
+        Raises:
+            ValidationError: When the range is inverted or longer than
+                :data:`MAX_WELLNESS_RANGE_DAYS`, or a metric is not one this
+                surface knows — named, with the whole vocabulary.
+        """
+        self._check_range(start, end)
+        wanted = self._check_metrics(metrics)
+        # The anchor is the last day *in* the half-open range. An empty range
+        # has no last day, and the day before its start is the honest anchor:
+        # nothing in it has happened yet.
+        anchor = end - dt.timedelta(days=1)
+        window_start = min(start, anchor - dt.timedelta(days=BASELINE_WINDOW_DAYS - 1))
+        window_end = max(end, anchor + dt.timedelta(days=1))
+        rows, _ = await self._repository.range(
+            start=window_start,
+            end=window_end,
+            offset=0,
+            limit=(window_end - window_start).days,
+        )
+        days = [
+            DaySample(day=row.to_domain(), subjective_recalled=self.is_recalled(row))
+            for row in rows
+        ]
+        with domain_rules():
+            computed = {
+                marker.metric: trend_for(marker, days, start=start, end=end, on=anchor)
+                for marker in MARKERS
+            }
+            projection = readiness(computed, on=anchor)
+        return WellnessTrend(
+            start=start,
+            end=end,
+            as_of=anchor,
+            metrics={name: computed[name] for name in wanted},
+            readiness=projection,
+        )
+
+    @staticmethod
+    def _check_metrics(metrics: Sequence[str] | None) -> tuple[WellnessMetric, ...]:
+        """Resolve the requested metrics, refusing an unknown one by name.
+
+        Omitting them asks for every marker. An unknown one is refused with the
+        whole vocabulary in the message, because an error the caller cannot act
+        on costs a round trip it should never have paid for (the #19 lesson).
+
+        Raises:
+            ValidationError: Naming the offending metric and every legal one.
+        """
+        if not metrics:
+            return tuple(marker.metric for marker in MARKERS)
+        legal = ", ".join(MARKERS_BY_METRIC)
+        resolved: list[WellnessMetric] = []
+        for name in metrics:
+            marker = MARKERS_BY_METRIC.get(str(name))
+            if marker is None:
+                raise ValidationError(
+                    f"{name!r} is not a wellness metric. The vocabulary is: {legal}."
+                )
+            resolved.append(marker.metric)
+        return tuple(dict.fromkeys(resolved))
 
     async def weeks(self, *, start: dt.date, end: dt.date) -> WellnessWeeks:
         """Fold the series into Monday-to-Sunday weeks, one mean per metric.

@@ -211,7 +211,12 @@ source_modules = [
     "app.services.guardrails",
     "app.domain.proposals",
 ]
-forbidden_modules = ["app.domain.wellness"]
+# Both wellness modules: the baseline half is the one that would be tempting,
+# because it is where "this marker is 2 SD below normal" finally becomes a
+# number a rule could compare against. It is still not a verdict, and wiring it
+# into the constraint surface before the baselines have matured is exactly the
+# confabulation D6 refuses.
+forbidden_modules = ["app.domain.wellness", "app.domain.wellness_baseline"]
 
 [[tool.importlinter.contracts]]
 name = "Layered architecture"

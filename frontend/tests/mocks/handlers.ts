@@ -52,6 +52,7 @@ import {
   wellnessDay,
   wellnessInputs,
   wellnessRange,
+  wellnessTrend,
   wellnessWeightInForce,
   withMatch,
   workoutFixture,
@@ -1273,6 +1274,15 @@ export const handlers = [
         ? response(422).json({ detail: result.detail })
         : response(200).json(result.day);
     },
+  ),
+  http.get("/api/v1/wellness/trend", ({ query, response }) =>
+    response(200).json(
+      wellnessTrend(
+        query.get("start") ?? "",
+        query.get("end") ?? "",
+        query.getAll("metric"),
+      ),
+    ),
   ),
   http.get("/api/v1/wellness/weight", ({ query, response }) => {
     const on = query.get("on") ?? "";

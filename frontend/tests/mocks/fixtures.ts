@@ -3,6 +3,7 @@ import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
 import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
+import { WELLNESS_TREND } from "./generated-wellness-trend";
 
 type Schemas = components["schemas"];
 
@@ -3925,4 +3926,77 @@ function addOneDay(isoDate: string): string {
   const next = new Date(`${isoDate}T12:00:00Z`);
   next.setUTCDate(next.getUTCDate() + 1);
   return next.toISOString().slice(0, 10);
+}
+
+/**
+ * `GET /wellness/trend` over an arbitrary range, from the generated document.
+ *
+ * The baselines, bands and maturity verdicts come from
+ * `generated-wellness-trend.ts`, which was produced by running the real domain
+ * and the real API projection over a synthetic sixty-day athlete — a fixture
+ * that stated them by hand could describe an answer the service cannot
+ * produce, and the component test would then agree with the fixture rather
+ * than the page.
+ *
+ * What is done here is only calendar arithmetic. The document ends on a fixed
+ * date so the generated file is stable in git; this **rebases** it so its last
+ * day is the last day of the requested range, then clips the series to that
+ * range and pads any date the document does not reach with an explicit gap —
+ * exactly what the real read does for a range wider than its own history.
+ * Every number survives the move untouched.
+ */
+export function wellnessTrend(
+  start: string,
+  end: string,
+  metrics: readonly string[],
+): Schemas["WellnessTrendRead"] {
+  const asOf = addDays(end, -1);
+  const shift = daysBetween(WELLNESS_TREND.as_of, asOf);
+  const dates: string[] = [];
+  for (let date = start; date < end; date = addDays(date, 1)) {
+    dates.push(date);
+  }
+  const wanted =
+    metrics.length === 0 ? Object.keys(WELLNESS_TREND.metrics) : metrics;
+  return {
+    start,
+    end,
+    as_of: asOf,
+    metrics: Object.fromEntries(
+      wanted
+        .filter((name) => name in WELLNESS_TREND.metrics)
+        .map((name) => {
+          const metric = WELLNESS_TREND.metrics[name];
+          const moved = new Map(
+            metric.series.map((point) => [
+              addDays(point.local_date, shift),
+              point,
+            ]),
+          );
+          return [
+            name,
+            {
+              ...metric,
+              series: dates.map(
+                (date) =>
+                  moved.get(date) ?? {
+                    local_date: date,
+                    value: null,
+                    markers: null,
+                  },
+              ),
+            },
+          ];
+        }),
+    ),
+    readiness: { ...WELLNESS_TREND.readiness, as_of: asOf },
+  };
+}
+
+/** Whole days from `from` to `to`, both ISO dates. */
+function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) /
+      86_400_000,
+  );
 }

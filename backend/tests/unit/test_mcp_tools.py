@@ -92,6 +92,7 @@ EXPECTED_TOOLS = {
     "get_purposes",
     "get_wellness_inputs",
     "get_wellness",
+    "get_wellness_trend",
     "get_wellness_weeks",
     # writes
     "append_anchor",
@@ -127,6 +128,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_purposes", {}),
     ("get_wellness_inputs", {}),
     ("get_wellness", {"start": "2026-08-10", "end": "2026-08-17"}),
+    ("get_wellness_trend", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
 )
 

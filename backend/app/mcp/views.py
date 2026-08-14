@@ -38,9 +38,17 @@ from app.domain.wellness import (
     SUBJECTIVE_SCALES,
     BodyRegion,
     Confounder,
+    HrvContext,
     WeightInForce,
     WellnessProvenance,
     WellnessSource,
+)
+from app.domain.wellness_baseline import (
+    Abstention,
+    Baseline,
+    Count,
+    MetricTrend,
+    Readiness,
 )
 from app.domain.workout import workout_body_to_json
 from app.domain.zones import Zone
@@ -63,7 +71,12 @@ from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary
 from app.services.plan import PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
-from app.services.wellness import DayResult, WellnessWeek, WellnessWeeks
+from app.services.wellness import (
+    DayResult,
+    WellnessTrend,
+    WellnessWeek,
+    WellnessWeeks,
+)
 from app.services.workouts import WorkoutDraft
 from app.services.zones import ResolvedZones
 
@@ -947,4 +960,180 @@ def wellness_day_result(result: DayResult) -> dict[str, Any]:
         "local_date": result.local_date.isoformat(),
         "outcome": result.outcome.value,
         "changed": dict(result.changed),
+    }
+
+
+def wellness_baseline(value: Baseline | Abstention) -> dict[str, Any]:
+    """A baseline, or an abstention that names what it still needs.
+
+    **An immature baseline carries no ``mean``, no ``band`` and no
+    ``deviation_sd`` key at all.** Not null — absent. A null in a number's slot
+    is a zero to the next reader, and a caveat beside a number is advice a
+    model under pressure to be helpful will drop. What the abstention does
+    carry is both counts and its own unlock condition, which is something a
+    coach can act on.
+    """
+    if isinstance(value, Abstention):
+        return {
+            "kind": "abstention",
+            "mature": False,
+            "metric": value.metric.value,
+            **_context(value.hrv_context),
+            "readings": _count(value.readings),
+            "span_days": _count(value.span_days),
+            "reason": value.reason,
+        }
+    answer: dict[str, Any] = {
+        "kind": "banded" if value.band is not None else "trend",
+        "mature": True,
+        "metric": value.metric.value,
+        **_context(value.hrv_context),
+        #: `ln` for HRV, `linear` for everything else. Every statistic on this
+        #: object is in it, so `deviation_sd` is `(rolling_mean_7d - mean) / sd`
+        #: on the numbers as printed.
+        "space": value.space.value,
+        "unit": value.unit,
+        #: Readings **after** exclusions: a confounder-voided day and a recalled
+        #: rating are not in it, so a thin `n` has a visible reason.
+        "n": value.n,
+        "span_days": value.span_days,
+        "mean": round(value.mean, 4),
+        "mean_native": round(value.mean_native, 4),
+        "sd": round(value.sd, 4),
+        "cv": None if value.cv is None else round(value.cv, 4),
+        "trend_per_week": round(value.trend.per_week, 4),
+    }
+    if value.band is not None:
+        answer["band"] = {
+            "low": round(value.band.low, 4),
+            "high": round(value.band.high, 4),
+            "half_width": round(value.band.half_width, 4),
+            "low_native": round(value.band.low_native, 4),
+            "high_native": round(value.band.high_native, 4),
+        }
+        answer["deviation_sd"] = (
+            None if value.deviation_sd is None else round(value.deviation_sd, 3)
+        )
+        answer["direction"] = None if value.direction is None else value.direction.value
+    return answer
+
+
+def _context(context: HrvContext | None) -> dict[str, Any]:
+    """Name the HRV context a baseline reports on, when there is one."""
+    return {} if context is None else {"hrv_context": context.value}
+
+
+def _count(count: Count) -> dict[str, Any]:
+    """A count against its bar, with the `have of need` line spelled out."""
+    return {"have": count.have, "need": count.need, "statement": str(count)}
+
+
+def wellness_metric_trend(found: MetricTrend) -> dict[str, Any]:
+    """One metric's dated readings, seven-day mean and baseline."""
+    return {
+        "metric": found.metric.value,
+        "unit": found.unit,
+        "space": found.space.value,
+        "series": [
+            {
+                "local_date": point.local_date.isoformat(),
+                #: Null on a date with no reading — never zero and never
+                #: interpolated. The gap is the honest picture.
+                "value": point.value,
+                **(
+                    {}
+                    if point.standing is None
+                    else {
+                        "markers": {
+                            "actionable": point.standing.actionable,
+                            "invalidated_by": [
+                                member.value for member in point.standing.invalidated_by
+                            ],
+                            "statement": point.standing.statement,
+                        }
+                    }
+                ),
+            }
+            for point in found.series
+        ],
+        "today": found.today,
+        "rolling_mean_7d": {
+            "mean": (
+                None
+                if found.rolling_mean_7d.mean is None
+                else round(found.rolling_mean_7d.mean, 4)
+            ),
+            "mean_native": (
+                None
+                if found.rolling_mean_7d.mean_native is None
+                else round(found.rolling_mean_7d.mean_native, 4)
+            ),
+            #: Never absent. A seven-day mean over three readings and one over
+            #: seven are different objects.
+            "n": found.rolling_mean_7d.n,
+        },
+        "baseline": wellness_baseline(found.baseline),
+        **(
+            {}
+            if not found.by_context
+            else {
+                "by_context": {
+                    context.value: wellness_baseline(value)
+                    for context, value in found.by_context.items()
+                }
+            }
+        ),
+    }
+
+
+def wellness_readiness(projection: Readiness) -> dict[str, Any]:
+    """How many markers are outside their band, which, and which way.
+
+    **A count, never a score.** There is no `readiness_score` here, no
+    `recommendation` and no `verdict`, and `test_readiness_field_inventory`
+    fails if one ever appears. Whether today is a day to train is the coach's
+    call, made out loud, with the confounders and the gaps visible.
+    """
+    outside = projection.markers_outside_band
+    answer: dict[str, Any] = {
+        "as_of": projection.as_of.isoformat(),
+        "markers_outside_band": {
+            "count": outside.count,
+            #: The denominator excludes markers whose baseline is immature and
+            #: says so: `2 of 4`, not `2 of 5`.
+            "of": outside.of,
+            "statement": str(outside),
+            "markers": [
+                {
+                    "metric": marker.metric.value,
+                    "direction": marker.direction.value,
+                    "deviation_sd": round(marker.deviation_sd, 3),
+                }
+                for marker in outside.markers
+            ],
+        },
+    }
+    if projection.joint_state is not None:
+        answer["joint_state"] = {
+            "key": projection.joint_state.key.value,
+            "label": projection.joint_state.label,
+            "hrv_deviation_sd": round(projection.joint_state.hrv_deviation_sd, 3),
+            "resting_hr_deviation_sd": round(
+                projection.joint_state.resting_hr_deviation_sd, 3
+            ),
+        }
+    return answer
+
+
+def wellness_trend(trend: WellnessTrend) -> dict[str, Any]:
+    """The whole trend read: metrics keyed by name, plus the projection."""
+    return {
+        "start": trend.start.isoformat(),
+        "end": trend.end.isoformat(),
+        "as_of": trend.as_of.isoformat(),
+        "metrics": {
+            name.value: wellness_metric_trend(found)
+            for name, found in trend.metrics.items()
+        },
+        "readiness": wellness_readiness(trend.readiness),
     }

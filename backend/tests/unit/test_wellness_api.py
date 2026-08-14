@@ -570,3 +570,549 @@ async def test_a_range_longer_than_a_year_is_refused_with_the_bound_named(
 
     assert response.status_code == 422, response.text
     assert "371" in response.json()["detail"]
+
+
+# --- the trend read: baselines, gaps and the readiness projection -------------
+#
+# The maths itself is `test_domain_wellness_baseline.py`. What is asserted here
+# is the *wire*: which keys the served objects carry, which they must not, and
+# that an abstention reaches the client as a missing key rather than a null.
+
+TREND = "/api/v1/wellness/trend"
+
+#: Every key `readiness` may carry, and nothing else. The closed set is the
+#: point: this projection counts and names, and a key called `readiness_score`
+#: or `recommendation` appearing on it would be arc emitting the verdict it
+#: exists not to emit — the deload week triggered by an alcohol artefact, with
+#: a number attached.
+READINESS_KEYS = {"as_of", "markers_outside_band", "joint_state"}
+
+#: Names that must not appear anywhere in the readiness projection, at any
+#: depth. A verdict smuggled in as a nested field is still a verdict.
+FORBIDDEN_READINESS_KEYS = {"readiness_score", "recommendation", "verdict", "score"}
+
+
+async def seed_days(client: AsyncClient, days: list[dict[str, Any]]) -> None:
+    """Write a batch of dated days through the backfill endpoint."""
+    response = await client.post("/api/v1/wellness/backfill", json={"days": days})
+    assert response.status_code == 200, response.text
+
+
+def day_at(offset: int, **fields: Any) -> dict[str, Any]:
+    """One backfill entry ``offset`` days before today."""
+    return {
+        "local_date": (TODAY - dt.timedelta(days=offset)).isoformat(),
+        **fields,
+    }
+
+
+async def read_trend(
+    client: AsyncClient,
+    *,
+    metric: str | list[str] | None = None,
+    start: dt.date | None = None,
+    end: dt.date | None = None,
+) -> dict[str, Any]:
+    """Read the trend over the trailing 60 days unless told otherwise."""
+    params: dict[str, Any] = {
+        "start": (start or TODAY - dt.timedelta(days=59)).isoformat(),
+        "end": (end or TODAY + dt.timedelta(days=1)).isoformat(),
+    }
+    if metric is not None:
+        params["metric"] = metric
+    response = await client.get(TREND, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def keys_anywhere(value: Any) -> set[str]:
+    """Every key appearing anywhere in a nested JSON value."""
+    if isinstance(value, dict):
+        return set(value) | {
+            name for item in value.values() for name in keys_anywhere(item)
+        }
+    if isinstance(value, list):
+        return {name for item in value for name in keys_anywhere(item)}
+    return set()
+
+
+# --- AC-9: an immature baseline is an abstention, not a number with a caveat --
+
+
+async def test_a_thin_hrv_series_serves_an_abstention_naming_both_counts(
+    client: AsyncClient,
+) -> None:
+    # Eleven sleeping readings over twenty-two days: short on both bars.
+    await seed_days(
+        client,
+        [
+            day_at(offset, hrv_ms=55.0, hrv_metric="rmssd", hrv_context="sleeping")
+            for offset in range(0, 22, 2)
+        ][:11],
+    )
+
+    baseline = (await read_trend(client, metric="hrv_rmssd_ms"))["metrics"][
+        "hrv_rmssd_ms"
+    ]["baseline"]
+
+    assert baseline["kind"] == "abstention"
+    assert baseline["mature"] is False
+    assert baseline["readings"] == {"have": 11, "need": 14, "statement": "11 of 14"}
+    assert baseline["span_days"] == {"have": 21, "need": 28, "statement": "21 of 28"}
+    # Absent from the object, not present-and-null.
+    for absent in ("mean", "band", "deviation_sd"):
+        assert absent not in baseline, f"an abstention must not carry {absent}"
+
+
+async def test_crossing_both_bars_flips_the_same_call_to_a_baseline(
+    client: AsyncClient,
+) -> None:
+    # Fourteen readings whose first and last are 27 days apart: a span of 28,
+    # which is the inclusive boundary.
+    offsets = [index * 2 for index in range(14)]
+    offsets[-1] = 27
+    await seed_days(
+        client,
+        [
+            day_at(
+                offset,
+                hrv_ms=52.0 + (offset % 7),
+                hrv_metric="rmssd",
+                hrv_context="sleeping",
+            )
+            for offset in offsets
+        ],
+    )
+
+    baseline = (await read_trend(client, metric="hrv_rmssd_ms"))["metrics"][
+        "hrv_rmssd_ms"
+    ]["baseline"]
+
+    assert baseline["kind"] == "banded"
+    assert baseline["mature"] is True
+    assert baseline["n"] == 14
+    assert baseline["span_days"] == 28
+    for present in ("mean", "band", "deviation_sd"):
+        assert present in baseline, f"a mature baseline must carry {present}"
+    assert baseline["hrv_context"] == "sleeping"
+
+
+async def test_an_empty_database_abstains_rather_than_raising(
+    client: AsyncClient,
+) -> None:
+    baseline = (await read_trend(client, metric="hrv_rmssd_ms"))["metrics"][
+        "hrv_rmssd_ms"
+    ]["baseline"]
+
+    assert baseline["kind"] == "abstention"
+    assert baseline["readings"]["have"] == 0
+
+
+# --- AC-39: every rolling statistic carries the n behind it -------------------
+
+
+async def test_the_seven_day_mean_carries_the_n_it_was_computed_over(
+    client: AsyncClient,
+) -> None:
+    await seed_days(
+        client, [day_at(offset, resting_hr_bpm=48 + offset % 3) for offset in range(3)]
+    )
+
+    rolling = (await read_trend(client, metric="resting_hr_bpm"))["metrics"][
+        "resting_hr_bpm"
+    ]["rolling_mean_7d"]
+
+    assert rolling["n"] == 3
+    assert rolling["mean"] == pytest.approx((48 + 49 + 50) / 3)
+
+
+async def test_a_seven_day_mean_over_one_reading_says_so(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, [day_at(2, resting_hr_bpm=51)])
+
+    rolling = (await read_trend(client, metric="resting_hr_bpm"))["metrics"][
+        "resting_hr_bpm"
+    ]["rolling_mean_7d"]
+
+    assert rolling == {"mean": 51.0, "mean_native": 51.0, "n": 1}
+
+
+async def test_the_weekly_fold_carries_its_n_too(
+    client: AsyncClient, session_factory: Any
+) -> None:
+    # The weekly fold has no HTTP adapter — its only surface is the MCP tool
+    # `get_wellness_weeks`, whose wire shape `test_mcp_wellness.py` asserts. The
+    # rule is the same one, so it is pinned here against the service that
+    # produces it: a mean without its `n` is arithmetic that looks identical
+    # whether it came from three readings or seven.
+    from app.services.wellness import WellnessService
+
+    monday = TODAY - dt.timedelta(days=TODAY.weekday())
+    await seed_days(
+        client,
+        [
+            {
+                "local_date": (monday + dt.timedelta(days=index)).isoformat(),
+                "resting_hr_bpm": 48 + index,
+            }
+            for index in range(3)
+        ],
+    )
+
+    async with session_factory() as session:
+        summary = await WellnessService.from_session(session).weeks(
+            start=monday, end=monday + dt.timedelta(days=7)
+        )
+
+    [week] = summary.weeks
+    [resting] = [mean for mean in week.metrics if mean.metric == "resting_hr_bpm"]
+    assert resting.n == 3
+    assert resting.mean == pytest.approx(49.0)
+
+
+# --- AC-32: a gap is a gap, never a zero and never an interpolation -----------
+
+
+async def test_a_date_with_no_reading_is_an_explicit_gap(
+    client: AsyncClient,
+) -> None:
+    await seed_days(
+        client,
+        [day_at(4, resting_hr_bpm=50), day_at(2, resting_hr_bpm=52)],
+    )
+
+    series = (
+        await read_trend(
+            client,
+            metric="resting_hr_bpm",
+            start=TODAY - dt.timedelta(days=4),
+            end=TODAY - dt.timedelta(days=1),
+        )
+    )["metrics"]["resting_hr_bpm"]["series"]
+
+    assert [point["local_date"] for point in series] == [
+        (TODAY - dt.timedelta(days=offset)).isoformat() for offset in (4, 3, 2)
+    ]
+    assert [point["value"] for point in series] == [50, None, 52]
+    # The failure this forbids: a gap rendered as a value, which draws a line
+    # to zero and reads as a heart that stopped.
+    assert 0 not in [point["value"] for point in series]
+
+
+async def test_a_gap_at_the_first_date_of_the_range(client: AsyncClient) -> None:
+    await seed_days(client, [day_at(2, resting_hr_bpm=52)])
+
+    series = (
+        await read_trend(
+            client,
+            metric="resting_hr_bpm",
+            start=TODAY - dt.timedelta(days=4),
+            end=TODAY - dt.timedelta(days=1),
+        )
+    )["metrics"]["resting_hr_bpm"]["series"]
+
+    assert series[0]["value"] is None
+    assert series[0]["markers"] is None
+    assert series[-1]["value"] == 52
+
+
+async def test_a_gap_at_the_last_date_of_the_range(client: AsyncClient) -> None:
+    await seed_days(client, [day_at(4, resting_hr_bpm=50)])
+
+    series = (
+        await read_trend(
+            client,
+            metric="resting_hr_bpm",
+            start=TODAY - dt.timedelta(days=4),
+            end=TODAY - dt.timedelta(days=1),
+        )
+    )["metrics"]["resting_hr_bpm"]["series"]
+
+    assert series[0]["value"] == 50
+    assert series[-1]["value"] is None
+
+
+async def test_an_entirely_empty_range_is_an_empty_series_not_a_404(
+    client: AsyncClient,
+) -> None:
+    body = await read_trend(
+        client,
+        metric="resting_hr_bpm",
+        start=TODAY - dt.timedelta(days=3),
+        end=TODAY,
+    )
+
+    series = body["metrics"]["resting_hr_bpm"]["series"]
+    assert [point["value"] for point in series] == [None, None, None]
+    assert body["metrics"]["resting_hr_bpm"]["today"] is None
+
+
+async def test_a_single_day_range_returns_a_single_point(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, [day_at(0, resting_hr_bpm=47)])
+
+    body = await read_trend(
+        client,
+        metric="resting_hr_bpm",
+        start=TODAY,
+        end=TODAY + dt.timedelta(days=1),
+    )
+
+    series = body["metrics"]["resting_hr_bpm"]["series"]
+    assert len(series) == 1
+    assert series[0]["value"] == 47
+    assert body["as_of"] == TODAY.isoformat()
+
+
+async def test_the_read_answers_per_requested_metric_and_refuses_an_unknown_one(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, [day_at(0, resting_hr_bpm=47, weight_kg=78.2)])
+
+    body = await read_trend(client, metric=["resting_hr_bpm", "weight_kg"])
+    assert set(body["metrics"]) == {"resting_hr_bpm", "weight_kg"}
+
+    response = await client.get(
+        TREND,
+        params={
+            "start": TODAY.isoformat(),
+            "end": (TODAY + dt.timedelta(days=1)).isoformat(),
+            "metric": "hrv",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+# --- AC-36: a voided morning says so beside its own numbers ------------------
+
+
+async def test_an_invalidated_day_reports_its_standing_beside_the_readings(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, [day_at(1, resting_hr_bpm=43, confounders=["alcohol"])])
+
+    series = (await read_trend(client, metric="resting_hr_bpm"))["metrics"][
+        "resting_hr_bpm"
+    ]["series"]
+    point = next(
+        item
+        for item in series
+        if item["local_date"] == (TODAY - dt.timedelta(days=1)).isoformat()
+    )
+
+    # The number is still here: it is real and it is part of the history. What
+    # is withheld is its standing as evidence about today — on the same object,
+    # because a coach that has to look elsewhere will one day not look.
+    assert point["value"] == 43
+    assert point["markers"]["actionable"] is False
+    assert point["markers"]["invalidated_by"] == ["alcohol"]
+    assert point["markers"]["statement"] == "recorded, not actionable: alcohol"
+
+
+async def test_a_confounder_that_does_not_invalidate_leaves_markers_actionable(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, [day_at(1, resting_hr_bpm=43, confounders=["travel"])])
+
+    series = (await read_trend(client, metric="resting_hr_bpm"))["metrics"][
+        "resting_hr_bpm"
+    ]["series"]
+    point = next(item for item in series if item["value"] == 43)
+
+    assert point["markers"]["actionable"] is True
+    assert point["markers"]["statement"] == "recorded"
+
+
+async def test_multiple_invalidating_confounders_are_all_named(
+    client: AsyncClient,
+) -> None:
+    await seed_days(
+        client,
+        [
+            day_at(
+                1,
+                resting_hr_bpm=43,
+                confounders=["alcohol", "short_sleep", "travel"],
+            )
+        ],
+    )
+
+    series = (await read_trend(client, metric="resting_hr_bpm"))["metrics"][
+        "resting_hr_bpm"
+    ]["series"]
+    point = next(item for item in series if item["value"] == 43)
+
+    assert point["markers"]["invalidated_by"] == ["alcohol", "short_sleep"]
+    assert "travel" not in point["markers"]["statement"]
+
+
+# --- AC-40: readiness counts, and the field inventory that keeps it a count ---
+
+
+#: Per-marker jitter, so a settled series has a non-zero SD to deviate from.
+#: Every marker moves through four values on a four-day cycle, which is a
+#: baseline with a real spread rather than a flat line whose band is zero-wide.
+_STEP = {
+    "resting_hr_bpm": 1,
+    "hrv_ms": 1.0,
+    "respiratory_rate_brpm": 0.2,
+    "wrist_temperature_delta_c": 0.05,
+    "spo2": 0.002,
+}
+
+#: The base value each marker jitters around.
+SETTLED: dict[str, float] = {
+    "resting_hr_bpm": 48,
+    "hrv_ms": 55.0,
+    "respiratory_rate_brpm": 13.0,
+    "wrist_temperature_delta_c": -0.2,
+    "spo2": 0.97,
+}
+
+
+def _hrv(fields: dict[str, Any]) -> dict[str, Any]:
+    """Attach the HRV discriminators when the day carries an HRV reading."""
+    if "hrv_ms" in fields:
+        fields |= {"hrv_metric": "rmssd", "hrv_context": "sleeping"}
+    return fields
+
+
+def settled_series(
+    *,
+    shifted: dict[str, float] | None = None,
+    markers: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Sixty days of a settled athlete, with an optional shifted last week.
+
+    Without ``shifted`` every day follows the same four-day jitter, so the
+    trailing seven-day mean sits inside the band the whole series defines —
+    which is what "nothing is outside" has to look like to be a real fixture
+    rather than a flat line.
+    """
+    base = SETTLED if markers is None else markers
+    days: list[dict[str, Any]] = []
+    for offset in range(60):
+        fields: dict[str, Any] = {
+            name: round(value + (offset % 4) * _STEP[name], 4)
+            for name, value in base.items()
+        }
+        if shifted is not None and offset < 7:
+            fields |= shifted
+        days.append(day_at(offset, **_hrv(fields)))
+    return days
+
+
+async def test_readiness_names_every_marker_outside_its_band_with_a_direction(
+    client: AsyncClient,
+) -> None:
+    await seed_days(
+        client,
+        settled_series(
+            shifted={
+                "resting_hr_bpm": 60,
+                "hrv_ms": 38.0,
+                "respiratory_rate_brpm": 14.5,
+                "wrist_temperature_delta_c": 0.5,
+                "spo2": 0.99,
+            }
+        ),
+    )
+
+    outside = (await read_trend(client))["readiness"]["markers_outside_band"]
+
+    assert outside["of"] == 5
+    assert outside["count"] == 5
+    assert outside["statement"] == "5 of 5"
+    directions = {item["metric"]: item["direction"] for item in outside["markers"]}
+    assert directions["resting_hr_bpm"] == "above"
+    assert directions["hrv_rmssd_ms"] == "below"
+    # A count and five names. No verdict travels with it.
+    assert set(outside) == {"count", "of", "statement", "markers"}
+
+
+async def test_readiness_field_inventory(client: AsyncClient) -> None:
+    await seed_days(client, settled_series())
+
+    projection = (await read_trend(client))["readiness"]
+
+    assert set(projection) <= READINESS_KEYS
+    assert "markers_outside_band" in projection
+    # At any depth: a verdict smuggled in as a nested field is still a verdict,
+    # and the whole point of this surface is that arc counts and abstains while
+    # the coach decides out loud.
+    assert not keys_anywhere(projection) & FORBIDDEN_READINESS_KEYS
+
+
+async def test_zero_markers_outside_still_returns_the_projection(
+    client: AsyncClient,
+) -> None:
+    await seed_days(client, settled_series())
+
+    outside = (await read_trend(client))["readiness"]["markers_outside_band"]
+
+    assert outside["count"] == 0
+    assert outside["of"] == 5
+    assert outside["markers"] == []
+
+
+async def test_an_immature_marker_leaves_the_denominator(
+    client: AsyncClient,
+) -> None:
+    days = settled_series(
+        markers={name: value for name, value in SETTLED.items() if name != "spo2"},
+        shifted={"resting_hr_bpm": 60, "hrv_ms": 38.0},
+    )
+    # SpO2 on four days only: present, and nowhere near a baseline.
+    days += [day_at(offset, spo2=0.97) for offset in (61, 62, 63, 64)]
+    await seed_days(client, days)
+
+    body = await read_trend(client, start=TODAY - dt.timedelta(days=64))
+    outside = body["readiness"]["markers_outside_band"]
+
+    # Four of five markers can speak, and the denominator says four — not five,
+    # which would make two outside look calmer than it is.
+    assert outside["of"] == 4
+    assert outside["count"] == 2
+    assert body["metrics"]["spo2"]["baseline"]["kind"] == "abstention"
+
+
+async def test_the_joint_state_is_absent_rather_than_guessed(
+    client: AsyncClient,
+) -> None:
+    # Resting HR present and mature, HRV absent entirely.
+    await seed_days(
+        client,
+        [day_at(offset, resting_hr_bpm=48 + offset % 3) for offset in range(60)],
+    )
+
+    projection = (await read_trend(client))["readiness"]
+
+    assert "joint_state" not in projection
+
+
+async def test_the_joint_state_names_the_quadrant_when_both_are_mature(
+    client: AsyncClient,
+) -> None:
+    await seed_days(
+        client,
+        settled_series(shifted={"resting_hr_bpm": 60, "hrv_ms": 38.0}),
+    )
+
+    state = (await read_trend(client))["readiness"]["joint_state"]
+
+    assert state["key"] == "hrv_low_rhr_high"
+    assert state["label"] == "HRV below baseline, resting HR above baseline"
+
+
+async def test_the_trend_read_needs_a_session(anon_client: AsyncClient) -> None:
+    response = await anon_client.get(
+        TREND,
+        params={
+            "start": TODAY.isoformat(),
+            "end": (TODAY + dt.timedelta(days=1)).isoformat(),
+        },
+    )
+
+    assert response.status_code == 401

@@ -7,6 +7,7 @@ import { WellnessView } from "@/components/wellness/wellness-view";
 import { addDays, todayIsoDate, weekdayLabel } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
 import { seedWellnessDay, wellnessDay } from "@/tests/mocks/fixtures";
+import { WELLNESS_TREND } from "@/tests/mocks/generated-wellness-trend";
 
 /**
  * `next/navigation`, reading jsdom's own address bar — the same mock
@@ -64,6 +65,19 @@ function renderWellness() {
   );
 }
 
+/**
+ * The capture form, as a scope.
+ *
+ * The page carries a trajectory panel per metric beside the form, and both
+ * name the metric — "Resting HR" is a text input in one and a chart's
+ * accessible name in the other. A bare `findByLabelText` cannot tell them
+ * apart, and it should not have to: a test about what the athlete types
+ * belongs inside the form.
+ */
+async function form() {
+  return within(await screen.findByRole("form", { name: "Record this day" }));
+}
+
 /** The row of the history table for one date, found by the day it names. */
 async function rowFor(date: string) {
   const table = await screen.findByRole("table");
@@ -89,9 +103,10 @@ describe("WellnessView", () => {
     const user = userEvent.setup();
     renderWellness();
 
-    await user.type(await screen.findByLabelText(/Resting HR/), "46");
-    await user.type(screen.getByLabelText(/Slept/), "7.5");
-    await user.selectOptions(await screen.findByLabelText(/Fatigue/), "3");
+    const fields = await form();
+    await user.type(fields.getByLabelText(/Resting HR/), "46");
+    await user.type(fields.getByLabelText(/Slept/), "7.5");
+    await user.selectOptions(fields.getByLabelText(/Fatigue/), "3");
     await user.click(screen.getByRole("button", { name: "Save the day" }));
 
     await screen.findByRole("status");
@@ -203,11 +218,9 @@ describe("WellnessView", () => {
     const user = userEvent.setup();
     renderWellness();
 
-    await user.type(await screen.findByLabelText(/^HRV/), "58");
-    await user.selectOptions(
-      await screen.findByLabelText(/HRV statistic/),
-      "sdnn",
-    );
+    const fields = await form();
+    await user.type(fields.getByLabelText(/^HRV/), "58");
+    await user.selectOptions(fields.getByLabelText(/HRV statistic/), "sdnn");
     await user.selectOptions(
       screen.getByLabelText(/How it was taken/),
       "waking_spot",
@@ -223,7 +236,7 @@ describe("WellnessView", () => {
     const user = userEvent.setup();
     renderWellness();
 
-    await user.type(await screen.findByLabelText(/^HRV/), "58");
+    await user.type((await form()).getByLabelText(/^HRV/), "58");
     await user.click(screen.getByRole("button", { name: "Save the day" }));
 
     // Said beside the field rather than after a round trip.
@@ -244,7 +257,7 @@ describe("WellnessView", () => {
     const user = userEvent.setup();
     renderWellness();
 
-    await user.type(await screen.findByLabelText(/^HRV/), "57");
+    await user.type((await form()).getByLabelText(/^HRV/), "57");
     await user.click(screen.getByRole("button", { name: "Save the day" }));
 
     await screen.findByRole("status");
@@ -261,5 +274,112 @@ describe("WellnessView", () => {
     expect(
       await screen.findByText("2 of 28 days recorded"),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The generated fixture's own sentence for a metric that cannot yet speak.
+ *
+ * Read out of the payload rather than typed here: the whole point of serving
+ * `reason` is that the maturity rule lives in one place, and a copy in a test
+ * would be the second one.
+ */
+function abstentionReason(metric: string): string {
+  const baseline = WELLNESS_TREND.metrics[metric]?.baseline;
+  if (baseline === undefined || baseline.kind !== "abstention") {
+    throw new Error(`${metric} is not an abstention in the fixture`);
+  }
+  return baseline.reason;
+}
+
+/**
+ * The trajectory half of the page (AC-59).
+ *
+ * The fixture behind these is `tests/mocks/generated-wellness-trend.ts`, whose
+ * every baseline, band and maturity verdict was produced by running the real
+ * domain and the real API projection over a synthetic sixty-day athlete. The
+ * assertions below are therefore about the *page*: what it does with a
+ * baseline that cannot speak yet.
+ */
+describe("WellnessView trajectories", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/wellness");
+  });
+
+  it("charts a metric and names its normal band", async () => {
+    renderWellness();
+
+    // Resting HR is the mature case in the fixture: sixty mornings, a band the
+    // domain computed, and a line to draw.
+    const panel = (await screen.findByRole("region", {
+      name: /Resting HR/,
+    })) as HTMLElement;
+    expect(within(panel).getByText(/normal band/i)).toBeInTheDocument();
+    expect(panel.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("abstains on an immature baseline with the reason the API gave", async () => {
+    renderWellness();
+
+    const panel = (await screen.findByRole("region", {
+      name: /HRV/,
+    })) as HTMLElement;
+
+    // The component, not a dash somebody typed — and the sentence is the
+    // API's, so a UI copy of "not enough data" cannot drift from the rule.
+    const abstention = within(panel).getByRole("img", {
+      name: /^Not assessed:/,
+    });
+    expect(abstention).toHaveAccessibleName(
+      `Not assessed: ${abstentionReason("hrv_rmssd_ms")}`,
+    );
+    // The series still charts: nine readings are worth looking at, they are
+    // just not worth a baseline.
+    expect(panel.querySelector("canvas")).not.toBeNull();
+    expect(within(panel).queryByText(/normal band/i)).not.toBeInTheDocument();
+  });
+
+  it("renders no chart at all for a metric with no readings", async () => {
+    renderWellness();
+
+    const panel = (await screen.findByRole("region", {
+      name: /Blood oxygen/,
+    })) as HTMLElement;
+
+    // Not an empty chart: a plot with nothing in it is a claim that there was
+    // something to plot.
+    expect(panel.querySelector("canvas")).toBeNull();
+    expect(
+      within(panel).getByRole("img", { name: /^Not assessed:/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a trend and no band where a band would be a lie", async () => {
+    renderWellness();
+
+    const panel = (await screen.findByRole("region", {
+      name: /Weight/,
+    })) as HTMLElement;
+
+    // Body weight moves on a scale of weeks; a daily SD deviation from it is a
+    // statement nobody should make, so the API sends no band and the page
+    // shows the trend instead.
+    expect(within(panel).queryByText(/normal band/i)).not.toBeInTheDocument();
+    expect(within(panel).getByText(/per week/i)).toBeInTheDocument();
+  });
+
+  it("counts the markers outside their band without scoring them", async () => {
+    renderWellness();
+
+    const summary = await screen.findByTestId("wellness-readiness");
+
+    expect(summary).toHaveTextContent(
+      `${WELLNESS_TREND.readiness.markers_outside_band.statement}`,
+    );
+    // Arc counts and names. Whether today is a day to train is not this page's
+    // sentence to write.
+    for (const forbidden of ["readiness score", "recommend", "you should"]) {
+      expect(summary.textContent?.toLowerCase()).not.toContain(forbidden);
+    }
   });
 });

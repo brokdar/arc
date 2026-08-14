@@ -627,3 +627,218 @@ async def test_the_compact_series_marks_a_day_the_agent_wrote_down(
         "the athlete's own report is the default and says nothing"
     )
     assert "provenance" not in compact[past(2)]
+
+
+# --- the trend read on the agent surface (AC-32, AC-36) -----------------------
+
+
+async def seed(days: list[dict[str, Any]]) -> None:
+    """Write a batch of days as the coach."""
+    await call(COACH, "record_wellness_days", {"days": days})
+
+
+def sleeping(offset: int, value: float, **fields: Any) -> dict[str, Any]:
+    """One backfill day carrying a sleeping RMSSD reading."""
+    return {
+        "date": past(offset),
+        "hrv_ms": value,
+        "hrv_metric": "rmssd",
+        "hrv_context": "sleeping",
+        **fields,
+    }
+
+
+async def test_the_trend_tool_answers_per_metric_with_its_own_maturity(
+    session_factory: Any,
+) -> None:
+    # Forty complete days imported in one batch. The objective half matures at
+    # full weight — the watch measured it on the day, whatever day it was typed
+    # in — and the subjective half does not, because nobody accurately recalls
+    # last month's Tuesday motivation. Two maturities, two objects, one call.
+    await seed(
+        [
+            sleeping(offset, 55.0 + offset % 4, motivation=3 + offset % 3)
+            for offset in range(40)
+        ]
+    )
+
+    answer = (
+        await call(
+            READER,
+            "get_wellness_trend",
+            {
+                "start": past(59),
+                "end": (TODAY + dt.timedelta(days=1)).isoformat(),
+                "metrics": ["motivation", "hrv_rmssd_ms"],
+            },
+        )
+    )["trend"]
+
+    hrv = answer["metrics"]["hrv_rmssd_ms"]["baseline"]
+    assert hrv["kind"] == "banded"
+    assert hrv["n"] == 40
+    assert hrv["hrv_context"] == "sleeping"
+    assert answer["metrics"]["hrv_rmssd_ms"]["rolling_mean_7d"]["n"] == 7
+
+    motivation = answer["metrics"]["motivation"]["baseline"]
+    assert motivation["kind"] == "abstention"
+    # Thirty-seven of the forty were recalled and do not count; only the three
+    # entered within the recall window do.
+    assert motivation["readings"]["statement"] == "3 of 14"
+    assert "mean" not in motivation
+    # The three days close enough to be report rather than memory still fold
+    # into the seven-day mean, and it says how many it had.
+    assert answer["metrics"]["motivation"]["rolling_mean_7d"]["n"] == 3
+
+
+async def test_the_trend_tool_reports_a_gap_as_a_gap(session_factory: Any) -> None:
+    await seed(
+        [
+            {"date": past(4), "resting_hr_bpm": 50},
+            {"date": past(2), "resting_hr_bpm": 52},
+        ]
+    )
+
+    series = (
+        await call(
+            READER,
+            "get_wellness_trend",
+            {
+                "start": past(4),
+                "end": past(1),
+                "metrics": ["resting_hr_bpm"],
+            },
+        )
+    )["trend"]["metrics"]["resting_hr_bpm"]["series"]
+
+    # Null, never zero: a line drawn to zero is a heart that stopped.
+    assert [point["value"] for point in series] == [50, None, 52]
+
+
+async def test_an_unknown_metric_is_refused_with_the_vocabulary(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="hrv_rmssd_ms"):
+        await call(
+            READER,
+            "get_wellness_trend",
+            {"start": past(6), "end": TODAY.isoformat(), "metrics": ["hrv"]},
+        )
+
+
+async def test_a_voided_morning_says_so_beside_its_numbers_on_the_trend(
+    session_factory: Any,
+) -> None:
+    await call(
+        COACH,
+        "record_wellness",
+        {
+            "date": past(1),
+            "resting_hr_bpm": 43,
+            "confounders": ["alcohol", "short_sleep", "travel"],
+        },
+    )
+
+    series = (
+        await call(
+            READER,
+            "get_wellness_trend",
+            {
+                "start": past(2),
+                "end": TODAY.isoformat(),
+                "metrics": ["resting_hr_bpm"],
+            },
+        )
+    )["trend"]["metrics"]["resting_hr_bpm"]["series"]
+    point = next(item for item in series if item["local_date"] == past(1))
+
+    assert point["value"] == 43
+    assert point["markers"]["statement"] == (
+        "recorded, not actionable: alcohol, short_sleep"
+    )
+    assert point["markers"]["invalidated_by"] == ["alcohol", "short_sleep"]
+
+
+async def test_the_coaching_context_names_the_confounder_beside_the_readings(
+    session_factory: Any,
+) -> None:
+    # AC-36 on the one call every session begins with. The numbers are still
+    # here — they are real and part of the history — and what is withheld is
+    # their standing as evidence about today, stated on the same object.
+    await call(
+        COACH,
+        "record_wellness",
+        {"resting_hr_bpm": 43, "confounders": ["alcohol", "hot_room"]},
+    )
+
+    block = (await call(READER, "get_coaching_context"))["wellness"]
+
+    assert block["today"]["resting_hr_bpm"] == 43
+    assert block["today"]["markers"]["statement"] == (
+        "recorded, not actionable: alcohol, hot_room"
+    )
+    compact = {day["local_date"]: day for day in block["recent"]}
+    assert compact[TODAY.isoformat()]["not_actionable"] == ["alcohol", "hot_room"]
+    assert compact[TODAY.isoformat()]["resting_hr_bpm"] == 43
+
+
+async def test_a_non_invalidating_confounder_leaves_the_markers_actionable(
+    session_factory: Any,
+) -> None:
+    await call(
+        COACH, "record_wellness", {"resting_hr_bpm": 43, "confounders": ["travel"]}
+    )
+
+    block = (await call(READER, "get_coaching_context"))["wellness"]
+
+    assert block["today"]["markers"]["actionable"] is True
+    assert "not_actionable" not in {key for day in block["recent"] for key in day}
+
+
+async def test_the_coaching_context_carries_the_readiness_projection(
+    session_factory: Any,
+) -> None:
+    # The whole point of the feature on the surface that matters most: the
+    # morning read arrives with the athlete's own normal already applied.
+    await seed(
+        [
+            sleeping(offset, 55.0 + offset % 4, resting_hr_bpm=48 + offset % 4)
+            for offset in range(60)
+        ]
+    )
+
+    projection = (await call(READER, "get_coaching_context"))["wellness"]["readiness"]
+
+    assert projection["markers_outside_band"]["statement"] == "0 of 2"
+    assert projection["markers_outside_band"]["markers"] == []
+    # A count and a label. No score, no recommendation, no verdict.
+    assert set(projection) <= {"as_of", "markers_outside_band", "joint_state"}
+
+
+async def test_the_weekly_fold_still_carries_its_n(session_factory: Any) -> None:
+    # AC-39's edge on the surface the weekly fold actually has.
+    monday = TODAY - dt.timedelta(days=TODAY.weekday())
+    await seed(
+        [
+            {
+                "date": (monday + dt.timedelta(days=index)).isoformat(),
+                "resting_hr_bpm": 48 + index,
+            }
+            for index in range(3)
+        ]
+    )
+
+    answer = await call(
+        READER,
+        "get_wellness_weeks",
+        {
+            "start": monday.isoformat(),
+            "end": (monday + dt.timedelta(days=7)).isoformat(),
+        },
+    )
+
+    [week] = answer["wellness"]["weeks"]
+    [resting] = [
+        metric for metric in week["metrics"] if metric["metric"] == "resting_hr_bpm"
+    ]
+    assert resting == {"metric": "resting_hr_bpm", "mean": 49.0, "n": 3}
