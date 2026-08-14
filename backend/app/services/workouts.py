@@ -324,8 +324,9 @@ class WorkoutService:
         prescriptions the same way, and neither adapter may re-implement it.
 
         Raises:
-            ValidationError: When the structure is not a legal prescription
-                or references an unknown exercise.
+            ValidationError: When the structure is not a legal prescription,
+                references an unknown exercise, or claims ``per_side`` on a
+                movement the catalogue marks bilateral.
         """
         return await self._parse(structure)
 
@@ -335,6 +336,11 @@ class WorkoutService:
             body = workout_body_from_json(structure)
         if isinstance(body, StrengthWorkout):
             await self._exercises.require_all(sorted(exercise_ids(body)))
+            await self._exercises.require_unilateral(
+                sorted(
+                    {item.exercise_id for item in body.prescriptions if item.per_side}
+                )
+            )
         return body
 
 

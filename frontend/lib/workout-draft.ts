@@ -129,6 +129,8 @@ export const MAX_SETS = 50;
 export const MAX_REPS = 500;
 export const MAX_RIR = 10;
 export const MAX_REST_SECONDS = 3600;
+/** Longest a prescribed hold may be, in seconds. */
+export const MAX_HOLD_SECONDS = 3600;
 export const MAX_STRENGTH_GROUPS = 40;
 
 // --- the draft ---------------------------------------------------------------
@@ -176,11 +178,25 @@ export interface DraftRepeatBlock {
 
 export type DraftStep = DraftSteadyStep | DraftRampStep | DraftRepeatBlock;
 
+/**
+ * Whether a line prescribes repetitions or a hold. Exactly one, which is why
+ * this is a mode rather than two fields either of which may be blank: a form
+ * that lets both be filled in has to decide which one it meant, and the domain
+ * refuses the answer either way.
+ */
+export type StrengthItemMode = "reps" | "hold";
+
 export interface DraftStrengthItem {
   readonly id: string;
   readonly exerciseId: string;
+  /** Rounds, as written on the card. A per-side round is two working sets. */
   readonly sets: string;
+  readonly mode: StrengthItemMode;
   readonly reps: string;
+  /** Seconds held per working set, when the mode is `hold`. */
+  readonly durationS: string;
+  /** Each round performed one side at a time — two working sets, not one. */
+  readonly perSide: boolean;
   readonly loadKind: LoadKind;
   readonly loadValue: string;
   readonly rir: string;
@@ -281,7 +297,10 @@ export function blankStrengthItem(exerciseId = ""): DraftStrengthItem {
     id: draftId(),
     exerciseId,
     sets: "3",
+    mode: "reps",
     reps: "8",
+    durationS: "",
+    perSide: false,
     loadKind: "kg",
     loadValue: "",
     rir: "",
@@ -524,10 +543,15 @@ function strengthItemToWire(
   item: DraftStrengthItem,
 ): Schemas["StrengthSetSchema"] {
   const value = parseNumberInput(item.loadValue);
+  const hold = item.mode === "hold";
   return {
     exercise_id: item.exerciseId,
     sets: Math.round(parseNumberInput(item.sets) ?? 0),
-    reps: Math.round(parseNumberInput(item.reps) ?? 0),
+    // Exactly one of the two, and the *other* one is null rather than absent
+    // so a re-edit cannot carry a stale value across a mode switch.
+    reps: hold ? null : Math.round(parseNumberInput(item.reps) ?? 0),
+    duration_s: hold ? Math.round(parseNumberInput(item.durationS) ?? 0) : null,
+    per_side: item.perSide ? true : null,
     load: {
       kind: item.loadKind,
       value:
@@ -563,7 +587,19 @@ export function draftFromStructure(
           id: draftId(),
           exerciseId: item.exercise_id,
           sets: String(item.sets),
-          reps: String(item.reps),
+          mode:
+            item.duration_s === null || item.duration_s === undefined
+              ? ("reps" as const)
+              : ("hold" as const),
+          reps:
+            item.reps === null || item.reps === undefined
+              ? ""
+              : String(item.reps),
+          durationS:
+            item.duration_s === null || item.duration_s === undefined
+              ? ""
+              : String(item.duration_s),
+          perSide: item.per_side === true,
           loadKind: item.load.kind,
           loadValue:
             item.load.value === null || item.load.value === undefined
@@ -768,6 +804,11 @@ function validateTarget(target: DraftTarget, label: string): string[] {
   return problems;
 }
 
+// One strength rule is deliberately not checked here: `perSide` is legal only
+// on a movement the catalogue marks unilateral, and that is a fact about the
+// catalogue rather than about the draft. The builder holds the catalogue, so it
+// offers the control only where the flag can be set — prevented at the point of
+// entry instead of reported after the form is filled.
 function validateStrength(draft: StrengthDraft): string[] {
   const problems: string[] = [];
   if (draft.groups.length === 0) {
@@ -789,7 +830,13 @@ function validateStrength(draft: StrengthDraft): string[] {
         problems.push(`${groupLabel}: choose an exercise.`);
       }
       problems.push(...inRange(item.sets, 1, MAX_SETS, `${label}: sets`));
-      problems.push(...inRange(item.reps, 1, MAX_REPS, `${label}: reps`));
+      if (item.mode === "hold") {
+        problems.push(
+          ...inRange(item.durationS, 1, MAX_HOLD_SECONDS, `${label}: hold`),
+        );
+      } else {
+        problems.push(...inRange(item.reps, 1, MAX_REPS, `${label}: reps`));
+      }
       if (item.rir.trim() !== "") {
         problems.push(...inRange(item.rir, 0, MAX_RIR, `${label}: RIR`));
       }

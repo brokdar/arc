@@ -181,11 +181,23 @@ describe("a hand-entered session", () => {
     expect(within(table).getByText("102.5 kg")).toBeInTheDocument();
     // Bodyweight is not zero kilos.
     expect(
-      within(table).getByRole("img", {
+      within(table).getAllByRole("img", {
         name: "Not assessed: Bodyweight, or no load recorded",
-      }),
-    ).toBeInTheDocument();
+      }).length,
+    ).toBeGreaterThan(0);
     expect(within(table).getByText(/Pull-up/)).toBeInTheDocument();
+  });
+
+  it("says which sets were worked one side at a time, and which were held", async () => {
+    // The reps column carries three different things, and a row that showed
+    // a bare `11` for a per-side set would report half the work — the same
+    // mistake `working_sets` exists to stop on the prescription side.
+    renderDetail(ACTIVITY_IDS.gym);
+    await ready();
+
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("per side")).toBeInTheDocument();
+    expect(within(table).getByText("45 s")).toBeInTheDocument();
   });
 });
 

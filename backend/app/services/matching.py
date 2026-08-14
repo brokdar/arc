@@ -96,6 +96,7 @@ from app.persistence.activity import (
     RecordingRow,
     SessionRepository,
     SessionRow,
+    logged_working_sets,
     session_duration_s,
 )
 from app.persistence.athlete import AthleteRepository
@@ -1025,8 +1026,15 @@ def _evidence(
     """
     if isinstance(body, StrengthWorkout):
         return MatchEvidence(
+            # Working sets on both sides: `total_sets` counts a per-side round
+            # twice, so the logged rows have to as well or a unilateral session
+            # looks half-completed to the matcher.
             planned_units=predict_strength_volume(body).total_sets,
-            performed_units=len(row.logged_sets) if row.logged_sets else None,
+            performed_units=(
+                sum(logged_working_sets(one) for one in row.logged_sets)
+                if row.logged_sets
+                else None
+            ),
             structure_basis=StructureBasis.SETS,
             actual_duration_s=session_duration_s(row),
         )

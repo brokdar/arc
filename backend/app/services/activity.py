@@ -88,6 +88,10 @@ LATEST_SESSION = dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
 #: Bounds on one logged set.
 MAX_SETS = 200
 MAX_REPS = 1_000
+#: Longest a logged hold may be. The domain's `MAX_HOLD_SECONDS` for the
+#: prescription side; repeated here because the logged side takes its bounds
+#: from this module, not from a prescription it may not have.
+MAX_HOLD_S = 3_600
 MAX_LOAD_KG = 1_000.0
 MIN_RIR, MAX_RIR = 0, 10
 
@@ -106,13 +110,22 @@ class LoggedSetInput:
             logging, so the row stays readable if the catalogue moves on.
         exercise_name: Free text, for a movement the catalogue does not have.
             Exactly one of the two is given.
-        reps: Repetitions performed.
-        load_kg: External load, when there was one (bodyweight sets have none).
+        reps: Repetitions performed, or ``None`` for a timed hold. Exactly one
+            of ``reps`` and ``duration_s`` is given.
+        duration_s: Seconds held, for a timed set.
+        per_side: Whether the row is one side of a bilateral movement, making
+            it two working sets. Refused on a movement the catalogue marks
+            bilateral, so a logged row and the catalogue cannot disagree.
+        load_kg: External load, when there was one (bodyweight sets have
+            none). For a per-side row, the load on **that side** — the same
+            convention `app.domain.strength.Load` declares.
         rir: Reps in reserve, as reported after the set.
         notes: Anything the athlete wrote about this set.
     """
 
-    reps: int
+    reps: int | None = None
+    duration_s: int | None = None
+    per_side: bool = False
     exercise_id: str | None = None
     exercise_name: str | None = None
     load_kg: float | None = None
@@ -500,9 +513,15 @@ class SessionService:
     async def _logged_set(self, entry: LoggedSetInput, index: int) -> LoggedSetRow:
         """Build one set row, resolving a catalogue reference to its name.
 
+        The catalogue cross-check for ``per_side`` lives here rather than in
+        the domain because the domain cannot reach the catalogue: a
+        prescription is stored JSON and stays self-describing, and the service
+        is the only layer that can see both it and `Exercise.unilateral`.
+
         Raises:
             ValidationError: When the set names neither a catalogue movement
-                nor a free-text one, or both.
+                nor a free-text one, or both, or claims ``per_side`` on a
+                movement the catalogue marks bilateral.
             NotFoundError: When the catalogue has no such movement.
         """
         if (entry.exercise_id is None) == (entry.exercise_name is None):
@@ -514,6 +533,12 @@ class SessionService:
         if entry.exercise_id is not None:
             catalogue = await self._exercises.get(entry.exercise_id)
             name = catalogue.name
+            if entry.per_side and not catalogue.unilateral:
+                raise ValidationError(
+                    f"Set {index + 1}: {catalogue.name} ({entry.exercise_id}) is "
+                    "performed with both sides at once, so it cannot be logged "
+                    "per side."
+                )
         else:
             name = (entry.exercise_name or "").strip()
             if not name:
@@ -523,6 +548,8 @@ class SessionService:
             exercise_name=name[:MAX_EXERCISE_NAME],
             set_index=index,
             reps=entry.reps,
+            duration_s=entry.duration_s,
+            per_side=entry.per_side,
             load_kg=entry.load_kg,
             rir=entry.rir,
             notes=(entry.notes or None),
@@ -561,8 +588,17 @@ def _check_manual(
     if len(sets) > MAX_SETS:
         raise ValidationError(f"A session may log at most {MAX_SETS} sets")
     for index, entry in enumerate(sets, start=1):
-        if not 1 <= entry.reps <= MAX_REPS:
+        if (entry.reps is None) == (entry.duration_s is None):
+            raise ValidationError(
+                f"Set {index} needs exactly one of reps or duration_s: a set "
+                "is repetitions or it is a hold, not both and not neither."
+            )
+        if entry.reps is not None and not 1 <= entry.reps <= MAX_REPS:
             raise ValidationError(f"Set {index}: reps must be between 1 and {MAX_REPS}")
+        if entry.duration_s is not None and not 1 <= entry.duration_s <= MAX_HOLD_S:
+            raise ValidationError(
+                f"Set {index}: duration_s must be between 1 and {MAX_HOLD_S} seconds"
+            )
         if entry.load_kg is not None and not 0 <= entry.load_kg <= MAX_LOAD_KG:
             raise ValidationError(
                 f"Set {index}: load must be between 0 and {MAX_LOAD_KG:g} kg"

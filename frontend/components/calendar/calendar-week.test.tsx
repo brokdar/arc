@@ -1091,7 +1091,7 @@ describe("CalendarWeek", () => {
     // 3 × 8 × 80: only the kilogram sets count.
     expect(within(sheet).getByText("1920")).toBeInTheDocument();
     expect(
-      within(sheet).getByText(/30% of the sets are prescribed in kilograms/),
+      within(sheet).getByText(/30% of the working sets contribute kilograms/),
     ).toBeInTheDocument();
     // And never in the TSS slot.
     expect(within(sheet).queryByText("Predicted load")).not.toBeInTheDocument();
@@ -1109,9 +1109,26 @@ describe("CalendarWeek", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      within(sheet).getByText(/prescribes its loads as bodyweight/),
+      within(sheet).getByText(/prescribes its repetitions as bodyweight/),
     ).toBeInTheDocument();
     expect(within(sheet).queryByText("0")).not.toBeInTheDocument();
+  });
+
+  /**
+   * Seconds are a third axis: a hold has no reps to multiply by kilograms, so
+   * its work would vanish entirely if the section reported only the two.
+   */
+  it("reports the seconds a core session holds, beside the kilograms it has none of", async () => {
+    renderCalendar();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Core/ }));
+    const sheet = await screen.findByRole("dialog");
+
+    // 3 × 45 s, and never folded into a volume load.
+    expect(within(sheet).getByText(/135 s held/)).toBeInTheDocument();
+    expect(
+      within(sheet).getByText(/Its holds have no reps to multiply/),
+    ).toBeInTheDocument();
   });
 
   /**

@@ -6,10 +6,13 @@ import { describe, expect, it } from "vitest";
 import type { components } from "@/generated/api/schema";
 import {
   COGGAN_7_LOWER,
+  describeSets,
   flattenSteps,
   profileBars,
+  type StrengthItem,
   totalDurationS,
   totalSets,
+  unmeasuredVolumeReason,
   type WorkoutStep,
   ZONE_COLORS,
   ZONE_LABELS,
@@ -362,8 +365,130 @@ describe("totals", () => {
     ).toBe(7);
   });
 
+  it("counts a per-side round as the two working sets it is", () => {
+    // The client's number has to agree with `summary.total_sets` from the
+    // backend — they sit next to each other on the week rail.
+    expect(
+      totalSets({
+        discipline: "strength",
+        groups: [
+          {
+            label: null,
+            items: [
+              {
+                exercise_id: "single_arm_dumbbell_row",
+                sets: 3,
+                reps: 11,
+                duration_s: null,
+                per_side: true,
+                load: { kind: "kg", value: 15 },
+                rir: null,
+                rest_s: null,
+                tempo: null,
+                notes: null,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe(6);
+  });
+
   it("has no opinion about the other discipline", () => {
     expect(totalSets({ discipline: "cycling", steps: [] })).toBeNull();
     expect(totalDurationS({ discipline: "strength", groups: [] })).toBeNull();
+  });
+});
+
+describe("describeSets", () => {
+  const line = (over: Partial<StrengthItem>): StrengthItem => ({
+    exercise_id: "back_squat",
+    sets: 3,
+    reps: 8,
+    duration_s: null,
+    per_side: null,
+    load: { kind: "kg", value: 100 },
+    rir: null,
+    rest_s: null,
+    tempo: null,
+    notes: null,
+    ...over,
+  });
+
+  it("says rounds by reps for an ordinary line", () => {
+    expect(describeSets(line({}))).toBe("3×8");
+  });
+
+  it("names the side, because a bare 3×11 reads as half the work", () => {
+    expect(describeSets(line({ reps: 11, per_side: true }))).toBe(
+      "3×11 per side",
+    );
+  });
+
+  it("renders a hold in seconds, with no invented rep count", () => {
+    expect(describeSets(line({ reps: null, duration_s: 45 }))).toBe("3×45 s");
+  });
+});
+
+describe("unmeasuredVolumeReason", () => {
+  const line = (over: Partial<StrengthItem>): StrengthItem => ({
+    exercise_id: "back_squat",
+    sets: 3,
+    reps: 8,
+    duration_s: null,
+    per_side: null,
+    load: { kind: "bodyweight", value: null },
+    rir: null,
+    rest_s: null,
+    tempo: null,
+    notes: null,
+    ...over,
+  });
+  const structure = (...items: StrengthItem[]) => ({
+    discipline: "strength" as const,
+    groups: [{ label: null, items }],
+  });
+
+  it("names the forms the prescription did use", () => {
+    const reason = unmeasuredVolumeReason(structure(line({})));
+
+    expect(reason.short).toBe("No set is prescribed in kilograms");
+    expect(reason.sentence).toContain("its repetitions as bodyweight");
+  });
+
+  it("does not call a kilogram hold a reason there are no kilograms", () => {
+    // The regression: a 45-second plank under a 20 kg vest is prescribed in
+    // kilograms *and* has no volume load, because a hold has no reps to
+    // multiply. Reading every line's load kind made the sentence contradict
+    // its own headline — "no set is prescribed in kilograms, and this session
+    // prescribes its loads as kilograms".
+    const reason = unmeasuredVolumeReason(
+      structure(
+        line({ reps: null, duration_s: 45, load: { kind: "kg", value: 20 } }),
+      ),
+    );
+
+    expect(reason.short).toBe("Every line is a hold");
+    expect(reason.sentence).not.toContain("prescribes its loads as kilograms");
+    expect(reason.sentence).toContain("a hold has no reps to multiply");
+  });
+
+  it("names the holds beside the rep-based lines when a session has both", () => {
+    const reason = unmeasuredVolumeReason(
+      structure(
+        line({}),
+        line({ reps: null, duration_s: 45, load: { kind: "kg", value: 20 } }),
+      ),
+    );
+
+    expect(reason.short).toBe("No set is prescribed in kilograms");
+    expect(reason.sentence).toContain("its repetitions as bodyweight");
+    expect(reason.sentence).toContain("Its holds have no reps to multiply");
+  });
+
+  it("says an empty prescription is empty rather than unmeasured", () => {
+    expect(unmeasuredVolumeReason(structure()).short).toBe(
+      "Nothing prescribed",
+    );
   });
 });

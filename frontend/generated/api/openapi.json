@@ -1668,8 +1668,21 @@
       },
       "LoggedSetCreate": {
         "additionalProperties": false,
-        "description": "One set of a manually entered session.",
+        "description": "One set of a manually entered session.\n\n``reps`` and ``duration_s`` are both optional *here* and exactly one of\nthem is required by the service: the exactly-one-of rule cannot be stated\nin a JSON schema without an ``oneOf`` the generated client would render as\ntwo unrelated shapes, and the #17 lesson says a bound that lives only in\nthe API schema is a bound a dry run passes and the write then fails. One\nrule, one message, one place.",
         "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "maximum": 3600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
           "exercise_id": {
             "anyOf": [
               {
@@ -1722,11 +1735,23 @@
             ],
             "title": "Notes"
           },
+          "per_side": {
+            "default": false,
+            "title": "Per Side",
+            "type": "boolean"
+          },
           "reps": {
-            "maximum": 1000.0,
-            "minimum": 1.0,
-            "title": "Reps",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
           },
           "rir": {
             "anyOf": [
@@ -1742,13 +1767,23 @@
             "title": "Rir"
           }
         },
-        "required": ["reps"],
         "title": "LoggedSetCreate",
         "type": "object"
       },
       "LoggedSetRead": {
         "description": "One set the athlete logged by hand.",
         "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
           "exercise_id": {
             "anyOf": [
               {
@@ -1791,9 +1826,20 @@
             ],
             "title": "Notes"
           },
+          "per_side": {
+            "title": "Per Side",
+            "type": "boolean"
+          },
           "reps": {
-            "title": "Reps",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
           },
           "rir": {
             "anyOf": [
@@ -1817,6 +1863,8 @@
           "exercise_name",
           "set_index",
           "reps",
+          "duration_s",
+          "per_side",
           "load_kg",
           "rir",
           "notes"
@@ -3678,6 +3726,17 @@
             "title": "Coverage",
             "type": "number"
           },
+          "total_hold_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Hold S"
+          },
           "total_sets": {
             "title": "Total Sets",
             "type": "integer"
@@ -3694,7 +3753,12 @@
             "title": "Volume Load Kg"
           }
         },
-        "required": ["volume_load_kg", "total_sets", "coverage"],
+        "required": [
+          "volume_load_kg",
+          "total_sets",
+          "total_hold_s",
+          "coverage"
+        ],
         "title": "PredictedVolumeRead",
         "type": "object"
       },
@@ -6277,6 +6341,17 @@
             ],
             "title": "Sets Completed"
           },
+          "total_hold_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Hold S"
+          },
           "volume_load_kg": {
             "anyOf": [
               {
@@ -6294,8 +6369,19 @@
       },
       "StrengthSetSchema": {
         "additionalProperties": false,
-        "description": "One line of a strength prescription.",
+        "description": "One line of a strength prescription.\n\n``reps`` and ``duration_s`` are both optional here and **exactly one** is\nrequired by the domain: a line prescribes repetitions or it prescribes a\nhold. Stating it as an ``oneOf`` would render in the generated client as\ntwo unrelated shapes, and a bound that lives only in the API schema is one\na dry run passes and the write then refuses (the #17 lesson) \u2014 so the rule\nhas one home, `app.domain.strength.StrengthSet`, and one message.\n\nEvery optional field is ``None``-defaulted rather than ``False``-defaulted\nso that `structure_document` drops it: a request that never said\n``per_side`` reaches the parser as the document it was written as. What\nkeeps the *stored* prescription free of the key is one layer further in \u2014\nboth writers persist `workout_body_to_json` of the parsed body, never this\nschema's dump, and `app.domain.strength.strength_set_to_json` omits an\nunset field (pinned by the fixture round trip in\n`tests/unit/test_domain_strength.py`). Two mechanisms, and only the second\none is load-bearing; this docstring said otherwise until a test written to\npin the claim passed with the default flipped.",
         "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
           "exercise_id": {
             "maxLength": 80,
             "minLength": 1,
@@ -6320,9 +6406,27 @@
             ],
             "title": "Notes"
           },
+          "per_side": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Side"
+          },
           "reps": {
-            "title": "Reps",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
           },
           "rest_s": {
             "anyOf": [
@@ -6365,7 +6469,7 @@
             "title": "Tempo"
           }
         },
-        "required": ["exercise_id", "sets", "reps", "load"],
+        "required": ["exercise_id", "sets", "load"],
         "title": "StrengthSetSchema",
         "type": "object"
       },

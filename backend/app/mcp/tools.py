@@ -175,7 +175,16 @@ def _offset(offset: int) -> int:
 #: vocabulary the service's set input takes, checked here so a misspelled
 #: field is refused by name rather than silently dropped.
 _SET_FIELDS = frozenset(
-    {"exercise_id", "exercise_name", "reps", "load_kg", "rir", "notes"}
+    {
+        "exercise_id",
+        "exercise_name",
+        "reps",
+        "duration_s",
+        "per_side",
+        "load_kg",
+        "rir",
+        "notes",
+    }
 )
 
 
@@ -199,8 +208,21 @@ def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
                 f"set carries {', '.join(sorted(_SET_FIELDS))}."
             )
         reps = entry.get("reps")
-        if not isinstance(reps, int) or isinstance(reps, bool):
+        if reps is not None and (not isinstance(reps, int) or isinstance(reps, bool)):
             raise ValueError(f"set {index}: reps must be an integer, got {reps!r}")
+        duration_s = entry.get("duration_s")
+        if duration_s is not None and (
+            not isinstance(duration_s, int) or isinstance(duration_s, bool)
+        ):
+            raise ValueError(
+                f"set {index}: duration_s must be a whole number of seconds, "
+                f"got {duration_s!r}"
+            )
+        per_side = entry.get("per_side", False)
+        if not isinstance(per_side, bool):
+            raise ValueError(
+                f"set {index}: per_side must be true or false, got {per_side!r}"
+            )
         load_kg = entry.get("load_kg")
         if load_kg is not None and (
             not isinstance(load_kg, int | float) or isinstance(load_kg, bool)
@@ -214,6 +236,8 @@ def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
         inputs.append(
             LoggedSetInput(
                 reps=reps,
+                duration_s=duration_s,
+                per_side=per_side,
                 exercise_id=entry.get("exercise_id"),
                 exercise_name=entry.get("exercise_name"),
                 load_kg=None if load_kg is None else float(load_kg),
@@ -1046,11 +1070,31 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             ]},
             {"label": "B", "items": [
               {"exercise_id": "romanian_deadlift", "sets": 3, "reps": 8,
-               "load": {"kind": "percent_e1rm", "value": 0.7}, "rir": 3}
+               "load": {"kind": "percent_e1rm", "value": 0.7}, "rir": 3},
+              {"exercise_id": "single_arm_dumbbell_row", "sets": 3, "reps": 11,
+               "per_side": true, "load": {"kind": "kg", "value": 15}},
+              {"exercise_id": "front_plank", "sets": 3, "duration_s": 45,
+               "load": {"kind": "bodyweight"}}
             ]}
           ]
         }
         ```
+
+        Three rules about a strength item that decide what the numbers mean:
+
+        * **`sets` counts rounds.** `per_side: true` says each round is
+          performed one side at a time, so three rounds of eleven is **six**
+          working sets and six is what volume and completion count. Set it
+          only on movements the catalogue marks `unilateral`; on any other it
+          is refused by name.
+        * **`kg` is the load moved in one rep as prescribed.** For a per-side
+          item that is the load on *that side* — one 15 kg dumbbell is `15`,
+          and the example above is 990 kg of volume. For a two-handed item
+          held with two implements it is the total: two 15 kg dumbbells are
+          `30`.
+        * **An item prescribes `reps` or `duration_s`, never both and never
+          neither.** A 45-second plank is `duration_s: 45`; writing `reps: 1`
+          for it puts an invented number into volume arithmetic.
 
         An unparseable structure, or one naming an exercise the catalogue
         does not have, is refused with the reason. Every answer carries
@@ -1299,6 +1343,22 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         `get_exercise_catalogue`, or give `exercise_name` (free text) for a
         movement the catalogue lacks; exactly one of the two per set.
         `load_kg` is absent for bodyweight sets.
+
+        Three fields decide what a set *counts* as, and getting them wrong
+        misstates the session's volume:
+
+        * a set carries **`reps` or `duration_s`, never both and never
+          neither** — a 45-second plank is `{"duration_s": 45}`, not
+          `{"reps": 1}`;
+        * **`per_side: true`** says the row is one side of a two-sided
+          movement, so it counts as two working sets. One row per round, not
+          one per limb: eleven reps each arm is a single
+          `{"reps": 11, "per_side": true}`. It is refused on a movement the
+          catalogue does not mark unilateral;
+        * **`load_kg` on a per-side set is the load on that side** — one
+          15 kg dumbbell is `15`, and the volume comes out at 990 kg for three
+          such rounds. For a two-handed set held with two implements it is the
+          total.
 
         Every answer carries `budget_remaining` — how many writes the hourly
         cap still admits, after this one if it was real (a dry run is free,

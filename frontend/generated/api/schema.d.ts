@@ -2239,8 +2239,17 @@ export interface components {
     /**
      * LoggedSetCreate
      * @description One set of a manually entered session.
+     *
+     *     ``reps`` and ``duration_s`` are both optional *here* and exactly one of
+     *     them is required by the service: the exactly-one-of rule cannot be stated
+     *     in a JSON schema without an ``oneOf`` the generated client would render as
+     *     two unrelated shapes, and the #17 lesson says a bound that lives only in
+     *     the API schema is a bound a dry run passes and the write then fails. One
+     *     rule, one message, one place.
      */
     LoggedSetCreate: {
+      /** Duration S */
+      duration_s?: number | null;
       /** Exercise Id */
       exercise_id?: string | null;
       /** Exercise Name */
@@ -2249,8 +2258,13 @@ export interface components {
       load_kg?: number | null;
       /** Notes */
       notes?: string | null;
+      /**
+       * Per Side
+       * @default false
+       */
+      per_side: boolean;
       /** Reps */
-      reps: number;
+      reps?: number | null;
       /** Rir */
       rir?: number | null;
     };
@@ -2259,6 +2273,8 @@ export interface components {
      * @description One set the athlete logged by hand.
      */
     LoggedSetRead: {
+      /** Duration S */
+      duration_s: number | null;
       /** Exercise Id */
       exercise_id: string | null;
       /** Exercise Name */
@@ -2272,8 +2288,10 @@ export interface components {
       load_kg: number | null;
       /** Notes */
       notes: string | null;
+      /** Per Side */
+      per_side: boolean;
       /** Reps */
-      reps: number;
+      reps: number | null;
       /** Rir */
       rir: number | null;
       /** Set Index */
@@ -3132,6 +3150,8 @@ export interface components {
     PredictedVolumeRead: {
       /** Coverage */
       coverage: number;
+      /** Total Hold S */
+      total_hold_s: number | null;
       /** Total Sets */
       total_sets: number;
       /** Volume Load Kg */
@@ -4318,21 +4338,45 @@ export interface components {
       not_assessed?: string | null;
       /** Sets Completed */
       sets_completed?: number | null;
+      /** Total Hold S */
+      total_hold_s?: number | null;
       /** Volume Load Kg */
       volume_load_kg?: number | null;
     };
     /**
      * StrengthSetSchema
      * @description One line of a strength prescription.
+     *
+     *     ``reps`` and ``duration_s`` are both optional here and **exactly one** is
+     *     required by the domain: a line prescribes repetitions or it prescribes a
+     *     hold. Stating it as an ``oneOf`` would render in the generated client as
+     *     two unrelated shapes, and a bound that lives only in the API schema is one
+     *     a dry run passes and the write then refuses (the #17 lesson) — so the rule
+     *     has one home, `app.domain.strength.StrengthSet`, and one message.
+     *
+     *     Every optional field is ``None``-defaulted rather than ``False``-defaulted
+     *     so that `structure_document` drops it: a request that never said
+     *     ``per_side`` reaches the parser as the document it was written as. What
+     *     keeps the *stored* prescription free of the key is one layer further in —
+     *     both writers persist `workout_body_to_json` of the parsed body, never this
+     *     schema's dump, and `app.domain.strength.strength_set_to_json` omits an
+     *     unset field (pinned by the fixture round trip in
+     *     `tests/unit/test_domain_strength.py`). Two mechanisms, and only the second
+     *     one is load-bearing; this docstring said otherwise until a test written to
+     *     pin the claim passed with the default flipped.
      */
     StrengthSetSchema: {
+      /** Duration S */
+      duration_s?: number | null;
       /** Exercise Id */
       exercise_id: string;
       load: components["schemas"]["LoadSchema"];
       /** Notes */
       notes?: string | null;
+      /** Per Side */
+      per_side?: boolean | null;
       /** Reps */
-      reps: number;
+      reps?: number | null;
       /** Rest S */
       rest_s?: number | null;
       /** Rir */

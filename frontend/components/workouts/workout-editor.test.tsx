@@ -311,8 +311,8 @@ describe("the strength builder", () => {
       within(first).getByLabelText("Movement"),
       "Back Squat",
     );
-    await userEvent.clear(within(first).getByLabelText("Sets"));
-    await userEvent.type(within(first).getByLabelText("Sets"), "4");
+    await userEvent.clear(within(first).getByLabelText("Rounds"));
+    await userEvent.type(within(first).getByLabelText("Rounds"), "4");
     await userEvent.clear(within(first).getByLabelText("Reps"));
     await userEvent.type(within(first).getByLabelText("Reps"), "5");
     await userEvent.selectOptions(
@@ -358,6 +358,160 @@ describe("the strength builder", () => {
                 load: { kind: "bodyweight", value: null },
               },
             ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("sends a per-side round and a timed hold as the shapes they are", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/v1/workouts", async ({ request, response }) => {
+        bodies.push(await request.json());
+        return response(201).json({
+          id: WORKOUT_IDS.lower,
+          name: "Unilateral",
+          description: null,
+          discipline: "strength",
+          folder: null,
+          tags: [],
+          structure: { discipline: "strength", groups: [] },
+          summary: { step_count: 0, total_duration_s: null, total_sets: null },
+          created_at: "2026-08-01T00:00:00Z",
+          updated_at: "2026-08-01T00:00:00Z",
+        });
+      }),
+    );
+
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Unilateral");
+    await switchToStrength();
+
+    const first = screen.getAllByTestId("draft-set")[0] as HTMLElement;
+    await userEvent.type(
+      within(first).getByLabelText("Movement"),
+      "Single-Arm Dumbbell Row",
+    );
+    await userEvent.clear(within(first).getByLabelText("Rounds"));
+    await userEvent.type(within(first).getByLabelText("Rounds"), "3");
+    await userEvent.clear(within(first).getByLabelText("Reps"));
+    await userEvent.type(within(first).getByLabelText("Reps"), "11");
+    await userEvent.selectOptions(
+      within(first).getByLabelText("Per side"),
+      "yes",
+    );
+    await userEvent.type(within(first).getByLabelText(/Value/), "15");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "+ Pair a movement (superset)" }),
+    );
+    const second = screen.getAllByTestId("draft-set")[1] as HTMLElement;
+    await userEvent.type(
+      within(second).getByLabelText("Movement"),
+      "Front Plank",
+    );
+    await userEvent.selectOptions(
+      within(second).getByLabelText("Each"),
+      "hold",
+    );
+    await userEvent.type(within(second).getByLabelText("Seconds"), "45");
+    await userEvent.selectOptions(
+      within(second).getByLabelText("Load"),
+      "bodyweight",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Save workout" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({
+      structure: {
+        discipline: "strength",
+        groups: [
+          {
+            items: [
+              {
+                exercise_id: "single_arm_dumbbell_row",
+                sets: 3,
+                reps: 11,
+                duration_s: null,
+                per_side: true,
+                load: { kind: "kg", value: 15 },
+              },
+              {
+                exercise_id: "front_plank",
+                // Switching to a hold clears the rep box rather than sending
+                // whatever was left in it.
+                reps: null,
+                duration_s: 45,
+                load: { kind: "bodyweight", value: null },
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it("offers per side only where the catalogue says the movement is unilateral", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/v1/workouts", async ({ request, response }) => {
+        bodies.push(await request.json());
+        return response(201).json({
+          id: WORKOUT_IDS.lower,
+          name: "Bilateral",
+          description: null,
+          discipline: "strength",
+          folder: null,
+          tags: [],
+          structure: { discipline: "strength", groups: [] },
+          summary: { step_count: 0, total_duration_s: null, total_sets: null },
+          created_at: "2026-08-01T00:00:00Z",
+          updated_at: "2026-08-01T00:00:00Z",
+        });
+      }),
+    );
+
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Bilateral");
+    await switchToStrength();
+
+    const row = screen.getAllByTestId("draft-set")[0] as HTMLElement;
+    const movement = within(row).getByLabelText("Movement");
+
+    // A back squat is worked on both legs at once, so the control that would
+    // make the draft claim otherwise is not there to be set.
+    await userEvent.type(movement, "Back Squat");
+    expect(within(row).queryByLabelText("Per side")).toBeNull();
+
+    await userEvent.clear(movement);
+    await userEvent.type(movement, "Single-Arm Dumbbell Row");
+    await userEvent.selectOptions(
+      within(row).getByLabelText("Per side"),
+      "yes",
+    );
+
+    // Moving the line back to a bilateral movement takes the flag with it,
+    // rather than leaving a draft nothing here objects to and the service
+    // refuses with a 422 on save.
+    await userEvent.clear(movement);
+    await userEvent.type(movement, "Back Squat");
+    expect(within(row).queryByLabelText("Per side")).toBeNull();
+
+    await userEvent.selectOptions(
+      within(row).getByLabelText("Load"),
+      "bodyweight",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save workout" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({
+      structure: {
+        discipline: "strength",
+        groups: [
+          {
+            items: [{ exercise_id: "back_squat", per_side: null }],
           },
         ],
       },

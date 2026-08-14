@@ -1222,6 +1222,7 @@ async def test_a_kilogram_lift_carries_its_predicted_volume(
     assert session["predicted_volume"] == {
         "volume_load_kg": 1500.0,
         "total_sets": 5,
+        "total_hold_s": None,
         "coverage": 1.0,
     }
     # Kilograms and TSS are different axes: the other one stays empty.
@@ -1236,6 +1237,7 @@ async def test_an_e1rm_lift_has_sets_but_no_kilograms(client: AsyncClient) -> No
     assert session["predicted_volume"] == {
         "volume_load_kg": None,
         "total_sets": 5,
+        "total_hold_s": None,
         "coverage": 0.0,
     }
 

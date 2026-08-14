@@ -151,14 +151,42 @@ class LoadSchema(BaseModel):
 
 
 class StrengthSetSchema(BaseModel):
-    """One line of a strength prescription."""
+    """One line of a strength prescription.
+
+    ``reps`` and ``duration_s`` are both optional here and **exactly one** is
+    required by the domain: a line prescribes repetitions or it prescribes a
+    hold. Stating it as an ``oneOf`` would render in the generated client as
+    two unrelated shapes, and a bound that lives only in the API schema is one
+    a dry run passes and the write then refuses (the #17 lesson) — so the rule
+    has one home, `app.domain.strength.StrengthSet`, and one message.
+
+    Every optional field is ``None``-defaulted rather than ``False``-defaulted
+    so that `structure_document` drops it: a request that never said
+    ``per_side`` reaches the parser as the document it was written as. What
+    keeps the *stored* prescription free of the key is one layer further in —
+    both writers persist `workout_body_to_json` of the parsed body, never this
+    schema's dump, and `app.domain.strength.strength_set_to_json` omits an
+    unset field (pinned by the fixture round trip in
+    `tests/unit/test_domain_strength.py`). Two mechanisms, and only the second
+    one is load-bearing; this docstring said otherwise until a test written to
+    pin the claim passed with the default flipped.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     #: Slug of a catalogue exercise; see `GET /api/v1/exercises`.
     exercise_id: Annotated[PostgresText, Field(min_length=1, max_length=80)]
+    #: Rounds prescribed — what the athlete writes on the card. A ``per_side``
+    #: round is **two** working sets, which is the unit volume and completion
+    #: are counted in.
     sets: int
-    reps: int
+    #: Reps per working set. Exactly one of ``reps`` and ``duration_s``.
+    reps: int | None = None
+    #: Seconds held per working set, for a timed set.
+    duration_s: int | None = None
+    #: Whether each round is performed one side at a time. Refused on a
+    #: movement the catalogue does not mark unilateral.
+    per_side: bool | None = None
     load: LoadSchema
     #: Target reps in reserve, 0-10.
     rir: int | None = None

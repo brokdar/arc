@@ -111,6 +111,26 @@ LIFT: dict[str, Any] = {
     ],
 }
 
+#: Three rounds of eleven single-arm reps — six working sets, 990 kg. Issue
+#: #25's own case, prescribed here so the scoring path can be checked against
+#: the number the domain test asserts.
+PER_SIDE_LIFT: dict[str, Any] = {
+    "discipline": "strength",
+    "groups": [
+        {
+            "items": [
+                {
+                    "exercise_id": "single_arm_dumbbell_row",
+                    "sets": 3,
+                    "reps": 11,
+                    "per_side": True,
+                    "load": {"kind": "kg", "value": 15.0},
+                }
+            ]
+        }
+    ],
+}
+
 
 # --- helpers -------------------------------------------------------------------
 
@@ -942,6 +962,62 @@ async def test_a_strength_session_is_scored_on_its_sets(client: AsyncClient) -> 
     assert document["suggested_verdict"] == Verdict.UNDER.value
     kinds = [one["kind"] for one in axis(document, ScoringAxis.SETS_LOAD)["criteria"]]
     assert kinds == ["sets_completed", "load_within"]
+
+
+async def test_a_per_side_session_is_complete_when_every_round_is_logged(
+    client: AsyncClient,
+) -> None:
+    # AC-21. Prescribed and logged sets have to be counted in the same unit or
+    # completion is double or half: three per-side rounds are six working sets
+    # on the prescription, and three per-side logged rows are six on the other
+    # side. One row per round, not one per limb.
+    await plan(client, purpose="max_strength", structure=PER_SIDE_LIFT)
+    done = await record(
+        client,
+        duration_s=3_600,
+        discipline="strength",
+        sets=[
+            {
+                "exercise_id": "single_arm_dumbbell_row",
+                "reps": 11,
+                "per_side": True,
+                "load_kg": 15.0,
+            }
+            for _ in range(3)
+        ],
+    )
+
+    document = await score(client, done["id"])
+
+    assert axis(document, ScoringAxis.COMPLETION)["value"] == pytest.approx(1.0)
+    assert axis(document, ScoringAxis.SETS_LOAD)["value"] == pytest.approx(1.0)
+
+
+async def test_logging_one_side_of_each_round_does_not_settle_as_the_session(
+    client: AsyncClient,
+) -> None:
+    # The other side of AC-21: the shared unit is only honest if a shortfall
+    # still reads as one. Three rounds prescribed per side is six working
+    # sets; three rows logged *without* `per_side` is three, so the matcher
+    # sees half the prescribed work and declines to settle the link by itself.
+    # Before `per_side`, the two sides counted three against three and this
+    # was indistinguishable from a completed session.
+    await plan(client, purpose="max_strength", structure=PER_SIDE_LIFT)
+    done = await record(
+        client,
+        duration_s=3_600,
+        discipline="strength",
+        sets=[
+            {"exercise_id": "single_arm_dumbbell_row", "reps": 11, "load_kg": 15.0}
+            for _ in range(3)
+        ],
+    )
+
+    # Pinned by value, not by `!= AUTO_HIGH`: half the prescribed work is a
+    # similarity of exactly 0.5, and an inequality would go on passing if the
+    # ratio drifted to a third or a sixth for some other reason.
+    assert done["match"]["similarity"] == pytest.approx(0.5)
+    assert done["match"]["status"] == MatchLinkStatus.PENDING.value
 
 
 # --- the stream seam, end to end ----------------------------------------------------

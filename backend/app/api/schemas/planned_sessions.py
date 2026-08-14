@@ -216,14 +216,19 @@ class PredictedVolumeRead(BaseModel):
     in one column. Exactly one of the two is ever present on a session.
     """
 
-    #: Σ ``sets × reps × kg`` over the sets prescribed in kilograms; null when
-    #: none is — a session of bodyweight, RPE or %e1RM work has no volume load
-    #: until it is performed. Null means "not assessed", never zero.
+    #: Σ ``working sets × reps × kg`` over the rep-based sets prescribed in
+    #: kilograms; null when none is — a session of bodyweight, RPE or %e1RM
+    #: work has no volume load until it is performed, and a hold has no reps
+    #: to multiply. Null means "not assessed", never zero.
     volume_load_kg: float | None
     #: Prescribed working sets across the whole workout, whatever their load
-    #: kind — the honest denominator.
+    #: kind — the honest denominator. A per-side round counts twice.
     total_sets: int
-    #: Fraction of ``total_sets`` whose load is in kilograms. Below 1.0,
+    #: Σ ``working sets × duration_s`` over the timed holds, in seconds; null
+    #: when the prescription holds nothing. Seconds beside the kilograms and
+    #: never summed with them.
+    total_hold_s: int | None
+    #: Fraction of ``total_sets`` that contributes kilograms. Below 1.0,
     #: ``volume_load_kg`` covers only part of the session.
     coverage: float
 

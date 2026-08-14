@@ -1796,6 +1796,67 @@ async def test_a_set_with_a_misspelled_field_is_refused_by_name(
     assert await rows(db_session, SessionRow) == []
 
 
+async def test_the_agent_can_log_a_per_side_round_and_a_hold(
+    client: AsyncClient,
+) -> None:
+    # Standing rule 1: the shape lands on both surfaces in one PR, so the
+    # agent can record what the athlete actually did rather than flattening a
+    # single-arm row into a bilateral one and a plank into `reps: 1`.
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3_600,
+            "sets": [
+                {
+                    "exercise_id": "single_arm_dumbbell_row",
+                    "reps": 11,
+                    "per_side": True,
+                    "load_kg": 15,
+                },
+                {"exercise_id": "front_plank", "duration_s": 45},
+            ],
+        },
+    )
+
+    row, hold = data["sets"]
+    assert (row["reps"], row["per_side"], row["duration_s"]) == (11, True, None)
+    assert (hold["reps"], hold["per_side"], hold["duration_s"]) == (None, False, 45)
+
+    # The dry run renders from the same view, so the answer the agent sees
+    # before committing carries the same two fields.
+    preview = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "duration_s": 3_600,
+            "sets": [{"exercise_id": "front_plank", "duration_s": 45}],
+            "dry_run": True,
+        },
+    )
+    assert preview["session"]["sets"][0]["duration_s"] == 45
+
+
+async def test_a_set_that_is_neither_reps_nor_a_hold_is_refused_by_name(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    with pytest.raises(ToolError, match="exactly one of reps or duration_s"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {
+                "start_time": f"{MONDAY.isoformat()}T17:30:00Z",
+                "duration_s": 3_600,
+                "sets": [{"exercise_id": "back_squat", "load_kg": 100}],
+            },
+        )
+
+    assert await rows(db_session, SessionRow) == []
+
+
 async def test_a_naive_manual_start_time_is_refused_by_name(
     client: AsyncClient,
 ) -> None:

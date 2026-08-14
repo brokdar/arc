@@ -541,6 +541,121 @@ async def test_a_manual_session_gets_its_volume_load_on_creation(
     assert metrics["strength"]["coverage"] == pytest.approx(2 / 3)
     # Kilograms are not a load, and nothing pretends otherwise.
     assert metrics["load"]["not_assessed"]
+    assert metrics["strength"]["total_hold_s"] is None
+
+
+async def test_a_logged_per_side_row_moves_the_load_twice(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-18 on the performed side, by the same numbers as the prescription:
+    # three rounds of eleven single-arm reps at 15 kg is 990 kg over six
+    # working sets. One row per round, and `load_kg` is what one arm moved.
+    created = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-05-11T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3600,
+            "sets": [
+                {
+                    "exercise_id": "single_arm_dumbbell_row",
+                    "reps": 11,
+                    "per_side": True,
+                    "load_kg": 15.0,
+                }
+                for _ in range(3)
+            ],
+        },
+    )
+
+    metrics = (await client.get(f"{SESSIONS}/{created.json()['id']}")).json()["metrics"]
+
+    assert metrics["strength"]["volume_load_kg"] == pytest.approx(990.0)
+    assert metrics["strength"]["sets_completed"] == 6
+    assert metrics["strength"]["coverage"] == pytest.approx(1.0)
+
+
+async def test_a_logged_hold_reports_its_seconds_and_no_kilograms(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-19 on the performed side. A hold has no reps to multiply, so it is
+    # outside the volume and its coverage — and its seconds are reported
+    # rather than lost.
+    created = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-05-11T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3600,
+            "sets": [
+                {"exercise_id": "back_squat", "reps": 5, "load_kg": 100.0},
+                {"exercise_id": "front_plank", "duration_s": 45},
+                {"exercise_id": "side_plank", "duration_s": 30, "per_side": True},
+            ],
+        },
+    )
+
+    metrics = (await client.get(f"{SESSIONS}/{created.json()['id']}")).json()["metrics"]
+
+    assert metrics["strength"]["volume_load_kg"] == pytest.approx(500.0)
+    assert metrics["strength"]["sets_completed"] == 1 + 1 + 2
+    assert metrics["strength"]["total_hold_s"] == 45 + 60
+    assert metrics["strength"]["coverage"] == pytest.approx(1 / 4)
+
+
+@pytest.mark.parametrize(
+    "logged",
+    [
+        pytest.param({}, id="neither"),
+        pytest.param({"reps": 5, "duration_s": 45}, id="both"),
+    ],
+)
+async def test_a_set_that_is_neither_reps_nor_a_hold_is_refused_by_name(
+    data_root: Path, client: AsyncClient, logged: dict[str, int]
+) -> None:
+    # Both halves of the rule, because the logged side enforces it in its own
+    # code (`_check_manual`) rather than through `StrengthSet`: a row with
+    # both is as unaccountable as a row with neither — it would be counted
+    # twice, once in the kilograms and once in the seconds.
+    response = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-05-11T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3600,
+            "sets": [{"exercise_id": "back_squat", "load_kg": 100.0, **logged}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "exactly one of reps or duration_s" in response.json()["detail"]
+
+
+async def test_logging_a_bilateral_movement_per_side_is_refused(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # The catalogue already knows a back squat is not a one-side-at-a-time
+    # movement, and letting the claim through would double the session's
+    # working sets against a prescription that counted them once.
+    response = await client.post(
+        MANUAL,
+        json={
+            "start_time": "2026-05-11T17:30:00+02:00",
+            "timezone": "Europe/Zurich",
+            "duration_s": 3600,
+            "sets": [
+                {
+                    "exercise_id": "back_squat",
+                    "reps": 5,
+                    "per_side": True,
+                    "load_kg": 100.0,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "back_squat" in response.json()["detail"]
 
 
 # --- the list column ----------------------------------------------------------

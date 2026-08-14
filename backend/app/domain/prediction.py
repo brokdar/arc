@@ -109,18 +109,23 @@ class PredictedVolume:
     """What a strength prescription is expected to cost. **Not** a load.
 
     Args:
-        volume_load_kg: Σ ``sets × reps × kg`` over the sets whose load is in
-            kilograms, or ``None`` when none of them is (a session of
-            bodyweight, RPE or %e1RM work has no volume load until it is
-            performed).
-        total_sets: Prescribed working sets across the whole workout, whatever
-            their load kind — the honest denominator, and the measure the week
-            rail shows for strength.
-        coverage: Fraction of :attr:`total_sets` whose load is in kilograms.
+        volume_load_kg: Σ ``working_sets × reps × kg`` over the rep-based sets
+            whose load is in kilograms, or ``None`` when none of them is (a
+            session of bodyweight, RPE or %e1RM work has no volume load until
+            it is performed, and a hold has no reps to multiply).
+        total_sets: Prescribed **working** sets across the whole workout,
+            whatever their load kind — the honest denominator, and the measure
+            the week rail shows for strength. A per-side round counts twice
+            (:attr:`~app.domain.strength.StrengthSet.working_sets`).
+        total_hold_s: Σ ``working_sets × duration_s`` over the timed sets, or
+            ``None`` when the workout prescribes no holds. Seconds, beside the
+            kilograms and never summed with them.
+        coverage: Fraction of :attr:`total_sets` that contributed kilograms.
     """
 
     volume_load_kg: float | None
     total_sets: int
+    total_hold_s: int | None
     coverage: float
 
 
@@ -275,26 +280,41 @@ def predict_endurance_load(
 def predict_strength_volume(workout: StrengthWorkout) -> PredictedVolume:
     """Sum the prescribed volume load of a strength workout.
 
-    Volume load is ``sets × reps × kg``, so only sets prescribed in kilograms
-    contribute: a %e1RM line has no kilograms until the e1RM is known, an RPE
-    line has none until it is performed, and a bodyweight line has none at all.
-    :attr:`PredictedVolume.coverage` says how much of the session that leaves
-    out, and :attr:`PredictedVolume.total_sets` counts every set regardless —
-    a strength session with no volume load is still work.
+    Volume load is ``working_sets × reps × kg``, so only rep-based sets
+    prescribed in kilograms contribute: a %e1RM line has no kilograms until
+    the e1RM is known, an RPE line has none until it is performed, a
+    bodyweight line has none at all, and a **timed hold has no reps to
+    multiply** — it contributes to :attr:`PredictedVolume.total_hold_s`
+    instead, on the same reasoning that keeps kilograms off the endurance load
+    axis. :attr:`PredictedVolume.coverage` says how much of the session that
+    leaves out, and :attr:`PredictedVolume.total_sets` counts every working
+    set regardless — a strength session with no volume load is still work.
+
+    **Working sets, not rounds.** Issue #25's case, by number: three rounds of
+    eleven single-arm reps at 15 kg is six working sets and 990 kg, not three
+    and 495.
 
     This is kilograms and it is **not** a load: see the module docstring.
     """
     total_sets = 0
     counted_sets = 0
     volume = 0.0
+    hold_s = 0
+    timed = False
     for prescription in workout.prescriptions:
-        total_sets += prescription.sets
+        working = prescription.working_sets
+        total_sets += working
+        if prescription.duration_s is not None:
+            timed = True
+            hold_s += working * prescription.duration_s
+            continue
         load = prescription.load
-        if load.kind is LoadKind.KG and load.value is not None:
-            counted_sets += prescription.sets
-            volume += prescription.sets * prescription.reps * load.value
+        if load.kind is LoadKind.KG and load.value is not None and prescription.reps:
+            counted_sets += working
+            volume += working * prescription.reps * load.value
     return PredictedVolume(
         volume_load_kg=volume if counted_sets else None,
         total_sets=total_sets,
+        total_hold_s=hold_s if timed else None,
         coverage=counted_sets / total_sets if total_sets else 0.0,
     )

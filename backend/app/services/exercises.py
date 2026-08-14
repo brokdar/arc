@@ -99,6 +99,43 @@ class ExerciseService:
                 "exercise catalogue — list the catalogue for the valid slugs"
             )
 
+    async def require_unilateral(self, exercise_ids: Sequence[str]) -> None:
+        """Check that every slug names a movement performed one side at a time.
+
+        The catalogue half of the `per_side` decision: the flag is stored on
+        the prescription so a stored document stays self-describing when the
+        catalogue changes under it, and this is what stops the two disagreeing
+        in the direction that matters — a bench press claimed as per-side
+        would double the session's working sets and its volume load.
+
+        The opposite direction is deliberately *not* checked. A unilateral
+        movement prescribed without `per_side` is a legal thing to write —
+        alternating reps within one set, say — and refusing it would make the
+        catalogue's opinion override the coach's.
+
+        Raises:
+            ValidationError: Naming every slug that is bilateral, and saying
+                so in the words the athlete would use.
+        """
+        await self.ensure_seeded()
+        by_id = {row.id: row for row in await self._repository.all()}
+        bilateral = sorted(
+            slug
+            for slug in set(exercise_ids)
+            if slug in by_id and not by_id[slug].unilateral
+        )
+        if bilateral:
+            named = ", ".join(f"{by_id[slug].name} ({slug})" for slug in bilateral)
+            raise ValidationError(
+                f"{named} is performed with both sides at once, so it cannot "
+                "be prescribed per side"
+                if len(bilateral) == 1
+                else (
+                    f"{named} are performed with both sides at once, so they "
+                    "cannot be prescribed per side"
+                )
+            )
+
     async def ensure_seeded(self, *, actor: Actor | None = None) -> int:
         """Bring the catalogue table in line with the bundled file.
 

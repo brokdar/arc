@@ -1042,3 +1042,16 @@ def test_a_bodyweight_session_has_sets_but_no_volume_load() -> None:
 
 def test_no_sets_logged_is_not_a_zero_volume() -> None:
     assert strength_volume([]) == NotAssessed("no sets were logged")
+
+
+def test_a_logged_set_records_reps_or_a_hold_and_never_both() -> None:
+    """The rule `strength_volume` counts on, refused where it is stated.
+
+    A row carrying both would be summed into `volume_load_kg` *and*
+    `total_hold_s`: one set, reported twice, on two axes.
+    """
+    with pytest.raises(ValueError, match="exactly one of reps or duration_s"):
+        PerformedSet(reps=5, duration_s=45, load_kg=20.0)
+
+    with pytest.raises(ValueError, match="exactly one of reps or duration_s"):
+        PerformedSet(load_kg=20.0)

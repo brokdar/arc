@@ -203,6 +203,7 @@ def _volume_to_read(predicted: PredictedVolume | None) -> PredictedVolumeRead | 
     return PredictedVolumeRead(
         volume_load_kg=predicted.volume_load_kg,
         total_sets=predicted.total_sets,
+        total_hold_s=predicted.total_hold_s,
         coverage=predicted.coverage,
     )
 

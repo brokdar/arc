@@ -30,7 +30,7 @@ import {
   profileLegend,
   resolveBand,
 } from "@/lib/targets";
-import { ZONE_COLORS } from "@/lib/workout-profile";
+import { describeSets, ZONE_COLORS } from "@/lib/workout-profile";
 
 /**
  * Today: what to do, why, and how it is judged.
@@ -259,7 +259,7 @@ function SessionPanel({
                       {nameOf(item.exercise_id)}
                     </span>
                     <span className="font-mono text-ink text-xs">
-                      {item.sets}×{item.reps}
+                      {describeSets(item)}
                     </span>
                   </div>
                 ))}
