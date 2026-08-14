@@ -192,3 +192,20 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/wellness/days"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# `POST /agent-notes/{note_id}/dispute` takes one field, `rating`, and
+# `DisputeRating` deliberately has two members — so the operation has four
+# distinct schema-valid bodies in total: either rating, an explicit null, or the
+# field omitted. Asking for 100 examples of a four-value space makes hypothesis
+# filter almost everything it generates, and it raises `filter_too_much` on the
+# seeds where that ratio happens to look pathological. The failure is real but it
+# is about the request for 100 examples, not about the API: the run that tripped
+# it still generated and passed 15478 cases.
+#
+# So the operation is sized to its own input space rather than the health check
+# being suppressed globally — a suppressed `filter_too_much` would also hide the
+# next genuinely over-constrained schema someone adds.
+
+[[operations]]
+include-name = "POST /api/v1/agent-notes/{note_id}/dispute"
+generation.max-examples = 5
