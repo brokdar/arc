@@ -102,6 +102,17 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/(check-migration-required(\.test)?|git-push-range)\.sh$
+      # The implement-plan workflow's guards each refuse an entire run, so they
+      # only execute when a plan is defective — which in a working repo is almost
+      # never. That is why review, not use, found that one guard was missing
+      # outright and another refused titles CI accepts. These cases are pure and
+      # cost milliseconds; the alternative is discovering the next one in flight.
+      - id: workflow-guards-test
+        name: workflow-guards-test
+        entry: node scripts/workflow-guards.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/workflows/implement-plan\.js|scripts/workflow-guards\.test\.mjs)$
 
   # ============================================================================
   # API contract synchronization

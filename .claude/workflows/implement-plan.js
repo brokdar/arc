@@ -74,7 +74,8 @@ const PARSE_SCHEMA = {
         additionalProperties: false,
         required: [
           "title", "branch", "depends", "why", "delivers", "reuses",
-          "owns", "needsDocker", "triggers", "decisions", "acceptance", "shipped",
+          "owns", "needsDocker", "triggers", "decisions", "acceptance",
+          "prExists", "merged",
         ],
         properties: {
           // Verbatim from the "### <title>" heading. This IS the PR title, and
@@ -93,9 +94,12 @@ const PARSE_SCHEMA = {
           decisions: { type: "array", items: { type: "string" } },
           // Each AC verbatim INCLUDING its level, test file and nested edge cases.
           acceptance: { type: "array", items: { type: "string" } },
-          // TRUE if a PR with this exact title exists in any state, or the
-          // subject is already on main. Derived from gh/git — never from the plan.
-          shipped: { type: "boolean" },
+          // Two DIFFERENT questions, and conflating them is a real bug: a PR that
+          // is merely OPEN satisfies "don't rebuild this" but not "its dependents
+          // may start". An open prerequisite means the next group would be cut
+          // from a main that lacks it. Both derived from gh/git, never the plan.
+          prExists: { type: "boolean" }, // a PR with this exact title, any state
+          merged: { type: "boolean" }, // that PR is MERGED, or the subject is on main
         },
       },
     },
@@ -156,6 +160,29 @@ const REVIEW_SCHEMA = {
   },
 };
 
+// Without a schema the setup agent returns a STRING, so every guarantee it is
+// asked to establish is discarded: an agent that faithfully reports "the tree is
+// dirty, stopping" returns a non-null string and the run proceeds into implement
+// anyway. That made the dirty-worktree hard stop unable to fire, and made
+// `prPrompt`'s "this worktree was verified clean at setup" a false premise —
+// which is exactly the reasoning that lets the commit agent stage without
+// suspicion.
+const SETUP_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ok", "headBranch", "dirty", "detail"],
+  properties: {
+    ok: { type: "boolean" },
+    headBranch: { type: "string" },
+    // Every dirty/untracked path in the worktree. MUST be empty to proceed.
+    dirty: { type: "array", items: { type: "string" } },
+    reused: { type: "boolean" },
+    // Prerequisite titles the agent confirmed are on origin/main.
+    prerequisitesOnMain: { type: "array", items: { type: "string" } },
+    detail: { type: "string" },
+  },
+};
+
 const PR_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -206,6 +233,107 @@ const MERGE_SCHEMA = {
     detail: { type: "string" },
   },
 };
+
+// ── GUARDS-BEGIN ─────────────────────────────────────────────────────────────
+// Everything between these sentinels is PURE: functions of a parsed plan and
+// nothing else — no agents, no git, no `log`, no closure over module state.
+// `scripts/workflow-guards.test.mjs` extracts this block verbatim and runs cases
+// against it, so the guards are proven without spawning a single agent. That
+// matters because every one of them refuses an entire run: a false positive
+// blocks legitimate work, and a false negative is how two Alembic heads or an
+// unreviewed push reach `main`.
+//
+// KEEP THIS BLOCK PURE. A `log()` or an `await` in here breaks the extraction.
+
+// `pr-title` is a required status check, and this must state ITS rule and no
+// more. The workflow refuses the whole plan on a mismatch, so a stricter regex
+// here rejects titles CI would accept — see the test's false-positive cases.
+// CI (.github/workflows/pr-title.yml): subjectPattern `^(?![A-Z])(?!.*\.$).+$`,
+// i.e. the subject must not START uppercase and must not END with a period. It
+// does NOT require the first character be a letter, and this repo's prose is
+// full of backticked identifiers.
+const TITLE_TYPES = "feat|fix|perf|refactor|revert|docs|chore|build|ci|test|style";
+const TITLE_RE = new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?: (?![A-Z])\\S.*[^.\\s]$`);
+
+// A positional label tells a reader nothing and outlives the plan that gave it
+// meaning — the title is the permanent commit subject on main and the changelog
+// entry.
+const POSITIONAL_RE = /\b(wp|pr|phase|slice|step|part|increment)[\s._-]?\d+\b/i;
+
+// The title is pasted into a double-quoted shell command by an agent
+// (`gh pr create --title "…"`), so a backtick or `$` in it is command
+// substitution and the mangled result becomes the permanent subject on main.
+const SHELL_UNSAFE_RE = /[`$"\\]/;
+
+// Branch names are interpolated into `git worktree add` / `git push` the same way.
+const BRANCH_RE = new RegExp(`^(${TITLE_TYPES})\\/[a-z0-9][a-z0-9._-]*$`);
+
+const isMigration = (owned) => /alembic[\\/]|\bmigration/i.test(owned);
+
+function badTitles(prs) {
+  return prs.filter((p) => !TITLE_RE.test(p.title));
+}
+function unsafeTitles(prs) {
+  return prs.filter((p) => SHELL_UNSAFE_RE.test(p.title));
+}
+function positionalOffenders(prs) {
+  return prs.filter(
+    (p) => POSITIONAL_RE.test(p.title) || POSITIONAL_RE.test(p.branch),
+  );
+}
+function badBranches(prs) {
+  return prs.filter((p) => !BRANCH_RE.test(p.branch));
+}
+function duplicateBranches(prs) {
+  const seen = new Set();
+  const dupes = new Set();
+  for (const p of prs) {
+    if (seen.has(p.branch)) dupes.add(p.branch);
+    seen.add(p.branch);
+  }
+  return [...dupes];
+}
+// The whole safety story is "an independent agent judges the diff against the
+// criteria". A PR with none is an unreviewed push to a protected branch — and it
+// is a likely parse failure, since a stray `### heading` becomes a PR with no ACs.
+function acceptanceless(prs) {
+  return prs.filter((p) => !p.acceptance || p.acceptance.length === 0);
+}
+function unknownDependencies(prs) {
+  const known = new Set(prs.map((p) => p.branch));
+  return prs.flatMap((p) =>
+    (p.depends || []).filter((d) => !known.has(d)).map((d) => `${p.branch} → ${d}`),
+  );
+}
+// Two branches cut from the same head both writing `alembic/versions/` produce
+// two Alembic heads: each is green locally with one head, and main ends up
+// broken. `plan-template.md` promises the executor refuses this.
+function migrationCollisions(groups) {
+  return groups
+    .map((g) => g.filter((p) => (p.owns || []).some(isMigration)))
+    .filter((owners) => owners.length > 1);
+}
+
+// Topological layering. `mergedBranches` is the set that is actually ON main —
+// an OPEN prerequisite must not satisfy a dependency, or the next group is cut
+// from a main that lacks it. Returns {groups} or {error, remaining}.
+function groupsOf(pending, mergedBranches) {
+  const remaining = pending.slice();
+  const done = new Set(mergedBranches);
+  const groups = [];
+  let spins = 0;
+  while (remaining.length && spins++ < 50) {
+    const ready = remaining.filter((p) => (p.depends || []).every((d) => done.has(d)));
+    if (!ready.length) return { error: "unbuildable", remaining };
+    groups.push(ready);
+    for (const p of ready) {
+      done.add(p.branch);
+      remaining.splice(remaining.indexOf(p), 1);
+    }
+  }
+  return remaining.length ? { error: "unbuildable", remaining } : { groups };
+}
+// ── GUARDS-END ───────────────────────────────────────────────────────────────
 
 // ── Shared prompt blocks ─────────────────────────────────────────────────────
 
@@ -313,7 +441,7 @@ function parsePrompt() {
   return `Parse the feature plan ${PLAN} into a machine-readable pull-request list.
 
 Read ${PLAN} in full. Then run BOTH yourself and use them — NOT the plan's checkboxes — to decide what
-is already shipped:
+is already shipped, and whether it is merely OPEN or actually MERGED:
 - \`gh pr list --state all --limit 60 --json number,title,state\`
 - \`git fetch origin main\` then \`git log --oneline origin/main -40\` (ignore failure if offline)
 
@@ -335,8 +463,14 @@ For each "### <title>" section under "## Pull requests":
 - acceptance — every "- [ ] **AC-n** …" bullet in this PR, VERBATIM and COMPLETE, including its
   level, its test path, and every nested "- Edge: …" line underneath it. Do not summarise or drop
   edge cases; the developer builds from these and the reviewer judges against them.
-- shipped — TRUE only if a PR whose title EXACTLY equals this title exists in any state, OR that
-  exact subject already appears in \`git log origin/main\`. Otherwise FALSE.
+- prExists — TRUE if a PR whose title EXACTLY equals this title exists in ANY state (open, merged,
+  or closed). FALSE otherwise.
+- merged — TRUE only if that PR's state is MERGED, or the exact subject already appears in
+  \`git log origin/main\`. A PR that is merely OPEN is prExists=true and merged=FALSE.
+
+These two are deliberately separate and you must not collapse them. An open PR means "do not build
+this again"; only a merged one means "the PRs that depend on it may start", because a dependent is
+cut from \`origin/main\` and an unmerged prerequisite is not there.
 
 Return only real PRs from the plan. Do not invent, reorder or renumber anything.`;
 }
@@ -346,28 +480,52 @@ function setupPrompt(p) {
   return `Prepare the worktree for the PR "${p.title}". Idempotent — this may be a re-run.
 
 1. \`git fetch origin main\` (best-effort; note it and continue if offline).
-2. If \`${wt}\` already exists as a worktree (\`git worktree list\`), it is from an earlier run. Re-base it
-   on CURRENT upstream main before reusing it — a worktree cut before a prerequisite merged is
-   building on a main that lacks what this PR depends on. With the tree clean (step 6 fails you if it
-   is not), run \`git -C ${wt} merge --ff-only origin/main\`. If that is refused because the branch
-   already carries commits of its own, leave it as it is and SAY SO in your report — do not rebase or
-   reset work that may already be on a PR. Then skip to step 4.
-3. Create it cut from CURRENT upstream main, so it starts from work already merged:
+
+2. ⚠️ CLEANLINESS FIRST — before touching anything. If \`${wt}\` already exists as a worktree
+   (\`git worktree list\`), run \`git -C ${wt} status --porcelain -uall\` NOW and put every dirty or
+   untracked path in \`dirty\`. If that list is non-empty, return \`ok: false\` IMMEDIATELY and do
+   nothing else. That worktree is left over from a run that hard-stopped, its uncommitted work exists
+   nowhere else, and the commit step would sweep it into this PR. Do not clean it, do not fast-forward
+   over it, do not proceed — a human decides whether to keep or discard it.
+   (Everything \`worktree-init\` creates — \`.venv\`, \`node_modules\`, \`.next\`, the dotenv file — is
+   gitignored, so a legitimately reusable worktree reports nothing here.)
+
+3. Only if step 2 found the worktree CLEAN: re-base it on current upstream main, because a worktree
+   cut before a prerequisite merged is building on a main that lacks what this PR depends on.
+   \`git -C ${wt} merge --ff-only origin/main\`. If that is refused because the branch already carries
+   commits of its own, leave it and say so — do not rebase or reset work that may be on a PR. Set
+   \`reused: true\` and skip to step 5.
+
+4. If it does not exist, create it cut from CURRENT upstream main:
    \`git worktree add ${wt} -b ${p.branch} origin/main\`
-   If branch \`${p.branch}\` already exists, use \`git worktree add ${wt} ${p.branch}\` instead.
-   If origin/main is unavailable, fall back to \`git worktree add ${wt} -b ${p.branch}\` and SAY SO.
-4. \`cd ${wt} && just worktree-init\` — a worktree has no \`.env\`, no \`.venv\` and no \`node_modules\`,
+   If branch \`${p.branch}\` already exists (a previous run's worktree was cleaned up but its branch
+   kept), use \`git worktree add ${wt} ${p.branch}\` and then ALSO
+   \`git -C ${wt} merge --ff-only origin/main\` — otherwise it starts from stale main with no rebase.
+   If origin/main is unavailable, fall back to \`git worktree add ${wt} -b ${p.branch}\` and say so.
+
+5. \`cd ${wt} && just worktree-init\` — a worktree has no \`.env\`, no \`.venv\` and no \`node_modules\`,
    and the always-run api-schema-sync pre-commit hook refuses to run without the frontend's. Skip
    only if \`${wt}/.venv\` and \`${wt}/frontend/node_modules\` both already exist.
-5. Confirm with \`git -C ${wt} rev-parse --abbrev-ref HEAD\` that HEAD is \`${p.branch}\`.
-6. ⚠️ Confirm with \`git -C ${wt} status --porcelain -uall\` that the tree is CLEAN, and REPORT A
-   FAILURE if it is not. A fresh worktree from origin/main is always clean, and everything
-   \`worktree-init\` creates (\`.venv\`, \`node_modules\`, \`.next\`, the dotenv file) is gitignored — so
-   dirt here means this worktree is left over from an earlier run that hard-stopped, and its partial
-   work would be swept into this PR's commit by the commit step. Do not clean it yourself and do not
-   proceed: name the dirty paths and stop, so a human decides whether to keep or discard them.
 
-Do not implement anything. Report the final state, or the failure if the worktree could not be made.`;
+6. Confirm with \`git -C ${wt} rev-parse --abbrev-ref HEAD\` that HEAD is \`${p.branch}\`, and return
+   it as \`headBranch\` whatever it turns out to be — do not report the expected value, report the
+   observed one.
+${
+  (p.depends || []).length
+    ? `
+7. ⚠️ PREREQUISITE CHECK. This PR depends on ${p.depends.map((d) => `\`${d}\``).join(", ")}. Run
+   \`git log origin/main --oneline -40\` and confirm each of these titles appears:
+${p.depends.map((d) => `     - the PR whose branch is \`${d}\``).join("\n")}
+   List the ones you found in \`prerequisitesOnMain\`. If any prerequisite is NOT on origin/main,
+   return \`ok: false\` and say which — this worktree would be built against a main that lacks the
+   work it extends.
+`
+    : ""
+}
+Return \`ok: true\` only when the worktree exists, HEAD is \`${p.branch}\`, \`dirty\` is empty${
+    (p.depends || []).length ? ", and every prerequisite is on origin/main" : ""
+  }.
+Do not implement anything.`;
 }
 
 function implementPrompt(parsed, p, fixIssues, handoff, ci) {
@@ -604,27 +762,34 @@ if (!parsed.why || parsed.why.trim().length < 80) {
   return { error: "no-why" };
 }
 
-// `pr-title` is a required status check. Catching a bad title here costs nothing;
-// catching it at CI costs a full pipeline run and a retitle.
-const TITLE_RE =
-  /^(feat|fix|perf|refactor|revert|docs|chore|build|ci|test|style)(\([^)]+\))?: [a-z](.*[^.])?$/;
-const badTitles = parsed.prs.filter((p) => !TITLE_RE.test(p.title));
-if (badTitles.length) {
+// The title/positional/branch guards run over UNMERGED PRs only. A long-lived
+// plan legitimately contains PRs that merged long ago under older conventions —
+// this repo's own history has `feat(wp-5): …` — and refusing the whole plan for
+// a title that already shipped leaves no way to proceed.
+const live = parsed.prs.filter((p) => !p.merged);
+
+const bad = badTitles(live);
+if (bad.length) {
   log(
-    `HARD STOP: ${badTitles.length} title(s) would fail the required \`pr-title\` check ` +
-      `(lowercase-start Conventional Commit, no trailing period):\n` +
-      badTitles.map((p) => `  - "${p.title}"`).join("\n"),
+    `HARD STOP: ${bad.length} title(s) would fail the required \`pr-title\` check — the subject must ` +
+      `not start with an uppercase letter and must not end with a period:\n` +
+      bad.map((p) => `  - "${p.title}"`).join("\n"),
   );
-  return { error: "bad-pr-title", titles: badTitles.map((p) => p.title) };
+  return { error: "bad-pr-title", titles: bad.map((p) => p.title) };
 }
 
-// A positional label tells a reader nothing and outlives the plan that gave it
-// meaning — the title is the permanent commit subject on main and the changelog
-// entry. Machine-catchable, so it is a guard rather than a convention.
-const POSITIONAL_RE = /\b(wp|pr|phase|slice|step|part|increment)[\s._-]?\d+\b/i;
-const positional = parsed.prs.filter(
-  (p) => POSITIONAL_RE.test(p.title) || POSITIONAL_RE.test(p.branch),
-);
+const unsafe = unsafeTitles(live);
+if (unsafe.length) {
+  log(
+    `HARD STOP: ${unsafe.length} title(s) contain a backtick, $, quote or backslash. The title is ` +
+      `pasted into \`gh pr create --title "…"\` by an agent, so those characters are command ` +
+      `substitution — and squash-merge makes the mangled result the permanent subject on main:\n` +
+      unsafe.map((p) => `  - "${p.title}"`).join("\n"),
+  );
+  return { error: "unsafe-pr-title", titles: unsafe.map((p) => p.title) };
+}
+
+const positional = positionalOffenders(live);
 if (positional.length) {
   log(
     `HARD STOP: ${positional.length} PR(s) carry a positional label in the title or branch. The title ` +
@@ -635,26 +800,77 @@ if (positional.length) {
   return { error: "positional-label", offenders: positional.map((p) => p.title) };
 }
 
+const badBranch = badBranches(live);
+if (badBranch.length) {
+  log(
+    `HARD STOP: ${badBranch.length} branch name(s) are not \`<type>/<kebab-case>\`. They are ` +
+      `interpolated into git commands:\n` +
+      badBranch.map((p) => `  - ${p.branch}`).join("\n"),
+  );
+  return { error: "bad-branch-name", branches: badBranch.map((p) => p.branch) };
+}
+
+const dupes = duplicateBranches(parsed.prs);
+if (dupes.length) {
+  log(
+    `HARD STOP: ${dupes.length} branch name(s) appear on more than one PR. Two PRs on one branch ` +
+      `share a worktree path, so a concurrent group would run two developers in one tree:\n` +
+      dupes.map((b) => `  - ${b}`).join("\n"),
+  );
+  return { error: "duplicate-branch", branches: dupes };
+}
+
+// A PR with no criteria is an unreviewed push: the reviewer is handed an empty
+// list, has nothing to reject, approves, and — if anything depends on it — the
+// result is squash-merged into protected main.
+const noAcs = acceptanceless(live);
+if (noAcs.length) {
+  log(
+    `HARD STOP: ${noAcs.length} PR(s) have no acceptance criteria. The reviewer would have nothing ` +
+      `to judge and would approve by default:\n` +
+      noAcs.map((p) => `  - "${p.title}"`).join("\n"),
+  );
+  return { error: "no-acceptance-criteria", titles: noAcs.map((p) => p.title) };
+}
+
 const byBranch = new Map(parsed.prs.map((p) => [p.branch, p]));
-const unknownDeps = parsed.prs.flatMap((p) =>
-  (p.depends || []).filter((d) => !byBranch.has(d)).map((d) => `${p.branch} → ${d}`),
-);
+const unknownDeps = unknownDependencies(parsed.prs);
 if (unknownDeps.length) {
   log(`HARD STOP: dependency on a branch not in the plan:\n${unknownDeps.map((d) => `  - ${d}`).join("\n")}`);
   return { error: "unknown-dependency", unknownDeps };
+}
+
+// A scoped run naming a branch the plan does not contain must say so. Silently
+// filtering to nothing reports "nothing to build", which reads as "the plan is
+// complete" — a wrong-direction failure over a typo.
+if (ONLY_BRANCH && !byBranch.has(ONLY_BRANCH)) {
+  log(
+    `HARD STOP: onlyBranch "${ONLY_BRANCH}" is not in ${PLAN}. Branches in this plan:\n` +
+      parsed.prs.map((p) => `  - ${p.branch}`).join("\n"),
+  );
+  return { error: "unknown-branch", requested: ONLY_BRANCH };
 }
 
 // ── Feature verification mode ────────────────────────────────────────────────
 // The one gate per-PR review structurally cannot pass: criteria that are only
 // true once several PRs are merged. Runs against main, after they are.
 if (VERIFY_FEATURE) {
-  const unshipped = parsed.prs.filter((p) => !p.shipped);
+  const unshipped = parsed.prs.filter((p) => !p.merged);
   if (unshipped.length) {
     log(
       `Feature verification asked for, but ${unshipped.length} PR(s) are not merged yet: ` +
         unshipped.map((p) => p.branch).join(", ") + ".",
     );
     return { note: "verify-blocked", pending: unshipped.map((p) => p.branch) };
+  }
+  // A verification with nothing to verify produces a rubber-stamp sign-off — the
+  // report the skill tells the operator to sign off on.
+  if (!parsed.featureAcceptance || parsed.featureAcceptance.length === 0) {
+    log(
+      `HARD STOP: ${PLAN} has no "## Feature acceptance" criteria, so there is nothing for this pass ` +
+        `to verify. Either write the cross-PR criteria or skip this step deliberately.`,
+    );
+    return { error: "no-feature-acceptance" };
   }
   phase("Verify feature");
   const task = `Every pull request for "${parsed.feature}" is merged. Verify the feature-scoped
@@ -685,50 +901,69 @@ misread, or only superficially covered. Return the verdict in the structured for
   return { feature: parsed.feature, featureVerdict: report };
 }
 
-// ── Derive the concurrency groups from `depends` ─────────────────────────────
-// Computed, never hand-written: a hand-numbered group and a `depends` line
-// eventually disagree, and the number wins silently. Level 0 is everything with
-// no unmerged prerequisite; each later level waits for the one before it to merge.
-function groupsOf(prs) {
-  const remaining = prs.slice();
-  const done = new Set(parsed.prs.filter((p) => p.shipped).map((p) => p.branch));
-  const out = [];
-  let guard = 0;
-  while (remaining.length && guard++ < 50) {
-    const ready = remaining.filter((p) => (p.depends || []).every((d) => done.has(d)));
-    if (!ready.length) {
-      // Either the plan has a cycle, or a scoped run (`onlyBranch`) named a PR
-      // whose prerequisite is neither in scope nor already merged.
-      log(
-        `HARD STOP: nothing is buildable — every remaining PR waits on a dependency that is not ` +
-          `merged and not in scope. Either the plan has a cycle, or this run was scoped past a ` +
-          `prerequisite:\n` +
-          remaining.map((p) => `  - ${p.branch} waits on [${(p.depends || []).join(", ")}]`).join("\n"),
-      );
-      return null;
-    }
-    out.push(ready);
-    ready.forEach((p) => {
-      done.add(p.branch);
-      remaining.splice(remaining.indexOf(p), 1);
-    });
-  }
-  return out;
-}
+// ── Select what to build ─────────────────────────────────────────────────────
+// `onlyBranch` is the documented re-entry after a hard stop, and the commonest
+// stop leaves a PR OPEN (CI red, or a review rejection fixed by hand). Skipping
+// on prExists would make that re-entry a no-op that reports "nothing to build" —
+// so an explicit branch overrides the skip and says which PR it is pushing onto.
+const pending = ONLY_BRANCH
+  ? parsed.prs.filter((p) => p.branch === ONLY_BRANCH && !p.merged)
+  : parsed.prs.filter((p) => !p.prExists && !p.merged);
 
-const pending = parsed.prs.filter(
-  (p) => !p.shipped && (!ONLY_BRANCH || p.branch === ONLY_BRANCH),
-);
 if (pending.length === 0) {
+  const target = ONLY_BRANCH ? byBranch.get(ONLY_BRANCH) : null;
+  if (target && target.merged) {
+    log(`"${target.title}" is already merged. Nothing to do.`);
+    return { feature: parsed.feature, note: "already-merged", branch: ONLY_BRANCH };
+  }
   log(
-    `Nothing to build for "${parsed.feature}". ` +
-      `Re-launch with { verifyFeature: true } to run the feature-scoped verification.`,
+    `Nothing to build for "${parsed.feature}" — every PR is merged or already has one open. ` +
+      `Re-launch with { verifyFeature: true } once they are all merged.`,
   );
   return { feature: parsed.feature, note: "nothing-pending" };
 }
+if (ONLY_BRANCH && byBranch.get(ONLY_BRANCH).prExists) {
+  log(
+    `"${ONLY_BRANCH}" already has a pull request; building onto it because it was named explicitly. ` +
+      `If that PR should be abandoned instead, close it and delete the branch first.`,
+  );
+}
 
-const groups = groupsOf(pending);
-if (!groups) return { feature: parsed.feature, error: "dependency-cycle" };
+// Groups are derived from `depends` against what is actually MERGED. An open
+// prerequisite does not count: a dependent is cut from `origin/main`, and code
+// that is only on an open PR is not there.
+const mergedBranches = parsed.prs.filter((p) => p.merged).map((p) => p.branch);
+const layered = groupsOf(pending, mergedBranches);
+if (layered.error) {
+  log(
+    `HARD STOP: nothing is buildable — every remaining PR waits on a dependency that is not merged ` +
+      `and not in scope. Either the plan has a cycle, or this run was scoped past a prerequisite:\n` +
+      layered.remaining
+        .map((p) => `  - ${p.branch} waits on [${(p.depends || []).join(", ")}]`)
+        .join("\n"),
+  );
+  return { feature: parsed.feature, error: "dependency-cycle" };
+}
+const groups = layered.groups;
+
+// `plan-template.md` promises the executor refuses this, so it must actually do
+// it: two branches cut from one head both writing a revision give main two heads.
+const collisions = migrationCollisions(groups);
+if (collisions.length) {
+  log(
+    `HARD STOP: a concurrent group has more than one PR owning a migration. Both would be cut from ` +
+      `the same head and autogenerate the same down_revision, so main ends up with two Alembic ` +
+      `heads:\n` +
+      collisions
+        .map((owners) => `  - ${owners.map((p) => p.branch).join(" ∥ ")}`)
+        .join("\n"),
+  );
+  return {
+    feature: parsed.feature,
+    error: "two-migrations-in-group",
+    groups: collisions.map((o) => o.map((p) => p.branch)),
+  };
+}
 
 // Who is depended on: those PRs auto-merge when green, because the whole DAG
 // waits on them. Leaves stay open for the operator to review at leisure.
@@ -762,8 +997,24 @@ async function buildPr(p) {
     return { branch: p.branch, title: p.title, ok: false, reason, ...extra };
   };
 
-  const setup = await agent(setupPrompt(p), { label: `${title}:setup`, phase: title, model: "sonnet" });
+  const setup = await agent(setupPrompt(p), {
+    label: `${title}:setup`, phase: title, model: "sonnet", schema: SETUP_SCHEMA,
+  });
   if (setup == null) return fail("worktree-setup-failed");
+  // Act on what it reported. Without these checks the schema would be decoration
+  // and the dirty-worktree stop could never fire.
+  if (setup.dirty && setup.dirty.length) {
+    return fail("worktree-dirty", {
+      dirty: setup.dirty,
+      recovery: `${wtPath(p)} holds uncommitted work from an earlier run — it exists nowhere else. Keep it or discard it by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
+    });
+  }
+  if (!setup.ok || setup.headBranch !== p.branch) {
+    return fail("worktree-unsafe", {
+      detail: setup.detail,
+      recovery: `Expected HEAD ${p.branch} in ${wtPath(p)}, agent reported "${setup.headBranch}". Nothing was implemented.`,
+    });
+  }
 
   // A dead implement agent must never advance to review against an empty diff.
   let handoff = await agent(implementPrompt(parsed, p, null, null, null), { ...dev, label: `${title}:implement` });
@@ -826,11 +1077,18 @@ as a clean run.
     // A CI fix changes behaviour, so it is re-reviewed before it goes back up:
     // no code reaches the PR without an independent pass over the criteria.
     const recheck = await agent(reviewPrompt(parsed, p, null, handoff), { ...rev, label: `${title}:review-ci${ciLoops}` });
-    if (recheck && recheck.status !== "APPROVED") {
-      return fail("CI fix broke the acceptance criteria", {
-        verdict: recheck, pr,
-        recovery: `PR #${pr.number} is open, but its latest work failed review. Decide by hand.`,
-      });
+    // A DEAD re-review is not an approval. Reading `recheck && …` let a null fall
+    // through to the push below, which contradicted the guarantee this step
+    // exists for — and was inconsistent with the initial review, where a null
+    // verdict is a hard stop.
+    if (!recheck || recheck.status !== "APPROVED") {
+      return fail(
+        recheck ? "CI fix broke the acceptance criteria" : "re-review agent died after a CI fix",
+        {
+          verdict: recheck, pr,
+          recovery: `PR #${pr.number} is open and its latest work is unreviewed — nothing was pushed. Decide by hand.`,
+        },
+      );
     }
     const repush = await agent(
       `Commit and push the CI fix for "${p.title}" to the existing PR #${pr.number}, from \`${wtPath(p)}\`.
@@ -977,7 +1235,7 @@ for (let gi = 0; gi < groups.length && !halted; gi++) {
     const missing = nextGroup.flatMap((p) =>
       (p.depends || []).filter((d) => {
         const r = done.find((x) => x.branch === d);
-        return r ? !r.merged : !byBranch.get(d)?.shipped;
+        return r ? !r.merged : !byBranch.get(d)?.merged;
       }),
     );
     if (missing.length) {
@@ -998,7 +1256,9 @@ log(
     `Open for review: ${open.map((r) => `${r.branch}(#${r.pr.number})`).join(", ") || "none"}. ` +
     `Stopped: ${stopped.map((r) => `${r.branch}(${r.reason})`).join(", ") || "none"}.`,
 );
-const allShipped = parsed.prs.every((p) => p.shipped || done.some((r) => r.branch === p.branch && r.merged));
+const allShipped = parsed.prs.every(
+  (p) => p.merged || done.some((r) => r.branch === p.branch && r.merged),
+);
 if (allShipped) log(`Every PR is merged — re-launch with { verifyFeature: true } for the feature-scoped verification.`);
 
 return {
