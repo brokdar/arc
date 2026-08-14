@@ -213,11 +213,19 @@ const CI_SCHEMA = {
 const LOCAL_CI_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "checks", "commented"],
+  required: ["status", "checks", "notRun", "commented"],
   properties: {
+    // GREEN means "everything that RAN passed" — which is NOT the same as
+    // "everything ran". `notRun` is a separate, structured field precisely so
+    // the difference is machine-readable: a GREEN with four skipped tiers must
+    // never be worth the same as a GREEN with none, and string-parsing the
+    // `checks` prose to find that out would be one bad regex from a bad merge.
     status: { type: "string", enum: ["GREEN", "RED"] },
     // One entry per CI-equivalent check: "<name>: PASS|FAIL|NOT_RUN — <detail>".
     checks: { type: "array", items: { type: "string" } },
+    // The names of every check that could NOT be run, with no exceptions and no
+    // rounding down. This is the field that decides whether the PR may merge.
+    notRun: { type: "array", items: { type: "string" } },
     commented: { type: "boolean" },
     detail: { type: "string" },
   },
@@ -697,6 +705,12 @@ observe pass. Never omit a check you skipped.
 Return \`status\` GREEN only if every check that RAN passed; RED if any failed. Report each check as
 "<name>: PASS|FAIL|NOT_RUN — <detail>" in \`checks\`, and whether the comment was posted.
 
+⚠️ \`notRun\` MUST list the name of every check you could not run — all of them, with no rounding
+down and no "it probably would have passed". That field decides whether this PR is allowed to merge
+without a human: a verification that skipped the Docker tiers is green on \`just check\` alone, which
+the pre-push hook already ran, so it proves nothing new. Under-reporting here is the one mistake in
+this task that could put unverified code on \`main\`. If everything ran, return an empty array.
+
 Do not change any code and do not merge.`;
 }
 
@@ -709,8 +723,12 @@ this plan DEPEND on it being merged before they can start. Merge it.
 If auto-merge is not enabled for this repository the command errors — in that case, confirm the
 checks are currently passing (\`gh pr checks ${pr.number}\`) and merge directly:
   \`gh pr merge ${pr.number} --squash\`
-If CI did not run at all (the budget-exhausted case, recorded in a comment on the PR), \`--auto\` will
-never fire — merge directly, and only if that local-verification comment is present and green.
+If CI did not run at all (the budget-exhausted case), \`--auto\` will never fire, so merge directly —
+but ONLY after reading the local-verification comment on the PR yourself and confirming it records
+every check as PASS. If that comment is missing, or records any check as NOT_RUN or FAIL, do NOT
+merge: report \`merged: false\` with what it said. The workflow only routes a PR here when it
+believes every check ran, so a NOT_RUN you find in that comment means the two disagree — and the
+comment, being the written record on the PR, wins.
 
 Then poll \`gh pr view ${pr.number} --json state,mergeStateStatus,mergedAt\` until \`state\` is
 \`MERGED\`, up to 10 times. Report \`merged: true\` with the resulting SHA only when you have SEEN it
@@ -1163,9 +1181,37 @@ async function localCiVerify(r) {
   if (res.status !== "GREEN") {
     return { ...r, reason: "local-ci-red", localCi: res, recovery: `PR #${r.pr.number} failed local verification: ${res.detail}` };
   }
+  // The comment IS the evidence. Without it the PR carries no record that CI
+  // was replaced by a local run, and the merge step is told to merge only "if
+  // that local-verification comment is present and green" — a precondition an
+  // agent would be self-policing against a record that does not exist.
   if (!res.commented) {
-    log(`⚠️ ${p.branch}: local verification passed but the PR comment was not posted — the record is missing.`);
+    return {
+      ...r, reason: "local-ci-unrecorded", localCi: res,
+      recovery: `PR #${r.pr.number} passed locally but the verification comment was not posted, so the PR carries no evidence. Post it by hand or re-run before merging.`,
+    };
   }
+
+  // GREEN with skipped tiers is NOT the same claim as GREEN. `just check` was
+  // already run by the pre-push hook, so a "verification" where test-int, e2e,
+  // smoke and schemathesis were all NOT_RUN adds exactly nothing — and this
+  // result feeds the auto-merge filter, which would squash it into protected
+  // main on that evidence. The documented case is real: `just smoke` needs
+  // E2E_PASSWORD to match the hash in .env, and without it the tier cannot run.
+  const skipped = res.notRun || [];
+  if (skipped.length) {
+    log(
+      `⚠️ ${p.branch}: PR #${r.pr.number} verified locally but ${skipped.length} check(s) could not ` +
+        `run (${skipped.join(", ")}). It will NOT auto-merge — a human decides whether that evidence ` +
+        `is enough.`,
+    );
+    await removeWorktree(p, title);
+    return {
+      branch: p.branch, title: p.title, ok: true, pr: r.pr, verdict: r.verdict,
+      localCi: res, ciMode: "local-partial", notRun: skipped,
+    };
+  }
+
   log(`✅ ${p.branch}: PR #${r.pr.number} verified locally (CI budget exhausted), recorded on the PR.`);
   await removeWorktree(p, title);
   return { branch: p.branch, title: p.title, ok: true, pr: r.pr, verdict: r.verdict, localCi: res, ciMode: "local" };
@@ -1209,7 +1255,23 @@ for (let gi = 0; gi < groups.length && !halted; gi++) {
 
   // Merge the prerequisites so the next group can branch off them. A leaf PR is
   // never merged here: it exists to be read by a human.
-  const toMerge = results.filter((r) => r.ok && dependedOn.has(r.branch));
+  // `local-partial` is deliberately excluded: it is green on the tiers that ran
+  // and silent on the ones that did not, which is not enough evidence to squash
+  // into a protected branch unattended. The DAG halts instead, and the operator
+  // decides — which is the right place for that call.
+  const toMerge = results.filter(
+    (r) => r.ok && r.ciMode !== "local-partial" && dependedOn.has(r.branch),
+  );
+  const heldBack = results.filter(
+    (r) => r.ok && r.ciMode === "local-partial" && dependedOn.has(r.branch),
+  );
+  if (heldBack.length) {
+    log(
+      `Holding back ${heldBack.length} prerequisite PR(s) from auto-merge: their local verification ` +
+        `skipped ${[...new Set(heldBack.flatMap((r) => r.notRun || []))].join(", ")}. Merge them by ` +
+        `hand if that is acceptable, then re-launch.`,
+    );
+  }
   if (AUTO_MERGE && toMerge.length && gi < groups.length - 1) {
     log(`Merging ${toMerge.length} prerequisite PR(s) so group ${gi + 2} can start.`);
     const merges = await parallel(
