@@ -30,7 +30,8 @@ power is watts. Every read carries ``red_flag``; every write takes
 """
 
 import datetime as dt
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -61,6 +62,12 @@ from app.domain.athlete import Discipline
 from app.domain.proposals import ProposalStatus, changes_from_json
 from app.domain.strength import ExerciseCategory
 from app.domain.templates import sorted_templates
+from app.domain.wellness import (
+    WRITABLE_FIELDS,
+    HrvContext,
+    HrvMetric,
+    WellnessSource,
+)
 from app.domain.zones import DEFAULT_ZONE_MODEL
 from app.ingest.repricing import append_anchor_and_reprice, preview_anchor_append
 from app.mcp import views
@@ -79,6 +86,12 @@ from app.services.plan import PlanService
 from app.services.proposals import ProposalService
 from app.services.scoring import ScoringService
 from app.services.templates import purpose_templates
+from app.services.wellness import (
+    DayInput,
+    WellnessService,
+    parse_confounders,
+    parse_soreness_by_region,
+)
 from app.services.workouts import WorkoutService, step_count_of
 from app.services.zones import ZoneService
 
@@ -186,6 +199,79 @@ _SET_FIELDS = frozenset(
         "notes",
     }
 )
+
+
+#: How many days of wellness `get_coaching_context` carries — the same seven
+#: `RECENT_SESSIONS` carries, so the two blocks describe the same stretch of
+#: time and a coach can read one against the other without a second call.
+RECENT_WELLNESS_DAYS = 7
+
+#: Fields on a wellness day that are parsed rather than passed through.
+_WELLNESS_TIMES = ("sleep_start_local", "sleep_end_local")
+
+
+def _wellness_updates(payload: Mapping[str, Any], *, where: str) -> dict[str, Any]:
+    """Parse one day's fields, refusing an unknown one **by name**.
+
+    Every vocabulary this touches is enumerated in the refusal — confounders,
+    body regions, the field list itself — because an error that does not say
+    what *is* legal costs the agent a round trip it should never have paid for
+    (the #19 lesson), and `get_wellness_inputs` exists so it never has to guess
+    in the first place.
+
+    Raises:
+        ValueError: Naming the day and what is wrong with it.
+    """
+    unknown = sorted(set(payload) - set(WRITABLE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"{where}unknown field(s): {', '.join(unknown)}. A day carries "
+            f"{', '.join(WRITABLE_FIELDS)} — call get_wellness_inputs for what "
+            "each one means."
+        )
+    updates = dict(payload)
+    for name in _WELLNESS_TIMES:
+        if isinstance(updates.get(name), str):
+            updates[name] = views.as_time(updates[name], field=f"{where}{name}")
+    if updates.get("confounders") is not None:
+        updates["confounders"] = parse_confounders(updates["confounders"])
+    if updates.get("soreness_by_region") is not None:
+        updates["soreness_by_region"] = parse_soreness_by_region(
+            updates["soreness_by_region"]
+        )
+    for name, enum_class in (("hrv_metric", HrvMetric), ("hrv_context", HrvContext)):
+        value = updates.get(name)
+        if isinstance(value, str):
+            try:
+                updates[name] = enum_class(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{where}{name} must be one of "
+                    f"{', '.join(member.value for member in enum_class)}, "
+                    f"got {value!r}"
+                ) from exc
+    return updates
+
+
+def _cleared(clear: list[str] | None, *, where: str = "") -> dict[str, Any]:
+    """Turn a ``clear`` argument into the explicit nulls the service reads.
+
+    A separate argument rather than an overloaded null, because an omitted
+    field already means "leave it alone" and one word cannot mean both.
+    `record_session_context` refused clearing outright and that was defensible
+    for two fields; over eighteen, a typo'd HRV the agent cannot retract is a
+    permanent lie in a baseline.
+
+    Raises:
+        ValueError: When a named field is not one a day carries.
+    """
+    unknown = sorted(set(clear or ()) - set(WRITABLE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"{where}cannot clear unknown field(s): {', '.join(unknown)}. A day "
+            f"carries {', '.join(WRITABLE_FIELDS)}."
+        )
+    return dict.fromkeys(clear or ())
 
 
 def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
@@ -300,6 +386,32 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `recent_sessions` — the last 7 recorded sessions, the summary rows
           `list_sessions` serves. Older ones are `list_sessions`; one
           session's axes, verdict and alignment are `get_session_detail`.
+        * `wellness` — what the athlete has reported about their own state.
+          `today` is the day in full when they have answered and null when
+          they have not (which is a fact, not a gap); `recent` is the last 7
+          days cut down to the handful of inputs the morning question turns on,
+          with a field the athlete did not report simply **absent**;
+          `weight_in_force` is the weight watts per kilogram is computed
+          against. Whole days are `get_wellness`, weekly shape is
+          `get_wellness_weeks`.
+
+          Two flags decide how to read any of it. `not_actionable` on a day
+          names the confounders the athlete declared that void that morning's
+          objective markers — the numbers are real and they are still here,
+          but they are not evidence about today. `subjective_recalled` means
+          the *felt* ratings were entered late enough to be memory; the device
+          numbers are never discounted for it.
+
+          A compact day carries `source` and `provenance` **only when they are
+          not `athlete` and `athlete_reported`** — so a day *you* wrote down is
+          marked and a day the athlete entered themselves is not. Absence there
+          means "the athlete's own first-hand report", and `get_wellness`
+          spells both out on every day if you would rather read them stated.
+
+          **Nothing here is a readiness verdict, and you should not treat it as
+          one.** Arc stores what the athlete said and describes it; whether
+          today is a day to train is your call, made out loud, with the
+          confounders and the gaps visible.
         * `budget_remaining` — the hourly write cap's current standing: how
           many writes it still admits.
 
@@ -333,9 +445,45 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 current = await SessionMetricsService.from_session(
                     session
                 ).current_for_sessions(row.id for row in recent)
+                wellness_service = WellnessService.from_session(session)
+                today = wellness_service.local_today()
+                # The last seven days including today, half-open like every
+                # other range here. Read as one page rather than day by day:
+                # this is the one call every session begins with.
+                wellness_page = await wellness_service.range(
+                    start=today - dt.timedelta(days=RECENT_WELLNESS_DAYS - 1),
+                    end=today + dt.timedelta(days=1),
+                    limit=RECENT_WELLNESS_DAYS,
+                )
+                today_row = next(
+                    (row for row in wellness_page.days if row.local_date == today),
+                    None,
+                )
                 return {
                     "athlete": views.athlete(profile, today=dt.date.today()),
                     "red_flag": views.red_flag(profile),
+                    "wellness": {
+                        "today": (
+                            None
+                            if today_row is None
+                            else views.wellness_day(
+                                today_row,
+                                subjective_recalled=wellness_service.is_recalled(
+                                    today_row
+                                ),
+                            )
+                        ),
+                        "recent": [
+                            views.wellness_day_compact(
+                                row,
+                                subjective_recalled=wellness_service.is_recalled(row),
+                            )
+                            for row in wellness_page.days
+                        ],
+                        "weight_in_force": views.weight_in_force(
+                            await wellness_service.weight_in_force(today)
+                        ),
+                    },
                     "anchors": anchors,
                     "week": views.plan_week(week),
                     "open_proposals": [views.proposal(row) for row in pending],
@@ -471,6 +619,14 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           not write it, ever: the verdict and its reasons are the athlete's
           word on their own training.
         * `match` — the link to a planned session, and how confident it is.
+        * `wellness` — **what the athlete reported on this session's own day**,
+          the same object `get_wellness` serves, or null when they reported
+          nothing. This is here so that "does poor sleep predict poor execution
+          for this athlete" is one read rather than two and a date match. Read
+          `markers.actionable` before drawing anything from the numbers.
+        * `weight_kg_in_force` — the body weight governing that date, so watts
+          per kilogram is derivable. Null before the first weight was recorded,
+          and w/kg is then absent rather than computed against a default.
 
         Use this before writing an evaluation: an evaluation that contradicts
         the measured record is worse than none.
@@ -488,8 +644,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 metrics_service = SessionMetricsService.from_session(session)
                 scoring = ScoringService.from_session(session)
                 matching = MatchingService.from_session(session)
+                wellness = WellnessService.from_session(session)
 
                 row = await sessions.get(identifier)
+                day = (await wellness.days_for([row.local_date])).get(row.local_date)
                 metrics_row = await metrics_service.get_current(identifier)
                 summary = None if metrics_row is None else summarise(metrics_row)
                 links = await matching.for_sessions([identifier])
@@ -503,6 +661,16 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         await scoring.declaration(identifier)
                     ),
                     "match": views.match(links.get(identifier)),
+                    "wellness": (
+                        None
+                        if day is None
+                        else views.wellness_day(
+                            day, subjective_recalled=wellness.is_recalled(day)
+                        )
+                    ),
+                    "weight_kg_in_force": views.weight_in_force(
+                        await wellness.weight_in_force(row.local_date)
+                    ),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -887,6 +1055,168 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     "items": [
                         views.purpose_template(template) for template in templates
                     ],
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_wellness_inputs() -> dict[str, Any]:
+        """Read what a wellness day may carry, and what every value means.
+
+        **Call this before your first `record_wellness`.** It is the whole
+        vocabulary of the daily surface, so you never have to discover a
+        confounder tag by submitting a guess and reading the refusal:
+
+        * `tiers` — every writable field and how much it is worth asking for.
+          `valuable` is what the morning question actually turns on; nothing is
+          `required`, deliberately — a required daily input turns a missed
+          morning into a failure state, and this is built for the real athlete
+          rather than the compliant one.
+        * `scales` — every subjective input with its range, its **polarity**
+          and a descriptor for each point. Read the polarity: 5 motivation is
+          good and 5 fatigue is not, and both are plausible numbers. Session
+          RPE is in here too, on 0-10 with `higher_is_neither` — a 9 is a hard
+          session, not a bad one, and it is a different scale from RIR.
+        * `confounders` — the controlled vocabulary, each marked with whether
+          it **invalidates the morning's markers**. Five of them do: the
+          athlete's own pre-check, learned from a deload week once triggered by
+          an alcohol artefact.
+        * `body_regions` — the keys of `soreness_by_region`.
+        * `max_backfill_days` — the ceiling on one `record_wellness_days` call.
+
+        Bundled reference data, identical on every deployment.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                return {
+                    "inputs": views.wellness_inputs(),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_wellness(
+        start: str, end: str, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
+        """Read the athlete's reported wellness over a date range, day by day.
+
+        Whole days, oldest first — a wellness series is read forwards, the way
+        a chart is drawn. Two things on every day decide how to read its
+        numbers:
+
+        * `markers.actionable` — false when the athlete declared a confounder
+          that voids the morning's objective readings. The values are still
+          here (they are real, and they are part of the history); what is
+          withheld is their standing as **evidence today**. `markers.statement`
+          says it in one line.
+        * `subjective_recalled` — true when the day was entered late enough
+          that the *felt* ratings are memory rather than report. The device
+          numbers are never discounted for this: the watch measured them on the
+          day, whatever day they were typed in.
+
+        A day the athlete did not answer is **absent from `items` and listed in
+        `missing`**. It is never returned as a day of nulls, because "reported
+        nothing" and "was not asked" are different facts. `missing` covers the
+        **whole range you asked for**, not the page you got back — so a date in
+        it is a date nobody answered, even when `total` says there is more to
+        page through.
+
+        A `null` field on a day that *is* here means **not provided**, never
+        zero — do not average it in as one.
+
+        Args:
+            start: First local date, `YYYY-MM-DD`, inclusive.
+            end: First local date **after** the range — it is half-open
+                `[start, end)`. To read a single day, pass the next day as
+                `end`. At most 371 days per call.
+            limit: How many days to return.
+            offset: How many to skip, for reading past the first page.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                service = WellnessService.from_session(session)
+                first = views.as_date(start, field="start")
+                last = views.as_date(end, field="end")
+                resolved = await service.range(
+                    start=first,
+                    end=last,
+                    offset=_offset(offset),
+                    limit=_limit(limit),
+                )
+                items = [
+                    views.wellness_day(
+                        row, subjective_recalled=service.is_recalled(row)
+                    )
+                    for row in resolved.days
+                ]
+                return {
+                    **views.page(
+                        items,
+                        total=resolved.total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
+                    # From the service, over the whole range — never derived
+                    # from `items`, which is one page of it.
+                    "missing": [day.isoformat() for day in resolved.missing],
+                    "weight_in_force": views.weight_in_force(
+                        await service.weight_in_force(last - dt.timedelta(days=1))
+                    ),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_wellness_weeks(start: str, end: str) -> dict[str, Any]:
+        """Summarise reported wellness over a range, week by week.
+
+        The tool for questions about *shape* — how did sleep track against load
+        last month, is resting heart rate drifting — without pulling thirty day
+        objects and folding them by hand. Monday to Sunday, the same weeks
+        `search_history` folds training into, so the two reads line up.
+
+        Every mean carries the **`n` it was computed over**, and that is not
+        decoration: a weekly mean over three readings and one over seven are
+        different objects, and comparing them without knowing which is which is
+        being misled by arithmetic that looks identical. `days_recorded` says
+        how many days the week holds at all.
+
+        Two exclusions, both stated on the week:
+
+        * `days_invalidated` — days a confounder voided. Their **objective**
+          markers are left out of the means; their subjective ratings still
+          count, because a hot room makes a resting heart rate say nothing
+          about readiness and does not make "I felt tired" untrue.
+        * `days_recalled` — days entered late enough for the felt ratings to be
+          memory.
+
+        HRV is **never pooled** across statistic or context: each
+        (metric, context) pair is its own entry, named `hrv_ms[rmssd,sleeping]`
+        and so on. A sleeping RMSSD mean and a daytime SDNN mean averaged
+        together belong to neither.
+
+        This is description, not interpretation. There is no readiness score
+        here and there is not meant to be.
+
+        Args:
+            start: First local date, `YYYY-MM-DD`, inclusive.
+            end: First local date **after** the range (half-open). At most 371
+                days.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                summary = await WellnessService.from_session(session).weeks(
+                    start=views.as_date(start, field="start"),
+                    end=views.as_date(end, field="end"),
+                )
+                return {
+                    "wellness": views.wellness_weeks(summary),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -1536,5 +1866,286 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 return {
                     "dry_run": dry_run,
                     "note": views.note(row),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
+
+    @mcp.tool
+    async def record_wellness(
+        date: str | None = None,
+        sleep_duration_s: int | None = None,
+        sleep_start_local: str | None = None,
+        sleep_end_local: str | None = None,
+        sleep_quality: int | None = None,
+        resting_hr_bpm: int | None = None,
+        hrv_ms: float | None = None,
+        hrv_metric: HrvMetric | None = None,
+        hrv_context: HrvContext | None = None,
+        respiratory_rate_brpm: float | None = None,
+        spo2: float | None = None,
+        wrist_temperature_delta_c: float | None = None,
+        weight_kg: float | None = None,
+        fatigue: int | None = None,
+        soreness: int | None = None,
+        stress: int | None = None,
+        motivation: int | None = None,
+        soreness_by_region: dict[str, int] | None = None,
+        confounders: list[str] | None = None,
+        note: str | None = None,
+        clear: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Record what the athlete reported about one day. One day, one row.
+
+        **Never infer a value the athlete did not report.** An HRV you
+        estimated, a sleep figure you reconstructed from what time they said
+        they went to bed, a fatigue rating you inferred from their tone — all
+        of it is the confabulation this whole surface exists to end. If they
+        did not say it, leave the field out; an absent value reads as "not
+        provided" everywhere and costs nothing, and an invented one enters a
+        baseline and stays there.
+
+        **Provenance is `athlete_reported`; source is `agent`.** You record
+        what you were told and you never sign as the athlete. Both are on every
+        read, so the difference stays visible.
+
+        Call `get_wellness_inputs` first if you have not this session: it is
+        the scales, their polarity, the confounder vocabulary and the tiers.
+
+        Two ways a day changes, and they are different:
+
+        * an **omitted** field is left exactly as it was — so you can record
+          the HRV in the morning and the motivation at lunch;
+        * a field named in **`clear`** is removed. That is how a typo is
+          retracted, and there is no other way: a wrong reading you cannot
+          take back is a permanent lie in every mean computed after it.
+
+        `date` may be **any past date**, so backfilling one day needs no other
+        tool — but for a file of history use `record_wellness_days`, which
+        costs one write instead of one per day. A **future** date is refused: a
+        reading for tomorrow is not a late entry, it is a typo.
+
+        Bounds are typo guards, not clinical limits: SpO2 is a **fraction**
+        (`0.97`, not `97`), sleep is **seconds**, wrist temperature is the
+        **delta** from the device's own baseline, and the subjective scales are
+        1-5 with declared directions.
+
+        An HRV reading must say **which statistic** (`rmssd` or `sdnn`) and
+        **how it was taken** (`sleeping`, `waking_spot`, `manual`). The two
+        statistics are not on one scale and the two contexts are not one
+        distribution, so a reading missing either cannot join a baseline
+        honestly and is refused.
+
+        Recording works normally while the red flag is up. A day's readings are
+        testimony, not an intensification, and an ill athlete is exactly who
+        most needs them recorded.
+
+        Args:
+            date: The day these readings describe, `YYYY-MM-DD`. Defaults to
+                today on the athlete's clock.
+            sleep_duration_s: Seconds slept.
+            sleep_start_local: Clock time sleep began, `HH:MM` — no date, no
+                offset. An overnight reading belongs to the **wake** day.
+            sleep_end_local: Clock time sleep ended, `HH:MM`.
+            sleep_quality: 1-5, higher is better.
+            resting_hr_bpm: Resting heart rate.
+            hrv_ms: Heart-rate variability in milliseconds.
+            hrv_metric: `rmssd` or `sdnn`. Required with `hrv_ms`.
+            hrv_context: `sleeping`, `waking_spot` or `manual`. Required with
+                `hrv_ms`.
+            respiratory_rate_brpm: Breaths per minute.
+            spo2: Blood oxygen as a fraction, e.g. `0.97`.
+            wrist_temperature_delta_c: Deviation from the device's baseline.
+            weight_kg: Body weight. The most recent one on or before a date is
+                what watts per kilogram is computed against.
+            fatigue: 1-5, higher is worse.
+            soreness: 1-5 overall, higher is worse.
+            stress: 1-5, higher is worse.
+            motivation: 1-5, higher is better.
+            soreness_by_region: `{"quads": 3}` — regions from
+                `get_wellness_inputs`.
+            confounders: Tags from the controlled vocabulary. Some of them make
+                the morning's objective markers unusable as evidence, and the
+                read says which.
+            note: The athlete's own words. Never parsed — put anything the
+                vocabulary has no tag for here, and tag what it does have.
+            clear: Field names to remove from the day.
+            dry_run: Validate everything and return what would be stored,
+                writing nothing and costing no rate-cap budget.
+
+        Requires a `write` key.
+        """
+        actor = require_scope(Scope.WRITE)
+        with tool_errors():
+            supplied: dict[str, Any] = {
+                "sleep_duration_s": sleep_duration_s,
+                "sleep_start_local": sleep_start_local,
+                "sleep_end_local": sleep_end_local,
+                "sleep_quality": sleep_quality,
+                "resting_hr_bpm": resting_hr_bpm,
+                "hrv_ms": hrv_ms,
+                "hrv_metric": hrv_metric,
+                "hrv_context": hrv_context,
+                "respiratory_rate_brpm": respiratory_rate_brpm,
+                "spo2": spo2,
+                "wrist_temperature_delta_c": wrist_temperature_delta_c,
+                "weight_kg": weight_kg,
+                "fatigue": fatigue,
+                "soreness": soreness,
+                "stress": stress,
+                "motivation": motivation,
+                "soreness_by_region": soreness_by_region,
+                "confounders": confounders,
+                "note": note,
+            }
+            # An argument left at its default means "not given", which is why
+            # `clear` has to exist: one word cannot mean both "leave it alone"
+            # and "remove it".
+            updates = _wellness_updates(
+                {name: value for name, value in supplied.items() if value is not None},
+                where="",
+            )
+            cleared = _cleared(clear)
+            overlap = sorted(set(updates) & set(cleared))
+            if overlap:
+                raise ValueError(
+                    f"cannot both set and clear {', '.join(overlap)} in one "
+                    "call — say which you meant"
+                )
+            updates |= cleared
+            if not updates:
+                raise ValueError(
+                    "give at least one field — a wellness write with nothing "
+                    "in it would record nothing, and an absent day already "
+                    "says that"
+                )
+            async with session_scope() as session:
+                service = WellnessService.from_session(session)
+                day = (
+                    service.local_today()
+                    if date is None
+                    else views.as_date(date, field="date")
+                )
+                result = await service.record(
+                    day,
+                    updates,
+                    actor=actor,
+                    source=WellnessSource.AGENT,
+                    dry_run=dry_run,
+                )
+                answer: dict[str, Any] = {
+                    "dry_run": dry_run,
+                    "day": views.wellness_day_result(result),
+                    "budget_remaining": await remaining_write_budget(session, actor),
+                }
+                if not dry_run:
+                    # Null when the write cleared the day's last value: the day
+                    # was retracted, and there is nothing to read back.
+                    answer["wellness"] = (
+                        None
+                        if result.day is None
+                        else views.wellness_day(
+                            (row := await service.get(day)),
+                            subjective_recalled=service.is_recalled(row),
+                        )
+                    )
+                return answer
+
+    @mcp.tool
+    async def record_wellness_days(
+        days: list[dict[str, Any]], dry_run: bool = False
+    ) -> dict[str, Any]:
+        """Record many days at once — **this is the tool for migrating history**.
+
+        When the athlete hands you a file of past readings, a watch export, or
+        weeks of numbers from a note, send them here. Do **not** loop
+        `record_wellness`: that spends one write per day against the hourly cap
+        and will strand a sixty-day migration around day sixty. One call to
+        this tool is **one** write however many days it carries, bounded
+        instead by a ceiling of 366 days — a year, the natural unit of
+        "here is my history".
+
+        Everything `record_wellness` says applies to every day in here, and two
+        of them bear repeating because a batch makes them cheaper to get wrong:
+        **never infer a value the athlete did not report**, and provenance is
+        `athlete_reported` with source `agent` — you are transcribing, not
+        testifying.
+
+        The batch **lands whole or not at all**. One day that breaks a rule
+        refuses the entire call and writes nothing, and the refusal names the
+        date and the field: a partial migration would leave the athlete unable
+        to tell which days made it, and your retry unable to reason about the
+        overlap. So **dry-run first**: it reports exactly the per-day outcomes
+        the real call would produce, costs no budget, and is the difference
+        between one clean import and three half ones.
+
+        Days that already exist are **updated, not replaced** — a field this
+        batch does not mention is left alone — and every day comes back marked
+        `created` or `updated`, so a re-run is legible. A field given as
+        **`null`** on one of these days *clears* it, the same as
+        `record_wellness`'s `clear`; a day whose last value is cleared that way
+        is `retracted` and its row goes.
+
+        Backfilled days count from the date they **describe**, not the date you
+        sent them. That is what makes this worth doing: an athlete who imports
+        ninety days of watch HRV has ninety days of real history, not ninety
+        days entered today.
+
+        Args:
+            days: One object per date. Each carries `date` (`YYYY-MM-DD`) plus
+                any of the fields `record_wellness` takes — for example
+                `{"date": "2026-06-01", "resting_hr_bpm": 48, "hrv_ms": 61,
+                "hrv_metric": "rmssd", "hrv_context": "sleeping",
+                "sleep_duration_s": 27000}`. A date may appear only once.
+            dry_run: Report the per-day outcomes without writing, costing no
+                rate-cap budget.
+
+        Requires a `write` key.
+        """
+        actor = require_scope(Scope.WRITE)
+        with tool_errors():
+            if not days:
+                raise ValueError(
+                    "give at least one day — an empty batch records nothing"
+                )
+            entries = []
+            for index, payload in enumerate(days, start=1):
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        f"day {index} must be an object with a date and some "
+                        f"fields, got {payload!r}"
+                    )
+                raw = dict(payload)
+                given = raw.pop("date", None)
+                if not isinstance(given, str):
+                    raise ValueError(
+                        f"day {index} needs a `date` in YYYY-MM-DD form: every "
+                        "reading is dated by the day it describes, which is "
+                        "what makes this a migration rather than a bulk entry "
+                        "for today"
+                    )
+                local_date = views.as_date(given, field=f"day {index} date")
+                entries.append(
+                    DayInput(
+                        local_date=local_date,
+                        updates=_wellness_updates(
+                            raw, where=f"{local_date.isoformat()}: "
+                        ),
+                    )
+                )
+            async with session_scope() as session:
+                results = await WellnessService.from_session(session).record_many(
+                    entries,
+                    actor=actor,
+                    source=WellnessSource.AGENT,
+                    dry_run=dry_run,
+                )
+                return {
+                    "dry_run": dry_run,
+                    "day_count": len(results),
+                    # One count per outcome — `created`, `updated`,
+                    # `retracted` — so a re-run of an import is legible at a
+                    # glance without reading three hundred day objects.
+                    "outcomes": dict(Counter(day.outcome.value for day in results)),
+                    "days": [views.wellness_day_result(day) for day in results],
                     "budget_remaining": await remaining_write_budget(session, actor),
                 }

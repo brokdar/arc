@@ -839,6 +839,290 @@
         "title": "AxisRead",
         "type": "object"
       },
+      "BackfillDay": {
+        "additionalProperties": false,
+        "description": "One dated day inside a batch write.",
+        "properties": {
+          "confounders": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Confounder"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confounders"
+          },
+          "fatigue": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fatigue"
+          },
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_metric": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvMetric"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_ms": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hrv Ms"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "motivation": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motivation"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "respiratory_rate_brpm": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 4.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Respiratory Rate Brpm"
+          },
+          "resting_hr_bpm": {
+            "anyOf": [
+              {
+                "maximum": 120.0,
+                "minimum": 20.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resting Hr Bpm"
+          },
+          "sleep_duration_s": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Duration S"
+          },
+          "sleep_end_local": {
+            "anyOf": [
+              {
+                "examples": ["23:15", "06:45:00"],
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep End Local"
+          },
+          "sleep_quality": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Quality"
+          },
+          "sleep_start_local": {
+            "anyOf": [
+              {
+                "examples": ["23:15", "06:45:00"],
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Start Local"
+          },
+          "soreness": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soreness"
+          },
+          "soreness_by_region": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "maximum": 5.0,
+                  "minimum": 1.0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "$ref": "#/components/schemas/BodyRegion"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soreness By Region"
+          },
+          "spo2": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.7,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spo2"
+          },
+          "stress": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stress"
+          },
+          "weight_kg": {
+            "anyOf": [
+              {
+                "maximum": 250.0,
+                "minimum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Kg"
+          },
+          "wrist_temperature_delta_c": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": -5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wrist Temperature Delta C"
+          }
+        },
+        "required": ["local_date"],
+        "title": "BackfillDay",
+        "type": "object"
+      },
+      "BackfillDayResult": {
+        "description": "What one day of a batch was, or would have been.",
+        "properties": {
+          "changed": {
+            "additionalProperties": true,
+            "title": "Changed",
+            "type": "object"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": ["local_date", "outcome", "changed"],
+        "title": "BackfillDayResult",
+        "type": "object"
+      },
       "BandSchema": {
         "additionalProperties": false,
         "description": "An acceptable range around a step's prescribed target, as fractions.",
@@ -863,6 +1147,29 @@
         "required": ["channel", "low", "high"],
         "title": "BandSchema",
         "type": "object"
+      },
+      "BodyRegion": {
+        "description": "Where soreness was felt. Keys of ``soreness_by_region``.\n\nA closed vocabulary for the same reason :class:`Confounder` is one: free\ntext cannot answer \"is the left knee thing recurring\". Coarse on purpose \u2014\nthis is a phone form answered before coffee, not an anatomy chart.",
+        "enum": [
+          "neck",
+          "shoulders",
+          "upper_back",
+          "lower_back",
+          "chest",
+          "arms",
+          "forearms",
+          "abdomen",
+          "hips",
+          "glutes",
+          "quads",
+          "hamstrings",
+          "calves",
+          "knees",
+          "ankles",
+          "feet"
+        ],
+        "title": "BodyRegion",
+        "type": "string"
       },
       "Body_ingest-upload_activity_file": {
         "properties": {
@@ -976,6 +1283,40 @@
         ],
         "title": "CompletionState",
         "type": "string"
+      },
+      "Confounder": {
+        "description": "Things that were true about a night, in a vocabulary something can gate on.\n\nThe list exists because of one documented failure: a deload week was once\ntriggered by an alcohol artefact. Peripheral vasodilation produces the same\ntemperature-up / resting-HR-down dissociation that otherwise reads as\nillness onset, and free text alone cannot gate anything \u2014 \"two beers\" in a\nnote is invisible to every query that matters the next morning.\n\nMembers are the athlete's own pre-check, copied out of their head rather\nthan invented: :data:`INVALIDATES_MARKERS` says which of them make the\nmorning's objective numbers *unusable* (logged, not acted on) as opposed to\nmerely context. ``OTHER`` is legitimate and analyzable \u2014 reviewing the\nfree-text and ``other`` volume and proposing new codes is the growth path,\nnot a reason to leave the vocabulary open now.",
+        "enum": [
+          "alcohol",
+          "late_meal",
+          "poor_sleep_timing",
+          "short_sleep",
+          "hot_room",
+          "travel",
+          "altitude",
+          "illness_onset",
+          "first_session_after_layoff",
+          "hard_session_previous_day",
+          "menstrual_phase_noted",
+          "other"
+        ],
+        "title": "Confounder",
+        "type": "string"
+      },
+      "ConfounderRead": {
+        "description": "One confounder tag, and whether it voids the morning's markers.",
+        "properties": {
+          "invalidates_markers": {
+            "title": "Invalidates Markers",
+            "type": "boolean"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Confounder"
+          }
+        },
+        "required": ["value", "invalidates_markers"],
+        "title": "ConfounderRead",
+        "type": "object"
       },
       "CriterionKind": {
         "description": "The five MVP criterion types, as they appear in the ``kind`` tag.",
@@ -1337,6 +1678,18 @@
         "title": "HeartRateMetricsRead",
         "type": "object"
       },
+      "HrvContext": {
+        "description": "How an HRV reading was taken. Baselines stay within one context.",
+        "enum": ["sleeping", "waking_spot", "manual"],
+        "title": "HrvContext",
+        "type": "string"
+      },
+      "HrvMetric": {
+        "description": "Which HRV statistic a reading is. Not interchangeable: see above.",
+        "enum": ["rmssd", "sdnn"],
+        "title": "HrvMetric",
+        "type": "string"
+      },
       "IngestEventRead": {
         "description": "One file the pipeline looked at. Append-only.",
         "properties": {
@@ -1468,6 +1821,27 @@
           "quarantine_ids"
         ],
         "title": "IngestReportRead",
+        "type": "object"
+      },
+      "InputTier": {
+        "description": "How much a consumer should want an input, as data rather than as prose.\n\nGraceful degradation is a promise nothing enforces if the tier lives in a\ndocument: every manual input is tiered and every consumer defines its\nabsent-input behaviour, so the tier is served\n(`GET /wellness/inputs`, `get_wellness_inputs`) and the UI orders the form\nby it while the agent learns what is worth asking for.\n\n**Nothing is ``REQUIRED``** \u2014 see :data:`INPUT_TIERS`. The member exists so\nthat a later input which genuinely cannot be omitted has a word for it.",
+        "enum": ["required", "valuable", "optional"],
+        "title": "InputTier",
+        "type": "string"
+      },
+      "InputTierRead": {
+        "description": "One writable field and how much a consumer should want it.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/InputTier"
+          }
+        },
+        "required": ["field", "tier"],
+        "title": "InputTierRead",
         "type": "object"
       },
       "IntervalRead": {
@@ -1961,6 +2335,29 @@
         },
         "required": ["start_time", "duration_s"],
         "title": "ManualSessionCreate",
+        "type": "object"
+      },
+      "MarkerStandingRead": {
+        "description": "Whether this day's objective markers may be acted on, and why not.\n\nOn the **same object as the readings**, deliberately: a coach that has to\nremember to look somewhere else for last night's beer will one day not\nremember, and the cost is a training week. The numbers themselves are\nalways returned \u2014 they are real, and they matter to the history. What is\nwithheld is their standing as evidence today.",
+        "properties": {
+          "actionable": {
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "invalidated_by": {
+            "items": {
+              "$ref": "#/components/schemas/Confounder"
+            },
+            "title": "Invalidated By",
+            "type": "array"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": ["actionable", "invalidated_by", "statement"],
+        "title": "MarkerStandingRead",
         "type": "object"
       },
       "MatchBreakdownRead": {
@@ -3644,6 +4041,12 @@
         "title": "PlannedSessionUpdate",
         "type": "object"
       },
+      "Polarity": {
+        "description": "Which way a subjective scale points.\n\nFatigue, soreness, stress and motivation are all 1-5 and they do not all\npoint the same way: 5 motivation is good, 5 fatigue is not. A reader that\nassumes one direction is a bug nothing catches, because both readings are\nplausible numbers \u2014 so every scale declares its own, and no consumer may\nhardcode a direction.\n\n``HIGHER_IS_NEITHER`` is the third answer and it is session RPE's: a 9 is a\nhard session, not a bad one. Forcing RPE into ``higher_is_worse`` to keep\nthe enum binary would invent exactly the direction this table exists to\nstop being invented, and a reader would flag every genuinely hard session\nas a problem.",
+        "enum": ["higher_is_better", "higher_is_worse", "higher_is_neither"],
+        "title": "Polarity",
+        "type": "string"
+      },
       "PowerMetricsRead": {
         "description": "Everything derived from the power channel.",
         "properties": {
@@ -4948,6 +5351,22 @@
         "title": "ResolvedTargetRead",
         "type": "object"
       },
+      "ScaleAnchorRead": {
+        "description": "One point on a declared subjective scale, and what it means.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": ["value", "label"],
+        "title": "ScaleAnchorRead",
+        "type": "object"
+      },
       "ScoreRecompute": {
         "additionalProperties": false,
         "description": "Why a recomputation was asked for. The body is optional.\n\nThe reason lands on the **new** version and is what a later reader sees\nwhen two score versions disagree.",
@@ -5725,6 +6144,26 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "weight_kg_in_force": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WeightInForceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wellness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WellnessDayRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5748,6 +6187,8 @@
           "recordings",
           "logged_sets",
           "metrics",
+          "weight_kg_in_force",
+          "wellness",
           "created_at",
           "updated_at"
         ],
@@ -6495,6 +6936,40 @@
         "title": "StrengthStructureSchema",
         "type": "object"
       },
+      "SubjectiveScaleRead": {
+        "description": "A declared subjective scale: range, direction and anchor words.\n\nServed so that neither the UI nor the agent carries a private copy of what\na 3 means. ``polarity`` is the load-bearing field: 5 motivation is good and\n5 fatigue is not, and a reader that assumes one direction is a bug nothing\ncatches, because both are plausible numbers.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/ScaleAnchorRead"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "high": {
+            "title": "High",
+            "type": "integer"
+          },
+          "low": {
+            "title": "Low",
+            "type": "integer"
+          },
+          "polarity": {
+            "$ref": "#/components/schemas/Polarity"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": ["field", "low", "high", "polarity", "prompt", "anchors"],
+        "title": "SubjectiveScaleRead",
+        "type": "object"
+      },
       "TemperatureMetricsRead": {
         "description": "What the device's own sensor read, in degrees Celsius.",
         "properties": {
@@ -7088,6 +7563,692 @@
         ],
         "title": "WeekSessionRead",
         "type": "object"
+      },
+      "WeightInForceRead": {
+        "description": "The body weight governing a date, and the day it was recorded on.\n\n``effective_date`` rides along because watts per kilogram computed against\na three-week-old weight should say so.",
+        "properties": {
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "on": {
+            "format": "date",
+            "title": "On",
+            "type": "string"
+          },
+          "weight_kg": {
+            "title": "Weight Kg",
+            "type": "number"
+          }
+        },
+        "required": ["weight_kg", "effective_date", "on"],
+        "title": "WeightInForceRead",
+        "type": "object"
+      },
+      "WellnessBackfill": {
+        "additionalProperties": false,
+        "description": "Many days in one transaction \u2014 the migration shape.\n\nA batch either lands whole or not at all: a partial migration leaves the\nathlete unable to tell which days made it, and the retry then has to reason\nabout overlap.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/BackfillDay"
+            },
+            "maxItems": 366,
+            "minItems": 1,
+            "title": "Days",
+            "type": "array"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "required": ["days"],
+        "title": "WellnessBackfill",
+        "type": "object"
+      },
+      "WellnessBackfillResult": {
+        "description": "The outcome of a batch write, per day.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/BackfillDayResult"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "outcomes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Outcomes",
+            "type": "object"
+          }
+        },
+        "required": ["dry_run", "outcomes", "days"],
+        "title": "WellnessBackfillResult",
+        "type": "object"
+      },
+      "WellnessDayRead": {
+        "description": "One recorded day as the API returns it.\n\nA null value means **not provided**, never zero. A day that was never\nrecorded at all is a 404 on the dated route and simply absent from a range\n\u2014 it is never synthesized as a day of nulls, because \"reported nothing\" and\n\"was not asked\" must not render as the same thing.",
+        "properties": {
+          "confounders": {
+            "items": {
+              "$ref": "#/components/schemas/Confounder"
+            },
+            "title": "Confounders",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fatigue": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fatigue"
+          },
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_metric": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvMetric"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hrv Ms"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "markers": {
+            "$ref": "#/components/schemas/MarkerStandingRead"
+          },
+          "motivation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motivation"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/WellnessProvenance"
+          },
+          "respiratory_rate_brpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Respiratory Rate Brpm"
+          },
+          "resting_hr_bpm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resting Hr Bpm"
+          },
+          "sleep_duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Duration S"
+          },
+          "sleep_end_local": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep End Local"
+          },
+          "sleep_quality": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Quality"
+          },
+          "sleep_start_local": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Start Local"
+          },
+          "soreness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soreness"
+          },
+          "soreness_by_region": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/BodyRegion"
+            },
+            "title": "Soreness By Region",
+            "type": "object"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WellnessSource"
+          },
+          "spo2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spo2"
+          },
+          "stress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stress"
+          },
+          "subjective_recalled": {
+            "title": "Subjective Recalled",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "weight_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Kg"
+          },
+          "wrist_temperature_delta_c": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wrist Temperature Delta C"
+          }
+        },
+        "required": [
+          "id",
+          "local_date",
+          "sleep_duration_s",
+          "sleep_start_local",
+          "sleep_end_local",
+          "sleep_quality",
+          "resting_hr_bpm",
+          "hrv_ms",
+          "hrv_metric",
+          "hrv_context",
+          "respiratory_rate_brpm",
+          "spo2",
+          "wrist_temperature_delta_c",
+          "weight_kg",
+          "fatigue",
+          "soreness",
+          "stress",
+          "motivation",
+          "soreness_by_region",
+          "confounders",
+          "note",
+          "markers",
+          "subjective_recalled",
+          "provenance",
+          "source",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "WellnessDayRead",
+        "type": "object"
+      },
+      "WellnessDayWrite": {
+        "additionalProperties": false,
+        "description": "The fields a wellness write may set, on any past or present date.\n\nEvery field is omittable and every field is nullable, and the two mean\ndifferent things: **omitted leaves the stored value alone, `null` clears\nit.** A day is corrigible, so retracting a wrong reading has to be\nexpressible; a day is also written a field at a time over a morning, so a\npartial payload must not wipe what came before it.\n\nClearing ``hrv_ms`` clears ``hrv_metric`` and ``hrv_context`` with it: they\ndescribe a reading, and describing one that is no longer there is a claim\nabout nothing.",
+        "properties": {
+          "confounders": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Confounder"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confounders"
+          },
+          "fatigue": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fatigue"
+          },
+          "hrv_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_metric": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HrvMetric"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hrv_ms": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hrv Ms"
+          },
+          "motivation": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motivation"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "respiratory_rate_brpm": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 4.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Respiratory Rate Brpm"
+          },
+          "resting_hr_bpm": {
+            "anyOf": [
+              {
+                "maximum": 120.0,
+                "minimum": 20.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resting Hr Bpm"
+          },
+          "sleep_duration_s": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Duration S"
+          },
+          "sleep_end_local": {
+            "anyOf": [
+              {
+                "examples": ["23:15", "06:45:00"],
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep End Local"
+          },
+          "sleep_quality": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Quality"
+          },
+          "sleep_start_local": {
+            "anyOf": [
+              {
+                "examples": ["23:15", "06:45:00"],
+                "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sleep Start Local"
+          },
+          "soreness": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soreness"
+          },
+          "soreness_by_region": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "maximum": 5.0,
+                  "minimum": 1.0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "$ref": "#/components/schemas/BodyRegion"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soreness By Region"
+          },
+          "spo2": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.7,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spo2"
+          },
+          "stress": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stress"
+          },
+          "weight_kg": {
+            "anyOf": [
+              {
+                "maximum": 250.0,
+                "minimum": 30.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Kg"
+          },
+          "wrist_temperature_delta_c": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": -5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wrist Temperature Delta C"
+          }
+        },
+        "title": "WellnessDayWrite",
+        "type": "object"
+      },
+      "WellnessDaysPage": {
+        "description": "A page of the series, with the gaps in it named.\n\n``missing`` is why this is not a bare `Page`: a range read returns the days\nthat exist, and a consumer that only sees those cannot tell a Tuesday\nnobody answered from a Tuesday outside the page. Reporting the absences is\ncheaper than synthesizing null-filled days that read as answers.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WellnessDayRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "missing": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["items", "total", "offset", "limit", "missing"],
+        "title": "WellnessDaysPage",
+        "type": "object"
+      },
+      "WellnessInputsRead": {
+        "description": "The self-describing vocabulary of the wellness surface.\n\nOne read that answers every \"what may I send\" question: the tiers, the\nscales with their descriptors and polarity, the confounder vocabulary with\nits invalidating half marked, and the body regions. It exists so that no\nconsumer ever discovers the vocabulary by submitting guesses and reading\nthe refusals.",
+        "properties": {
+          "body_regions": {
+            "items": {
+              "$ref": "#/components/schemas/BodyRegion"
+            },
+            "title": "Body Regions",
+            "type": "array"
+          },
+          "confounders": {
+            "items": {
+              "$ref": "#/components/schemas/ConfounderRead"
+            },
+            "title": "Confounders",
+            "type": "array"
+          },
+          "max_backfill_days": {
+            "default": 366,
+            "title": "Max Backfill Days",
+            "type": "integer"
+          },
+          "scales": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectiveScaleRead"
+            },
+            "title": "Scales",
+            "type": "array"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/InputTierRead"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": ["tiers", "scales", "confounders", "body_regions"],
+        "title": "WellnessInputsRead",
+        "type": "object"
+      },
+      "WellnessProvenance": {
+        "description": "Where a day's numbers came from. About the *value*, not the writer.\n\nThe same split :class:`app.domain.anchors.Provenance` makes, with the two\nmembers a wellness reading can honestly claim. ``DEVICE_MEASURED`` is\nreserved: nothing writes it in Increment 1, and it exists now so that\nIncrement 2's HealthKit path is a new caller rather than a migration of\nstored values.",
+        "enum": ["athlete_reported", "device_measured"],
+        "title": "WellnessProvenance",
+        "type": "string"
+      },
+      "WellnessSource": {
+        "description": "Who wrote the row. Distinct from :class:`WellnessProvenance`.\n\nMirrors :class:`app.domain.anchors.AnchorSource`, and for the same reason:\nthe agent records what it was told and may never sign as the athlete. A\ncoach that cannot tell the athlete's report from its own transcription will\none day cite its own echo back to them as evidence.",
+        "enum": ["athlete", "agent"],
+        "title": "WellnessSource",
+        "type": "string"
       },
       "WorkoutCreate": {
         "additionalProperties": false,
@@ -12175,6 +13336,420 @@
         ],
         "summary": "Revise Session Reasons",
         "tags": ["scores"]
+      }
+    },
+    "/api/v1/wellness/backfill": {
+      "post": {
+        "description": "Record many days in **one transaction** \u2014 the migration path.\n\nEither the whole batch lands or none of it does: a partial migration leaves\nthe athlete unable to tell which days made it, and the retry then has to\nreason about overlap. A day that breaks a rule is refused **by date and\nfield**, because \"validation failed\" over three hundred days is\nunactionable.\n\nDays that already exist are updated, not replaced \u2014 a field the batch does\nnot mention is left alone \u2014 and the answer says per day whether it was\ncreated or updated. `dry_run` reports exactly those outcomes without\nwriting, which is what a migration wants before committing to itself.",
+        "operationId": "wellness-backfill_wellness",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WellnessBackfill"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessBackfillResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The day violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Backfill Wellness",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/days": {
+      "get": {
+        "description": "Read the series over the half-open range ``[start, end)``, oldest first.\n\nOldest first because a wellness series is read the way a chart is drawn \u2014\nthe opposite of the session log, which reads backwards from the most recent\nthing that happened.\n\nDays with nothing recorded are **absent from `items` and listed in\n`missing`**. They are not synthesized as null-filled days: \"the athlete\nreported nothing\" and \"the athlete was not asked\" must not render as the\nsame object. `missing` is over the **whole range**, not the page \u2014 a\nrecorded day on page two is not a day the athlete was silent on.\n\n`end` equal to `start` is a legal empty range; `end` before it is a 422, as\nis a range longer than a year and a week \u2014 the answer names every\nunanswered date in it, so an unbounded range is an unbounded answer.",
+        "operationId": "wellness-list_wellness_days",
+        "parameters": [
+          {
+            "description": "First day of the range, inclusive.",
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "description": "First day of the range, inclusive.",
+              "format": "date",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          {
+            "description": "First day *after* the range: it is half-open [start, end), like every range in this application.",
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "description": "First day *after* the range: it is half-open [start, end), like every range in this application.",
+              "format": "date",
+              "title": "End",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessDaysPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The day violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Wellness Days",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/days/{local_date}": {
+      "get": {
+        "description": "Read one day.\n\n404 when nothing was recorded that day \u2014 see `GET /wellness/days` for why\na day of nulls would be the wrong answer.",
+        "operationId": "wellness-get_wellness_day",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "local_date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Local Date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessDayRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Nothing recorded for that date"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Wellness Day",
+        "tags": ["wellness"]
+      },
+      "patch": {
+        "description": "Record or correct one day. Creates it if it does not exist.\n\nAn omitted field is left unchanged; an explicit `null` **clears** it. A day\nis corrigible \u2014 the athlete who typed 6.5 h of sleep as 65 can fix it \u2014 and\nevery write appends an audit row carrying what it used to say.\n\n**Any past or present date** is a legal target, which is what makes\nbackfilling a single day need nothing added. A future date is refused by\nname: a reading for tomorrow is not a late entry, it is a typo, and storing\nit would put a value in the baseline window before the morning it claims to\nreport has happened.\n\nThe response is **`null`** when the write cleared the day's last value: the\nday was retracted, and `null` says the same thing the dated read's 404 says\n\u2014 there is nothing here now. It is a 200 rather than a 204 so the contract\nstays one status and one model, and a client can tell \"retracted\" from\n\"failed\" without inspecting a header.",
+        "operationId": "wellness-record_wellness_day",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "local_date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Local Date",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WellnessDayWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WellnessDayRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Wellness-Record Wellness Day"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The day violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Record Wellness Day",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/inputs": {
+      "get": {
+        "description": "Read the whole vocabulary of the wellness surface.\n\nThe tiers, the subjective scales with their polarity and anchor\ndescriptors, the confounder vocabulary with its invalidating half marked,\nand the body regions. Served so no consumer has to carry a private copy of\nwhat a 3 means \u2014 or discover the confounder list by submitting guesses.\n\nBundled reference data, unpaged and identical on every deployment.",
+        "operationId": "wellness-get_wellness_inputs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessInputsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Wellness Inputs",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/weight": {
+      "get": {
+        "description": "The body weight governing ``on``, with the day it was recorded.\n\nThe most recent weight on or before that date \u2014 which is why appending a\nlater one never changes what an earlier date resolves to.\n\nA date before the first recorded weight is a **404**, and watts per\nkilogram is then absent rather than computed against a default nobody has.",
+        "operationId": "wellness-get_weight_in_force",
+        "parameters": [
+          {
+            "description": "The date to resolve the weight for.",
+            "in": "query",
+            "name": "on",
+            "required": true,
+            "schema": {
+              "description": "The date to resolve the weight for.",
+              "format": "date",
+              "title": "On",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeightInForceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Nothing recorded for that date"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Weight In Force",
+        "tags": ["wellness"]
       }
     },
     "/api/v1/workout-labels": {

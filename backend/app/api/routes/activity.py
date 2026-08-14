@@ -33,6 +33,7 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.deps import ActorDep
 from app.api.pagination import PageParamsDep
 from app.api.routes.matching import to_summary
+from app.api.routes.wellness import to_read as to_wellness_read
 from app.api.schemas.activity import (
     LoggedSetRead,
     ManualSessionCreate,
@@ -53,6 +54,7 @@ from app.api.schemas.metrics import (
     StreamChannelRead,
     StreamStopRead,
 )
+from app.api.schemas.wellness import WeightInForceRead, WellnessDayRead
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.domain.activity import SessionDiscipline
 from app.domain.anchors import AnchorType
@@ -71,6 +73,7 @@ from app.persistence.metrics import SessionMetricsRow
 from app.services.activity import LoggedSetInput, SessionService
 from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService, summarise
+from app.services.wellness import WellnessService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 #: Manual entry, outside the id namespace — see the module docstring.
@@ -102,6 +105,11 @@ def get_matching(session: SessionDep) -> MatchingService:
     return MatchingService.from_session(session)
 
 
+def get_wellness(session: SessionDep) -> WellnessService:
+    """Bind the wellness service to a request-scoped session."""
+    return WellnessService.from_session(session)
+
+
 def get_analyser(session: SessionDep) -> SessionAnalyser:
     """Bind the stream-reading analyser to a request-scoped session.
 
@@ -115,6 +123,7 @@ def get_analyser(session: SessionDep) -> SessionAnalyser:
 ServiceDep = Annotated[SessionService, Depends(get_service)]
 MetricsDep = Annotated[SessionMetricsService, Depends(get_metrics)]
 MatchingDep = Annotated[MatchingService, Depends(get_matching)]
+WellnessDep = Annotated[WellnessService, Depends(get_wellness)]
 AnalyserDep = Annotated[SessionAnalyser, Depends(get_analyser)]
 
 # `SkipJsonSchema[None]`: optional by omission, never `null` — a query string
@@ -306,6 +315,8 @@ def to_read(
     repairs: Mapping[uuid.UUID, int],
     metrics: SessionMetricsRead | None = None,
     link: SessionMatchRow | None = None,
+    weight: WeightInForceRead | None = None,
+    wellness: WellnessDayRead | None = None,
 ) -> SessionRead:
     """Project a stored session with the recordings behind it."""
     duration_s, recording_time_s = _duration(row)
@@ -341,6 +352,8 @@ def to_read(
         created_at=row.created_at,
         updated_at=row.updated_at,
         metrics=metrics,
+        weight_kg_in_force=weight,
+        wellness=wellness,
     )
 
 
@@ -348,14 +361,36 @@ async def one_to_read(
     service: SessionService,
     metrics: SessionMetricsService,
     matching: MatchingService,
+    wellness: WellnessService,
     row: SessionRow,
 ) -> SessionRead:
-    """Resolve one session's repairs, metrics and match link, and project it."""
+    """Resolve one session's repairs, metrics, match link and day, and project it.
+
+    The wellness lookup is one query on a date that is already indexed, and it
+    is what turns "does poor sleep predict poor execution for this athlete"
+    from two reads and a manual date match into one read.
+    """
+    day = (await wellness.days_for([row.local_date])).get(row.local_date)
+    in_force = await wellness.weight_in_force(row.local_date)
     return to_read(
         row,
         await service.repair_counts([row]),
         await current_metrics(metrics, row.id),
         (await matching.for_sessions([row.id])).get(row.id),
+        weight=(
+            None
+            if in_force is None
+            else WeightInForceRead(
+                weight_kg=in_force.weight_kg,
+                effective_date=in_force.effective_date,
+                on=row.local_date,
+            )
+        ),
+        wellness=(
+            None
+            if day is None
+            else to_wellness_read(day, subjective_recalled=wellness.is_recalled(day))
+        ),
     )
 
 
@@ -429,6 +464,7 @@ async def get_session(
     service: ServiceDep,
     metrics: MetricsDep,
     matching: MatchingDep,
+    wellness: WellnessDep,
     session_id: uuid.UUID,
 ) -> SessionRead:
     """Get one completed session, its recordings' metadata and its metrics.
@@ -436,7 +472,9 @@ async def get_session(
     Not the samples: those are 1-2 MB and live at
     `GET /sessions/{id}/streams`.
     """
-    return await one_to_read(service, metrics, matching, await service.get(session_id))
+    return await one_to_read(
+        service, metrics, matching, wellness, await service.get(session_id)
+    )
 
 
 @router.patch("/{session_id}", responses=NOT_FOUND | BAD_BODY | INVALID)
@@ -444,6 +482,7 @@ async def update_session(
     service: ServiceDep,
     metrics: MetricsDep,
     matching: MatchingDep,
+    wellness: WellnessDep,
     actor: ActorDep,
     session_id: uuid.UUID,
     payload: SessionUpdate,
@@ -461,7 +500,7 @@ async def update_session(
     row = await service.update(
         session_id, payload.model_dump(exclude_unset=True), actor=actor
     )
-    return await one_to_read(service, metrics, matching, row)
+    return await one_to_read(service, metrics, matching, wellness, row)
 
 
 @manual_router.post(
@@ -471,6 +510,7 @@ async def create_manual_session(
     service: ServiceDep,
     metrics: MetricsDep,
     matching: MatchingDep,
+    wellness: WellnessDep,
     actor: ActorDep,
     payload: ManualSessionCreate,
 ) -> SessionRead:
@@ -492,7 +532,7 @@ async def create_manual_session(
         notes=payload.notes,
         sets=_sets(payload),
     )
-    return await one_to_read(service, metrics, matching, row)
+    return await one_to_read(service, metrics, matching, wellness, row)
 
 
 @router.get("/{session_id}/streams", responses=NOT_FOUND)
@@ -540,6 +580,7 @@ async def merge_sessions(
     service: ServiceDep,
     metrics: MetricsDep,
     matching: MatchingDep,
+    wellness: WellnessDep,
     analyser: AnalyserDep,
     actor: ActorDep,
     session_id: uuid.UUID,
@@ -567,4 +608,6 @@ async def merge_sessions(
     await analyser.compute(
         row.id, actor=actor, reason="recordings merged into one session"
     )
-    return await one_to_read(service, metrics, matching, await service.get(row.id))
+    return await one_to_read(
+        service, metrics, matching, wellness, await service.get(row.id)
+    )

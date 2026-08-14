@@ -14,6 +14,7 @@ import { StatusDot } from "@/components/design/status-dot";
 import { WorkoutProfileBars } from "@/components/design/workout-profile-bars";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
+import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
 import { $api } from "@/lib/api/client";
@@ -35,12 +36,17 @@ import { describeSets, ZONE_COLORS } from "@/lib/workout-profile";
 /**
  * Today: what to do, why, and how it is judged.
  *
- * Deliberately narrower than the mockup's Today screen. Weather, readiness,
- * TSB, TSS, RPE logging and the coach's proposals all belong to work packages
- * that do not exist yet, and drawing them from nothing would make the page a
- * picture of an application rather than the application. What is here is
- * everything the *plan* knows: the frozen prescription, its targets, its
- * criteria, and where the day sits in the week.
+ * Narrower than the mockup's Today screen. Weather, TSB, TSS and the coach's
+ * proposals all belong to work that does not exist yet, and drawing them from
+ * nothing would make the page a picture of an application rather than the
+ * application. What is here is everything the *plan* knows — the frozen
+ * prescription, its targets, its criteria, and where the day sits in the week
+ * — plus what the *athlete* has reported about their own morning.
+ *
+ * The wellness card is a record, not a verdict. It shows what was entered and
+ * whether a declared confounder voided the device numbers; it does not score
+ * readiness, and nothing on this page decides whether to train. That reading
+ * is the coach's, and the baselines it would need do not exist yet.
  *
  * Every absolute number on this page comes from the session's own
  * `resolved_steps` — resolved by the backend against the anchor versions the
@@ -99,6 +105,10 @@ export function TodayView() {
         </div>
 
         <aside className="flex w-full max-w-[300px] flex-[1_1_280px] flex-col gap-3">
+          {/* Above the week, because the question this page answers first is
+              "should I do the thing on it", and the athlete's own report of
+              how they slept is the input to that — not a footnote under it. */}
+          <WellnessCard today={today} />
           <ThisWeek days={days} today={today} />
         </aside>
       </PageBody>

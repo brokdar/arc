@@ -173,3 +173,62 @@ async def test_audit_rows_are_listed_newest_first(
 
     assert total == 3
     assert rows[0].action == "anchor.appended"
+
+
+WELLNESS_DAYS = "/api/v1/wellness/days"
+
+
+async def test_recording_a_wellness_day_is_audited_with_the_diff(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"resting_hr_bpm": 47})
+
+    [row] = [
+        entry
+        for entry in await entries(db_session)
+        if entry.entity_type == "wellness_day"
+    ]
+
+    assert row.action == "wellness.created"
+    assert row.payload_json == {
+        "local_date": "2026-06-01",
+        "changed": {"resting_hr_bpm": {"from": None, "to": 47}},
+    }
+
+
+async def test_correcting_a_wellness_day_records_what_it_used_to_say(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A day is corrigible in place, so the audit row is the only place the
+    # superseded value survives — which is what makes correcting it safe.
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"sleep_duration_s": 650})
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"sleep_duration_s": 23_400})
+
+    rows = [
+        entry
+        for entry in await entries(db_session)
+        if entry.entity_type == "wellness_day"
+    ]
+
+    assert [row.action for row in rows] == ["wellness.created", "wellness.updated"]
+    assert rows[1].payload_json["changed"] == {
+        "sleep_duration_s": {"from": 650, "to": 23_400}
+    }
+
+
+async def test_retracting_a_wellness_day_keeps_what_the_day_said(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"resting_hr_bpm": 47})
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"resting_hr_bpm": None})
+
+    rows = [
+        entry
+        for entry in await entries(db_session)
+        if entry.entity_type == "wellness_day"
+    ]
+
+    assert [row.action for row in rows] == ["wellness.created", "wellness.retracted"]
+    assert rows[1].payload_json["changed"] == {
+        "resting_hr_bpm": {"from": 47, "to": None}
+    }

@@ -91,12 +91,13 @@ describe("SidebarNav", () => {
     );
   });
 
-  it("lists all eight sections the app is going to have", () => {
+  it("lists all nine sections the app is going to have", () => {
     renderNav();
 
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       "Today",
       "Calendar",
+      "Wellness",
       "Sessions",
       "Inbox",
       "Workouts",

@@ -26,6 +26,7 @@ import {
   mintId,
   noteList,
   patchAthlete,
+  patchWellnessDay,
   plannedSessionFixture,
   planWeekFixture,
   proposalById,
@@ -48,6 +49,10 @@ import {
   updateProposal,
   WORKOUT_LABELS,
   WORKOUTS,
+  wellnessDay,
+  wellnessInputs,
+  wellnessRange,
+  wellnessWeightInForce,
   withMatch,
   workoutFixture,
   zoneModelMatches,
@@ -484,8 +489,16 @@ export const handlers = [
     const session = ingestState().sessions.find(
       (row) => row.id === params.session_id,
     );
+    // The day and the weight are resolved at response time from the wellness
+    // store rather than baked into the fixture, so a test that records a
+    // morning and then opens that day's session sees the two joined — which
+    // is the whole point of carrying them here.
     return session
-      ? response(200).json(withMatch(session))
+      ? response(200).json({
+          ...withMatch(session),
+          wellness: wellnessDay(session.local_date),
+          weight_kg_in_force: wellnessWeightInForce(session.local_date),
+        })
       : response(404).json({
           detail: `Session ${params.session_id} not found`,
         });
@@ -1232,6 +1245,44 @@ export const handlers = [
         : response(404).json({ detail: "No such note." });
     },
   ),
+
+  // --- wellness -------------------------------------------------------------
+  // Stateful, because the form's contract is which fields it sends: a canned
+  // day could not fail when the form drops one.
+  http.get("/api/v1/wellness/inputs", ({ response }) =>
+    response(200).json(wellnessInputs()),
+  ),
+  http.get("/api/v1/wellness/days", ({ query, response }) =>
+    response(200).json(
+      wellnessRange(query.get("start") ?? "", query.get("end") ?? ""),
+    ),
+  ),
+  http.get("/api/v1/wellness/days/{local_date}", ({ params, response }) => {
+    const day = wellnessDay(params.local_date);
+    return day
+      ? response(200).json(day)
+      : response(404).json({
+          detail: `No wellness was recorded for ${params.local_date}`,
+        });
+  }),
+  http.patch(
+    "/api/v1/wellness/days/{local_date}",
+    async ({ params, request, response }) => {
+      const result = patchWellnessDay(params.local_date, await request.json());
+      return "detail" in result
+        ? response(422).json({ detail: result.detail })
+        : response(200).json(result.day);
+    },
+  ),
+  http.get("/api/v1/wellness/weight", ({ query, response }) => {
+    const on = query.get("on") ?? "";
+    const resolved = wellnessWeightInForce(on);
+    return resolved
+      ? response(200).json(resolved)
+      : response(404).json({
+          detail: `No weight was recorded on or before ${on}`,
+        });
+  }),
 ];
 
 /** `app.services.scoring.MAX_ALIGNMENT_OFFSET_S` — six hours, in seconds. */

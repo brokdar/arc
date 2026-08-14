@@ -6,7 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { TodayView } from "@/components/today/today-view";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
-import { planWeekFixture, SESSION_IDS } from "@/tests/mocks/fixtures";
+import {
+  planWeekFixture,
+  SESSION_IDS,
+  seedWellnessDay,
+} from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -310,6 +314,54 @@ describe("TodayView", () => {
 
     expect(
       await screen.findByRole("heading", { name: "Edit session" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("TodayView wellness card", () => {
+  it("names the missing input and puts the control beside it", async () => {
+    renderToday();
+
+    // UI convention 3: an empty state that names no remedy is a dead end, and
+    // "Record this morning" is the whole feature.
+    expect(
+      await screen.findByText(/Nothing recorded this morning/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Record this morning" }),
+    ).toHaveAttribute("href", "/wellness");
+  });
+
+  it("shows the day's markers, and says when a confounder voided them", async () => {
+    seedWellnessDay(today, {
+      resting_hr_bpm: 43,
+      sleep_duration_s: 21_600,
+      confounders: ["alcohol"],
+    });
+    renderToday();
+
+    const value = await screen.findByText("43");
+    const card = value.closest<HTMLElement>('[data-slot="panel"]');
+    if (!card) {
+      throw new Error("the marker is not on a panel");
+    }
+    // On the same card as the numbers: a reader who has to look elsewhere for
+    // last night's beer will one day not look.
+    expect(
+      within(card).getByText(/not actionable today: Alcohol/),
+    ).toBeInTheDocument();
+  });
+
+  it("holds a marker's slot with the placeholder rather than a zero", async () => {
+    seedWellnessDay(today, { resting_hr_bpm: 43 });
+    renderToday();
+
+    await screen.findByText("43");
+
+    // UI convention 4: position is how a returning eye finds a number, so a
+    // missing HRV keeps its slot instead of collapsing the row.
+    expect(
+      screen.getByRole("img", { name: /^Not assessed: No hrv/i }),
     ).toBeInTheDocument();
   });
 });

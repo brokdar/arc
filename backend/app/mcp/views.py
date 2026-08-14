@@ -31,6 +31,17 @@ from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
 from app.domain.purpose import discipline_of
 from app.domain.templates import PurposeTemplate
+from app.domain.wellness import (
+    INPUT_TIERS,
+    INVALIDATES_MARKERS,
+    MAX_BACKFILL_DAYS,
+    SUBJECTIVE_SCALES,
+    BodyRegion,
+    Confounder,
+    WeightInForce,
+    WellnessProvenance,
+    WellnessSource,
+)
 from app.domain.workout import workout_body_to_json
 from app.domain.zones import Zone
 from app.ingest.repricing import RepricePrediction, RepriceReport
@@ -46,11 +57,13 @@ from app.persistence.scoring import (
     SessionScoreRow,
     VerdictDeclarationRow,
 )
+from app.persistence.wellness import WellnessDayRow
 from app.persistence.workouts import WorkoutRow
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary
 from app.services.plan import PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
+from app.services.wellness import DayResult, WellnessWeek, WellnessWeeks
 from app.services.workouts import WorkoutDraft
 from app.services.zones import ResolvedZones
 
@@ -690,6 +703,25 @@ def as_date(value: str, *, field: str) -> dt.date:
         ) from exc
 
 
+def as_time(value: str, *, field: str) -> dt.time:
+    """Parse a wall-clock time a tool was given, or say which argument was wrong.
+
+    No date and no offset: these are the clock times a watch exports, and the
+    day they belong to is the wellness day's own (see
+    `app.domain.wellness.wellness_day_date`).
+
+    Raises:
+        ValueError: When it is not an ISO time.
+    """
+    try:
+        return dt.time.fromisoformat(value)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{field} must be a clock time (HH:MM or HH:MM:SS) with no date "
+            f"and no offset, got {value!r}"
+        ) from exc
+
+
 def as_datetime(value: str, *, field: str) -> dt.datetime:
     """Parse an ISO datetime a tool was given.
 
@@ -710,3 +742,209 @@ def as_datetime(value: str, *, field: str) -> dt.datetime:
             "2026-08-17T18:00:00+02:00), so it means one moment everywhere"
         )
     return parsed
+
+
+# --- wellness -----------------------------------------------------------------
+
+
+def wellness_day(row: WellnessDayRow, *, subjective_recalled: bool) -> dict[str, Any]:
+    """One recorded day, whole.
+
+    ``markers`` rides on the **same object as the readings** rather than in a
+    block of its own, because a coach that has to remember to look elsewhere
+    for last night's beer will one day not remember, and the cost is a training
+    week. The numbers are still all here: what is withheld is their standing as
+    evidence today, not the values.
+    """
+    day = row.to_domain()
+    standing = day.standing
+    return {
+        "local_date": day.local_date.isoformat(),
+        "sleep_duration_s": day.sleep_duration_s,
+        "sleep_start_local": (
+            None if day.sleep_start_local is None else day.sleep_start_local.isoformat()
+        ),
+        "sleep_end_local": (
+            None if day.sleep_end_local is None else day.sleep_end_local.isoformat()
+        ),
+        "sleep_quality": day.sleep_quality,
+        "resting_hr_bpm": day.resting_hr_bpm,
+        "hrv_ms": day.hrv_ms,
+        "hrv_metric": None if day.hrv_metric is None else day.hrv_metric.value,
+        "hrv_context": None if day.hrv_context is None else day.hrv_context.value,
+        "respiratory_rate_brpm": day.respiratory_rate_brpm,
+        "spo2": day.spo2,
+        "wrist_temperature_delta_c": day.wrist_temperature_delta_c,
+        "weight_kg": day.weight_kg,
+        "fatigue": day.fatigue,
+        "soreness": day.soreness,
+        "stress": day.stress,
+        "motivation": day.motivation,
+        "soreness_by_region": {
+            region.value: rating for region, rating in day.soreness_by_region.items()
+        },
+        "confounders": [member.value for member in day.confounders],
+        "note": day.note,
+        "markers": {
+            "actionable": standing.actionable,
+            "invalidated_by": [member.value for member in standing.invalidated_by],
+            "statement": standing.statement,
+        },
+        #: The subjective ratings were entered from memory. The objective
+        #: readings are not discounted for it — the watch measured them on the
+        #: day, whatever day they were typed in.
+        "subjective_recalled": subjective_recalled,
+        #: Where the numbers came from, and who wrote them down. Both, always:
+        #: a coach that cannot tell the athlete's report from its own
+        #: transcription will eventually cite its own echo back as evidence.
+        "provenance": day.provenance.value,
+        "source": day.source.value,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+#: The fields the compact series carries — the `valuable` tier of
+#: `app.domain.wellness.INPUT_TIERS`, which is exactly the set the coach's
+#: morning question turns on. Everything else is a whole-day read away.
+COMPACT_FIELDS = (
+    "sleep_duration_s",
+    "resting_hr_bpm",
+    "hrv_ms",
+    "weight_kg",
+    "fatigue",
+    "motivation",
+)
+
+
+def wellness_day_compact(
+    row: WellnessDayRow, *, subjective_recalled: bool
+) -> dict[str, Any]:
+    """One day, cut down to what the one-call opener can afford.
+
+    `get_coaching_context` is the call every session begins with, and seven
+    full day objects at twenty-odd fields each is a hundred and forty fields
+    spent before the coach has asked anything. So the series it carries holds
+    the six `valuable`-tier inputs, the confounder standing when there is one,
+    and nothing else — a field that was not reported is **absent** rather than
+    null, because a null is a token spent saying nothing.
+
+    **``source`` and ``provenance`` appear only when they are not the
+    ordinary ones.** Every read has to let the coach tell the athlete's own
+    report from its own transcription, or it will eventually cite its own echo
+    back as evidence — but spelling `athlete` / `athlete_reported` on all seven
+    days spends fourteen fields saying "as usual" on the one call every session
+    begins with. So the default is silence and a departure from it is stated,
+    which is the convention this object already uses for the confounder
+    standing and the recall flag. The rule is written into
+    `get_coaching_context`'s own docstring, so the agent reads it before the
+    data.
+
+    Whole days are `get_wellness`, which spells both out on every day.
+    """
+    whole = wellness_day(row, subjective_recalled=subjective_recalled)
+    compact: dict[str, Any] = {"local_date": whole["local_date"]}
+    compact.update(
+        {name: whole[name] for name in COMPACT_FIELDS if whole[name] is not None}
+    )
+    if not whole["markers"]["actionable"]:
+        compact["not_actionable"] = whole["markers"]["invalidated_by"]
+    if subjective_recalled:
+        compact["subjective_recalled"] = True
+    if row.source is not WellnessSource.ATHLETE:
+        compact["source"] = row.source.value
+    if row.provenance is not WellnessProvenance.ATHLETE_REPORTED:
+        compact["provenance"] = row.provenance.value
+    return compact
+
+
+def weight_in_force(resolved: WeightInForce | None) -> Any:
+    """The weight governing a date, or null before the first one was recorded.
+
+    Null is the answer, not a gap: watts per kilogram is then **absent** rather
+    than computed against a default weight that is nobody's.
+    """
+    if resolved is None:
+        return None
+    return {
+        "weight_kg": resolved.weight_kg,
+        "effective_date": resolved.effective_date.isoformat(),
+    }
+
+
+def wellness_inputs() -> dict[str, Any]:
+    """The whole vocabulary of the wellness surface, self-describing.
+
+    Tiers, scales with their polarity and anchor words, the confounder
+    vocabulary with its invalidating half marked, and the body regions. It
+    exists so the agent never discovers a vocabulary by submitting guesses and
+    reading the refusals.
+    """
+    return {
+        "tiers": [
+            {"field": name, "tier": tier.value} for name, tier in INPUT_TIERS.items()
+        ],
+        "scales": [
+            {
+                "field": scale.field,
+                "low": scale.low,
+                "high": scale.high,
+                #: Load-bearing: 5 motivation is good and 5 fatigue is not, so
+                #: no reader may assume a direction. `higher_is_neither` is
+                #: session RPE — a 9 is a hard session, not a bad one.
+                "polarity": scale.polarity.value,
+                "prompt": scale.prompt,
+                "anchors": {
+                    str(point): label for point, label in sorted(scale.anchors.items())
+                },
+            }
+            for scale in SUBJECTIVE_SCALES.values()
+        ],
+        "confounders": [
+            {
+                "value": member.value,
+                "invalidates_markers": member in INVALIDATES_MARKERS,
+            }
+            for member in Confounder
+        ],
+        "body_regions": [member.value for member in BodyRegion],
+        "max_backfill_days": MAX_BACKFILL_DAYS,
+    }
+
+
+def wellness_week(week: WellnessWeek) -> dict[str, Any]:
+    """One folded week. Every mean carries the ``n`` it was computed over."""
+    return {
+        "start": week.start.isoformat(),
+        "end": week.end.isoformat(),
+        "days_recorded": week.days_recorded,
+        "days_invalidated": week.days_invalidated,
+        "days_recalled": week.days_recalled,
+        "metrics": [
+            {"metric": mean.metric, "mean": round(mean.mean, 3), "n": mean.n}
+            for mean in week.metrics
+        ],
+    }
+
+
+def wellness_weeks(summary: WellnessWeeks) -> dict[str, Any]:
+    """A date range of reported wellness, folded into weeks."""
+    return {
+        "start": summary.start.isoformat(),
+        "end": summary.end.isoformat(),
+        "weeks": [wellness_week(week) for week in summary.weeks],
+    }
+
+
+def wellness_day_result(result: DayResult) -> dict[str, Any]:
+    """What one day of a write was, or would have been.
+
+    ``changed`` is the before/after diff the audit row carries, returned so a
+    dry run shows what a real call would actually move — an empty diff means
+    the day already said exactly this, which is a legal and unremarkable thing
+    for a re-run of an import to find.
+    """
+    return {
+        "local_date": result.local_date.isoformat(),
+        "outcome": result.outcome.value,
+        "changed": dict(result.changed),
+    }

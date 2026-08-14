@@ -468,3 +468,60 @@ async def test_a_manual_session_defaults_to_utc_and_no_sets(
     assert session["local_date"] == "2026-05-11"
     assert session["logged_sets"] == []
     assert session["rpe"] is None
+
+
+# --- the wellness of the session's own day (AC-12, AC-41) ----------------------
+
+WELLNESS_DAYS = "/api/v1/wellness/days"
+
+
+async def test_a_session_carries_the_wellness_of_its_own_day(
+    client: AsyncClient,
+) -> None:
+    # The question worth answering is not "was HRV low on the 11th" but "does
+    # poor sleep predict poor execution for this athlete", and after this the
+    # two halves are one read rather than two and a date match.
+    session_id = (await client.post(MANUAL, json=a_manual_session())).json()["id"]
+    await client.patch(
+        f"{WELLNESS_DAYS}/2026-05-11",
+        json={"sleep_duration_s": 21_600, "fatigue": 4, "confounders": ["short_sleep"]},
+    )
+
+    body = (await client.get(f"{SESSIONS}/{session_id}")).json()
+
+    assert body["local_date"] == "2026-05-11"
+    assert body["wellness"]["sleep_duration_s"] == 21_600
+    assert body["wellness"]["markers"]["actionable"] is False
+
+
+async def test_a_session_on_a_day_with_no_wellness_still_reads(
+    client: AsyncClient,
+) -> None:
+    # "Not recorded" rather than a 404 on the session: the athlete not
+    # answering their morning form is not a broken session.
+    session_id = (await client.post(MANUAL, json=a_manual_session())).json()["id"]
+
+    response = await client.get(f"{SESSIONS}/{session_id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["wellness"] is None
+    assert response.json()["weight_kg_in_force"] is None
+
+
+async def test_a_session_carries_the_weight_governing_its_date(
+    client: AsyncClient,
+) -> None:
+    # AC-12: watts per kilogram is derivable per session without a second call,
+    # and the weight names the day it was recorded on — a w/kg computed against
+    # a three-week-old weight should say so.
+    await client.patch(f"{WELLNESS_DAYS}/2026-05-01", json={"weight_kg": 78.0})
+    await client.patch(f"{WELLNESS_DAYS}/2026-06-01", json={"weight_kg": 82.0})
+    session_id = (await client.post(MANUAL, json=a_manual_session())).json()["id"]
+
+    body = (await client.get(f"{SESSIONS}/{session_id}")).json()
+
+    assert body["weight_kg_in_force"] == {
+        "weight_kg": 78.0,
+        "effective_date": "2026-05-01",
+        "on": "2026-05-11",
+    }
