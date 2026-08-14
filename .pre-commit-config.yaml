@@ -82,6 +82,26 @@ repos:
         language: system
         files: ^backend/
         stages: [pre-push]
+      # `alembic check` runs in exactly one place — the Postgres integration
+      # suite — so model/migration drift is discovered in the most expensive
+      # tier there is, and the fix costs a second run of it. This needs no
+      # database: it refuses a push whose diff moves DDL without shipping a
+      # revision. Heuristic by design; `alembic check` is still the authority.
+      - id: migration-required
+        name: migration-required
+        entry: ./scripts/check-migration-required.sh
+        language: script
+        pass_filenames: false
+        files: ^backend/app/persistence/.*\.py$
+        stages: [pre-push]
+      # The check above is a heuristic over diff text, so it rots silently when
+      # the model idiom shifts. Its cases run whenever it or its helpers change.
+      - id: migration-required-test
+        name: migration-required-test
+        entry: ./scripts/check-migration-required.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/(check-migration-required(\.test)?|git-push-range)\.sh$
 
   # ============================================================================
   # API contract synchronization
@@ -119,4 +139,37 @@ repos:
         pass_filenames: false
         language: system
         files: ^frontend/(app|components|lib|tests)/.*\.(tsx?|jsx?)$
+        stages: [pre-push]
+      # The production build was the one `just check` gate no hook ran, so a
+      # build-only failure — the class `tsgo --noEmit` cannot see — was first
+      # discovered in `frontend-checks.yml`, and the fix cost a second run of
+      # it. Same trigger as that workflow's `paths:` filter, so green here and
+      # green there are the same statement.
+      # The path gate is `run-if-changed`, not `files:` — prek widens its own
+      # file set to the whole tree whenever the branch has no remote counterpart
+      # (its first push, and every retry after a failed one), which would make
+      # every new branch pay a production build it did not earn.
+      - id: frontend-build
+        name: frontend-build
+        entry: ./scripts/run-if-changed.sh ^frontend/ -- bash -c 'cd frontend && bun run build'
+        pass_filenames: false
+        language: script
+        always_run: true
+        stages: [pre-push]
+
+  # ============================================================================
+  # Workflow security
+  # ============================================================================
+  # Mirrors zizmor.yml. Workflow files change rarely, so this almost never runs
+  # — but when it does, a lint discovered in CI costs a whole run to learn
+  # something `uvx` answers in seconds. Needs network for the first `uvx` fetch;
+  # if you are offline, SKIP=zizmor and let CI have it.
+  - repo: local
+    hooks:
+      - id: zizmor
+        name: zizmor
+        entry: ./scripts/run-if-changed.sh '^\.github/workflows/.*\.ya?ml$' -- uvx zizmor .github/workflows/
+        pass_filenames: false
+        language: script
+        always_run: true
         stages: [pre-push]
