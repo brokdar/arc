@@ -37,6 +37,7 @@ from app.domain.wellness import (
     weight_in_force,
     wellness_day_date,
 )
+from app.persistence.wellness import WellnessDayRow
 from app.services.activity import MAX_RPE, MIN_RPE
 
 BERLIN = "Europe/Berlin"
@@ -375,6 +376,31 @@ def test_the_objective_and_subjective_splits_cover_the_measured_fields() -> None
         "note",
     }
     assert set(OBJECTIVE_FIELDS) | set(SUBJECTIVE_FIELDS) == scalars
+
+
+def test_the_field_lists_are_derived_from_the_stored_columns() -> None:
+    # The list every other list is checked against. `BOUNDS`, `INPUT_TIERS` and
+    # the objective/subjective split are all pinned to `VALUE_FIELDS`, and
+    # `VALUE_FIELDS` was pinned to nothing — so a column added to the model and
+    # to the dataclass while this tuple was forgotten would be a field nothing
+    # bounds, nothing tiers, and no completeness test can see. Deriving the
+    # expectation from the ORM closes that: a test may reach across the layer
+    # the domain may not import, which is the whole point of putting the check
+    # here. The exclusions are enumerated rather than pattern-matched, so a new
+    # column has to be classified instead of defaulting into silence.
+    bookkeeping = {
+        "id",
+        "local_date",
+        "provenance",
+        "source",
+        "created_at",
+        "updated_at",
+    }
+    collections = {"soreness_by_region", "confounders"}
+    stored = {column.name for column in WellnessDayRow.__table__.columns}
+
+    assert set(WRITABLE_FIELDS) == stored - bookkeeping
+    assert set(VALUE_FIELDS) == stored - bookkeeping - collections
 
 
 # --- gaps are reported, never synthesized -------------------------------------
