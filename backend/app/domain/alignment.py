@@ -184,6 +184,18 @@ def detect_work_intervals(
         the series is too short to have a threshold, or when nothing crossed
         it — a steady ride genuinely has no intervals, and inventing one would
         put a row in the table for every ride ever recorded.
+
+    Note:
+        With a **derived** threshold the detected duration is not guaranteed
+        monotonic in the true duration. ``default_threshold`` reads the smoothed
+        series, so a longer effort raises the level it is then measured against,
+        and a one-second-longer block can detect one second shorter. On a real
+        recording the threshold reflects the whole ride and one interval barely
+        moves it; on a short synthetic series where the effort dominates, it
+        moves a lot. Pass an explicit ``threshold`` whenever you are comparing
+        detected durations across series that differ only in that effort —
+        otherwise the detector varies with the thing being measured. See
+        ``test_confidence_falls_as_the_duration_drifts``.
     """
     if not any(value is not None for value in power_fixed):
         return []

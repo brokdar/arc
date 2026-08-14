@@ -16,6 +16,7 @@ from app.domain.alignment import (
     CONFIDENCE_FLOOR,
     LOW_CONFIDENCE_REASON,
     Alignment,
+    _ratio,
     align,
     align_strength,
     default_threshold,
@@ -314,14 +315,29 @@ def test_a_noisily_executed_plan_recovers_its_own_step_order(
 def test_confidence_falls_as_the_duration_drifts(
     planned_s: int, stretch: float
 ) -> None:
-    """Confidence is monotonically non-increasing under injected mismatch."""
+    """Confidence is monotonically non-increasing under injected mismatch.
+
+    The threshold is **pinned** rather than derived. ``default_threshold`` reads
+    the smoothed series, and in this fixture the work block is a large fraction
+    of a short series — so lengthening it raises the threshold, which is the very
+    boundary detection then measures against. Left derived, this test varies its
+    own detector: a 68 s block detects as 74 s and a 69 s block as 73 s, and the
+    property fails on an artefact of the fixture rather than on the arithmetic it
+    exists to pin. Pinning the threshold removes that feedback; over 40-200 s it
+    makes detected duration strictly monotonic in the true duration, where the
+    derived threshold violates it four times.
+
+    A real ride's threshold comes from the whole recording, where one second in
+    one interval does not move it. That is an argument, not a measurement — so
+    :func:`detect_work_intervals` now states the caveat where it binds.
+    """
     plan = flatten(EnduranceWorkout(steps=(step(StepRole.WORK, planned_s, 280.0),)))
     ridden_s = int(planned_s * stretch)
     closer = int(planned_s * (1 + (stretch - 1) / 2))
 
     def confidence(seconds: int) -> float:
         watts = series((100.0, 300), (280.0, seconds), (100.0, 300))
-        detected = detect_work_intervals(watts, min_duration_s=30)
+        detected = detect_work_intervals(watts, min_duration_s=30, threshold=190.0)
         assume(len(detected) == 1)
         result = align(plan, detected)
         pairs = [*result.aligned, *result.excluded]
@@ -329,6 +345,30 @@ def test_confidence_falls_as_the_duration_drifts(
         return pairs[0].confidence
 
     assert confidence(closer) >= confidence(ridden_s) - 1e-9
+
+
+@given(
+    planned=st.floats(min_value=1.0, max_value=1e4),
+    near=st.floats(min_value=1.0, max_value=1e4),
+    far=st.floats(min_value=1.0, max_value=1e4),
+)
+def test_ratio_is_monotonic_as_a_value_moves_away(
+    planned: float, near: float, far: float
+) -> None:
+    """``_ratio`` never rewards the further of two values on the same side.
+
+    This is the guarantee the confidence gate rests on, and the one the test
+    above could only reach through a detector. Stated directly it needs no
+    fixture and nothing can confound it.
+
+    Note what it does **not** say. ``min / max`` measures *proportional* drift,
+    not absolute: against a 3 s target, 1 s scores 0.33 and 5 s scores 0.60 even
+    though both are two seconds away. So the values have to sit on the same side
+    of ``planned`` for "further" to mean anything — an earlier draft of this test
+    asserted it across sides and was simply wrong about the arithmetic.
+    """
+    assume(planned <= near <= far or far <= near <= planned)
+    assert _ratio(planned, near) >= _ratio(planned, far) - 1e-9
 
 
 # --- strength -----------------------------------------------------------------
