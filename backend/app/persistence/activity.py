@@ -300,10 +300,10 @@ class LoggedSetRow(Base):
     #: 0-based position within the session.
     set_index: Mapped[int] = mapped_column(Integer)
     #: Repetitions performed, or null for a timed hold. Exactly one of `reps`
-    #: and `duration_s` is set — the domain states the rule
-    #: (`app.domain.metrics.PerformedSet`) and the service enforces it, because
-    #: a check constraint here could not be written once for both dialects
-    #: without a batch migration on every future change to it.
+    #: and `duration_s` is set — the service refuses the write and
+    #: `app.domain.metrics.PerformedSet` refuses to be built from a row that
+    #: breaks it, because a check constraint here could not be written once for
+    #: both dialects without a batch migration on every future change to it.
     reps: Mapped[int | None] = mapped_column(Integer)
     #: Seconds held, for a timed set. Null for a rep-based one.
     duration_s: Mapped[int | None] = mapped_column(Integer)

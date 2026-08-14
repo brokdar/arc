@@ -10,7 +10,10 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import { ExercisePicker } from "@/components/workouts/exercise-catalogue";
+import {
+  ExercisePicker,
+  useExercises,
+} from "@/components/workouts/exercise-catalogue";
 import {
   blankStrengthGroup,
   blankStrengthItem,
@@ -164,8 +167,20 @@ function ItemRow({
   onRemove: () => void;
 }) {
   const base = useId();
+  const { exercises } = useExercises();
   const bodyweight = item.loadKind === "bodyweight";
   const hold = item.mode === "hold";
+  const unilateral = (exerciseId: string) =>
+    exercises.some(
+      (exercise) => exercise.id === exerciseId && exercise.unilateral,
+    );
+  // Per side is only meaningful — and only accepted by the service — on a
+  // movement the catalogue works one limb at a time, so it is offered on those
+  // and absent elsewhere, the way `Value` is absent for a bodyweight load.
+  // Left standing while the draft still says per side, so a prescription made
+  // before the catalogue changed under it can be corrected here rather than
+  // stranded behind a control it can no longer reach.
+  const perSideOffered = unilateral(item.exerciseId) || item.perSide;
   // What the athlete wrote is rounds; what everything downstream counts is
   // working sets. The hint says so at the point of entry rather than leaving
   // the difference to be discovered on the week rail.
@@ -185,7 +200,17 @@ function ItemRow({
           id={`${base}-exercise`}
           className="h-7"
           value={item.exerciseId}
-          onChange={(exerciseId) => onChange({ ...item, exerciseId })}
+          onChange={(exerciseId) =>
+            // The flag goes with the movement it was set for: carried onto a
+            // bilateral one it builds a draft the form has no complaint about
+            // and the service refuses with a 422 on save, after the rest of
+            // the line has been filled in.
+            onChange({
+              ...item,
+              exerciseId,
+              perSide: item.perSide && unilateral(exerciseId),
+            })
+          }
         />
       </Field>
 
@@ -256,20 +281,26 @@ function ItemRow({
         </Field>
       )}
 
-      <Field label="Per side" htmlFor={`${base}-per-side`} className="w-[74px]">
-        <NativeSelect
-          className="w-full"
-          size="sm"
-          id={`${base}-per-side`}
-          value={item.perSide ? "yes" : "no"}
-          onChange={(event) =>
-            onChange({ ...item, perSide: event.target.value === "yes" })
-          }
+      {perSideOffered ? (
+        <Field
+          label="Per side"
+          htmlFor={`${base}-per-side`}
+          className="w-[74px]"
         >
-          <NativeSelectOption value="no">Both</NativeSelectOption>
-          <NativeSelectOption value="yes">Per side</NativeSelectOption>
-        </NativeSelect>
-      </Field>
+          <NativeSelect
+            className="w-full"
+            size="sm"
+            id={`${base}-per-side`}
+            value={item.perSide ? "yes" : "no"}
+            onChange={(event) =>
+              onChange({ ...item, perSide: event.target.value === "yes" })
+            }
+          >
+            <NativeSelectOption value="no">Both</NativeSelectOption>
+            <NativeSelectOption value="yes">Per side</NativeSelectOption>
+          </NativeSelect>
+        </Field>
+      ) : null}
 
       <Field label="Load" htmlFor={`${base}-load-kind`} className="w-[104px]">
         <NativeSelect

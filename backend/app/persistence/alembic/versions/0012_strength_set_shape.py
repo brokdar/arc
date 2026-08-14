@@ -58,6 +58,20 @@ def downgrade() -> None:
     Timed sets have no rep count, so they cannot survive a column that
     requires one: they are dropped rather than given an invented `reps` value,
     which is the same refusal the upgrade exists to make possible.
+
+    **The delete leaves two things behind, both deliberately, and both need a
+    re-analysis of the affected sessions to clear.** Their metric and score
+    artefacts (`session_metrics`, `session_scores`) are immutable version
+    chains and nothing here touches them, so a session that logged a plank
+    keeps a tip version whose `sets_completed` and `total_hold_s` were computed
+    over rows that no longer exist — deleting an artefact to tidy that up would
+    break the no-overwrite rule the chains exist to enforce. And a session that
+    logged sets 0, 1 (timed) and 2 is left holding `set_index` 0 and 2, a gap
+    that `app.domain.scoring`'s prescribed/performed pairing reads positionally.
+    Appending a fresh version over the surviving rows
+    (`SessionMetricsService.record_strength`) is what repairs both; downgrading
+    without it leaves the stored numbers describing a session that is no longer
+    there.
     """
     op.execute(sa.text("DELETE FROM logged_sets WHERE reps IS NULL"))
     with op.batch_alter_table("logged_sets") as batch:

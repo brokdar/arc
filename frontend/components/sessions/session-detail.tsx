@@ -485,7 +485,7 @@ function LoggedSets({ sets }: { sets: Session["logged_sets"] }) {
                 </th>
                 <th
                   scope="col"
-                  className="w-[72px] px-3.5 py-2 font-semibold text-ink-faint text-label uppercase tracking-[0.09em]"
+                  className="w-[128px] whitespace-nowrap px-3.5 py-2 font-semibold text-ink-faint text-label uppercase tracking-[0.09em]"
                 >
                   Reps / hold
                 </th>
@@ -518,7 +518,11 @@ function LoggedSets({ sets }: { sets: Session["logged_sets"] }) {
                       <span className="text-ink-faint"> · {set.notes}</span>
                     ) : null}
                   </td>
-                  <td className="px-3.5 py-2 font-mono text-ink text-sm">
+                  {/* Wide enough for its longest value, `11 per side`, and
+                      held on one line: a cell that wraps makes its own row
+                      taller than the rest of the table, and rule 4 is that a
+                      returning eye finds a number by its position. */}
+                  <td className="whitespace-nowrap px-3.5 py-2 font-mono text-ink text-sm">
                     {/* Reps or a hold, never both — and `per_side` says the
                         row was worked twice, once per limb, which is what the
                         volume and completion numbers above are counted in. */}

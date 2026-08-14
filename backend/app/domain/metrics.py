@@ -1990,6 +1990,24 @@ class PerformedSet:
     duration_s: int | None = None
     per_side: bool = False
 
+    def __post_init__(self) -> None:
+        """Reject a set that is both reps and a hold, or neither.
+
+        Stated *and enforced* here, the way `StrengthSet.__post_init__` states
+        and enforces it for the prescription. `logged_sets` carries no check
+        constraint — `app.persistence.activity.LoggedSetRow.reps` says why —
+        so the rule rested on the single service that writes those rows, and a
+        row holding both would be counted by `strength_volume` into
+        `volume_load_kg` *and* `total_hold_s`: the same set reported twice, on
+        two axes, with nothing to say which one was the work.
+        """
+        if (self.reps is None) == (self.duration_s is None):
+            raise ValueError(
+                "a logged set needs exactly one of reps or duration_s: it "
+                "records repetitions or it records a hold, not both and not "
+                "neither"
+            )
+
     @property
     def working_sets(self) -> int:
         """Sets actually worked: a per-side row is two, one per limb."""

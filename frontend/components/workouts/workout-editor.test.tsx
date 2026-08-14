@@ -452,6 +452,71 @@ describe("the strength builder", () => {
       },
     });
   });
+
+  it("offers per side only where the catalogue says the movement is unilateral", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("/api/v1/workouts", async ({ request, response }) => {
+        bodies.push(await request.json());
+        return response(201).json({
+          id: WORKOUT_IDS.lower,
+          name: "Bilateral",
+          description: null,
+          discipline: "strength",
+          folder: null,
+          tags: [],
+          structure: { discipline: "strength", groups: [] },
+          summary: { step_count: 0, total_duration_s: null, total_sets: null },
+          created_at: "2026-08-01T00:00:00Z",
+          updated_at: "2026-08-01T00:00:00Z",
+        });
+      }),
+    );
+
+    renderEditor();
+    await userEvent.type(await screen.findByLabelText("Name"), "Bilateral");
+    await switchToStrength();
+
+    const row = screen.getAllByTestId("draft-set")[0] as HTMLElement;
+    const movement = within(row).getByLabelText("Movement");
+
+    // A back squat is worked on both legs at once, so the control that would
+    // make the draft claim otherwise is not there to be set.
+    await userEvent.type(movement, "Back Squat");
+    expect(within(row).queryByLabelText("Per side")).toBeNull();
+
+    await userEvent.clear(movement);
+    await userEvent.type(movement, "Single-Arm Dumbbell Row");
+    await userEvent.selectOptions(
+      within(row).getByLabelText("Per side"),
+      "yes",
+    );
+
+    // Moving the line back to a bilateral movement takes the flag with it,
+    // rather than leaving a draft nothing here objects to and the service
+    // refuses with a 422 on save.
+    await userEvent.clear(movement);
+    await userEvent.type(movement, "Back Squat");
+    expect(within(row).queryByLabelText("Per side")).toBeNull();
+
+    await userEvent.selectOptions(
+      within(row).getByLabelText("Load"),
+      "bodyweight",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save workout" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({
+      structure: {
+        discipline: "strength",
+        groups: [
+          {
+            items: [{ exercise_id: "back_squat", per_side: null }],
+          },
+        ],
+      },
+    });
+  });
 });
 
 describe("leaving an unsaved draft", () => {

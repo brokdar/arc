@@ -804,6 +804,11 @@ function validateTarget(target: DraftTarget, label: string): string[] {
   return problems;
 }
 
+// One strength rule is deliberately not checked here: `perSide` is legal only
+// on a movement the catalogue marks unilateral, and that is a fact about the
+// catalogue rather than about the draft. The builder holds the catalogue, so it
+// offers the control only where the flag can be set — prevented at the point of
+// entry instead of reported after the form is filled.
 function validateStrength(draft: StrengthDraft): string[] {
   const problems: string[] = [];
   if (draft.groups.length === 0) {
