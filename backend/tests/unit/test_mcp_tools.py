@@ -36,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.domain.actor import Actor
 from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
@@ -47,6 +48,7 @@ from app.persistence.audit import AuditLogEntry
 from app.persistence.db import session_scope
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
+from app.services.wellness import WellnessService
 from app.services.workouts import WorkoutService
 from tests.unit.golden_fit import golden
 from tests.unit.mcp_harness import connected_as, server_for
@@ -903,6 +905,52 @@ async def test_the_context_budget_is_the_caps_standing(session_factory: Any) -> 
 
     assert data["budget_remaining"] == standing["budget_remaining"]
     assert data["budget_remaining"] == get_settings().mcp.write_cap_per_hour - 1
+
+
+async def test_the_context_carries_the_standing_wellness_prompt(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    """AC-61: the coach can tell "the athlete felt fine" from "nobody asked".
+
+    On the one call every session begins with, because a standing question the
+    agent has to fetch separately is a standing question it will not fetch.
+    """
+    await WellnessService.from_session(db_session).raise_prompt(
+        dt.date.today(), actor=Actor.system()
+    )
+    await db_session.commit()
+
+    prompt = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
+
+    assert prompt["status"] == "pending"
+    assert prompt["local_date"] == dt.date.today().isoformat()
+    assert prompt["expires_at"]
+
+
+async def test_the_context_says_the_day_closed_unanswered(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    service = WellnessService.from_session(db_session)
+    await service.raise_prompt(dt.date.today(), actor=Actor.system())
+    await service.expire_prompts(
+        actor=Actor.system(), now=dt.datetime.now(dt.UTC) + dt.timedelta(days=30)
+    )
+    await db_session.commit()
+
+    prompt = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
+
+    # Not silence: "we asked and got no answer" is a fact, and storing it as
+    # one is what stops the agent from reading the gap as assent.
+    assert prompt["status"] == "expired"
+    assert prompt["resolved_at"]
+
+
+async def test_the_context_reports_an_unasked_day_as_an_answer(
+    session_factory: Any,
+) -> None:
+    prompt = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
+
+    assert prompt is None
 
 
 async def test_a_write_key_may_not_open_the_context(session_factory: Any) -> None:

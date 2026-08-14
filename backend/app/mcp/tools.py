@@ -395,6 +395,14 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           against. Whole days are `get_wellness`, weekly shape is
           `get_wellness_weeks`.
 
+          `prompt` is the standing of the day's own question — `pending` while
+          the athlete still has time to answer, `answered` once they have, and
+          `expired` when the window closed with no answer. **Null means nobody
+          was asked yet**, which is not the same as an unanswered day: an
+          `expired` prompt beside a missing day is a morning that went
+          unreported, and a null one is a morning the application never put the
+          question. Read it before treating an absent day as a signal.
+
           Two flags decide how to read any of it. `not_actionable` on a day
           names the confounders the athlete declared that void that morning's
           objective markers — the numbers are real and they are still here,
@@ -482,6 +490,14 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         ],
                         "weight_in_force": views.weight_in_force(
                             await wellness_service.weight_in_force(today)
+                        ),
+                        # The day's standing question, on the opener rather
+                        # than behind a second call: a coach that has to fetch
+                        # "was the athlete asked?" separately is a coach that
+                        # will one day not fetch it, and will read an empty
+                        # morning as an athlete who felt fine.
+                        "prompt": views.wellness_prompt(
+                            await wellness_service.prompt()
                         ),
                         # The projection, not the whole trend: the opener says
                         # how many markers are off their own normal and which,

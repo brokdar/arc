@@ -155,6 +155,57 @@ class ScoringSettings(BaseModel):
     """
 
 
+class WellnessSettings(BaseModel):
+    """Increment 1: when the day's wellness prompt is raised, and when it closes.
+
+    Beside `SCORING__*`, because this is the same machinery: a dated row with a
+    stored deadline and an idempotent sweep. What is deliberately **not** here
+    is the maturity thresholds, `WELLNESS_LATE_ENTRY_DAYS` and
+    `MAX_BACKFILL_DAYS` — those are domain constants
+    (`app.domain.wellness`, `app.domain.wellness_baseline`). They are statements
+    about physiology and recall that must be identical in every deployment: a
+    per-instance override would make an abstention message unreproducible and
+    the late-entry flag mean different things in two places.
+    """
+
+    prompt_hour_local: int = 19
+    """The hour, on the athlete's own clock, the day's prompt is raised at.
+
+    Evening rather than morning: the prompt asks about the day that is ending,
+    and the sweep that raises it also has to be able to close yesterday's. The
+    clock is `MATCHING__TIMEZONE` — there is one athlete and therefore one local
+    clock, and a second source of "what day is it" is how the plan and the
+    wellness series come to disagree about Tuesday.
+    """
+
+    prompt_expiry_hours: int = 36
+    """How long the athlete has to answer before the day closes unanswered.
+
+    Long enough to cover the morning after — the readings this exists to
+    capture are entered the next day as often as not — and short enough that a
+    prompt still standing is a question about a day the athlete can remember.
+    Stored on each prompt when it is raised, so changing this never re-dates a
+    prompt that is already standing.
+    """
+
+    prompt_scan_interval_seconds: int = 3600
+    """How often the raise-and-expire sweep runs.
+
+    Hourly, for the reason the other three sweeps are hourly: the job's only
+    duty is to notice an hour boundary and a deadline passing, and noticing
+    within the hour is close enough for a question the athlete has a day and a
+    half to answer.
+    """
+
+    prompt_scan_batch: int = 200
+    """Most prompts one sweep will expire.
+
+    A bound rather than pagination: the sweep is idempotent and the next run is
+    an hour away, so a first run after a long absence catches up over a few
+    passes instead of in one transaction.
+    """
+
+
 class ProposalSettings(BaseModel):
     """WP-8: how often standing plan-change proposals are swept for expiry."""
 
@@ -249,6 +300,7 @@ class Settings(BaseSettings):
     ingest: IngestSettings = IngestSettings()
     matching: MatchingSettings = MatchingSettings()
     scoring: ScoringSettings = ScoringSettings()
+    wellness: WellnessSettings = WellnessSettings()
     proposals: ProposalSettings = ProposalSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()

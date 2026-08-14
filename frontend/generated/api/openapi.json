@@ -8857,6 +8857,77 @@
         "title": "WellnessMetric",
         "type": "string"
       },
+      "WellnessPromptAnswer": {
+        "description": "What answering the prompt produced: the closed question and the day.\n\nBoth, because they move together \u2014 the day is written and the prompt is\nresolved in one transaction \u2014 and a client that had to re-read one of them\ncould render a moment where only half of it had happened.",
+        "properties": {
+          "day": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WellnessDayRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/WellnessPromptRead"
+          }
+        },
+        "required": ["prompt", "day"],
+        "title": "WellnessPromptAnswer",
+        "type": "object"
+      },
+      "WellnessPromptRead": {
+        "description": "The standing of one day's question, as the API returns it.\n\nRead as **`null` for the whole object** when no prompt was ever raised for\nthe date \u2014 \"nobody has been asked yet\" is an answer, and a 404 would make\nthe Today view treat the ordinary state of a fresh morning as a failure.\n\n`expires_at` is the deadline stamped when the prompt was raised, not a\nconstant re-derived on read: it is a fact about *this* prompt, so the\nsweep, this surface and the Today view cannot disagree about when the day\ncloses.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "raised_at": {
+            "format": "date-time",
+            "title": "Raised At",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WellnessPromptStatus"
+          }
+        },
+        "required": [
+          "local_date",
+          "status",
+          "expires_at",
+          "resolved_at",
+          "raised_at"
+        ],
+        "title": "WellnessPromptRead",
+        "type": "object"
+      },
+      "WellnessPromptStatus": {
+        "description": "The standing of one day's question: asked, answered, or closed unasked.\n\nThe same three states :class:`app.domain.matching.EveningPromptStatus` has,\nand deliberately the same shape: a dated row, a stored deadline, and a\nterminal member the sweep writes. What matters is that ``EXPIRED`` is a\n*recorded fact* \u2014 \"we asked and got no answer\" \u2014 rather than the absence of\na row, because a coach reading silence cannot tell the athlete who felt\nfine from the athlete nobody asked.",
+        "enum": ["pending", "answered", "expired"],
+        "title": "WellnessPromptStatus",
+        "type": "string"
+      },
       "WellnessProvenance": {
         "description": "Where a day's numbers came from. About the *value*, not the writer.\n\nThe same split :class:`app.domain.anchors.Provenance` makes, with the two\nmembers a wellness reading can honestly claim. ``DEVICE_MEASURED`` is\nreserved: nothing writes it in Increment 1, and it exists now so that\nIncrement 2's HealthKit path is a new caller rather than a migration of\nstored values.",
         "enum": ["athlete_reported", "device_measured"],
@@ -14335,6 +14406,132 @@
           }
         ],
         "summary": "Get Wellness Inputs",
+        "tags": ["wellness"]
+      }
+    },
+    "/api/v1/wellness/prompt": {
+      "get": {
+        "description": "The question standing for today: its status and its deadline.\n\n**`null` when nobody has been asked yet** \u2014 a fresh instance, or an hour\nbefore the day's prompt is raised. That is an answer and not a failure, so\nit is a 200 with a null body rather than a 404: the Today view has to be\nable to tell \"not asked\" from \"asked and unanswered\" from \"answered\", and\nan error status collapses the first into a broken page.\n\nReading this **never raises a prompt**. A question the athlete only gets\nbecause they happened to open the app is exactly the intermittent capture\nthe prompt exists to replace, and it would make \"was the athlete asked?\"\ndepend on who read the page. The scheduled sweep raises it, once, at\n`WELLNESS__PROMPT_HOUR_LOCAL`.",
+        "operationId": "wellness-get_wellness_prompt",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WellnessPromptRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Wellness-Get Wellness Prompt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Wellness Prompt",
+        "tags": ["wellness"]
+      },
+      "post": {
+        "description": "Answer today's standing prompt: record the day and close the question.\n\nThe body is the day, exactly as `PATCH /wellness/days/{date}` takes it. The\ntwo writes are **one transaction**: a payload that breaks a domain rule\nleaves the prompt `pending`, because the athlete was asked, has not\nanswered yet, and a rejected payload must not spend the day's one question.\n\n**404** when no prompt is standing \u2014 the day is still writable through the\ndated PATCH; what does not exist is a question to answer. **409** when the\nprompt already expired: the day closed unanswered and that is a recorded\nfact, so a late reading goes through the dated write, where it is marked as\nentered from memory rather than backdated into an answer that never came.",
+        "operationId": "wellness-answer_wellness_prompt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WellnessDayWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WellnessPromptAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Nothing recorded for that date"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The prompt already expired"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The day violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Answer Wellness Prompt",
         "tags": ["wellness"]
       }
     },

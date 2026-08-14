@@ -1,8 +1,8 @@
 """HTTP endpoints for the daily wellness series. Thin over the service.
 
 **Why the dated resource is `/wellness/days/{date}` and not `/wellness/{date}`.**
-Four facets of this collection — `inputs`, `backfill`, `weight` and (from a
-later PR) `prompt` — would otherwise share a path shape with the id route, and
+Five facets of this collection — `inputs`, `backfill`, `weight`, `trend` and
+`prompt` — would otherwise share a path shape with the id route, and
 every method they do not themselves declare would fall through to it and answer
 **422 about the path parameter** where 405 is the truth. Schemathesis'
 ``unsupported_method`` check fails on exactly that
@@ -51,6 +51,8 @@ from app.api.schemas.wellness import (
     WellnessDaysPage,
     WellnessDayWrite,
     WellnessInputsRead,
+    WellnessPromptAnswer,
+    WellnessPromptRead,
     WellnessTrendRead,
 )
 from app.core.exceptions import ErrorDetail, NotFoundError, ValidationErrorDetail
@@ -73,6 +75,7 @@ from app.domain.wellness_baseline import (
 )
 from app.persistence.db import SessionDep
 from app.persistence.wellness import WellnessDayRow
+from app.persistence.wellness_prompt import WellnessPromptRow
 from app.services.wellness import (
     DayInput,
     DayResult,
@@ -92,6 +95,9 @@ INVALID: Responses = {
         "model": ValidationErrorDetail,
         "description": "The day violates a schema or domain rule",
     }
+}
+CONFLICT: Responses = {
+    409: {"model": ErrorDetail, "description": "The prompt already expired"}
 }
 
 
@@ -269,6 +275,72 @@ async def backfill_wellness(
         dry_run=payload.dry_run,
     )
     return _backfill_result(results, dry_run=payload.dry_run)
+
+
+@router.get("/prompt")
+async def get_wellness_prompt(service: ServiceDep) -> WellnessPromptRead | None:
+    """The question standing for today: its status and its deadline.
+
+    **`null` when nobody has been asked yet** — a fresh instance, or an hour
+    before the day's prompt is raised. That is an answer and not a failure, so
+    it is a 200 with a null body rather than a 404: the Today view has to be
+    able to tell "not asked" from "asked and unanswered" from "answered", and
+    an error status collapses the first into a broken page.
+
+    Reading this **never raises a prompt**. A question the athlete only gets
+    because they happened to open the app is exactly the intermittent capture
+    the prompt exists to replace, and it would make "was the athlete asked?"
+    depend on who read the page. The scheduled sweep raises it, once, at
+    `WELLNESS__PROMPT_HOUR_LOCAL`.
+    """
+    return _prompt(await service.prompt())
+
+
+@router.post("/prompt", responses=NOT_FOUND | BAD_BODY | CONFLICT | INVALID)
+async def answer_wellness_prompt(
+    service: ServiceDep, actor: ActorDep, payload: WellnessDayWrite
+) -> WellnessPromptAnswer:
+    """Answer today's standing prompt: record the day and close the question.
+
+    The body is the day, exactly as `PATCH /wellness/days/{date}` takes it. The
+    two writes are **one transaction**: a payload that breaks a domain rule
+    leaves the prompt `pending`, because the athlete was asked, has not
+    answered yet, and a rejected payload must not spend the day's one question.
+
+    **404** when no prompt is standing — the day is still writable through the
+    dated PATCH; what does not exist is a question to answer. **409** when the
+    prompt already expired: the day closed unanswered and that is a recorded
+    fact, so a late reading goes through the dated write, where it is marked as
+    entered from memory rather than backdated into an answer that never came.
+    """
+    prompt, result = await service.answer_prompt(
+        _times(payload.model_dump(exclude_unset=True)),
+        actor=actor,
+        # The athlete is the only writer with an HTTP session; the agent writes
+        # through MCP, which supplies `agent` here.
+        source=WellnessSource.ATHLETE,
+    )
+    day = None
+    if result.day is not None:
+        row = await service.get(prompt.local_date)
+        day = to_read(row, subjective_recalled=service.is_recalled(row))
+    return WellnessPromptAnswer(prompt=_prompt_read(prompt), day=day)
+
+
+def _prompt(row: WellnessPromptRow | None) -> WellnessPromptRead | None:
+    """Render the standing prompt, or the absence of one."""
+    return None if row is None else _prompt_read(row)
+
+
+def _prompt_read(row: WellnessPromptRow) -> WellnessPromptRead:
+    """Project one prompt row onto its read shape."""
+    return WellnessPromptRead(
+        local_date=row.local_date,
+        status=row.status,
+        expires_at=row.expires_at,
+        resolved_at=row.resolved_at,
+        raised_at=row.created_at,
+    )
 
 
 @router.get("/weight", responses=NOT_FOUND)

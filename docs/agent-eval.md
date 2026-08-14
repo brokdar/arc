@@ -45,12 +45,23 @@ the MCP tools, it cannot use; that constraint is the point.
 3. **Propose a plan** for the remainder of the current week (3 sessions),
    with a rationale and an expiry.
 4. **Write evaluations.** Three session evaluations and one week annotation.
-5. **Simulate the NEXT coaching session.** Open with full context — athlete,
+5. **Migrate a supplied file of 60 days of historical readings.** The
+   `profil-lokal.md` case: sixty dated mornings handed over as a document, to
+   be written into the daily series. It is Increment 1's exit criterion and
+   the one step that exercises backfill under a write cap — an agent that
+   loops a per-day tool hits the hourly cap partway through and strands the
+   migration half-written.
+6. **Record three days of wellness** — one complete, one partial (sleep and
+   motivation only), one where the athlete reports a confounder and no numbers
+   — **then answer "should I train today" from stored data alone.** No prose
+   file, no memory of what the athlete said in an earlier turn: the answer
+   must cite what is in the record.
+7. **Simulate the NEXT coaching session.** Open with full context — athlete,
    anchors, current week, recent sessions — then determine the status of the
    proposal filed in step 3 (accepted, rejected, or lapsed), and check
    whether the historical sessions carry training load.
 
-Step 5 is what makes this a *coaching-loop* eval rather than a data-entry
+Step 7 is what makes this a *coaching-loop* eval rather than a data-entry
 eval: a coach that can write but cannot later see the consequences of its
 writes is flying blind, and the baseline showed exactly that.
 
@@ -89,6 +100,45 @@ Notes on reading the table:
   catalogue from the GitHub repository and kept the athlete's zones in a
   hand-maintained local file (issue #20). The target is zero: the surface
   should be self-sufficient for its own task.
+
+### 3.1 Increment-1 metrics: the daily wellness series
+
+Added with Increment 1 (the daily series, the baselines, and the prompt that
+asks once a day). These score steps 5 and 6 of the task, and they are scored
+*in addition to* the table above — the MVP loop must be undamaged, so a run
+that improves these while regressing section 3 has not passed.
+
+| Metric | Target | Why |
+| --- | --- | --- |
+| Out-of-band reads for daily state | **0** | `profil-lokal.md` retired; the whole point |
+| Calls to discover the wellness vocabulary | ≤ 1 (`get_wellness_inputs`) | no guessing a confounder tag |
+| Wasted confounder/scale guesses | 0 | the #19/#21 failure class, not repeated |
+| Calls to record one day | 1 | it is one touchpoint, so it is one call |
+| Calls to migrate 60 days of history | ≤ 2 (dry run, then write) | if the agent loops the per-day tool it will hit the cap at 60 and strand the migration — the metric that catches a batch tool nobody found |
+| Write budget spent on the migration | 1 | the backfill cap decision, observed rather than asserted |
+| Days lost or duplicated by the migration | 0 | one transaction, dated by the day they describe |
+| Write crashes on valid input | 0 | any nonzero fails the run outright |
+| "Should I train today" answered citing stored readings | yes | the increment's question |
+| Interpretation offered where the baseline is immature | **none**, and the abstention names the unlock | interpretation stays with the coach, held under a model that wants to be helpful |
+| Trend read after backfill | HRV mature, subjective **not** | the late-entry asymmetry, end to end |
+| Prompts emitted per day | ≤ 1 | the real athlete, not the compliant one |
+
+Notes on reading this table:
+
+- **Prompts emitted per day** counts prompt rows, not notifications: one row
+  per `local_date`, held by a unique constraint rather than by the sweep
+  behaving. A run showing two is a defect in the constraint, not in the agent.
+- **Interpretation offered where the baseline is immature** is the metric this
+  half of the increment exists for, and it is read from the transcript rather
+  than counted. A coach that says "your HRV is trending down" from nine
+  readings has failed the increment even if every number above is green — an
+  abstention that names its own unlock condition is worth more than a number
+  with a caveat, because a caveat is advice a model under pressure to be
+  helpful drops.
+- **Trend read after backfill** is asymmetric on purpose: backfilled objective
+  readings count toward maturity at full weight, backfilled subjective ones do
+  not. A run where both go mature after one import means the recall discount
+  stopped working.
 
 ## 4. Transcript-reading checklist
 
@@ -136,3 +186,12 @@ transcript reading should look like:
 | Date | Model | Calls to first valid workout | Wasted purpose guesses | Calls to open session | Proposal status via MCP | Out-of-band reads | Write crashes | Sessions priced | Strength via MCP | Budget visible | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-08-11 | claude-opus-5 | ~20 | 4 | 4–6 | no | 2 | 2 | 0/14 | no | no | Iteration zero; external review, issues #17–#26 |
+
+### Results — Increment 1 (steps 5 and 6)
+
+Its own table because the columns are different, and append-only for the same
+reason the one above is: a rewritten row is a baseline nobody can check.
+Empty until the first run against the wellness surface.
+
+| Date | Model | Out-of-band reads | Vocabulary calls | Wasted guesses | Calls to record one day | Calls to migrate 60 days | Budget spent | Days lost/duplicated | Write crashes | Answered from stored data | Interpretation over an immature baseline | HRV mature / subjective not | Prompts per day | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -37,6 +37,7 @@ from app.domain.wellness import (
     HrvMetric,
     InputTier,
     Polarity,
+    WellnessPromptStatus,
     WellnessProvenance,
     WellnessSource,
 )
@@ -635,3 +636,42 @@ class WellnessTrendRead(BaseModel):
     #: denominator that depended on the query string would mean something
     #: different on every call.
     readiness: ReadinessRead
+
+
+class WellnessPromptRead(BaseModel):
+    """The standing of one day's question, as the API returns it.
+
+    Read as **`null` for the whole object** when no prompt was ever raised for
+    the date — "nobody has been asked yet" is an answer, and a 404 would make
+    the Today view treat the ordinary state of a fresh morning as a failure.
+
+    `expires_at` is the deadline stamped when the prompt was raised, not a
+    constant re-derived on read: it is a fact about *this* prompt, so the
+    sweep, this surface and the Today view cannot disagree about when the day
+    closes.
+    """
+
+    local_date: dt.date
+    status: WellnessPromptStatus
+    #: When the day stops being answerable. The window is half-open
+    #: `[raised, expires_at)`, so this instant is already outside it.
+    expires_at: dt.datetime
+    #: When it was answered, or closed unanswered. Null while pending.
+    resolved_at: dt.datetime | None
+    #: When the question was put to the athlete.
+    raised_at: dt.datetime
+
+
+class WellnessPromptAnswer(BaseModel):
+    """What answering the prompt produced: the closed question and the day.
+
+    Both, because they move together — the day is written and the prompt is
+    resolved in one transaction — and a client that had to re-read one of them
+    could render a moment where only half of it had happened.
+    """
+
+    prompt: WellnessPromptRead
+    #: The day as stored. **Null** when the answer cleared the day's last
+    #: value, which retracts it — the same thing `PATCH /wellness/days/{date}`
+    #: returns null for.
+    day: WellnessDayRead | None
