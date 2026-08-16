@@ -659,6 +659,19 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         is kilograms. A `planned_load` of null with sessions present means the
         week could not be priced, not that it is easy.
 
+        `sessions` is what was **planned**; `unplanned_sessions` is what was
+        **ridden that no card here accounts for** — each with its id, local
+        date, discipline, duration, training load and `match_status`. Together
+        they name every session `completed_session_count` counts, so a week
+        with nothing on the calendar and two rides in it answers with those two
+        rides rather than with a number: no second `list_sessions` call, no
+        matching on dates. A ride a card claims is on that card as
+        `matched_session_id` and never repeated in the list. Read
+        `match_status` before calling one of them unplanned to the athlete:
+        `unplanned` means nothing on the calendar could be it, `matched` means
+        a card in an *adjacent* week carries it, and `unmatched` means a
+        proposal about it is open and unanswered.
+
         `agent_notes` is what has been said **about this week** — the
         annotations `annotate` filed under this Monday, oldest first, with the
         athlete's `dispute` on each. Commentary about one *session* is not

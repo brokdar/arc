@@ -279,7 +279,9 @@ class PlanWeek:
     #: only two are predictable must not read as a light week.
     load_sessions_counted: int
     load_sessions_uncounted: int
-    #: Recorded sessions dated inside the window, whatever was planned.
+    #: Recorded sessions dated inside the window, whatever was planned —
+    #: including any past `MAX_WEEK_COMPLETED` the read did not carry, the
+    #: same contract `session_count` has on the planned side.
     completed_session_count: int
     #: Their total duration; ``None`` — never 0 — when there were none.
     completed_duration_s: float | None
@@ -305,6 +307,37 @@ class PlanWeek:
     #: One row per discipline that has a session this week, in vocabulary
     #: order.
     by_discipline: tuple[PlanWeekDiscipline, ...]
+    #: The recorded sessions in the window that **no card in this window
+    #: references** — the rides nothing on this calendar accounts for, with
+    #: their ids (#49).
+    #:
+    #: The rule is "no `WeekSession` above carries this id as
+    #: `matched_session_id`", **not** `match_status is UNPLANNED`. A status is
+    #: a fact about the *ride*; this list is a fact about *this window's*
+    #: cards, and the two come apart in both directions. A ride dated here but
+    #: matched to last week's card is `matched` and nothing here accounts for
+    #: it — a status filter would hide it. A ride this week's card has an open
+    #: **proposal** about is `unmatched` while that card already carries it —
+    #: a status filter would list it twice over. The card's
+    #: `matched_session_id` is the join for planned work, and repeating that
+    #: ride here would make one session read as two.
+    #:
+    #: Each entry keeps its own `match_status`, rather than reducing to a
+    #: "nothing was planned" flag: a ride nothing could be matched to resolves
+    #: to `unplanned` on the spot, a ride carried by an adjacent week's card
+    #: reads `matched`, and only the status tells the agent which of those it
+    #: is looking at.
+    #:
+    #: Truncated by :data:`MAX_WEEK_COMPLETED` with the totals, so
+    #: `completed_session_count` can exceed what this lists — the count is the
+    #: true one and the list is what a bounded read could carry.
+    #:
+    #: **Rendered by the MCP adapter only**; `PlanWeekRead` deliberately does
+    #: not name it, so the REST contract is unchanged. The browser reaches
+    #: these rows through the session list its week strip already links to; the
+    #: agent is the caller with no cheap join, and giving it a second way to
+    #: read the same rows over HTTP would be two contracts for one fact.
+    unplanned_sessions: tuple[CompletedSession, ...]
 
 
 class PlanService:
@@ -371,7 +404,9 @@ class PlanService:
         Every total on the projection reports its own coverage, and a session
         past :data:`MAX_WEEK_SESSIONS` counts as uncounted on both — the cap
         truncates what is rendered, and a truncated week must not claim its
-        totals are whole.
+        totals are whole. :data:`MAX_WEEK_COMPLETED` works the same way on the
+        recorded side: the count is the true one, and what the cap left behind
+        is uncounted against the load and the polarization pairs.
 
         Raises:
             ValueError: When **any** session in the window has a stored
@@ -422,7 +457,17 @@ class PlanService:
             )
             for row in rows
         ]
-        done = await self._completed_sessions(first, dates[-1])
+        done, completed_total = await self._completed_sessions(first, dates[-1])
+        # The recordings the cap left behind, counted the way the planned
+        # side counts its own: in the session total, and as uncounted against
+        # every coverage pair, because an unread row can contribute neither a
+        # load nor a band.
+        completed_overflow = max(completed_total - len(done), 0)
+        claimed = {
+            card.matched_session_id
+            for card in cards
+            if card.matched_session_id is not None
+        }
         loads = [
             card.predicted_load for card in cards if card.predicted_load is not None
         ]
@@ -452,13 +497,15 @@ class PlanService:
             planned_load=sum(loads) if loads else None,
             load_sessions_counted=len(loads),
             load_sessions_uncounted=len(cards) - len(loads) + overflow,
-            completed_session_count=len(done),
+            completed_session_count=completed_total,
             completed_duration_s=(
                 sum(entry.duration_s for entry in done) if done else None
             ),
             completed_load=sum(done_loads) if done_loads else None,
             completed_load_sessions_counted=len(done_loads),
-            completed_load_sessions_uncounted=len(done) - len(done_loads),
+            completed_load_sessions_uncounted=(
+                len(done) - len(done_loads) + completed_overflow
+            ),
             completed_polarization_index=(
                 index.value if isinstance(index, Measured) else None
             ),
@@ -467,8 +514,13 @@ class PlanService:
             ),
             completed_polarization_rule=ONE_CHANNEL_PER_SESSION_RULE,
             completed_polarization_sessions_counted=len(banded),
-            completed_polarization_sessions_uncounted=len(done) - len(banded),
+            completed_polarization_sessions_uncounted=(
+                len(done) - len(banded) + completed_overflow
+            ),
             by_discipline=_by_discipline(cards, done),
+            unplanned_sessions=tuple(
+                entry for entry in done if entry.id not in claimed
+            ),
         )
 
     async def _verdicts(
@@ -506,16 +558,22 @@ class PlanService:
 
     async def _completed_sessions(
         self, start: dt.date, end: dt.date
-    ) -> list[CompletedSession]:
-        """The recorded sessions dated in the window, with their metrics.
+    ) -> tuple[list[CompletedSession], int]:
+        """The recorded sessions dated in the window, and how many there are.
 
         One query for the sessions and one for every current artefact behind
         them, so a busy week costs the same round trips as an empty one. A
         session with no artefact is **kept** — it happened, it has a duration,
         and it counts as uncounted against the load total rather than
         vanishing from the week.
+
+        The count is the repository's total and not ``len()`` of the rows: it
+        survives :data:`MAX_WEEK_COMPLETED`, so a truncated window still says
+        how many sessions it holds — the same contract the planned side's
+        `session_count` has always had, and what keeps the count honest
+        against the ids `unplanned_sessions` could carry.
         """
-        rows, _ = await self._completed.list(
+        rows, total = await self._completed.list(
             start=start, end=end, limit=MAX_WEEK_COMPLETED
         )
         current = await self._metrics.current_for_sessions(row.id for row in rows)
@@ -536,7 +594,7 @@ class PlanService:
                     match_status=row.status,
                 )
             )
-        return completed
+        return completed, total
 
 
 def _completed_duration(row: SessionRow) -> float:

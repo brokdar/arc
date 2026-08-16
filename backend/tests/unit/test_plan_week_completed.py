@@ -12,17 +12,23 @@ distribution is meaningless.
 """
 
 import datetime as dt
+import uuid
 from pathlib import Path
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.services.plan import PlanService, PlanWeek
 from tests.unit.golden_fit import golden
+from tests.unit.prescriptions import EASY_RIDE
 
 WEEK = "/api/v1/plan/week"
 ANCHORS = "/api/v1/anchors"
 MANUAL = "/api/v1/manual-sessions"
+MATCHES = "/api/v1/matches"
+PLANNED = "/api/v1/planned-sessions"
 UPLOAD = "/api/v1/ingest/upload"
 
 #: The Monday of the week the golden files were recorded in.
@@ -251,3 +257,121 @@ async def test_a_week_with_no_zone_time_explains_its_missing_index(
     assert payload["completed_polarization_not_assessed"]
     assert payload["completed_polarization_sessions_counted"] == 0
     assert payload["completed_polarization_sessions_uncounted"] == 1
+
+
+# --- what no card claims (#49) ------------------------------------------------
+
+
+async def plan(client: AsyncClient, date: dt.date, **overrides: Any) -> dict[str, Any]:
+    """Plan an easy ride on ``date``, asserting it was accepted."""
+    payload: dict[str, Any] = {
+        "date": date.isoformat(),
+        "purpose": "endurance",
+        "structure": EASY_RIDE,
+    } | overrides
+    response = await client.post(PLANNED, json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def ride(client: AsyncClient, date: dt.date) -> str:
+    """A typed-in cycling session on ``date``, an hour long."""
+    response = await client.post(
+        MANUAL,
+        json={
+            "start_time": f"{date.isoformat()}T09:00:00+00:00",
+            "timezone": "UTC",
+            "duration_s": 3_600,
+            "discipline": "cycling",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def link(client: AsyncClient, session_id: str, planned_id: str) -> None:
+    """Match a recording to a card by hand, the way the athlete does."""
+    response = await client.post(
+        MATCHES,
+        json={"session_id": session_id, "planned_session_id": planned_id},
+    )
+    assert response.status_code == 201, response.text
+
+
+async def projection(
+    session_factory: async_sessionmaker[AsyncSession], start: dt.date = MONDAY
+) -> PlanWeek:
+    """The week as `PlanService` returns it — no HTTP, no MCP, no schema."""
+    async with session_factory() as session:
+        return await PlanService.from_session(session).week(start)
+
+
+def claimed(week: PlanWeek) -> set[uuid.UUID]:
+    """Every session id a card in this projection carries."""
+    return {
+        card.matched_session_id
+        for day in week.days
+        for card in day.sessions
+        if card.matched_session_id is not None
+    }
+
+
+async def test_a_recording_is_listed_exactly_when_no_card_claims_it(
+    data_root: Path,
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The rule, stated as the biconditional it is.
+
+    On the projection itself: what a card claims decides this, not the
+    recording's own `match_status`, which is a fact about the ride and not
+    about this window.
+    """
+    await anchors(client)
+    await plan(client, MONDAY)
+    matched = await ride(client, MONDAY)  # matching links this one to the card
+    loose = await ride(client, MONDAY + dt.timedelta(days=2))
+
+    week = await projection(session_factory)
+
+    listed = {entry.id for entry in week.unplanned_sessions}
+    for session_id in (uuid.UUID(matched), uuid.UUID(loose)):
+        assert (session_id in listed) is (session_id not in claimed(week))
+    assert listed == {uuid.UUID(loose)}
+    assert claimed(week) == {uuid.UUID(matched)}
+
+
+async def test_a_card_matched_outside_the_window_invents_no_entry(
+    data_root: Path,
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # The list is drawn from the recordings *in* the window, never from what
+    # the cards point at: a card claiming last week's ride must not conjure
+    # that ride into this week.
+    await anchors(client)
+    outside = await ride(client, MONDAY - dt.timedelta(days=3))
+    await link(client, outside, (await plan(client, MONDAY))["id"])
+
+    week = await projection(session_factory)
+
+    assert claimed(week) == {uuid.UUID(outside)}
+    assert week.unplanned_sessions == ()
+    assert week.completed_session_count == 0
+
+
+async def test_two_recordings_on_one_day_split_by_what_the_card_claims(
+    data_root: Path,
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await anchors(client)
+    await plan(client, MONDAY)
+    first = await ride(client, MONDAY)  # matched to the card on record
+    second = await ride(client, MONDAY)
+
+    week = await projection(session_factory)
+
+    assert claimed(week) == {uuid.UUID(first)}
+    assert [entry.id for entry in week.unplanned_sessions] == [uuid.UUID(second)]
+    assert week.completed_session_count == 2

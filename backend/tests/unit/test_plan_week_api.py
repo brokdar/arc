@@ -9,14 +9,18 @@ sheet, which fetches the session itself.
 """
 
 import datetime as dt
+import json
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
 
+from app.api.schemas.plan import PlanWeekRead
+
 WEEK = "/api/v1/plan/week"
 SESSIONS = "/api/v1/planned-sessions"
 ANCHORS = "/api/v1/anchors"
+MANUAL = "/api/v1/manual-sessions"
 WORKOUTS = "/api/v1/workouts"
 
 #: A Monday, so a window starting here is also a plan week.
@@ -681,3 +685,51 @@ async def test_a_malformed_start_is_refused(client: AsyncClient) -> None:
     response = await client.get(WEEK, params={"start": "last monday"})
 
     assert response.status_code == 422
+
+
+# --- what the browser client is not served (#49) ------------------------------
+
+
+async def record(client: AsyncClient, date: dt.date) -> str:
+    """A typed-in cycling session on ``date``, an hour long."""
+    response = await client.post(
+        MANUAL,
+        json={
+            "start_time": f"{date.isoformat()}T09:00:00+00:00",
+            "timezone": "UTC",
+            "duration_s": 3_600,
+            "discipline": "cycling",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+async def test_the_week_body_has_no_unplanned_session_list(
+    client: AsyncClient,
+) -> None:
+    """The MCP-only field is on the service's dataclass and not in the contract.
+
+    `PlanWeekRead` validates the projection with `from_attributes`, so a new
+    dataclass field reaches the response the moment the schema names it — and
+    nothing here names it.
+    """
+    payload = await week(client, MONDAY)
+
+    assert "unplanned_sessions" not in payload
+    assert "unplanned_sessions" not in PlanWeekRead.model_fields
+
+
+async def test_an_unplanned_recording_shows_only_in_the_completed_counters(
+    client: AsyncClient,
+) -> None:
+    # The browser reaches these rows through the session list the week strip
+    # already links to; the agent is the caller with no cheap join.
+    session_id = await record(client, MONDAY)
+
+    payload = await week(client, MONDAY)
+
+    assert "unplanned_sessions" not in payload
+    assert payload["completed_session_count"] == 1
+    assert payload["completed_duration_s"] == 3_600
+    assert session_id not in json.dumps(payload)
