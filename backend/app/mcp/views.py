@@ -212,6 +212,13 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
     The day grid is dropped and the sessions are listed with their dates: an
     empty Wednesday is a fact the reader can see from the dates, and seven
     nested objects to say it is six of them saying nothing.
+
+    **The week's agent notes are not in here.** A view renders one domain
+    object, and a `PlanWeek` is the plan; the notes are a second read from a
+    second service, so `get_plan_week` assembles them as a sibling block the
+    way `get_session_detail` assembles `wellness` beside `metrics`. Threading
+    them through this function would make the projection of the plan depend on
+    a service the plan knows nothing about.
     """
     return {
         "start": week.start.isoformat(),
@@ -595,7 +602,15 @@ def history(summary: HistorySummary) -> dict[str, Any]:
 
 
 def note(row: AgentNoteRow) -> dict[str, Any]:
-    """One agent note. ``id`` and ``created_at`` are null on a dry run."""
+    """One agent note. ``id`` and ``created_at`` are null on a dry run.
+
+    Rendered **whole** wherever it appears — as the answer to the write that
+    made it, in `get_session_detail`'s ``agent_notes``, in `get_plan_week`'s —
+    including ``session_id`` and ``plan_week`` even where the block it came
+    back in already fixes them. One note has one rendering: a trimmed
+    per-context variant would mean a reader comparing two calls has to diff
+    two shapes to decide whether they are looking at the same note.
+    """
     return {
         "id": None if row.id is None else str(row.id),
         "kind": row.kind.value,

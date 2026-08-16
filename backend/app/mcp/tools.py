@@ -380,6 +380,14 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `week` — the current plan week, exactly as `get_plan_week` returns
           it, concurrency tokens included. Other weeks are `get_plan_week`
           with a `start`.
+        * `agent_notes` — **what you have already said about this week**: the
+          annotations filed under this Monday, oldest first, with the
+          athlete's `dispute` on each. Here for the reason `prompt` is: a
+          coach that has to fetch its own standing opinion separately is a
+          coach that will one day not fetch it, and will repeat itself — or
+          contradict itself — permanently and under its own `model_id`. Other
+          weeks come with `get_plan_week`; what was said about one *session*
+          is on `get_session_detail`.
         * `open_proposals` — `pending` proposals only, the summary rows
           `list_proposals` serves. Resolved ones are `list_proposals`; the
           stored diff is `get_proposal`.
@@ -518,6 +526,15 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     },
                     "anchors": anchors,
                     "week": views.plan_week(week),
+                    # The opener passes no `start`, so `week.start` is always
+                    # the resolved Monday — the null `get_plan_week` can
+                    # answer with is unreachable here by construction.
+                    "agent_notes": [
+                        views.note(row)
+                        for row in await AgentNoteService.from_session(session).list(
+                            plan_week=week.start
+                        )
+                    ],
                     "open_proposals": [views.proposal(row) for row in pending],
                     "recent_sessions": [
                         views.session_summary(
@@ -616,6 +633,19 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         is kilograms. A `planned_load` of null with sessions present means the
         week could not be priced, not that it is easy.
 
+        `agent_notes` is what has been said **about this week** — the
+        annotations `annotate` filed under this Monday, oldest first, with the
+        athlete's `dispute` on each. Commentary about one *session* is not
+        here even when that session falls inside the week: it is read on the
+        session, with `get_session_detail`.
+
+        It is **null**, not `[]`, when `start` is not a Monday. A plan week is
+        keyed by the Monday it starts on, so a window beginning on any other
+        day has no key to ask under — and answering with the overlapped
+        Monday's notes would attach a different week's commentary to the
+        window you asked for. Null means "there was nothing to ask"; `[]`
+        means "asked, and nothing has been said".
+
         Args:
             start: The Monday to read, as `YYYY-MM-DD`. Taken literally, not
                 snapped — pass a Monday. Defaults to the current week.
@@ -627,8 +657,22 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             async with session_scope() as session:
                 day = None if start is None else views.as_date(start, field="start")
                 week = await PlanService.from_session(session).week(day)
+                # `week.start` is the **resolved** start, so the default path
+                # (`start=None`, which becomes the current Monday) asks under
+                # a real key rather than falling into the null branch — the
+                # branch answers one question about the window that was
+                # actually served, not about the argument that was passed.
+                notes = None
+                if week.start.weekday() == 0:
+                    notes = [
+                        views.note(row)
+                        for row in await AgentNoteService.from_session(session).list(
+                            plan_week=week.start
+                        )
+                    ]
                 return {
                     "week": views.plan_week(week),
+                    "agent_notes": notes,
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
@@ -659,9 +703,24 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `weight_kg_in_force` — the body weight governing that date, so watts
           per kilogram is derivable. Null before the first weight was recorded,
           and w/kg is then absent rather than computed against a default.
+        * `agent_notes` — **what has already been said about this session**,
+          oldest first, with the athlete's `dispute` on each. Both kinds are
+          here: the evaluations `write_session_evaluation` writes *and* the
+          session-targeted annotations `annotate` writes, because they are
+          two halves of one conversation about one ride and a coach reading
+          only one half writes contradictions. Not to be confused with
+          `notes`, one block up, which is the **athlete's own** text about
+          their session — the two are never merged, or an opinion signed by a
+          model becomes indistinguishable from the athlete's word.
+
+          No author filter: a note written under another key is here too, with
+          its own `created_by`. This block is the record of what has been said
+          about this session, not one model's diary.
 
         Use this before writing an evaluation: an evaluation that contradicts
-        the measured record is worse than none.
+        the measured record is worse than none, and one that contradicts what
+        you already said — permanently, under your own `model_id` — is worse
+        again. `agent_notes` is where you find out.
 
         Args:
             session_id: The recorded session's id.
@@ -677,6 +736,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 scoring = ScoringService.from_session(session)
                 matching = MatchingService.from_session(session)
                 wellness = WellnessService.from_session(session)
+                notes = AgentNoteService.from_session(session)
 
                 row = await sessions.get(identifier)
                 day = (await wellness.days_for([row.local_date])).get(row.local_date)
@@ -686,6 +746,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 return {
                     "session": views.session_summary(row, summary),
                     "notes": row.notes,
+                    "agent_notes": [
+                        views.note(entry)
+                        for entry in await notes.list(session_id=identifier)
+                    ],
                     "metrics": views.metrics(summary, metrics_row),
                     "score": views.score(await scoring.get_current(identifier)),
                     "alignment": views.alignment(await scoring.alignment(identifier)),
@@ -1864,7 +1928,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         Call `get_session_detail` first. An evaluation that contradicts the
         measured record is worse than no evaluation, and the measurements are
-        right there.
+        right there — as is `agent_notes`, everything already said about this
+        session, so you can see whether you are repeating yourself, disagreeing
+        with yourself, or answering something the athlete disputed.
 
         This does **not** set the verdict. `declared_verdict` and its reasons
         are the athlete's, always.
@@ -1924,6 +1990,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         Exactly one target. A note about a week is filed under the **Monday**
         the week starts on; any other day is refused, so that one week has one
         key and every read of it finds every note.
+
+        Read what is already there first: a week's notes come back on
+        `get_plan_week` (and on `get_coaching_context` for the current week),
+        a session's on `get_session_detail`. Nothing here is editable or
+        deletable, so a second note that repeats or contradicts the first
+        stands beside it for good.
 
         Every answer carries `budget_remaining`: how many writes the hourly
         cap still admits, after this one if it was real (a dry run is free,
