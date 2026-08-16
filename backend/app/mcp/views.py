@@ -26,6 +26,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.domain.activity import parse_timezone
 from app.domain.anchors import AnchorType, AnchorVersion
 from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
@@ -69,7 +70,7 @@ from app.persistence.wellness import WellnessDayRow
 from app.persistence.wellness_prompt import WellnessPromptRow
 from app.persistence.workouts import WorkoutRow
 from app.services.history import HistorySummary, HistoryWeek
-from app.services.metrics import MetricSummary
+from app.services.metrics import MetricSummary, measured_channels
 from app.services.plan import PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
 from app.services.wellness import (
@@ -247,17 +248,45 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
     }
 
 
+def start_time_local(start_time: dt.datetime, timezone: str) -> str:
+    """One session's start on the athlete's own clock, offset included.
+
+    Resolved through `app.domain.activity.parse_timezone` — the single
+    resolver `local_date` is already derived through — rather than by doing
+    arithmetic on an offset string here. That is what makes an IANA zone come
+    out right across a DST boundary, and it is deliberately **not** guarded:
+    the stored timezone is validated at every write boundary, so a value this
+    cannot resolve is a corrupt row and should say so rather than quietly
+    render a UTC time as if it were local.
+
+    The offset stays on the string. A naive local timestamp would repeat the
+    mistake this field exists to fix, in the other direction.
+    """
+    return start_time.astimezone(parse_timezone(timezone)).isoformat()
+
+
 def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str, Any]:
     """One recorded session in a list.
 
     ``local_date`` rather than the UTC timestamp is the day the athlete would
     name, and the day the plan places work on — the two must agree or a
     question about "Tuesday" has two answers.
+
+    ``start_time`` and ``start_time_local`` are the same instant twice, and
+    both are here on purpose. The UTC one is what orders two sessions ridden
+    in two timezones, so re-rendering it in the session's own offset — the
+    other reading the issue offered — would cost the only field that compares
+    across them. The local one is what the athlete's own clock said, so a
+    coach reading a session planned for "06:30, window non-negotiable" does
+    not have to add an offset to a UTC instant to find out whether they made
+    it. Answering with the date already local and the time still UTC was the
+    asymmetry that produced a wrong statement to the athlete.
     """
     return {
         "id": str(row.id),
         "local_date": row.local_date.isoformat(),
         "start_time": row.start_time.isoformat(),
+        "start_time_local": start_time_local(row.start_time, row.timezone),
         "timezone": row.timezone,
         "discipline": row.discipline.value,
         "recording_kind": row.recording_kind.value,
@@ -299,6 +328,7 @@ def manual_session_draft(row: SessionRow) -> dict[str, Any]:
     """
     return {
         "start_time": row.start_time.isoformat(),
+        "start_time_local": start_time_local(row.start_time, row.timezone),
         "local_date": row.local_date.isoformat(),
         "timezone": row.timezone,
         "discipline": row.discipline.value,
@@ -311,9 +341,19 @@ def manual_session_draft(row: SessionRow) -> dict[str, Any]:
 
 
 def metrics(summary: MetricSummary | None, row: SessionMetricsRow | None) -> Any:
-    """The computed metrics of one session, or null if it has none."""
+    """The computed metrics of one session, or null if it has none.
+
+    The measured channels — `max_hr` through the three temperatures — are
+    plain numbers or ``null``, not the `{value, explanation, not_assessed}`
+    object the REST artefact serves. REST answers a UI that renders *why* a
+    channel is absent; the agent asks "what did this ride touch", and three
+    keys per number would triple the block to carry a reason it does not act
+    on. ``null`` therefore says only "not measured" — which is still never a
+    zero, and is why every key is present even for a session with no streams.
+    """
     if summary is None or row is None:
         return None
+    channels = measured_channels(row)
     return {
         "version": summary.version,
         "recording_time_s": summary.recording_time_s,
@@ -327,7 +367,15 @@ def metrics(summary: MetricSummary | None, row: SessionMetricsRow | None) -> Any
         "hard_s": summary.hard_s,
         "normalized_power": summary.normalized_power,
         "average_hr": summary.average_hr,
+        "max_hr": channels.max_hr,
+        "max_power": channels.max_power,
+        "average_cadence": channels.average_cadence,
+        "max_cadence": channels.max_cadence,
         "distance_km": summary.distance_km,
+        "elevation_gain_m": channels.elevation_gain_m,
+        "average_temp_c": channels.average_temp_c,
+        "min_temp_c": channels.min_temp_c,
+        "max_temp_c": channels.max_temp_c,
         "interval_count": summary.interval_count,
         "computed_at": row.as_of.isoformat(),
     }

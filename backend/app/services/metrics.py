@@ -460,3 +460,69 @@ def summarise(row: SessionMetricsRow) -> MetricSummary:
         distance_km=_number(_block(payload, "speed", "distance_km"), "value"),
         interval_count=len(intervals) if isinstance(intervals, list) else None,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredChannels:
+    """The peaks and ranges one *detail* read shows off a metric artefact.
+
+    A second reader beside `MetricSummary` rather than eight more fields on
+    it, and the split is by audience: `MetricSummary` is what an **aggregate**
+    reads — the week rail, the session list and the trends construct one per
+    session, per row, and none of them totals a maximum heart rate. This one
+    is the **detail's**, built only where a single session is being read in
+    full, so a number nobody sums is not carried through every rollup that
+    does not want it.
+
+    Every field is what the athlete's device actually measured, straight off
+    the stored assessment's ``value`` — the same pull `normalized_power` makes
+    above, and the same tolerance :func:`summarise` documents: ``None`` where
+    the channel was not recorded **and** where the payload predates the block,
+    because an artefact written by an earlier metric set must stay readable.
+    ``None`` is never a zero: a ride with no altimeter climbed an unknown
+    amount, not nothing.
+
+    Args:
+        max_hr: Highest heart rate observed, in bpm. The number that says a
+            max-HR anchor is due an append.
+        max_power: Peak power, in watts.
+        average_cadence: Mean cadence over the recording, in rpm.
+        max_cadence: Peak cadence, in rpm.
+        elevation_gain_m: Total ascent, in metres — whether 150 W was flat or
+            climbing.
+        average_temp_c: The **stream's** mean ambient temperature in °C, which
+            is a measurement and not the athlete's recollection (that one is
+            `SessionRow.temperature_c`, and the two are never merged).
+        min_temp_c: The coldest sample, in °C.
+        max_temp_c: The warmest sample, in °C.
+    """
+
+    max_hr: float | None
+    max_power: float | None
+    average_cadence: float | None
+    max_cadence: float | None
+    elevation_gain_m: float | None
+    average_temp_c: float | None
+    min_temp_c: float | None
+    max_temp_c: float | None
+
+
+def measured_channels(row: SessionMetricsRow) -> MeasuredChannels:
+    """Read one artefact's measured channels out of its payload.
+
+    Tolerant on exactly the terms :func:`summarise` is, and for the same
+    reason — see :class:`MeasuredChannels`.
+    """
+    payload: Mapping[str, Any] = row.payload if isinstance(row.payload, Mapping) else {}
+    return MeasuredChannels(
+        max_hr=_number(_block(payload, "heart_rate", "max_hr"), "value"),
+        max_power=_number(_block(payload, "power", "max_power"), "value"),
+        average_cadence=_number(_block(payload, "cadence", "average_cadence"), "value"),
+        max_cadence=_number(_block(payload, "cadence", "max_cadence"), "value"),
+        elevation_gain_m=_number(_block(payload, "elevation_gain_m"), "value"),
+        average_temp_c=_number(
+            _block(payload, "temperature", "average_temp_c"), "value"
+        ),
+        min_temp_c=_number(_block(payload, "temperature", "min_temp_c"), "value"),
+        max_temp_c=_number(_block(payload, "temperature", "max_temp_c"), "value"),
+    )

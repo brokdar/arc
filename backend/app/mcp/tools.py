@@ -695,7 +695,21 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
         * `metrics` — what was measured: duration, training load and its
           basis, time in easy/moderate/hard zones (seconds), normalized power
-          (watts), average heart rate.
+          (watts), average heart rate, and the channels the device recorded —
+          `max_hr` (bpm), `max_power` (W), `average_cadence` and `max_cadence`
+          (rpm), `distance_km`, `elevation_gain_m`, and `average_temp_c`,
+          `min_temp_c`, `max_temp_c` (°C). Each is a plain number, or `null`
+          where that channel was not recorded — never a zero, so a ride with
+          no altimeter is not a flat one. `max_hr` is what tells you a ride
+          exceeded the max-HR anchor and the anchor is due an append.
+
+          **Two temperatures, two authors.** `metrics.average_temp_c` is the
+          **stream's measurement** — what the device recorded, over the whole
+          ride. `session.temperature_c` is the **athlete's report** — what
+          they told you it felt like, and the only one `record_session_context`
+          writes. Neither overwrites the other and neither is a fallback for
+          the other: quote the measurement as the measurement, and if you
+          quote the report, say whose it is.
         * `score` — how it went against what was planned: per-axis results
           with the individual criteria, plus the engine's `suggested_verdict`
           and the rule that produced it. Null when the recording is not linked
