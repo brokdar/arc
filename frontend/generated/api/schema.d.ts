@@ -259,6 +259,123 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/connections": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Connections
+     * @description Every cloud account arc holds a credential for, with its folders.
+     */
+    get: operations["connections-list_connections"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/connections/dropbox/authorize": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Start Dropbox Authorization
+     * @description Begin connecting Dropbox: get the link the athlete opens.
+     *
+     *     The link carries a PKCE challenge and **no redirect URI** — Dropbox shows
+     *     the athlete a code, which they paste into `POST /connections/dropbox/complete`.
+     *     That is what lets arc connect a cloud account from behind a home router
+     *     without registering a redirect or being reachable from the internet.
+     */
+    post: operations["connections-start_dropbox_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/connections/dropbox/complete": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Complete Dropbox Authorization
+     * @description Finish connecting Dropbox with the code the athlete pasted back.
+     */
+    post: operations["connections-complete_dropbox_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/connections/{connection_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Connection
+     * @description One connection, with its folders.
+     */
+    get: operations["connections-get_connection"];
+    put?: never;
+    post?: never;
+    /**
+     * Disconnect
+     * @description Forget a connection: revoke it upstream, delete it and all its feeds.
+     *
+     *     204 even when the revoke call fails. The local credential is gone either
+     *     way, which is what the athlete asked for; a token still alive on Dropbox's
+     *     side can be finished off from Dropbox's own connected-apps page.
+     */
+    delete: operations["connections-disconnect"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/connections/{connection_id}/folders": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Folders
+     * @description The folders directly under ``path`` — the folder picker's data.
+     *
+     *     Folders only: the athlete is choosing a directory to watch, and the files
+     *     in it are what the poll will find, not what this answers. A folder holding
+     *     nothing but files is a 200 with an empty list.
+     */
+    get: operations["connections-list_folders"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/exercises": {
     parameters: {
       query?: never;
@@ -297,6 +414,53 @@ export interface paths {
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  "/api/v1/feeds": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Feed
+     * @description Watch a folder on a connection.
+     *
+     *     The path is normalised, so `/Apps/WahooFitness/` and `/apps/wahoofitness`
+     *     are one feed and the second attempt is a 409.
+     */
+    post: operations["connections-create_feed"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/feeds/{feed_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete Feed
+     * @description Stop watching a folder and forget its polling state.
+     */
+    delete: operations["connections-delete_feed"];
+    options?: never;
+    head?: never;
+    /**
+     * Update Feed
+     * @description Turn a feed's polling on or off. The cursor is kept either way.
+     */
+    patch: operations["connections-update_feed"];
     trace?: never;
   };
   "/api/v1/ingest/events": {
@@ -2366,6 +2530,78 @@ export interface components {
       value: components["schemas"]["Confounder"];
     };
     /**
+     * ConnectionList
+     * @description Every connection arc holds.
+     *
+     *     A bare list rather than a page: there is one athlete and at most one
+     *     connection per provider, so an offset here would be ceremony with no
+     *     collection large enough to need it.
+     */
+    ConnectionList: {
+      /** Items */
+      items: components["schemas"]["ConnectionRead"][];
+    };
+    /**
+     * ConnectionProvider
+     * @description The cloud services arc can hold a credential for.
+     *
+     *     One member today. It exists as an enum rather than a constant because the
+     *     tables, the routes and the panel are all provider-shaped already, and the
+     *     alternative — a `connections` table that can only ever mean Dropbox —
+     *     would have to be widened by a migration on the day a second one arrives.
+     * @enum {string}
+     */
+    ConnectionProvider: "dropbox";
+    /**
+     * ConnectionRead
+     * @description One connected account, with the folders arc watches on it.
+     */
+    ConnectionRead: {
+      /** Account Label */
+      account_label: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Feeds */
+      feeds: components["schemas"]["FeedRead"][];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Error */
+      last_error: string | null;
+      provider: components["schemas"]["ConnectionProvider"];
+      /** Scopes */
+      scopes: string[];
+      status: components["schemas"]["ConnectionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
+     * ConnectionStatus
+     * @description Whether arc can currently use the credential it is holding.
+     *
+     *     Three states with three different remedies, which is why `error` is not
+     *     folded into `needs_reauth`:
+     *
+     *     * ``connected`` — the credential works, or at least nothing has told arc
+     *       otherwise;
+     *     * ``needs_reauth`` — Dropbox refused the refresh token. The athlete has to
+     *       go through the connect ritual again; nothing local will fix it;
+     *     * ``error`` — arc cannot *read* its own credential, which today means
+     *       `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
+     *       remedy is to restore the key, and re-authorizing would only paper over a
+     *       configuration mistake that is also hiding every other secret.
+     * @enum {string}
+     */
+    ConnectionStatus: "connected" | "needs_reauth" | "error";
+    /**
      * CountRead
      * @description A count against the bar it has to clear.
      */
@@ -2441,6 +2677,27 @@ export interface components {
      * @enum {string}
      */
     DisputeRating: "up" | "down";
+    /**
+     * DropboxAuthorizationRead
+     * @description The link the athlete opens, and the deadline on the code they bring back.
+     */
+    DropboxAuthorizationRead: {
+      /** Authorize Url */
+      authorize_url: string;
+      /**
+       * Expires At
+       * Format: date-time
+       */
+      expires_at: string;
+    };
+    /**
+     * DropboxCodeSubmit
+     * @description The authorization code Dropbox showed the athlete, pasted back.
+     */
+    DropboxCodeSubmit: {
+      /** Code */
+      code: string;
+    };
     /**
      * DurationFloorSchema
      * @description The session must last at least this long.
@@ -2574,6 +2831,85 @@ export interface components {
       inputs: {
         [key: string]: string;
       };
+    };
+    /**
+     * FeedCreate
+     * @description Start watching a folder on a connection.
+     */
+    FeedCreate: {
+      /**
+       * Connection Id
+       * Format: uuid
+       */
+      connection_id: string;
+      /**
+       * Remote Path
+       * @default
+       */
+      remote_path: string;
+    };
+    /**
+     * FeedRead
+     * @description One folder arc watches, and its polling state.
+     */
+    FeedRead: {
+      /**
+       * Connection Id
+       * Format: uuid
+       */
+      connection_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Cursor */
+      cursor: string | null;
+      /** Cursor Attempts */
+      cursor_attempts: number;
+      /** Enabled */
+      enabled: boolean;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Delivery At */
+      last_delivery_at: string | null;
+      /** Last Error */
+      last_error: string | null;
+      /** Remote Path */
+      remote_path: string;
+    };
+    /**
+     * FeedUpdate
+     * @description Turn a feed's polling on or off, keeping its cursor.
+     */
+    FeedUpdate: {
+      /** Enabled */
+      enabled: boolean;
+    };
+    /**
+     * FolderList
+     * @description The folders directly under one remote path.
+     *
+     *     Never a 404 for an empty folder: a directory holding only files is a
+     *     legitimate answer with `items: []`, and the picker says so rather than
+     *     drawing an empty box.
+     */
+    FolderList: {
+      /** Items */
+      items: components["schemas"]["FolderRead"][];
+    };
+    /**
+     * FolderRead
+     * @description One folder in a remote listing.
+     */
+    FolderRead: {
+      /** Name */
+      name: string;
+      /** Path Lower */
+      path_lower: string;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -6642,6 +6978,289 @@ export interface operations {
       };
     };
   };
+  "connections-list_connections": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConnectionList"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "connections-start_dropbox_authorization": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DropboxAuthorizationRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The setup is incomplete, or Dropbox refused the code */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "connections-complete_dropbox_authorization": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DropboxCodeSubmit"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConnectionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The setup is incomplete, or Dropbox refused the code */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "connections-get_connection": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConnectionRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-disconnect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-list_folders": {
+    parameters: {
+      query?: {
+        path?: string;
+      };
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FolderList"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The setup is incomplete, or Dropbox refused the code */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+      /** @description Dropbox is rate-limiting arc */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
   "exercises-list_exercises": {
     parameters: {
       query?: {
@@ -6717,6 +7336,166 @@ export interface operations {
         };
       };
       /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-create_feed": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FeedCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeedRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-delete_feed": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        feed_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-update_feed": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        feed_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FeedUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeedRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
       404: {
         headers: {
           [name: string]: unknown;

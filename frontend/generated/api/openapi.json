@@ -1508,6 +1508,108 @@
         "title": "ConfounderRead",
         "type": "object"
       },
+      "ConnectionList": {
+        "description": "Every connection arc holds.\n\nA bare list rather than a page: there is one athlete and at most one\nconnection per provider, so an offset here would be ceremony with no\ncollection large enough to need it.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "ConnectionList",
+        "type": "object"
+      },
+      "ConnectionProvider": {
+        "description": "The cloud services arc can hold a credential for.\n\nOne member today. It exists as an enum rather than a constant because the\ntables, the routes and the panel are all provider-shaped already, and the\nalternative \u2014 a `connections` table that can only ever mean Dropbox \u2014\nwould have to be widened by a migration on the day a second one arrives.",
+        "enum": ["dropbox"],
+        "title": "ConnectionProvider",
+        "type": "string"
+      },
+      "ConnectionRead": {
+        "description": "One connected account, with the folders arc watches on it.",
+        "properties": {
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "feeds": {
+            "items": {
+              "$ref": "#/components/schemas/FeedRead"
+            },
+            "title": "Feeds",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectionStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "status",
+          "account_label",
+          "scopes",
+          "last_error",
+          "created_at",
+          "updated_at",
+          "feeds"
+        ],
+        "title": "ConnectionRead",
+        "type": "object"
+      },
+      "ConnectionStatus": {
+        "description": "Whether arc can currently use the credential it is holding.\n\nThree states with three different remedies, which is why `error` is not\nfolded into `needs_reauth`:\n\n* ``connected`` \u2014 the credential works, or at least nothing has told arc\n  otherwise;\n* ``needs_reauth`` \u2014 Dropbox refused the refresh token. The athlete has to\n  go through the connect ritual again; nothing local will fix it;\n* ``error`` \u2014 arc cannot *read* its own credential, which today means\n  `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The\n  remedy is to restore the key, and re-authorizing would only paper over a\n  configuration mistake that is also hiding every other secret.",
+        "enum": ["connected", "needs_reauth", "error"],
+        "title": "ConnectionStatus",
+        "type": "string"
+      },
       "CountRead": {
         "description": "A count against the bar it has to clear.",
         "properties": {
@@ -1620,6 +1722,37 @@
         "enum": ["up", "down"],
         "title": "DisputeRating",
         "type": "string"
+      },
+      "DropboxAuthorizationRead": {
+        "description": "The link the athlete opens, and the deadline on the code they bring back.",
+        "properties": {
+          "authorize_url": {
+            "title": "Authorize Url",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": ["authorize_url", "expires_at"],
+        "title": "DropboxAuthorizationRead",
+        "type": "object"
+      },
+      "DropboxCodeSubmit": {
+        "description": "The authorization code Dropbox showed the athlete, pasted back.",
+        "properties": {
+          "code": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": ["code"],
+        "title": "DropboxCodeSubmit",
+        "type": "object"
       },
       "DurationFloorSchema": {
         "additionalProperties": false,
@@ -1847,6 +1980,147 @@
         },
         "required": ["formula", "inputs", "assumptions", "citation"],
         "title": "ExplanationRead",
+        "type": "object"
+      },
+      "FeedCreate": {
+        "description": "Start watching a folder on a connection.",
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "remote_path": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Remote Path",
+            "type": "string"
+          }
+        },
+        "required": ["connection_id"],
+        "title": "FeedCreate",
+        "type": "object"
+      },
+      "FeedRead": {
+        "description": "One folder arc watches, and its polling state.",
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "cursor_attempts": {
+            "title": "Cursor Attempts",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_delivery_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivery At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "remote_path": {
+            "title": "Remote Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "connection_id",
+          "remote_path",
+          "enabled",
+          "cursor",
+          "cursor_attempts",
+          "last_delivery_at",
+          "last_error",
+          "created_at"
+        ],
+        "title": "FeedRead",
+        "type": "object"
+      },
+      "FeedUpdate": {
+        "description": "Turn a feed's polling on or off, keeping its cursor.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled"],
+        "title": "FeedUpdate",
+        "type": "object"
+      },
+      "FolderList": {
+        "description": "The folders directly under one remote path.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FolderRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "FolderList",
+        "type": "object"
+      },
+      "FolderRead": {
+        "description": "One folder in a remote listing.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path_lower": {
+            "title": "Path Lower",
+            "type": "string"
+          }
+        },
+        "required": ["path_lower", "name"],
+        "title": "FolderRead",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -10293,6 +10567,374 @@
         "tags": ["auth"]
       }
     },
+    "/api/v1/connections": {
+      "get": {
+        "description": "Every cloud account arc holds a credential for, with its folders.",
+        "operationId": "connections-list_connections",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Connections",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/dropbox/authorize": {
+      "post": {
+        "description": "Begin connecting Dropbox: get the link the athlete opens.\n\nThe link carries a PKCE challenge and **no redirect URI** \u2014 Dropbox shows\nthe athlete a code, which they paste into `POST /connections/dropbox/complete`.\nThat is what lets arc connect a cloud account from behind a home router\nwithout registering a redirect or being reachable from the internet.",
+        "operationId": "connections-start_dropbox_authorization",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropboxAuthorizationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Start Dropbox Authorization",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/dropbox/complete": {
+      "post": {
+        "description": "Finish connecting Dropbox with the code the athlete pasted back.",
+        "operationId": "connections-complete_dropbox_authorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropboxCodeSubmit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Complete Dropbox Authorization",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/{connection_id}": {
+      "delete": {
+        "description": "Forget a connection: revoke it upstream, delete it and all its feeds.\n\n204 even when the revoke call fails. The local credential is gone either\nway, which is what the athlete asked for; a token still alive on Dropbox's\nside can be finished off from Dropbox's own connected-apps page.",
+        "operationId": "connections-disconnect",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Disconnect",
+        "tags": ["connections"]
+      },
+      "get": {
+        "description": "One connection, with its folders.",
+        "operationId": "connections-get_connection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Connection",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/{connection_id}/folders": {
+      "get": {
+        "description": "The folders directly under ``path`` \u2014 the folder picker's data.\n\nFolders only: the athlete is choosing a directory to watch, and the files\nin it are what the poll will find, not what this answers. A folder holding\nnothing but files is a 200 with an empty list.",
+        "operationId": "connections-list_folders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 1000,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox is rate-limiting arc"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Folders",
+        "tags": ["connections"]
+      }
+    },
     "/api/v1/exercises": {
       "get": {
         "description": "List catalogue exercises, by family then name.",
@@ -10451,6 +11093,216 @@
         ],
         "summary": "Get Exercise",
         "tags": ["exercises"]
+      }
+    },
+    "/api/v1/feeds": {
+      "post": {
+        "description": "Watch a folder on a connection.\n\nThe path is normalised, so `/Apps/WahooFitness/` and `/apps/wahoofitness`\nare one feed and the second attempt is a 409.",
+        "operationId": "connections-create_feed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Feed",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/feeds/{feed_id}": {
+      "delete": {
+        "description": "Stop watching a folder and forget its polling state.",
+        "operationId": "connections-delete_feed",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feed_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Feed Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Feed",
+        "tags": ["connections"]
+      },
+      "patch": {
+        "description": "Turn a feed's polling on or off. The cursor is kept either way.",
+        "operationId": "connections-update_feed",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feed_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Feed Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Feed",
+        "tags": ["connections"]
       }
     },
     "/api/v1/ingest/events": {

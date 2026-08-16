@@ -26,6 +26,13 @@ dependencies = [
     "gpxpy>=1.6.2",
     "tcxreader>=0.4.11",
     "pyarrow>=25.0.0",
+    # The outbound half of the Dropbox connector. Already present transitively
+    # (fastapi[standard] ships it, and the test client is built on it), named
+    # here because `app.connectors` imports it directly: a transitive
+    # dependency is one `uv lock` away from not being there.
+    "httpx>=0.28.1",
+    # Fernet, for the OAuth credentials at rest (`app/persistence/connections.py`).
+    "cryptography>=45",
 ]
 
 [dependency-groups]
@@ -179,6 +186,11 @@ forbidden_modules = [
     "gpxpy",
     "tcxreader",
     "pyarrow",
+    # The connector's two: `httpx` was already forbidden here (the domain has
+    # no business making a request), and `cryptography` joins it — a layer that
+    # computes training rules over plain values never encrypts anything.
+    "cryptography",
+    "app.connectors",
     "app.persistence",
     "app.services",
     "app.api",
@@ -221,10 +233,17 @@ forbidden_modules = ["app.domain.wellness", "app.domain.wellness_baseline"]
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
+# `app.connectors` sits between services and persistence: a connector may read
+# and re-seal the connection row whose credential it refreshes, and may never
+# reach up into a service. Left unlayered, an outbound client importing
+# `app.services.connections` would be a circular design import-linter could not
+# see — and it is exactly the import somebody adds when a connector needs "just
+# one" use-case.
 layers = [
     "app.api | app.mcp",
     "app.ingest",
     "app.services",
+    "app.connectors",
     "app.persistence",
     "app.domain",
 ]

@@ -10,11 +10,15 @@ import {
   appendAnchorVersion,
   applyLinkStatuses,
   athleteRecord,
+  completeDropbox,
+  connectionsState,
   contentHash,
+  createDropboxFeed,
   currentAnchor,
   DETAILS,
   declarationRead,
   defaultZoneModel,
+  dropboxFolders,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
@@ -1514,3 +1518,117 @@ function applyIntent(
     },
   };
 }
+
+/**
+ * The Dropbox connection surface (settings panel).
+ *
+ * Stateful and request-honouring for the same reason the ingest handlers are:
+ * "connect" is a two-step ritual, and a `complete` that answered 201 to any
+ * body at all could not fail when the form posts an empty code — which is
+ * exactly the bug the panel's test is written to catch. The state lives in
+ * `fixtures.ts` and is reset by `resetMockState`.
+ */
+export const connectionHandlers = [
+  http.get("/api/v1/connections", ({ response }) =>
+    response(200).json({ items: connectionsState().connections }),
+  ),
+  http.post("/api/v1/connections/dropbox/authorize", ({ response }) => {
+    connectionsState().authorizationStarted = true;
+    return response(200).json({
+      authorize_url:
+        "https://www.dropbox.com/oauth2/authorize?client_id=test-app-key" +
+        "&response_type=code&token_access_type=offline" +
+        "&code_challenge=fake-challenge&code_challenge_method=S256" +
+        "&scope=account_info.read+files.content.read+files.metadata.read",
+      expires_at: "2026-08-16T09:45:00Z",
+    });
+  }),
+  http.post(
+    "/api/v1/connections/dropbox/complete",
+    async ({ request, response }) => {
+      const result = completeDropbox((await request.json()).code);
+      return "detail" in result
+        ? response(422).json({ detail: result.detail })
+        : response(201).json(result.connection);
+    },
+  ),
+  http.get("/api/v1/connections/{connection_id}", ({ params, response }) => {
+    const found = connectionsState().connections.find(
+      (row) => row.id === params.connection_id,
+    );
+    return found
+      ? response(200).json(found)
+      : response(404).json({
+          detail: `Connection ${params.connection_id} not found`,
+        });
+  }),
+  http.get(
+    "/api/v1/connections/{connection_id}/folders",
+    ({ params, query, response }) => {
+      const state = connectionsState();
+      if (!state.connections.some((row) => row.id === params.connection_id)) {
+        return response(404).json({
+          detail: `Connection ${params.connection_id} not found`,
+        });
+      }
+      const path = query.get("path") ?? "";
+      const folders = dropboxFolders(path);
+      return folders === null
+        ? response(404).json({ detail: `Dropbox has no folder at ${path}` })
+        : response(200).json({ items: folders });
+    },
+  ),
+  http.delete("/api/v1/connections/{connection_id}", ({ params, response }) => {
+    const state = connectionsState();
+    const before = state.connections.length;
+    state.connections = state.connections.filter(
+      (row) => row.id !== params.connection_id,
+    );
+    return state.connections.length === before
+      ? response(404).json({
+          detail: `Connection ${params.connection_id} not found`,
+        })
+      : response(204).empty();
+  }),
+  http.post("/api/v1/feeds", async ({ request, response }) => {
+    const body = await request.json();
+    const result = createDropboxFeed(
+      body.connection_id,
+      body.remote_path ?? "",
+    );
+    if ("feed" in result) {
+      return response(201).json(result.feed);
+    }
+    return result.status === 404
+      ? response(404).json({ detail: result.detail })
+      : response(409).json({ detail: result.detail });
+  }),
+  http.patch(
+    "/api/v1/feeds/{feed_id}",
+    async ({ params, request, response }) => {
+      const body = await request.json();
+      for (const connection of connectionsState().connections) {
+        const feed = connection.feeds.find((row) => row.id === params.feed_id);
+        if (feed) {
+          // Echoes what it was sent: a panel that posted the value it already
+          // had would otherwise look like it worked.
+          feed.enabled = body.enabled;
+          return response(200).json(feed);
+        }
+      }
+      return response(404).json({ detail: `Feed ${params.feed_id} not found` });
+    },
+  ),
+  http.delete("/api/v1/feeds/{feed_id}", ({ params, response }) => {
+    for (const connection of connectionsState().connections) {
+      const kept = connection.feeds.filter((row) => row.id !== params.feed_id);
+      if (kept.length !== connection.feeds.length) {
+        connection.feeds = kept;
+        return response(204).empty();
+      }
+    }
+    return response(404).json({ detail: `Feed ${params.feed_id} not found` });
+  }),
+];
+
+handlers.push(...connectionHandlers);

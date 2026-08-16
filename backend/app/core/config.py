@@ -264,6 +264,48 @@ class McpSettings(BaseModel):
     """
 
 
+class DropboxSettings(BaseModel):
+    """The one thing the operator has to paste in to connect Dropbox.
+
+    There is no app *secret*, and that absence is the design: the connect flow
+    is PKCE (RFC 7636) with a code the athlete pastes back, so arc is a public
+    OAuth client. A secret would buy nothing a self-hosted box can keep — and
+    the redirect URI a confidential client needs is exactly what arc cannot
+    register, because it is reached at whatever host the home network gives it.
+
+    `SecretStr` even so: the app key is public by design, but it is still a
+    credential-shaped value, and the wrapper is what keeps it out of the
+    `input_value=` of a settings ValidationError alongside everything else.
+    """
+
+    app_key: SecretStr = SecretStr("")
+    """The Dropbox app key from https://www.dropbox.com/developers/apps.
+
+    Register the app as **Full Dropbox**, not "App folder": Wahoo's and
+    HealthFit's own app folders are where the FIT files already are, and an
+    app-folder app is structurally unable to see them.
+    """
+
+
+class SecretsSettings(BaseModel):
+    """The key under which arc encrypts third-party credentials at rest.
+
+    Distinct from `AUTH__SESSION__SECRET_KEY`, which signs a cookie arc issues
+    to itself: this one protects a live key to *someone else's* file store, so
+    rotating it does not log anybody out — it makes every stored credential
+    unreadable, and the connection says so rather than silently failing to
+    refresh.
+    """
+
+    encryption_key: SecretStr = SecretStr("")
+    """A Fernet key: 32 random bytes, urlsafe-base64 encoded.
+
+    Generate one with
+    ``python -c "from cryptography.fernet import Fernet;
+    print(Fernet.generate_key().decode())"``.
+    """
+
+
 class LogSettings(BaseModel):
     """Logging settings."""
 
@@ -302,6 +344,8 @@ class Settings(BaseSettings):
     scoring: ScoringSettings = ScoringSettings()
     wellness: WellnessSettings = WellnessSettings()
     proposals: ProposalSettings = ProposalSettings()
+    dropbox: DropboxSettings = DropboxSettings()
+    secrets: SecretsSettings = SecretsSettings()
     log: LogSettings = LogSettings()
     mcp: McpSettings = McpSettings()
 
@@ -326,6 +370,13 @@ class Settings(BaseSettings):
             problems.append("AUTH__SESSION__SECRET_KEY is empty")
         if self.postgres.password.get_secret_value() in ("", "postgres"):
             problems.append("POSTGRES__PASSWORD is empty or the dev default")
+        # Unlike the three above, this one does not gate the login: an instance
+        # with no Dropbox connection never reads it. It is here anyway because
+        # the failure it prevents is the worst-timed kind — the athlete would
+        # complete the whole connect ritual, arc would store a credential it
+        # cannot open, and nothing would say so until the first token refresh.
+        if not self.secrets.encryption_key.get_secret_value():
+            problems.append("SECRETS__ENCRYPTION_KEY is empty")
         if problems:
             raise ValueError(
                 f"Insecure production configuration: {'; '.join(problems)}"
