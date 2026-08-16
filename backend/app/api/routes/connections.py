@@ -41,6 +41,8 @@ type Responses = dict[int | str, dict[str, Any]]
 NOT_FOUND: Responses = {
     404: {"model": ErrorDetail, "description": "No such connection, feed or folder"}
 }
+# FastAPI returns 400 (not 422) for bodies that fail to parse at all.
+BAD_BODY: Responses = {400: {"model": ErrorDetail, "description": "Malformed body"}}
 CONFLICT: Responses = {
     409: {
         "model": ErrorDetail,
@@ -106,7 +108,7 @@ async def start_dropbox_authorization(
 @router.post(
     "/dropbox/complete",
     status_code=status.HTTP_201_CREATED,
-    responses=INVALID | CONFLICT,
+    responses=BAD_BODY | INVALID | CONFLICT,
 )
 async def complete_dropbox_authorization(
     service: ServiceDep, actor: ActorDep, submitted: DropboxCodeSubmit
@@ -162,7 +164,9 @@ async def disconnect(
 
 
 @feeds_router.post(
-    "", status_code=status.HTTP_201_CREATED, responses=NOT_FOUND | CONFLICT
+    "",
+    status_code=status.HTTP_201_CREATED,
+    responses=BAD_BODY | NOT_FOUND | CONFLICT,
 )
 async def create_feed(
     service: ServiceDep, actor: ActorDep, submitted: FeedCreate
@@ -181,7 +185,7 @@ async def create_feed(
     )
 
 
-@feeds_router.patch("/{feed_id}", responses=NOT_FOUND)
+@feeds_router.patch("/{feed_id}", responses=BAD_BODY | NOT_FOUND)
 async def update_feed(
     service: ServiceDep, actor: ActorDep, feed_id: uuid.UUID, submitted: FeedUpdate
 ) -> FeedRead:

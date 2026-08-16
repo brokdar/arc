@@ -536,3 +536,43 @@ async def test_every_connection_route_needs_a_session(
     assert (await anon_client.get(CONNECTIONS)).status_code == 401
     assert (await anon_client.post(AUTHORIZE)).status_code == 401
     assert (await anon_client.post(FEEDS, json={})).status_code == 401
+
+
+# --- found by Schemathesis: a body that does not parse -----------------------
+#
+# FastAPI answers **400** — "There was an error parsing the body" — when a
+# request body is not JSON at all, where a body that parses but breaks a rule
+# is 422. The fuzzer sends both, and the three connect operations that take a
+# body documented only the second, so the fuzz job failed on an undocumented
+# status code. Every other body-taking route in this API already declares that
+# 400 (`BAD_BODY`); the sweep that now holds the whole surface to it is
+# `test_error_envelope.py::test_every_json_body_operation_documents_a_bad_body`.
+
+
+async def test_a_body_that_is_not_json_is_a_documented_400(
+    client: httpx.AsyncClient,
+) -> None:
+    connection = await connect(client)
+    created = await client.post(
+        FEEDS, json={"connection_id": connection["id"], "remote_path": "/apps/wahoo"}
+    )
+    assert created.status_code == 201, created.text
+    feed_id = created.json()["id"]
+    spec = (await client.get("/openapi.json")).json()
+
+    for method, url, operation in (
+        ("POST", COMPLETE, "/api/v1/connections/dropbox/complete"),
+        ("POST", FEEDS, "/api/v1/feeds"),
+        ("PATCH", f"{FEEDS}/{feed_id}", "/api/v1/feeds/{feed_id}"),
+    ):
+        response = await client.request(
+            method,
+            url,
+            content=b"\xa0\xa1not json",
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.status_code == 400, f"{method} {url}: {response.text}"
+        assert isinstance(response.json()["detail"], str)
+        documented = spec["paths"][operation][method.lower()]["responses"]
+        assert "400" in documented, f"{method} {operation} documents {list(documented)}"

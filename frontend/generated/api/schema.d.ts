@@ -7067,6 +7067,15 @@ export interface operations {
           "application/json": components["schemas"]["ConnectionRead"];
         };
       };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description No valid session */
       401: {
         headers: {
@@ -7377,6 +7386,15 @@ export interface operations {
           "application/json": components["schemas"]["FeedRead"];
         };
       };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description No valid session */
       401: {
         headers: {
@@ -7484,6 +7502,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeedRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
       /** @description No valid session */
