@@ -10,6 +10,7 @@ credential, point it at a folder — and nothing in it fetches a file.
 import datetime as dt
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,8 +38,10 @@ from app.core.exceptions import (
 from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.connections import (
+    FEED_DELIVERED_ACTION,
     ConnectionProvider,
     ConnectionStatus,
+    FeedDeliveryState,
     normalise_remote_path,
 )
 from app.persistence.audit import AuditRepository
@@ -69,6 +72,48 @@ FEED_ENTITY = "feed"
 #: a browser history; shorter, and a two-factor prompt on a phone runs the
 #: clock out.
 AUTHORIZATION_TTL = dt.timedelta(minutes=15)
+
+
+#: The window `ingest_status` counts deliveries over.
+#:
+#: Seven days because the question it answers is "is the week I am looking at
+#: complete", and the coach reasons in weeks. A rolling window rather than the
+#: current ISO week: a Monday-morning read would otherwise report near zero for
+#: a perfectly healthy feed.
+DELIVERY_WINDOW = dt.timedelta(days=7)
+
+
+@dataclass(frozen=True, slots=True)
+class FeedStatus:
+    """One watched folder, as the coaching agent needs to see it."""
+
+    feed_id: uuid.UUID
+    #: The remote folder, in the spelling arc stores.
+    folder: str
+    enabled: bool
+    state: FeedDeliveryState
+    #: When arc last heard from Dropbox for this feed at all. ``None`` until
+    #: the first successful poll — never rendered as a zero or an error.
+    last_delivery_at: dt.datetime | None
+    #: Files this feed turned into sessions in the last :data:`DELIVERY_WINDOW`.
+    deliveries: int
+    last_error: str | None
+    #: The credential's own state, because a `needs_reauth` connection makes
+    #: every feed under it silent for a reason no per-feed field can express.
+    connection_status: ConnectionStatus
+    account_label: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class IngestStatus:
+    """Whether arc's supply of activity files is working, and through what."""
+
+    feeds: tuple[FeedStatus, ...]
+    #: True when no connection exists at all. **Not an error**: files arriving
+    #: in `data/inbox/` is the supported baseline configuration, and answering
+    #: a coaching agent with a failure would teach it that a perfectly healthy
+    #: single-user install is broken.
+    local_inbox_only: bool
 
 
 class AuthorizationStart:
@@ -125,6 +170,52 @@ class ConnectionService:
             raise NotFoundError(f"Connection {connection_id} not found")
         self._settle_readability(row)
         return row
+
+    async def ingest_status(self) -> IngestStatus:
+        """How each watched folder is doing, and whether there are any.
+
+        Read-only and cheap: one query for the connections, one count per feed
+        over the audit trail. The delivery count comes from that trail
+        (`app.ingest.feeds.DELIVERED_ACTION`) rather than from a column on the
+        feed, because the trail already records every delivery with the feed it
+        belonged to — see `AuditRepository.count_for_entity_since`.
+
+        A connection whose credential will not open reports `error` here as it
+        does everywhere else (:meth:`_settle_readability`), so a coach reading
+        this sees the same fault the settings panel is showing the athlete.
+        """
+        since = dt.datetime.now(dt.UTC) - DELIVERY_WINDOW
+        rows = await self._repository.list()
+        for connection in rows:
+            self._settle_readability(connection)
+        return IngestStatus(
+            feeds=tuple(
+                [
+                    await self._feed_status(connection, feed, since=since)
+                    for connection in rows
+                    for feed in connection.feeds
+                ]
+            ),
+            local_inbox_only=not rows,
+        )
+
+    async def _feed_status(
+        self, connection: ConnectionRow, feed: FeedRow, *, since: dt.datetime
+    ) -> FeedStatus:
+        """One feed's line of the answer, with its delivery count."""
+        return FeedStatus(
+            feed_id=feed.id,
+            folder=feed.remote_path,
+            enabled=feed.enabled,
+            state=_delivery_state(feed),
+            last_delivery_at=feed.last_delivery_at,
+            deliveries=await self._audit.count_for_entity_since(
+                action=FEED_DELIVERED_ACTION, entity_id=feed.id, since=since
+            ),
+            last_error=feed.last_error,
+            connection_status=connection.status,
+            account_label=connection.account_label,
+        )
 
     def _settle_readability(self, row: ConnectionRow) -> None:
         """Downgrade a connection arc cannot read its own credential for.
@@ -461,3 +552,20 @@ class ConnectionService:
         if row is None:
             raise NotFoundError(f"Feed {feed_id} not found")
         return row
+
+
+def _delivery_state(feed: FeedRow) -> FeedDeliveryState:
+    """One word for how a feed is doing. See :class:`FeedDeliveryState`.
+
+    The order is the enum's and it is the point: a paused feed is silent
+    because the athlete said so, and reporting it as `failing` or
+    `never_delivered` would send a coach hunting a fault the athlete created
+    on purpose.
+    """
+    if not feed.enabled:
+        return FeedDeliveryState.PAUSED
+    if feed.last_error:
+        return FeedDeliveryState.FAILING
+    if feed.last_delivery_at is None:
+        return FeedDeliveryState.NEVER_DELIVERED
+    return FeedDeliveryState.DELIVERING

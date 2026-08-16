@@ -3,6 +3,7 @@ from pathlib import Path
 from asgi_lifespan import LifespanManager
 
 from app.core.config import get_settings
+from app.ingest.feeds import FEED_POLL_JOB_ID
 from app.ingest.inbox import INBOX_JOB_ID
 from app.main import create_app
 from app.services.wellness import PROMPT_SWEEP_JOB_ID
@@ -32,6 +33,30 @@ async def test_the_inbox_sweep_is_registered_at_startup(data_root: Path) -> None
             get_settings().ingest.scan_interval_seconds
         )
         # One interval away, so a boot does not also sweep.
+        assert job.next_run_time is not None
+
+
+async def test_the_dropbox_feed_poll_is_registered_at_startup(data_root: Path) -> None:
+    """AC-11: the poll only exists if the lifespan wires it up.
+
+    A connector nobody scheduled is a folder that fills up in silence, which
+    looks exactly like an athlete who stopped riding. The job function's own
+    behaviour is tested in `test_dropbox_feed`.
+    """
+    app = create_app()
+
+    async with LifespanManager(app):
+        job = app.state.scheduler.get_job(FEED_POLL_JOB_ID)
+
+        assert job is not None
+        assert job.trigger.interval.total_seconds() == (
+            get_settings().dropbox.poll_interval_seconds
+        )
+        # One instance and ``coalesce``: a slow poll delays the next one rather
+        # than running two cursors over the same folder.
+        assert job.max_instances == 1
+        assert job.coalesce is True
+        # One interval away, so a boot does not also poll.
         assert job.next_run_time is not None
 
 

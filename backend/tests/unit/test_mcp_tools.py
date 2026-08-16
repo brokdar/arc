@@ -35,9 +35,11 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.connectors import dropbox as dropbox_connector
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
+from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
@@ -47,6 +49,11 @@ from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.audit import AuditLogEntry
+from app.persistence.connections import (
+    ConnectionRow,
+    EncryptedCredentials,
+    FeedRow,
+)
 from app.persistence.db import session_scope
 from app.persistence.metrics import SessionMetricsRow
 from app.persistence.proposals import PlanProposalRow
@@ -99,6 +106,7 @@ EXPECTED_TOOLS = {
     "get_wellness",
     "get_wellness_trend",
     "get_wellness_weeks",
+    "get_ingest_status",
     # writes
     "append_anchor",
     "create_workout",
@@ -135,6 +143,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_wellness", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_trend", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
+    ("get_ingest_status", {}),
 )
 
 
@@ -3270,3 +3279,101 @@ async def test_the_opener_names_the_weeks_unplanned_rides(client: AsyncClient) -
     assert entry["id"] == session_id
     assert entry["local_date"] == monday.isoformat()
     assert entry["duration_s"] == 3_600
+
+
+# --- AC-18: the coach can see its own supply line ----------------------------------
+
+
+async def test_get_ingest_status_answers_with_no_connection_at_all(
+    session_factory: Any,
+) -> None:
+    # An athlete who never connected Dropbox is a supported configuration, not
+    # an error: files arrive in `data/inbox/` and the answer says so.
+    data = await call(READER, "get_ingest_status")
+
+    assert data["feeds"] == []
+    assert data["local_inbox_only"] is True
+
+
+async def test_get_ingest_status_reports_a_feed_that_has_never_delivered(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    connection = await seed_dropbox(db_session)
+    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
+
+    data = await call(READER, "get_ingest_status")
+
+    assert data["local_inbox_only"] is False
+    [entry] = data["feeds"]
+    assert entry["feed_id"] == str(feed.id)
+    assert entry["folder"] == "/apps/wahoofitness"
+    # Never `0`, never an error: a feed nothing has arrived through yet is a
+    # fact about setup, and "0 deliveries" would read as a broken pipe.
+    assert entry["last_delivery_at"] is None
+    assert entry["state"] == "never_delivered"
+    assert entry["deliveries_7d"] == 0
+    assert entry["connection_status"] == "connected"
+
+
+async def test_get_ingest_status_counts_the_last_seven_days_of_deliveries(
+    dropbox_env: None,
+    data_root: Path,
+    session_factory: Any,
+    db_session: AsyncSession,
+) -> None:
+    from app.ingest import feeds as feed_poll
+    from tests.unit.dropbox_fake import FakeDropbox, file_entry, page
+    from tests.unit.golden_fit import golden
+
+    connection = await seed_dropbox(db_session)
+    await seed_feed(db_session, connection, "/apps/wahoofitness")
+    upstream = FakeDropbox()
+    entry = file_entry("ride.fit", "/apps/wahoofitness/ride.fit")
+    upstream.by_cursor = {None: page(entry, cursor="cursor-1")}
+    upstream.files[entry["id"]] = golden("outdoor_ride.fit").read_bytes()
+    dropbox_connector.set_transport(upstream.transport)
+    try:
+        await feed_poll.poll_feeds()
+    finally:
+        dropbox_connector.set_transport(None)
+
+    data = await call(READER, "get_ingest_status")
+
+    [status] = data["feeds"]
+    assert status["deliveries_7d"] == 1
+    assert status["last_delivery_at"] is not None
+    assert status["state"] == "delivering"
+
+
+async def test_get_ingest_status_refuses_a_write_only_key(
+    session_factory: Any,
+) -> None:
+    # Scopes are named requirements, not a hierarchy: `write` does not imply
+    # `read`, and the refusal has to name the one that is missing.
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_ingest_status")
+
+
+async def seed_dropbox(session: AsyncSession) -> Any:
+    """A connected Dropbox account, as `complete_dropbox` would leave it."""
+    row = ConnectionRow(
+        provider=ConnectionProvider.DROPBOX,
+        status=ConnectionStatus.CONNECTED,
+        account_label="Ada Lovelace (ada@example.com)",
+        scopes=["account_info.read", "files.content.read", "files.metadata.read"],
+        credentials=EncryptedCredentials.seal(
+            {"access_token": "access-token-0", "refresh_token": "refresh-token-0"}
+        ),
+        access_token_expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(hours=1),
+    )
+    session.add(row)
+    await session.commit()
+    return row
+
+
+async def seed_feed(session: AsyncSession, connection: Any, path: str) -> Any:
+    """A folder arc watches on a connection."""
+    row = FeedRow(connection_id=connection.id, remote_path=path)
+    session.add(row)
+    await session.commit()
+    return row

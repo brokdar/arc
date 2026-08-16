@@ -286,6 +286,23 @@ class DropboxSettings(BaseModel):
     app-folder app is structurally unable to see them.
     """
 
+    poll_interval_seconds: int = 120
+    """How often each enabled feed asks Dropbox what has changed.
+
+    Two minutes, against a rate limit measured in thousands of calls a day:
+    one cursor call per feed is ~720 requests/day, which is noise. Shortening
+    it buys nothing the athlete can feel — the ELEMNT→phone→Dropbox leg costs
+    minutes on its own, and arc does not control it.
+    """
+
+    max_batch_attempts: int = 5
+    """Consecutive failures on one listing cursor before the batch is skipped.
+
+    Five, at two-minute intervals, is ten minutes of trying before arc gives
+    up on a page and writes down which entry it gave up on. See
+    `app.ingest.feeds` for why giving up at all is the lesser evil.
+    """
+
 
 class SecretsSettings(BaseModel):
     """The key under which arc encrypts third-party credentials at rest.

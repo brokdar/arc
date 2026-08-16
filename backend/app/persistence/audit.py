@@ -105,6 +105,30 @@ class AuditRepository:
         )
         return total or 0
 
+    async def count_for_entity_since(
+        self, *, action: str, entity_id: uuid.UUID, since: dt.datetime
+    ) -> int:
+        """Count one entity's rows for one action at or after ``since``.
+
+        The trailing-window read behind "how many rides has this folder
+        delivered this week". It counts the audit log for the same reason
+        :meth:`count_since` does: the trail is already the record of every
+        write, so a counter column beside it would be a second answer that can
+        drift from the first — and a delivery count that disagrees with the
+        trail is worse than no delivery count, because the coach reasons over
+        it as if it were the pipeline's own word.
+        """
+        total = await self._session.scalar(
+            select(func.count())
+            .select_from(AuditLogEntry)
+            .where(
+                AuditLogEntry.action == action,
+                AuditLogEntry.entity_id == entity_id,
+                AuditLogEntry.at >= since,
+            )
+        )
+        return total or 0
+
     async def list(
         self, *, offset: int = 0, limit: int = 50
     ) -> tuple[Sequence[AuditLogEntry], int]:
