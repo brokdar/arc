@@ -4,6 +4,7 @@ Unit tests must not require external services. Anything needing a real
 Postgres belongs in tests/integration.
 """
 
+import base64
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,28 @@ def _auth_env(password_hash: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[N
     """
     monkeypatch.setenv("AUTH__PASSWORD_HASH", password_hash)
     monkeypatch.setenv("AUTH__SESSION__SECRET_KEY", "unit-test-secret")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+#: A valid Fernet key (32 urlsafe-base64 bytes), fixed so a test can write a
+#: blob under a *different* key and prove the failure is loud.
+TEST_ENCRYPTION_KEY = base64.urlsafe_b64encode(
+    b"arc-unit-test-key-32-bytes-long!"
+).decode()
+
+
+@pytest.fixture
+def dropbox_env(monkeypatch: pytest.MonkeyPatch, _auth_env: None) -> Iterator[None]:
+    """The two settings the Dropbox connector needs, and a usable secrets key.
+
+    Depends on `_auth_env` so it runs after the cache clear that fixture does;
+    clearing again on the way out keeps a test that overrides `DROPBOX__APP_KEY`
+    from leaking an empty key into the next one.
+    """
+    monkeypatch.setenv("DROPBOX__APP_KEY", "test-app-key")
+    monkeypatch.setenv("SECRETS__ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

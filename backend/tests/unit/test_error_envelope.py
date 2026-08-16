@@ -119,3 +119,29 @@ async def test_a_lost_bootstrap_race_recovers_with_the_winners_row(
 
     assert response.status_code == 200
     assert lookups >= 2
+
+
+# --- the malformed-body 400 is part of the contract, everywhere ---------------
+#
+# FastAPI answers 400, not 422, for a body it cannot parse as JSON at all, and
+# that status has to be in the contract or the fuzz job fails on it — which is
+# how it was found, twice now. Declaring it is one line per route (`BAD_BODY` in
+# the route module), and the mistake is invisible in review because the route
+# works: only the generated client and the fuzzer notice the gap. So the whole
+# surface is swept rather than each new route being remembered individually.
+
+
+async def test_every_json_body_operation_documents_a_bad_body(
+    client: AsyncClient,
+) -> None:
+    spec = (await client.get("/openapi.json")).json()
+
+    offenders = [
+        f"{method.upper()} {path}"
+        for path, methods in spec["paths"].items()
+        for method, operation in methods.items()
+        if "application/json" in operation.get("requestBody", {}).get("content", {})
+        and "400" not in operation["responses"]
+    ]
+
+    assert offenders == []

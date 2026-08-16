@@ -1953,6 +1953,7 @@ export function resetMockState(): void {
   resetAgentState();
   resetAnchorState();
   resetWellnessState();
+  resetConnectionsState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -4101,4 +4102,202 @@ function daysBetween(from: string, to: string): number {
     (Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) /
       86_400_000,
   );
+}
+
+// ============================================================================
+// Dropbox connections (the settings panel)
+// ============================================================================
+
+type Connection = Schemas["ConnectionRead"];
+type Feed = Schemas["FeedRead"];
+type Folder = Schemas["FolderRead"];
+
+/** The connection id every seeded fixture uses. */
+export const DROPBOX_CONNECTION_ID = "0199b000-0000-7000-8000-00000000c001";
+
+/**
+ * The code the fake Dropbox "showed the athlete".
+ *
+ * The complete handler refuses anything else, which is what makes the connect
+ * test about the form rather than about the mock: a panel that posted an empty
+ * field, or the wrong field, gets the same 422 the real API would give it.
+ */
+export const DROPBOX_CODE = "the-code-dropbox-showed";
+
+/** The scopes a real read-only Dropbox grant comes back with. */
+export const DROPBOX_READ_SCOPES = [
+  "account_info.read",
+  "files.content.read",
+  "files.metadata.read",
+];
+
+interface ConnectionsMockState {
+  connections: Connection[];
+  /** Whether an authorization has been started but not yet completed. */
+  authorizationStarted: boolean;
+  /** Remote path → the folders directly under it. */
+  folders: Map<string, Folder[]>;
+  minted: number;
+}
+
+function seedConnectionsState(): ConnectionsMockState {
+  return {
+    connections: [],
+    authorizationStarted: false,
+    folders: new Map<string, Folder[]>([
+      [
+        "",
+        [
+          { path_lower: "/apps", name: "Apps" },
+          { path_lower: "/photos", name: "Photos" },
+        ],
+      ],
+      ["/apps", [{ path_lower: "/apps/wahoofitness", name: "WahooFitness" }]],
+      // A folder holding only files: Dropbox answers 200 with no entries, and
+      // the picker has to say so rather than draw an empty box.
+      ["/apps/wahoofitness", []],
+    ]),
+    minted: 0,
+  };
+}
+
+let connections: ConnectionsMockState | null = null;
+
+/** The current connections mock state. */
+export function connectionsState(): ConnectionsMockState {
+  connections ??= seedConnectionsState();
+  return connections;
+}
+
+/** Put the connections mock back to its seed. Wired into `resetMockState`. */
+export function resetConnectionsState(): void {
+  connections = seedConnectionsState();
+}
+
+/**
+ * The same normalisation `app.domain.connections.normalise_remote_path` does.
+ *
+ * Repeated here rather than approximated: the 409 on a folder already watched
+ * is the behaviour the panel has to cope with, and a mock that compared raw
+ * strings would let a panel that sends `/Apps/WahooFitness/` twice pass.
+ */
+export function normaliseRemotePath(path: string): string {
+  const trimmed = path.trim().replace(/\/+$/, "");
+  if (trimmed === "") {
+    return "";
+  }
+  return (trimmed.startsWith("/") ? trimmed : `/${trimmed}`).toLowerCase();
+}
+
+function mintConnectionId(): string {
+  connectionsState().minted += 1;
+  return `0199b000-0000-7000-8000-0000000${String(
+    connectionsState().minted,
+  ).padStart(5, "0")}`;
+}
+
+/** A connected Dropbox account, as `GET /connections` reports it. */
+export function dropboxConnection(
+  overrides: Partial<Connection> = {},
+): Connection {
+  return {
+    id: DROPBOX_CONNECTION_ID,
+    provider: "dropbox",
+    status: "connected",
+    account_label: "Ada Lovelace (ada@example.com)",
+    scopes: [...DROPBOX_READ_SCOPES],
+    last_error: null,
+    created_at: "2026-08-16T09:30:00Z",
+    updated_at: "2026-08-16T09:30:00Z",
+    feeds: [],
+    ...overrides,
+  };
+}
+
+/** A watched folder, as the API reports it before anything has been delivered. */
+export function dropboxFeed(overrides: Partial<Feed> = {}): Feed {
+  return {
+    id: "0199b000-0000-7000-8000-00000000f001",
+    connection_id: DROPBOX_CONNECTION_ID,
+    remote_path: "/apps/wahoofitness",
+    enabled: true,
+    cursor: null,
+    cursor_attempts: 0,
+    last_delivery_at: null,
+    last_error: null,
+    created_at: "2026-08-16T09:31:00Z",
+    ...overrides,
+  };
+}
+
+/** Seed the mock with a connection the panel will find. */
+export function seedDropboxConnection(
+  overrides: Partial<Connection> = {},
+): Connection {
+  const connection = dropboxConnection(overrides);
+  connectionsState().connections = [connection];
+  return connection;
+}
+
+/** Complete an authorization the way the API does, or say why not. */
+export function completeDropbox(
+  code: string,
+): { connection: Connection } | { detail: string } {
+  const state = connectionsState();
+  if (!state.authorizationStarted) {
+    return {
+      detail:
+        "No Dropbox authorization is in progress. Start the connection " +
+        "first, then paste the code Dropbox shows you.",
+    };
+  }
+  if (state.connections.length > 0) {
+    return {
+      detail:
+        "A Dropbox account is already connected. Disconnect it before " +
+        "connecting another.",
+    };
+  }
+  if (code.trim() !== DROPBOX_CODE) {
+    return {
+      detail:
+        "Dropbox refused that authorization code: it has already been used, " +
+        "or it has expired. Start the connection again and paste the new code.",
+    };
+  }
+  state.authorizationStarted = false;
+  const connection = dropboxConnection();
+  state.connections = [connection];
+  return { connection };
+}
+
+/** Create a feed the way the API does — normalised path, 409 on a repeat. */
+export function createDropboxFeed(
+  connectionId: string,
+  remotePath: string,
+): { feed: Feed } | { status: 404 | 409; detail: string } {
+  const state = connectionsState();
+  const connection = state.connections.find((row) => row.id === connectionId);
+  if (!connection) {
+    return { status: 404, detail: `Connection ${connectionId} not found` };
+  }
+  const path = normaliseRemotePath(remotePath);
+  if (connection.feeds.some((feed) => feed.remote_path === path)) {
+    return {
+      status: 409,
+      detail: `arc is already watching ${path || "the Dropbox root"} on this connection.`,
+    };
+  }
+  const feed = dropboxFeed({
+    id: mintConnectionId(),
+    connection_id: connectionId,
+    remote_path: path,
+  });
+  connection.feeds = [...connection.feeds, feed];
+  return { feed };
+}
+
+/** The folders directly under a path, or null when the path is unknown. */
+export function dropboxFolders(path: string): Folder[] | null {
+  return connectionsState().folders.get(normaliseRemotePath(path)) ?? null;
 }

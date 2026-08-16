@@ -10,6 +10,7 @@ import {
   AnchorHistory,
   CurrentAnchors,
 } from "@/components/settings/anchors";
+import { DropboxPanel } from "@/components/settings/dropbox-panel";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { ZonesPreview } from "@/components/settings/zones-preview";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
@@ -24,6 +25,10 @@ import type { WritableAnchorType } from "@/lib/anchors";
  * was no screen in the application that could enter one. The order is the
  * order of the question being answered: what is in force, how to change it,
  * what it produces, what it has been.
+ *
+ * Dropbox comes last: where rides come *from* is settled once and then never
+ * looked at again, unlike an anchor, which is the number every screen above
+ * resolves against.
  *
  * The profile and the illness flag come after, and are smaller on purpose.
  * The flag in particular is *not* re-implemented here — it is the same control
@@ -82,6 +87,11 @@ export function SettingsView() {
           <ProfileForm className="min-w-0 flex-[1_1_480px]" />
           <HealthPanel className="min-w-0 flex-[1_1_340px]" />
         </div>
+
+        {/* Last, and deliberately: this is the panel an athlete visits twice
+            — once at setup and once when a ride stops arriving — while
+            everything above it is read on the way past. */}
+        <DropboxPanel />
       </PageBody>
     </>
   );

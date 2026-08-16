@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
@@ -6,11 +8,14 @@ from app.core.config import (
     AuthSettings,
     McpSettings,
     PostgresSettings,
+    SecretsSettings,
     SessionSettings,
     Settings,
 )
 
 REAL_HASH = "$2b$12$" + "x" * 53
+#: Fernet keys are exactly 32 urlsafe-base64-encoded bytes.
+FERNET_KEY = base64.urlsafe_b64encode(b"k" * 32).decode()
 
 
 def test_repo_root_anchor_points_at_the_repository() -> None:
@@ -113,6 +118,19 @@ def test_production_rejects_a_missing_session_secret() -> None:
         )
 
 
+def test_production_names_a_missing_encryption_key_among_the_problems() -> None:
+    """AC-8: the key that decrypts the Dropbox credential joins the boot guard.
+
+    A production instance booting without it would take the athlete through
+    the whole connect ritual and then be unable to read back what it stored —
+    a failure that only shows up the first time a token has to be refreshed.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(environment="production", _env_file=None)
+
+    assert "SECRETS__ENCRYPTION_KEY is empty" in str(excinfo.value)
+
+
 def test_production_boots_with_real_secrets() -> None:
     settings = Settings(
         environment="production",
@@ -121,6 +139,7 @@ def test_production_boots_with_real_secrets() -> None:
             session=SessionSettings(secret_key=SecretStr("x" * 64)),
         ),
         postgres=PostgresSettings(password=SecretStr("a-real-password")),
+        secrets=SecretsSettings(encryption_key=SecretStr(FERNET_KEY)),
         _env_file=None,
     )
 

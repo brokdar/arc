@@ -27,6 +27,17 @@ timezone offset* — and a malformed one is refused by name. Durations are
 seconds, cycling load is TSS-equivalent, strength volume is kilograms, and
 power is watts. Every read carries ``red_flag``; every write takes
 ``dry_run``.
+
+**Connecting a cloud account has no tool here, and will not get one.** The
+standing parity rule is about *capability* — anything the athlete can ask arc
+to reason about, the agent can too — not about every endpoint having a twin.
+Holding, exchanging and revoking the athlete's Dropbox OAuth credential is not
+a coaching capability; it is the operator's setup ritual, done once, at a
+screen, with a code pasted from another site. An agent with a
+``connect_dropbox`` tool would be an agent that can move where the athlete's
+training files come from. What the agent *does* get, in the PR that makes the
+feed deliver, is the read half: whether the pipeline is alive, so it can tell
+a quiet week from a broken one.
 """
 
 import datetime as dt
