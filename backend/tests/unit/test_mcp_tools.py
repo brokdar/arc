@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
+from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp.tools import register_tools
@@ -223,6 +224,34 @@ async def rows(session: AsyncSession, model: Any) -> list[Any]:
     """Every row of one table."""
     session.expire_all()
     return list((await session.execute(select(model))).scalars())
+
+
+async def evaluate(session_id: str, text: str, **overrides: Any) -> Any:
+    """Write one evaluation of a session as the coach."""
+    return await call(
+        COACH,
+        "write_session_evaluation",
+        {"session_id": session_id, "text": text, "model_id": MODEL} | overrides,
+    )
+
+
+async def annotate_week(monday: dt.date, text: str, **overrides: Any) -> Any:
+    """Annotate one plan week as the coach."""
+    return await call(
+        COACH,
+        "annotate",
+        {"text": text, "model_id": MODEL, "plan_week": monday.isoformat()} | overrides,
+    )
+
+
+def this_monday() -> dt.date:
+    """The Monday `get_coaching_context` will resolve the current week to.
+
+    Computed in UTC, the way `app.services.plan` does it — the opener passes
+    no `start`, so the week it reads is a fact about the clock and not about
+    :data:`MONDAY`.
+    """
+    return week_start(dt.datetime.now(dt.UTC).date())
 
 
 # --- the shape of the surface ------------------------------------------------------
@@ -2123,6 +2152,324 @@ async def test_a_note_about_both_a_session_and_a_week_is_refused(
                 "plan_week": MONDAY.isoformat(),
             },
         )
+
+
+# --- reading notes back ------------------------------------------------------------
+#
+# The coach writes the one artefact in this application that is its own, and
+# until these it could not see it again. Every test here writes as `COACH` and
+# reads as `READER`, because the keys are single-scope: the read path is
+# proved to be a read path, not the write tool's own answer echoed back.
+
+
+async def test_an_evaluation_is_on_the_next_read_of_its_session(
+    client: AsyncClient,
+) -> None:
+    session_id = await record(client)
+    await evaluate(session_id, "Steady all the way through.")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    [note] = data["agent_notes"]
+    assert note["kind"] == "evaluation"
+    assert note["text"] == "Steady all the way through."
+    assert note["model_id"] == MODEL
+    assert note["dispute"] is None
+    # `views.note` renders whole, so the subject is on the note even where the
+    # block it came back in already fixes it.
+    assert note["session_id"] == session_id
+
+
+async def test_a_session_nobody_wrote_about_says_so_with_an_empty_list(
+    client: AsyncClient,
+) -> None:
+    session_id = await record(client)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    # `[]`, never null and never absent: "nothing has been said about this
+    # session" is an answer, and the coach must be able to read it as one.
+    assert data["agent_notes"] == []
+
+
+async def test_a_dry_run_evaluation_is_not_on_the_next_read(
+    client: AsyncClient,
+) -> None:
+    session_id = await record(client)
+    await evaluate(session_id, "Steady.", dry_run=True)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["agent_notes"] == []
+
+
+async def test_a_session_annotation_shares_the_block_with_the_evaluation(
+    client: AsyncClient,
+) -> None:
+    # The block is both kinds. `evaluations` would drop this note, which is
+    # the tier-0 half of the same table and about the same session.
+    session_id = await record(client)
+    await evaluate(session_id, "Held the target.")
+    await call(
+        COACH,
+        "annotate",
+        {
+            "text": "The power meter reads low since the battery change.",
+            "model_id": MODEL,
+            "session_id": session_id,
+        },
+    )
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert [note["kind"] for note in data["agent_notes"]] == [
+        "evaluation",
+        "annotation",
+    ]
+
+
+async def test_notes_on_a_session_come_back_oldest_first(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    session_id = await record(client)
+    await evaluate(session_id, "Written first.")
+    await evaluate(session_id, "Written second.")
+
+    # Ordered by *when they were said*, not by the order they were inserted:
+    # pushing the second note's timestamp behind the first must reorder the
+    # block, or the read is only accidentally chronological.
+    [first, second] = sorted(
+        await rows(db_session, AgentNoteRow), key=lambda row: row.text
+    )
+    first.created_at = dt.datetime(2026, 8, 10, 9, 0, tzinfo=dt.UTC)
+    second.created_at = dt.datetime(2026, 8, 10, 8, 0, tzinfo=dt.UTC)
+    await db_session.commit()
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert [note["text"] for note in data["agent_notes"]] == [
+        "Written second.",
+        "Written first.",
+    ]
+
+
+async def test_the_order_is_still_total_inside_one_clock_tick(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    session_id = await record(client)
+    await evaluate(session_id, "Written first.")
+    await evaluate(session_id, "Written second.")
+
+    # Two notes on one instant — the repository's id tiebreak is what keeps
+    # the conversation readable when the clock cannot separate them.
+    tick = dt.datetime(2026, 8, 10, 9, 0, tzinfo=dt.UTC)
+    for row in await rows(db_session, AgentNoteRow):
+        row.created_at = tick
+    await db_session.commit()
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert [note["text"] for note in data["agent_notes"]] == [
+        "Written first.",
+        "Written second.",
+    ]
+
+
+async def test_the_athletes_own_notes_are_a_different_key(client: AsyncClient) -> None:
+    # `athlete_notes` is the athlete's own text about their session;
+    # `agent_notes` is what the coach said about it. Conflating them would
+    # attribute one to the other, which is the whole reason notes are
+    # attributed at all.
+    session_id = await record(client, notes="Legs felt awful from the gun.")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["athlete_notes"] == "Legs felt awful from the gun."
+    assert data["agent_notes"] == []
+    # Both keys are named for their author. `notes` is the generic word, it
+    # reads like the superset of every note on this payload, and it is the one
+    # block the coach did not write — so it must not come back under it.
+    assert "notes" not in data
+
+
+async def test_a_note_from_a_second_key_is_returned_with_its_own_author(
+    client: AsyncClient,
+) -> None:
+    # No author filter: the block is the record of what has been said about
+    # this session, not one model's diary.
+    session_id = await record(client)
+    second = f"nightly:write:{('9f8e7d6c' * 4)}"
+    server = server_for(COACH, second, READER)
+    async with connected_as(server, second) as agent:
+        await agent.call_tool(
+            "write_session_evaluation",
+            {
+                "session_id": session_id,
+                "text": "Flagged overnight.",
+                "model_id": MODEL,
+            },
+        )
+    async with connected_as(server, READER) as reader:
+        result = await reader.call_tool(
+            "get_session_detail", {"session_id": session_id}
+        )
+
+    [note] = result.data["agent_notes"]
+    assert note["text"] == "Flagged overnight."
+    assert note["created_by"] == "agent:nightly"
+
+
+async def test_a_dispute_reaches_the_coach_on_the_note_it_was_left_on(
+    client: AsyncClient,
+) -> None:
+    session_id = await record(client)
+    disputed = (await evaluate(session_id, "Written first."))["note"]["id"]
+    await evaluate(session_id, "Written second.")
+
+    response = await client.post(
+        f"/api/v1/agent-notes/{disputed}/dispute", json={"rating": "down"}
+    )
+    assert response.status_code == 200, response.text
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    # The rating attaches to a note, not to the session.
+    assert [(note["text"], note["dispute"]) for note in data["agent_notes"]] == [
+        ("Written first.", "down"),
+        ("Written second.", None),
+    ]
+
+    cleared = await client.post(
+        f"/api/v1/agent-notes/{disputed}/dispute", json={"rating": None}
+    )
+    assert cleared.status_code == 200, cleared.text
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    [first, _] = data["agent_notes"]
+    assert "dispute" in first, "a cleared rating is null, not an absent key"
+    assert first["dispute"] is None
+
+
+async def test_an_agreeing_rating_reaches_the_coach_too(client: AsyncClient) -> None:
+    # Both values of the toggle are signal about coach quality, and a block
+    # that only carried the negative one would report a distorted loop.
+    session_id = await record(client)
+    note_id = (await evaluate(session_id, "That was the right call."))["note"]["id"]
+
+    response = await client.post(
+        f"/api/v1/agent-notes/{note_id}/dispute", json={"rating": "up"}
+    )
+    assert response.status_code == 200, response.text
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    [note] = data["agent_notes"]
+    assert note["dispute"] == "up"
+
+
+async def test_a_week_annotation_is_on_the_next_read_of_that_week(
+    session_factory: Any,
+) -> None:
+    await annotate_week(MONDAY, "Three weeks of threshold with no easy week.")
+
+    data = await call(READER, "get_plan_week", {"start": MONDAY.isoformat()})
+
+    # Nothing is planned this week: the block is a sibling of `week`, so it
+    # does not depend on the plan being non-empty.
+    assert data["week"]["sessions"] == []
+    [note] = data["agent_notes"]
+    assert note["kind"] == "annotation"
+    assert note["text"] == "Three weeks of threshold with no easy week."
+    assert note["plan_week"] == MONDAY.isoformat()
+    assert note["session_id"] is None
+
+    later = await call(
+        READER,
+        "get_plan_week",
+        {"start": (MONDAY + dt.timedelta(days=7)).isoformat()},
+    )
+
+    assert later["agent_notes"] == []
+
+
+async def test_an_adjacent_weeks_note_does_not_leak_in(session_factory: Any) -> None:
+    await annotate_week(MONDAY - dt.timedelta(days=7), "About last week.")
+    await annotate_week(MONDAY, "About this week.")
+    await annotate_week(MONDAY + dt.timedelta(days=7), "About next week.")
+
+    data = await call(READER, "get_plan_week", {"start": MONDAY.isoformat()})
+
+    assert [note["text"] for note in data["agent_notes"]] == ["About this week."]
+
+
+async def test_a_note_about_a_session_in_the_week_is_read_on_the_session(
+    client: AsyncClient,
+) -> None:
+    # The #49 boundary, pinned: the week block carries the notes filed under
+    # that Monday, and per-session commentary is read on the session — even
+    # when the session falls inside the week.
+    session_id = await record(client)
+    await evaluate(session_id, "Steady all the way through.")
+
+    week = await call(READER, "get_plan_week", {"start": MONDAY.isoformat()})
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert week["agent_notes"] == []
+    assert [note["text"] for note in detail["agent_notes"]] == [
+        "Steady all the way through."
+    ]
+
+
+async def test_a_non_monday_window_has_no_week_to_ask_under(
+    session_factory: Any,
+) -> None:
+    # The plan service serves seven days from any day, so this call is legal
+    # and must stay legal. There is no plan-week key for a Wednesday window,
+    # and the note under the Monday it overlaps is not this window's
+    # commentary — so the answer is `null`, not that note and not `[]`.
+    await annotate_week(MONDAY, "Three weeks of threshold with no easy week.")
+    wednesday = MONDAY + dt.timedelta(days=2)
+
+    data = await call(READER, "get_plan_week", {"start": wednesday.isoformat()})
+
+    assert data["week"]["start"] == wednesday.isoformat()
+    assert data["agent_notes"] is None
+
+
+async def test_the_default_week_asks_under_the_monday_it_resolved_to(
+    session_factory: Any,
+) -> None:
+    # The call `READ_TOOLS` already makes: no `start`, so the resolved week
+    # is a Monday and the block is a list. `null` is reachable only by the
+    # non-Monday path.
+    data = await call(READER, "get_plan_week")
+
+    assert dt.date.fromisoformat(data["week"]["start"]).weekday() == 0
+    assert data["agent_notes"] == []
+
+
+async def test_the_opener_carries_this_weeks_notes(session_factory: Any) -> None:
+    await annotate_week(this_monday(), "Threshold block, week three.")
+    await annotate_week(this_monday() - dt.timedelta(days=7), "About last week.")
+
+    data = await call(READER, "get_coaching_context")
+
+    assert data["week"]["start"] == this_monday().isoformat()
+    assert [note["text"] for note in data["agent_notes"]] == [
+        "Threshold block, week three."
+    ]
+    assert data["agent_notes"][0]["plan_week"] == this_monday().isoformat()
+
+
+async def test_the_openers_shape_does_not_change_in_a_quiet_week(
+    session_factory: Any,
+) -> None:
+    # The opener never passes a `start`, so its week is always a Monday and
+    # the block is always a list — `[]` in a week nobody has written about.
+    data = await call(READER, "get_coaching_context")
+
+    assert data["agent_notes"] == []
 
 
 # --- what the trail says the agent did --------------------------------------------
