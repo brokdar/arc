@@ -680,7 +680,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
     async def get_session_detail(session_id: str) -> dict[str, Any]:
         """Read everything computed about one recorded session.
 
-        The full picture for a single session, assembled from four places:
+        The full picture for a single session, assembled from several places:
 
         * `metrics` — what was measured: duration, training load and its
           basis, time in easy/moderate/hard zones (seconds), normalized power
@@ -703,15 +703,21 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `weight_kg_in_force` — the body weight governing that date, so watts
           per kilogram is derivable. Null before the first weight was recorded,
           and w/kg is then absent rather than computed against a default.
+        * `athlete_notes` — **the athlete's own words** about their session,
+          one free-text string or null. Theirs, not yours: you may read it and
+          there is no tool that writes it. Named for its author rather than
+          `notes`, because the generic word reads like the superset of every
+          note on this payload and is in fact the one block you did not write.
         * `agent_notes` — **what has already been said about this session**,
           oldest first, with the athlete's `dispute` on each. Both kinds are
           here: the evaluations `write_session_evaluation` writes *and* the
           session-targeted annotations `annotate` writes, because they are
           two halves of one conversation about one ride and a coach reading
-          only one half writes contradictions. Not to be confused with
-          `notes`, one block up, which is the **athlete's own** text about
-          their session — the two are never merged, or an opinion signed by a
-          model becomes indistinguishable from the athlete's word.
+          only one half writes contradictions. Never merged with
+          `athlete_notes` above: these are permanent, attributed and
+          disputable, that one is mutable, unattributed and the athlete's, and
+          a list holding both would make an opinion signed by a model
+          indistinguishable from the athlete's word.
 
           No author filter: a note written under another key is here too, with
           its own `created_by`. This block is the record of what has been said
@@ -745,7 +751,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 links = await matching.for_sessions([identifier])
                 return {
                     "session": views.session_summary(row, summary),
-                    "notes": row.notes,
+                    "athlete_notes": row.notes,
                     "agent_notes": [
                         views.note(entry)
                         for entry in await notes.list(session_id=identifier)

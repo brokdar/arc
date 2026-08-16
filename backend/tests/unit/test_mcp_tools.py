@@ -2276,15 +2276,20 @@ async def test_the_order_is_still_total_inside_one_clock_tick(
 
 
 async def test_the_athletes_own_notes_are_a_different_key(client: AsyncClient) -> None:
-    # `notes` is the athlete's own text about their session; `agent_notes` is
-    # what the coach said about it. Conflating them would attribute one to the
-    # other, which is the whole reason notes are attributed at all.
+    # `athlete_notes` is the athlete's own text about their session;
+    # `agent_notes` is what the coach said about it. Conflating them would
+    # attribute one to the other, which is the whole reason notes are
+    # attributed at all.
     session_id = await record(client, notes="Legs felt awful from the gun.")
 
     data = await call(READER, "get_session_detail", {"session_id": session_id})
 
-    assert data["notes"] == "Legs felt awful from the gun."
+    assert data["athlete_notes"] == "Legs felt awful from the gun."
     assert data["agent_notes"] == []
+    # Both keys are named for their author. `notes` is the generic word, it
+    # reads like the superset of every note on this payload, and it is the one
+    # block the coach did not write — so it must not come back under it.
+    assert "notes" not in data
 
 
 async def test_a_note_from_a_second_key_is_returned_with_its_own_author(
