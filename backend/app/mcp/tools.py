@@ -421,6 +421,21 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           `expired` prompt beside a missing day is a morning that went
           unreported, and a null one is a morning the application never put the
           question. Read it before treating an absent day as a signal.
+          Recording the day answers it — see `record_wellness`.
+
+          `readiness` is this athlete's own normal, already applied, so you
+          never have to reconstruct it from the series.
+          `markers_outside_band` counts how many objective markers sit outside
+          their own trailing-60-day band this morning and names each one with a
+          direction. Read the denominator literally: it counts **only the
+          markers whose baseline is mature enough to have a band**, so a
+          morning with five markers recorded and one baseline still forming
+          says `2 of 4`, not `2 of 5` — a marker whose baseline cannot yet say
+          anything about it is left out rather than counted as though it were
+          inside its band. `joint_state` names the HRV x resting-HR quadrant
+          when both of those are mature: a **label**, with no verdict attached
+          and no ranking against the other quadrants. The series and the
+          baselines behind all of it are `get_wellness_trend`.
 
           Two flags decide how to read any of it. `not_actionable` on a day
           names the confounders the athlete declared that void that morning's
@@ -2125,6 +2140,19 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         tool — but for a file of history use `record_wellness_days`, which
         costs one write instead of one per day. A **future** date is refused: a
         reading for tomorrow is not a late entry, it is a typo.
+
+        **Recording a day answers that day's standing question.** A `pending`
+        prompt for the date flips to `answered` in the same transaction as the
+        write, so there is no second call to make and no `answer_prompt` tool
+        to look for: filling the morning in *is* the answer, and a prompt left
+        pending beside a recorded day would expire into a silence the coach
+        reads as an athlete who could not be bothered. A prompt that already
+        `expired` is left alone — a day entered after its question closed is a
+        late entry, not an answer arriving on time. `record_wellness_days` does
+        **not** do this: a backfill is history arriving rather than a morning
+        being reported, so a migration that happens to cover today leaves
+        today's question standing. The prompt's standing is on
+        `get_coaching_context`.
 
         Bounds are typo guards, not clinical limits: SpO2 is a **fraction**
         (`0.97`, not `97`), sleep is **seconds**, wrist temperature is the

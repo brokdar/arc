@@ -8,6 +8,7 @@ and the compact block on the one-call opener.
 """
 
 import datetime as dt
+import json
 from typing import Any
 
 import pytest
@@ -15,9 +16,11 @@ from fastmcp.exceptions import ToolError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.actor import Actor
 from app.domain.wellness import MAX_BACKFILL_DAYS, Confounder
 from app.persistence.audit import AuditLogEntry
 from app.persistence.wellness import WellnessDayRow
+from app.services.wellness import WellnessService
 from tests.unit.mcp_harness import connected_as, server_for
 
 _KEY = "a1b2c3d4" * 4
@@ -37,6 +40,20 @@ async def call(entry: str, tool: str, arguments: dict[str, Any] | None = None) -
 def past(offset: int) -> str:
     """An ISO date ``offset`` days ago."""
     return (TODAY - dt.timedelta(days=offset)).isoformat()
+
+
+def field_count(value: Any) -> int:
+    """Every key in ``value``, at every depth, lists walked into.
+
+    ``len(block)`` counts the four or five top-level keys and misses the
+    hundred beneath them, which is how a budget written against the outside of
+    a nested block stops measuring anything.
+    """
+    if isinstance(value, dict):
+        return len(value) + sum(field_count(item) for item in value.values())
+    if isinstance(value, list):
+        return sum(field_count(item) for item in value)
+    return 0
 
 
 # --- the self-describing vocabulary (AC-43) -----------------------------------
@@ -457,11 +474,20 @@ async def test_the_coaching_context_carries_today_and_a_compact_recent_series(
 
 
 async def test_the_coaching_context_block_stays_small_with_a_long_history(
-    session_factory: Any,
+    session_factory: Any, db_session: AsyncSession
 ) -> None:
     # AC-55: a pinned budget, so a field added later that would bloat the one
     # call every session begins with fails here rather than quietly costing the
     # coach tokens forever.
+    #
+    # A prompt is standing for today, and the batch path deliberately does not
+    # answer it, so the block is measured with every key it can carry populated.
+    # A null `prompt` would leave that object's own fields outside the budget —
+    # which is exactly how `readiness` and `prompt` came to be free.
+    await WellnessService.from_session(db_session).raise_prompt(
+        TODAY, actor=Actor.system()
+    )
+    await db_session.commit()
     await call(
         COACH,
         "record_wellness_days",
@@ -489,11 +515,77 @@ async def test_the_coaching_context_block_stays_small_with_a_long_history(
 
     block = (await call(READER, "get_coaching_context"))["wellness"]
 
+    # The week, which is a different claim from the budget below: `recent` is
+    # seven days whatever the history holds.
     assert len(block["recent"]) == 7, "the opener carries a week, not the history"
     fields = sum(len(day) for day in block["recent"])
     assert fields <= 70, (
         "the compact series has grown; whole days belong in get_wellness"
     )
+    # The fixture must be at its fullest for the budget to mean anything: a
+    # null `prompt` costs 4 fields, and if this setup ever stops taking effect
+    # the ceilings would silently go back to covering 106 of the block's
+    # fields — the same "the budget stopped covering what it claims" failure
+    # this whole assertion exists to end, one level up.
+    assert block["prompt"] is not None, "the fixture must raise a prompt"
+    assert block["readiness"] is not None, "the fixture must produce a readiness block"
+    assert block["today"] is not None, "the fixture must record today"
+
+    # And the whole block, because budgeting `recent` alone left everything
+    # else free: `readiness` and `prompt` were each added to this block without
+    # touching the ceiling above, which is 50 fields nobody counted on the one
+    # call every session begins with.
+    #
+    # Measured 2026-08-14 against this 90-day fixture: **110 fields, 2610
+    # bytes**. The slack is deliberately SMALLER than the smallest key anyone
+    # would plausibly add — a `prompt`-shaped key is 4 fields and ~130 bytes —
+    # so that every addition forces a conscious edit to these numbers rather
+    # than sliding underneath them. That ratchet is the point: an earlier draft
+    # of this test left 10 fields of headroom "for a marker or two", and a
+    # 4-field key measured through it untouched, which is precisely the
+    # regression that produced this criterion.
+    #
+    # The reserved-for-markers rationale was wrong twice: a marker costs 4
+    # fields, not one, and all 90 fixture days are identical, so the SD is zero
+    # and `readiness.markers` can never be non-empty here. The count is fully
+    # deterministic at 110; the only jitter in the byte figure is `expires_at`
+    # dropping a zero microsecond field, 7 bytes at roughly one in a million.
+    #
+    # A key that blows this budget must either justify what it costs on every
+    # session opener — this is the most expensive place in the surface to add a
+    # field — or live behind its own tool, which is where `get_wellness`,
+    # `get_wellness_trend` and `get_wellness_weeks` already are.
+    assert field_count(block) <= 112, (
+        "the wellness block has grown; a field here is paid for on every "
+        "coaching session"
+    )
+    assert len(json.dumps(block).encode()) <= 2_640, (
+        "the wellness block has grown in bytes; long strings cost the coach "
+        "tokens even when the field count holds"
+    )
+
+
+async def test_recording_today_answers_the_day_s_standing_prompt(
+    session_factory: Any, db_session: AsyncSession
+) -> None:
+    # The agent's half of `test_answering_the_prompt_writes_the_day_and_closes
+    # _the_question`: there is no `answer_prompt` tool and there is not meant to
+    # be one — filling in the day *is* the answer, so an agent that records for
+    # the athlete closes the question the application put to them. Pinned on
+    # this surface because the docstring now says so, and a promise made to an
+    # agent in prose is a promise nothing else keeps.
+    await WellnessService.from_session(db_session).raise_prompt(
+        TODAY, actor=Actor.system()
+    )
+    await db_session.commit()
+    before = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
+    assert before["status"] == "pending"
+
+    await call(COACH, "record_wellness", {"fatigue": 3})
+
+    prompt = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
+    assert prompt["status"] == "answered"
+    assert prompt["resolved_at"]
 
 
 async def test_the_context_says_nothing_recorded_rather_than_inventing_a_day(
