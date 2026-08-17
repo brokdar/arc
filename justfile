@@ -125,6 +125,27 @@ check: lint typecheck test build api-check
 # `check` plus the integration suite (needs Docker for Postgres)
 check-all: check test-int
 
+# The single pre-review gate, for a human or an agent: one command, one exit
+# code, one success marker to grep for. It is `check` plus the one pre-push hook
+# `check` does not contain — the migration heuristic, which needs a commit range
+# and so only says anything once there is one.
+#
+# WHY IT EXISTS SEPARATELY. `implement-plan` used to tell each developer agent
+# "the gate is `just check`, it must end GREEN" and then tell the reviewer "`just
+# check` is already GREEN, do not re-run it". Neither statement was ever
+# observed: on PR #54 (16 Aug 2026) the implementer ran `just lint`, `just test`
+# and `just test-int` piecemeal and never ran the gate at all, and the reviewer
+# was told it had passed. Now one cheap seat runs THIS, and its exit code is
+# evidence the reviewer reads rather than a claim it is asked to trust.
+#
+# Non-mutating by construction (`ruff format --check`, never `--write`), so it is
+# safe on an uncommitted tree: it cannot sweep an unrelated reformat into a diff.
+
+# The single pre-review gate: `check` plus the migration heuristic
+gate: check
+	@bash scripts/check-migration-required.sh
+	@echo "GATE OK"
+
 # --- Database ----------------------------------------------------------------
 
 # POSTGRES__HOST=localhost for the same reason as the dev-* recipes above: the

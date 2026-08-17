@@ -22,7 +22,11 @@ VERSIONS="backend/app/persistence/alembic/versions"
 
 # No usable range (no remote, shallow clone, detached oddity) — never block on
 # a range we could not determine. `alembic check` in CI is still the authority.
-range="$("$here/git-push-range.sh")"
+# Invoked through `bash`, not as an executable: this repo has `core.fileMode =
+# false`, so a lost +x bit is invisible in `git status` and this script exited 126
+# — "Permission denied" — for every push that touched a model. A guard that
+# cannot run is worse than no guard, because the push goes green.
+range="$(bash "$here/git-push-range.sh")"
 [ -n "$range" ] || exit 0
 read -r from_ref to_ref <<<"$range"
 

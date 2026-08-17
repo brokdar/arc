@@ -7,6 +7,13 @@ there — every decision names the docstring or test it lands in.
 **The parser reads the marked lines verbatim.** Everything else is prose for a human and for the
 developer agent. Trim prose freely; never drop a marked line.
 
+The parser is `scripts/parse-plan.mjs`, and it is strict on purpose: a missing `> **Branch**:`,
+`> **Depends**:`, `> **Needs Docker**:`, `**Why this PR**:`, `**Delivers**:`, `**Reuses**:` or
+`**Acceptance**` block makes it exit 2 and name the PR and the line, before `implement-plan` spawns a
+single agent. Check a new plan with `node scripts/parse-plan.mjs <slug>-plan.md` — it is instant, and
+it is the cheapest moment to find a defect. `> **Source**:` is read too, and becomes the push agent's
+hint for the issue a PR closes.
+
 ---
 
 ````markdown

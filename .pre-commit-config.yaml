@@ -113,6 +113,62 @@ repos:
         language: system
         pass_filenames: false
         files: ^(\.claude/workflows/implement-plan\.js|scripts/workflow-guards\.test\.mjs)$
+      # The guards above are pure functions; every bug that actually cost a run
+      # lived in the ORCHESTRATION between seats, which no test could reach
+      # without spawning a dozen agents against a real remote. This simulates
+      # whole runs against the real script with stubbed agents — seat order, loop
+      # bounds, what merges, what halts, and what each prompt says — in
+      # milliseconds. Its `parallel` deep-clones results on purpose, so nothing
+      # can quietly depend on mutation surviving that boundary again.
+      - id: implement-plan-sim-test
+        name: implement-plan-sim-test
+        entry: node scripts/implement-plan.sim.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/workflows/implement-plan\.js|scripts/implement-plan\.sim\.test\.mjs)$
+      # The three scripts that replaced an agent's judgement inside that workflow.
+      # Each one now decides something a model used to derive: what the plan says,
+      # whether CI ran, and who owns the Docker ports. A regression in any of them
+      # is silent at the only moment it matters — mid-run, with PRs in flight — so
+      # their cases run on every edit. They are pure or hermetic and cost under a
+      # second together.
+      - id: parse-plan-test
+        name: parse-plan-test
+        entry: node scripts/parse-plan.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^scripts/parse-plan(\.test)?\.mjs$
+      - id: ci-status-test
+        name: ci-status-test
+        entry: node scripts/ci-status.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^scripts/ci-status(\.test)?\.mjs$
+      - id: docker-lock-test
+        name: docker-lock-test
+        entry: ./scripts/docker-lock.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/docker-lock(\.test)?\.sh$
+      # This checkout has core.fileMode=false, so git ignores the +x bit: a hook
+      # script added without `git update-index --chmod=+x` is committed 100644,
+      # `git status` shows nothing, and it exits 126 for everyone else.
+      # `git-push-range.sh` was in exactly that state, which meant the
+      # migration-drift guard exited "Permission denied" on every push and its own
+      # 11-case suite failed 11/11 — silently, because a guard that cannot run
+      # still lets the push through. Invoked with `bash` on purpose: a check for
+      # missing executable bits must not need one.
+      # pre-push, not pre-commit: this reads the INDEX, and during a commit prek
+      # has swapped in a temporary one holding only the staged subset — every
+      # other tracked script then reads as untracked and a staged mode change
+      # reads as unset. At push time the index is the real one.
+      - id: exec-bits
+        name: exec-bits
+        entry: bash scripts/check-exec-bits.sh
+        language: system
+        pass_filenames: false
+        files: ^(\.pre-commit-config\.yaml|scripts/.*)$
+        stages: [pre-push]
 
   # ============================================================================
   # API contract synchronization

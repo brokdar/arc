@@ -1,12 +1,24 @@
 export const meta = {
   name: "implement-plan",
   description:
-    "Build a feature plan's pull requests: each in its own worktree, developed TDD against its acceptance criteria and edge cases, gated by an independent arc-reviewer, then pushed as its own PR with CI driven green. PRs others depend on auto-merge so the next group can start; leaf PRs stay open for the operator.",
+    "Build a feature plan's pull requests: each in its own worktree, developed TDD against its acceptance criteria and edge cases, gated by a deterministic `just gate` run and then by an independent arc-reviewer, then pushed as its own PR with CI driven green. PRs the DAG waits on auto-merge so the next group can start; leaf PRs stay open for the operator.",
   // Only the statically-known group is declared. Per-PR groups are created at
   // runtime by their agents' `phase:` option — their titles are dynamic, and
   // declaring them here would render empty groups on a scoped run.
-  phases: [{ title: "Parse", detail: "plan → PRs, cross-checked against gh + git" }],
+  phases: [{ title: "Parse", detail: "plan → PRs, via scripts/parse-plan.mjs" }],
 };
+
+// ── What this script may and may not do ──────────────────────────────────────
+// The Workflow runtime has NO shell and NO filesystem: this script can only call
+// `agent()`. So every mechanical step is a SCRIPT in `scripts/`, run by the
+// cheapest possible seat, whose exit code and output tail come back as
+// structured data for the seats that exercise judgement. Three steps moved out
+// of judgement this way, each after costing a real run:
+//   · parsing the plan      → scripts/parse-plan.mjs   (tested)
+//   · the pre-review gate   → `just gate`              (one exit code)
+//   · CI status / no-budget → scripts/ci-status.mjs    (tested)
+// Do not put any of them back in a prompt. A model asked to derive a mechanical
+// fact spends 40 turns and is occasionally wrong in a way nothing detects.
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 // Tolerant of a bare string (hand-launch, or a slash-command wrapper echoing the
@@ -43,10 +55,17 @@ const VERIFY_FEATURE = A.verifyFeature === true || A.verifyFeature === "true";
 const AUTO_MERGE = A.autoMerge === false || A.autoMerge === "false" ? false : true;
 
 // Review reject → fix → targeted re-review, this many times, then a hard stop
-// with NO PR opened. CI red → fix → re-review → push → re-watch, likewise. Both
-// bounded: an unbounded loop burns tokens on something that needs a human.
+// with NO PR opened. CI red → fix → scoped re-review → push → re-watch, likewise.
+// A red gate → fix → re-gate, likewise. All bounded: an unbounded loop burns
+// tokens on something that needs a human.
 const MAX_REVIEW_LOOPS = 2;
 const MAX_CI_LOOPS = 2;
+const MAX_GATE_LOOPS = 2;
+
+// Seat tiers. The judging seats are expensive because judgement is the product;
+// everything mechanical is cheap because it runs a script and reports an exit
+// code. Cheap seats were 4–14 turns each on sonnet in the 16 Aug 2026 runs.
+const CHEAP = { model: "sonnet", effort: "low" };
 
 if (!PLAN) {
   log("No plan given. Pass { plan: '<slug>-plan.md' }. Aborting.");
@@ -55,34 +74,43 @@ if (!PLAN) {
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
+// The parse seat runs a script and hands back what it printed. `ok` and
+// `exitCode` are the only required fields BECAUSE the failure paths (a plan
+// defect, an unreachable remote) have no payload to report — requiring the
+// payload would force a dead agent into inventing one.
 const PARSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["feature", "why", "openQuestions", "prs", "featureAcceptance"],
+  required: ["ok", "exitCode"],
   properties: {
+    ok: { type: "boolean" },
+    exitCode: { type: "number" },
+    // Verbatim stderr when the script refused. Relayed to the operator.
+    stderr: { type: "string" },
     feature: { type: "string" },
-    // The plan's "Why" section, verbatim. Carried into every developer prompt:
-    // it is the one thing that cannot be inferred from the codebase, and it is
-    // what a developer reasons from when the plan runs out of instructions.
+    // The plan's `> **Source**:` line — the push seat's hint for the issue this
+    // work closes.
+    source: { type: "string" },
     why: { type: "string" },
     openQuestions: { type: "array", items: { type: "string" } },
     featureAcceptance: { type: "array", items: { type: "string" } },
+    // The run-local copy of the plan. Every later prompt points at THIS, never
+    // at the operator's working copy.
+    planSnapshot: { type: "string" },
+    planSha: { type: "string" },
+    // Cross-checked against `prs.length`: the seat has to copy a ~16 KB JSON
+    // document into its structured output, and a truncated echo that drops a PR
+    // would otherwise read as a shorter plan.
+    prCount: { type: "number" },
     prs: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: [
-          "title", "branch", "depends", "why", "delivers", "reuses",
-          "owns", "needsDocker", "triggers", "decisions", "acceptance",
-          "prExists", "merged",
-        ],
+        required: ["title", "branch", "depends", "acceptance", "prExists", "merged"],
         properties: {
-          // Verbatim from the "### <title>" heading. This IS the PR title, and
-          // squash-merge makes it the commit subject on main.
           title: { type: "string" },
           branch: { type: "string" },
-          // Branch names this PR needs MERGED before it can start.
           depends: { type: "array", items: { type: "string" } },
           why: { type: "string" },
           delivers: { type: "string" },
@@ -90,16 +118,11 @@ const PARSE_SCHEMA = {
           owns: { type: "array", items: { type: "string" } },
           needsDocker: { type: "boolean" },
           triggers: { type: "array", items: { type: "string" } },
-          // "<decision> | displaces <x> | lands in <site>" per row.
           decisions: { type: "array", items: { type: "string" } },
-          // Each AC verbatim INCLUDING its level, test file and nested edge cases.
           acceptance: { type: "array", items: { type: "string" } },
-          // Two DIFFERENT questions, and conflating them is a real bug: a PR that
-          // is merely OPEN satisfies "don't rebuild this" but not "its dependents
-          // may start". An open prerequisite means the next group would be cut
-          // from a main that lacks it. Both derived from gh/git, never the plan.
-          prExists: { type: "boolean" }, // a PR with this exact title, any state
-          merged: { type: "boolean" }, // that PR is MERGED, or the subject is on main
+          prExists: { type: "boolean" },
+          merged: { type: "boolean" },
+          prNumber: { type: ["number", "null"] },
         },
       },
     },
@@ -121,6 +144,26 @@ const HANDOFF_SCHEMA = {
     decisions: { type: "array", items: { type: "string" } },
     testLocations: { type: "array", items: { type: "string" } },
     weakSpots: { type: "array", items: { type: "string" } },
+  },
+};
+
+// The gate seat: run `just gate`, then commit if it passed. `gateExit` is an
+// OBSERVED exit code, which is the whole point — it replaces "the implementer
+// says the gate is green", a claim that was false on PR #54 and that both the
+// review prompt and arc-reviewer.md were told to trust.
+const GATE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["gateExit", "committed", "detail"],
+  properties: {
+    gateExit: { type: "number" },
+    // The last ~25 lines of `just gate` output. Carried to the reviewer as
+    // evidence, and to a fix agent as the failure.
+    gateTail: { type: "string" },
+    committed: { type: "boolean" },
+    sha: { type: "string" },
+    files: { type: "array", items: { type: "string" } },
+    detail: { type: "string" },
   },
 };
 
@@ -147,7 +190,12 @@ const REVIEW_SCHEMA = {
         },
       },
     },
+    // Criteria only. Anything about the run itself — a tool that failed, a file
+    // that was missing — goes in `processNotes`, because `gaps` is the field the
+    // skill tells the operator to relay verbatim and it was once three
+    // paragraphs about an uncommitted branch.
     gaps: { type: "string" },
+    processNotes: { type: "string" },
     issues: {
       type: "array",
       items: {
@@ -163,10 +211,7 @@ const REVIEW_SCHEMA = {
 // Without a schema the setup agent returns a STRING, so every guarantee it is
 // asked to establish is discarded: an agent that faithfully reports "the tree is
 // dirty, stopping" returns a non-null string and the run proceeds into implement
-// anyway. That made the dirty-worktree hard stop unable to fire, and made
-// `prPrompt`'s "this worktree was verified clean at setup" a false premise —
-// which is exactly the reasoning that lets the commit agent stage without
-// suspicion.
+// anyway. That made the dirty-worktree hard stop unable to fire.
 const SETUP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -177,7 +222,9 @@ const SETUP_SCHEMA = {
     // Every dirty/untracked path in the worktree. MUST be empty to proceed.
     dirty: { type: "array", items: { type: "string" } },
     reused: { type: "boolean" },
-    // Prerequisite titles the agent confirmed are on origin/main.
+    // Prerequisite titles the agent confirmed are on origin/main. This is the
+    // SECOND, independent check that a prerequisite really merged — the first
+    // being the finish seat that merged it.
     prerequisitesOnMain: { type: "array", items: { type: "string" } },
     detail: { type: "string" },
   },
@@ -196,17 +243,20 @@ const PR_SCHEMA = {
   },
 };
 
+// Mapped from `scripts/ci-status.mjs` exit codes, not from prose.
 const CI_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "detail"],
+  required: ["exitCode", "status", "detail"],
   properties: {
-    // NO_BUDGET: checks could not run because Actions minutes / spending limit
-    // are exhausted. A distinct outcome from RED — nothing is wrong with the
-    // code, and the answer is a local verification, not a fix.
+    exitCode: { type: "number" },
+    // NO_BUDGET: exit 2 — no workflow run ever registered for the head SHA. A
+    // distinct outcome from RED: nothing is wrong with the code, and the answer
+    // is a local verification, not a fix agent hunting a defect that isn't there.
     status: { type: "string", enum: ["GREEN", "RED", "NO_BUDGET", "UNKNOWN"] },
     failing: { type: "array", items: { type: "string" } },
     detail: { type: "string" },
+    invocations: { type: "number" },
   },
 };
 
@@ -218,26 +268,37 @@ const LOCAL_CI_SCHEMA = {
     // GREEN means "everything that RAN passed" — which is NOT the same as
     // "everything ran". `notRun` is a separate, structured field precisely so
     // the difference is machine-readable: a GREEN with four skipped tiers must
-    // never be worth the same as a GREEN with none, and string-parsing the
-    // `checks` prose to find that out would be one bad regex from a bad merge.
+    // never be worth the same as a GREEN with none.
     status: { type: "string", enum: ["GREEN", "RED"] },
-    // One entry per CI-equivalent check: "<name>: PASS|FAIL|NOT_RUN — <detail>".
+    // One entry per CI-equivalent check:
+    // "<name>: PASS|FAIL|NOT_RUN|PREEXISTING — <detail>".
     checks: { type: "array", items: { type: "string" } },
     // The names of every check that could NOT be run, with no exceptions and no
     // rounding down. This is the field that decides whether the PR may merge.
     notRun: { type: "array", items: { type: "string" } },
+    // Tiers that failed IDENTICALLY on main, with the control SHA as evidence.
+    // Without this the honest answer to "e2e was already broken" was RED, which
+    // halted a DAG over a defect the PR did not introduce (PR #55, 16 Aug 2026).
+    preexisting: { type: "array", items: { type: "string" } },
     commented: { type: "boolean" },
     detail: { type: "string" },
   },
 };
 
-const MERGE_SCHEMA = {
+// The finish seat: clean up, and merge if the DAG is waiting on this PR. `merged`
+// comes back as DATA on the seat's own result — it is never written onto a shared
+// object afterwards. Run wf_a4a6a27e squash-merged PR #54, reported
+// `merged: true`, and the workflow still halted and printed "Merged: none",
+// because the flag was assigned through an object handed back out of
+// `parallel()` and that assignment was not visible to the caller.
+const FINISH_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["merged", "detail"],
   properties: {
     merged: { type: "boolean" },
-    sha: { type: "string" },
+    mergeSha: { type: "string" },
+    worktreeRemoved: { type: "boolean" },
     detail: { type: "string" },
   },
 };
@@ -261,7 +322,7 @@ const MERGE_SCHEMA = {
 // does NOT require the first character be a letter, and this repo's prose is
 // full of backticked identifiers.
 const TITLE_TYPES = "feat|fix|perf|refactor|revert|docs|chore|build|ci|test|style";
-const TITLE_RE = new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?: (?![A-Z])\\S.*[^.\\s]$`);
+const TITLE_RE = new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?: (?![A-Z])\\S(?:.*[^.\\s])?$`);
 
 // A positional label tells a reader nothing and outlives the plan that gave it
 // meaning — the title is the permanent commit subject on main and the changelog
@@ -341,6 +402,41 @@ function groupsOf(pending, mergedBranches) {
   }
   return remaining.length ? { error: "unbuildable", remaining } : { groups };
 }
+
+// Does the DAG actually WAIT on this branch? Only then is it merged unattended.
+// This is narrower than "something in the plan lists it under Depends": a
+// dependent that is already merged waits for nothing. It replaces the old
+// `dependedOn` set plus a group-index test, and being pure it is testable.
+function blocksSomething(prs, branch) {
+  return prs.some((x) => (x.depends || []).includes(branch) && !x.merged);
+}
+
+// Prerequisites of `nextGroup` that are not demonstrably on main. `mergedNow` is
+// what THIS run merged (returned as data by each finish seat), `planMerged` what
+// the parse found already on main. Nothing is inferred from mutation.
+function missingPrerequisites(nextGroup, mergedNow, planMerged) {
+  const have = new Set([...(mergedNow || []), ...(planMerged || [])]);
+  return [
+    ...new Set(nextGroup.flatMap((p) => (p.depends || []).filter((d) => !have.has(d)))),
+  ];
+}
+
+// A parse seat has to echo a ~16 KB JSON document into its structured output.
+// This is the integrity check on that echo: a truncated array, a dropped PR, or
+// a payload that does not match the count the script printed.
+function echoProblems(parsed) {
+  const out = [];
+  if (!parsed.prs || !parsed.prs.length) out.push("no PRs in the parsed payload");
+  if (typeof parsed.prCount === "number" && parsed.prs && parsed.prCount !== parsed.prs.length) {
+    out.push(`the script reported ${parsed.prCount} PR(s) but the payload carries ${parsed.prs.length}`);
+  }
+  if (!parsed.planSnapshot) out.push("no planSnapshot path");
+  for (const p of parsed.prs || []) {
+    if (!p.title || !p.branch) out.push("a PR is missing its title or branch");
+    if (!p.why || !p.delivers) out.push(`"${p.title || "?"}" is missing why/delivers`);
+  }
+  return out;
+}
 // ── GUARDS-END ───────────────────────────────────────────────────────────────
 
 // ── Shared prompt blocks ─────────────────────────────────────────────────────
@@ -364,19 +460,17 @@ WHY THIS PR: ${p.why}
 // Repo facts stated, not discovered. Every one is enforced by a hook, a test or
 // an import-linter contract, so stating them cannot drift silently — and it saves
 // every agent a rediscovery pass over CLAUDE.md and the justfile.
-function guardrails(p) {
+function guardrails(parsed, p) {
   const wt = wtPath(p);
   return `
 WHERE YOU WORK: everything happens in the worktree \`${wt}\` on branch \`${p.branch}\`. Prefix every
 command with \`cd ${wt} && …\` (or run git with \`-C ${wt}\`). NEVER edit, stage or run anything in the
 main checkout — other PRs are being built there in parallel.
 
-READ FIRST: this PR's section of ${PLAN}, the repo's CLAUDE.md, and any \`.claude/rules/*.md\` whose
-\`paths:\` match the files you touch.
-
-⚠️ THE PLAN IS NOT IN YOUR WORKTREE. It is an untracked working note in the MAIN checkout, absent
-from every worktree. Read it at the path above WITHOUT prefixing \`cd ${wt}\` —
-that path is resolved from the main checkout. Everything else you do is inside \`${wt}\`.
+READ FIRST: this PR's section of the plan snapshot \`${parsed.planSnapshot}\` (an absolute path,
+readable from anywhere — read it WITHOUT a \`cd\`), the repo's CLAUDE.md, and any \`.claude/rules/*.md\`
+whose \`paths:\` match the files you touch. The snapshot is the run's own copy: the operator's working
+copy of the plan may be edited or deleted while you work, and on 16 Aug 2026 it was.
 
 NON-NEGOTIABLE:
 - TDD is binding. Write the tests first — the happy path AND every edge case listed under each
@@ -389,30 +483,53 @@ NON-NEGOTIABLE:
   \`frontend/tests/mocks/handlers.ts\` — never by mocking \`lib/api/client.ts\` — and a fixture must be
   a payload the real API could produce.
 - Package managers: \`uv\` for Python, \`bun\` for the frontend. Never npm/npx/pnpm/yarn. Always
-  \`uv run\` / \`bun run\` — a worktree shell can otherwise import the main checkout's code.
-- The gate is \`just check\` (ruff · pyrefly · import-linter · backend+frontend unit tests ·
-  production build · api-contract drift). It must end GREEN.${
+  \`uv run\` / \`bun run\`. A \`VIRTUAL_ENV does not match\` warning from uv is expected noise in a
+  worktree, not a failure — \`uv run\` ignores the stale value deliberately.
+- ITERATE WITH TARGETED TESTS, not with the whole gate: \`uv run pytest <file> -k <name>\`,
+  \`bun run vitest run <file>\`. Do NOT run \`just check\`, \`just lint\`, \`just typecheck\` or
+  \`just gate\` yourself — a separate cheap seat runs \`just gate\` once when you are done and hands
+  its exit code to the reviewer as evidence. Running it here costs minutes and floods your context
+  for a result that is recomputed anyway.
+- KEEP OUTPUT OUT OF YOUR CONTEXT: redirect any long run to a log and read the tail
+  (\`… > /tmp/x.log 2>&1; tail -30 /tmp/x.log\`). Never let a full suite's output land in the
+  transcript.
+- WAITING: there is no bare \`sleep\`. To wait for something you started, use \`run_in_background\`
+  and poll, or an until-loop with a real condition (\`until <check>; do sleep 5; done\`). Never burn
+  turns on \`true\` or a shell spin loop.
+- STAY INSIDE THE WORKTREE. Do not touch \`git config\`, \`git remote\`, \`~/.ssh\`, \`~/.gitconfig\` or
+  anything else outside it — they are shared with every other worktree and with the operator, and a
+  push that will not go through is a REPORTED blocker, not a thing to reconfigure. Never \`pkill\` by
+  pattern; kill only a PID you started.${
     p.needsDocker
-      ? `\n- This PR is marked "needs Docker": ALSO run \`just test-int\` and it must be green. You have
-  exclusive use of the compose ports — no other PR is being built while you run.`
-      : `\n- Do NOT run \`just test-int\`, \`just smoke\` or \`just up\`. They bind fixed host ports shared with
-  other worktrees running right now, and this PR is not marked as needing them.`
+      ? `
+- This PR is marked "needs Docker": ALSO run \`just test-int\` and it must be green. The Docker
+  tiers bind fixed host ports and one shared compose project name across every checkout, so take
+  the lock around them:
+    \`bash scripts/docker-lock.sh acquire ${p.branch}\`   → exit 3 means another run holds it; wait
+    and retry, or report it rather than running anyway
+    \`… just test-int …\`
+    \`bash scripts/docker-lock.sh release ${p.branch}\``
+      : `
+- Do NOT run \`just test-int\`, \`just smoke\`, \`just up\` or \`just infra\`. They bind fixed host ports
+  shared with every other worktree, and this PR is not marked as needing them.`
   }${
     p.triggers && p.triggers.length && p.triggers[0] !== "none"
-      ? `\n- Build steps this PR triggers — run them, VERIFY the output before anything consumes it, and
-  commit the result: ${p.triggers.join("; ")}.`
+      ? `
+- Build steps this PR triggers — run them, VERIFY the output before anything consumes it, and
+  leave the result in the tree: ${p.triggers.join("; ")}.`
       : ""
   }
 - A model change ships with its Alembic migration in the same PR. A new setting goes in
   \`app/core/config.py\` AND \`.env.example\` (a test enforces it). A backend schema change means
-  \`just api-sync\`, committed.
+  \`just api-sync\`.
 - Layering: imports point inward only (api | mcp → ingest → services → persistence → domain).
   \`app/domain/\` is pure. Endpoints and MCP tools stay thin; services hold the logic and commit the
   transaction; services raise \`AppError\` subclasses, never \`HTTPException\`.
 - Reasoning goes where it binds. Each row below names a docstring, comment or test — put it THERE,
   not in the plan:${p.decisions.length ? "\n" + p.decisions.map((d) => `    · ${d}`).join("\n") : " (none recorded)"}
 - Fix every problem you touch. No skips, no broken windows, never \`--no-verify\`.
-- Do NOT commit, do NOT \`git add\`, do NOT push, do NOT modify ${PLAN}. A separate agent commits.
+- Do NOT commit, do NOT \`git add\`, do NOT push, and do NOT edit the plan or its snapshot. A
+  separate agent runs the gate and commits.
 - \`CHANGELOG.md\` is hand-curated by the operator. Never touch it.
 `;
 }
@@ -446,44 +563,25 @@ ${list(h.weakSpots)}
 // ── Prompt builders ──────────────────────────────────────────────────────────
 
 function parsePrompt() {
-  return `Parse the feature plan ${PLAN} into a machine-readable pull-request list.
+  return `Run the plan parser and hand back exactly what it printed.
 
-Read ${PLAN} in full. Then run BOTH yourself and use them — NOT the plan's checkboxes — to decide what
-is already shipped, and whether it is merely OPEN or actually MERGED:
-- \`gh pr list --state all --limit 60 --json number,title,state\`
-- \`git fetch origin main\` then \`git log --oneline origin/main -40\` (ignore failure if offline)
+  \`node scripts/parse-plan.mjs ${PLAN}\`
 
-Return the plan's H1 as \`feature\`, its entire "## Why" section as \`why\` (verbatim prose — this is
-carried into every developer prompt and is the most important field here), every unresolved
-**(confirm)** item under "Open questions" as \`openQuestions\` (empty array if none), and every
-"- [ ] **AC-n** …" bullet under "Feature acceptance" as \`featureAcceptance\`, verbatim.
+It reads the plan, cross-checks every PR against \`gh pr list\` and \`git log origin/main\`, snapshots
+the plan for the rest of the run, and prints ONE JSON document on stdout.
 
-For each "### <title>" section under "## Pull requests":
-- title — the heading text, VERBATIM. This becomes the PR title.
-- branch, needsDocker — from the \`**Branch**\` and \`**Needs Docker**\` blockquote lines
-  (needsDocker is TRUE unless the line starts with "no").
-- depends — the branch names from \`**Depends**\`; empty array for "—".
-- owns / triggers — entries from \`**Owns**\` and \`**Triggers**\`; empty array for "—" or "none".
-- why — the "**Why this PR**" paragraph, verbatim.
-- delivers / reuses — those paragraphs, verbatim.
-- decisions — one string per row of the "Decisions landing in code" table, formatted
-  "<decision> | displaces <alternative> | lands in <site>". Empty array if the table is absent.
-- acceptance — every "- [ ] **AC-n** …" bullet in this PR, VERBATIM and COMPLETE, including its
-  level, its test path, and every nested "- Edge: …" line underneath it. Do not summarise or drop
-  edge cases; the developer builds from these and the reviewer judges against them.
-- prExists — TRUE if a PR whose title EXACTLY equals this title exists in ANY state (open, merged,
-  or closed). FALSE otherwise.
-- merged — TRUE only if that PR's state is MERGED, or the exact subject already appears in
-  \`git log origin/main\`. A PR that is merely OPEN is prExists=true and merged=FALSE.
+- Exit 0 → return \`ok: true\`, \`exitCode: 0\`, and the JSON's fields as your structured output,
+  COPIED VERBATIM. Do not summarise, re-order, re-wrap or "tidy" anything — the acceptance criteria
+  are contracts, and \`prCount\` is cross-checked against the number of PRs you hand back, so a
+  truncated copy is detected rather than silently building a shorter plan.
+- Exit 2 (plan defects), 3 (remote state unavailable) or 4 (usage) → return \`ok: false\`, the
+  \`exitCode\`, and the script's stderr verbatim in \`stderr\`. Do NOT try to parse the plan yourself,
+  do not work around it, and do not fix the plan.
 
-These two are deliberately separate and you must not collapse them. An open PR means "do not build
-this again"; only a merged one means "the PRs that depend on it may start", because a dependent is
-cut from \`origin/main\` and an unmerged prerequisite is not there.
-
-Return only real PRs from the plan. Do not invent, reorder or renumber anything.`;
+Run nothing else.`;
 }
 
-function setupPrompt(p) {
+function setupPrompt(parsed, p) {
   const wt = wtPath(p);
   return `Prepare the worktree for the PR "${p.title}". Idempotent — this may be a re-run.
 
@@ -513,7 +611,8 @@ function setupPrompt(p) {
 
 5. \`cd ${wt} && just worktree-init\` — a worktree has no \`.env\`, no \`.venv\` and no \`node_modules\`,
    and the always-run api-schema-sync pre-commit hook refuses to run without the frontend's. Skip
-   only if \`${wt}/.venv\` and \`${wt}/frontend/node_modules\` both already exist.
+   only if \`${wt}/.venv\` and \`${wt}/frontend/node_modules\` both already exist (test with
+   \`[ -d … ]\`, which does not print an error when they do not).
 
 6. Confirm with \`git -C ${wt} rev-parse --abbrev-ref HEAD\` that HEAD is \`${p.branch}\`, and return
    it as \`headBranch\` whatever it turns out to be — do not report the expected value, report the
@@ -521,52 +620,25 @@ function setupPrompt(p) {
 ${
   (p.depends || []).length
     ? `
-7. ⚠️ PREREQUISITE CHECK. This PR depends on ${p.depends.map((d) => `\`${d}\``).join(", ")}. Run
-   \`git log origin/main --oneline -40\` and confirm each of these titles appears:
+7. ⚠️ PREREQUISITE CHECK — an INDEPENDENT confirmation that what this PR extends is really on main,
+   not merely reported merged by an earlier step. Run \`git log origin/main --oneline -40\` and
+   confirm each of these appears:
 ${p.depends.map((d) => `     - the PR whose branch is \`${d}\``).join("\n")}
-   List the ones you found in \`prerequisitesOnMain\`. If any prerequisite is NOT on origin/main,
-   return \`ok: false\` and say which — this worktree would be built against a main that lacks the
-   work it extends.
+   List the ones you found in \`prerequisitesOnMain\`. If any is NOT on origin/main, return
+   \`ok: false\` and say which — this worktree would be built against a main that lacks the work it
+   extends.
 `
     : ""
 }
 Return \`ok: true\` only when the worktree exists, HEAD is \`${p.branch}\`, \`dirty\` is empty${
     (p.depends || []).length ? ", and every prerequisite is on origin/main" : ""
   }.
-Do not implement anything.`;
+Do not implement anything. Do not run the gate or any test suite.`;
 }
 
-function implementPrompt(parsed, p, fixIssues, handoff, ci) {
-  if (ci) {
-    return `CI is RED on the PR "${p.title}". Fix it.
-
-Failing checks:
-${ci.failing && ci.failing.length ? ci.failing.map((f) => `- ${f}`).join("\n") : `- ${ci.detail}`}
-
-Read the actual failure before changing anything: find the run with \`gh run list --branch ${p.branch}\`
-and read \`gh run view <run-id> --log-failed\`. CI runs tiers \`just check\` deliberately omits —
-integration against real Postgres (the only place \`alembic check\` runs), Playwright e2e, the
-fullstack smoke suite, and schemathesis — so red here is usually a REAL defect your local gate could
-not see. Treat it as one unless the log proves otherwise.
-
-If schemathesis found it, fix it AND pin the case as a unit test; that is this repo's standing rule.
-If \`alembic check\` found model/migration drift, the migration is missing or incomplete.
-
-Fix the cause, re-run the relevant local gate, and leave the tree GREEN and uncommitted; a separate
-agent commits and pushes.
-${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(p)}${HANDOFF_INSTRUCTION}`;
-  }
-  if (fixIssues && fixIssues.length) {
-    return `The independent review of "${p.title}" REJECTED these acceptance criteria. Fix ONLY these —
-do not refactor beyond them:
-${fixIssues.map((i) => `- ${i.ac} — responsible area: ${i.area}`).join("\n")}
-
-For each, make the criterion genuinely true and prove it with a test that asserts that specific claim
-at the right level, covering the edge cases the plan lists under it. Then re-run this PR's full gate —
-your fix can break things beyond the flagged items, and nothing downstream re-runs the suites for you.
-${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(p)}${HANDOFF_INSTRUCTION}`;
-  }
-  return `Implement the pull request "${p.title}" from ${PLAN}, END TO END, by yourself, using TDD.
+function implementPrompt(parsed, p, handoff) {
+  return `Implement the pull request "${p.title}" from the plan snapshot ${parsed.planSnapshot},
+END TO END, by yourself, using TDD.
 ${whyBlock(parsed, p)}
 DELIVERS: ${p.delivers}
 
@@ -576,57 +648,163 @@ ACCEPTANCE CRITERIA. Each states input, action and the exact expected result, an
 cases its tests must also cover. An independent reviewer with no write tools will judge your diff
 against exactly these, per criterion and per edge case:
 ${acBlock(p)}
-${guardrails(p)}${HANDOFF_INSTRUCTION}`;
+${guardrails(parsed, p)}${handoffBlock(handoff)}${HANDOFF_INSTRUCTION}`;
 }
 
-function reviewPrompt(parsed, p, rejected, handoff) {
+function fixPrompt(parsed, p, issues, handoff) {
+  return `The independent review of "${p.title}" REJECTED these acceptance criteria. Fix ONLY these —
+do not refactor beyond them:
+${issues.map((i) => `- ${i.ac} — responsible area: ${i.area}`).join("\n")}
+
+For each, make the criterion genuinely true and prove it with a test that asserts that specific claim
+at the right level, covering the edge cases the plan lists under it. Run the targeted tests for what
+you changed; the gate runs again automatically after you, so do not run it yourself.
+${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_INSTRUCTION}`;
+}
+
+function gateFixPrompt(parsed, p, gate, handoff) {
+  return `\`just gate\` FAILED on "${p.title}" (exit ${gate.gateExit}). Fix the cause.
+
+The gate is ruff · pyrefly · import-linter · backend+frontend unit tests · the production frontend
+build · api-contract drift · the migration heuristic. Its tail:
+
+${(gate.gateTail || gate.detail || "").slice(-2500)}
+
+Fix the actual failure — do not silence it, do not skip a test, do not weaken an assertion to make it
+pass. If the api-contract check failed, \`just api-sync\` and leave the regenerated
+\`frontend/generated/api/\` in the tree. If the migration heuristic failed, the model change needs its
+Alembic migration in this PR.
+
+Re-run only the targeted command that was failing. The gate runs again automatically after you.
+${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_INSTRUCTION}`;
+}
+
+function ciFixPrompt(parsed, p, ci, handoff) {
+  return `CI is RED on the PR "${p.title}". Fix it.
+
+Failing checks: ${ci.failing && ci.failing.length ? ci.failing.join(", ") : "(not named)"}
+What the CI seat observed — start from this, it already read the log:
+${ci.detail || "(nothing recorded)"}
+
+Read the actual failure before changing anything: \`gh run list --branch ${p.branch}\`, then
+\`gh run view <run-id> --log-failed\` (redirect it to a log and read the tail). CI runs tiers the
+local gate deliberately omits — integration against real Postgres (the only place \`alembic check\`
+runs), Playwright e2e, the fullstack smoke suite, and schemathesis — so red here is usually a REAL
+defect the gate could not see. Treat it as one unless the log proves otherwise.
+
+If schemathesis found it, fix it AND pin the case as a unit test; that is this repo's standing rule.
+If \`alembic check\` found model/migration drift, the migration is missing or incomplete.
+
+Leave the fix uncommitted; the gate seat commits and pushes it.
+${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_INSTRUCTION}`;
+}
+
+// The gate seat. Runs one command, then commits — which is what makes the
+// reviewer's diff real: the implementer is forbidden to commit, so
+// `git diff origin/main...HEAD` was empty for every reviewer until now, and all
+// seven of them had to improvise their way to the working tree.
+function gatePrompt(p, subject, isFirst) {
   const wt = wtPath(p);
-  const where = `The work is in the worktree \`${wt}\` on branch \`${p.branch}\`. Inspect it with
-\`git -C ${wt} diff origin/main...HEAD\` (\`--stat\` first). Run any targeted test with \`cd ${wt} && …\`,
-never in the main checkout. Plan: ${PLAN} — this PR's section, its acceptance criteria AND its
-"Decisions landing in code" table, whose landing sites you verify actually exist in the code.
-The plan is untracked and therefore absent from the worktree: read it at that path from the MAIN
-checkout, without a \`cd\`.`;
-  if (rejected && rejected.length) {
+  return `Run the gate on "${p.title}" and, only if it passes, commit the work. Two steps, no judgement.
+
+1. \`cd ${wt} && just gate > /tmp/gate-${p.branch.replace(/\//g, "-")}.log 2>&1; echo "EXIT=$?"\`
+   Read the LAST ~40 lines of that log, not the whole thing. Report the exit code in \`gateExit\` and
+   the last ~25 meaningful lines in \`gateTail\` — including the failing assertion or error if it
+   failed. If it is non-zero, STOP: report \`committed: false\` and do not stage anything. Do not fix
+   it, do not re-run it hoping for a different answer, do not investigate further.
+
+2. Only on exit 0: commit, staging explicitly by path.
+   - \`git -C ${wt} status --porcelain -uall\`, then \`git -C ${wt} add -- <path> …\` for every path
+     that belongs to this PR. NEVER \`git add -A\`, \`.\` or \`-u\`. Always exclude anything under
+     \`.claude/agent-memory/\` at any depth, and \`CHANGELOG.md\`.
+   - Commit. ${
+     isFirst
+       ? `Subject EXACTLY: \`${subject}\`  (it is the PR title, and squash-merge makes it the
+     subject on main).`
+       : `Subject: a Conventional Commit describing this follow-up, e.g. \`${subject}\`.`
+   } Body wrapped at ~76 columns, saying WHY.
+   - NEVER \`--no-verify\`. Pre-commit hooks may rewrite files (api-schema-sync regenerates
+     \`frontend/generated/api/\`); if a hook aborts the commit, re-derive the path list the same way,
+     \`git add --\` exactly those, and commit again.
+   - Then \`git -C ${wt} show --stat --oneline HEAD\`. Every path must be work this PR actually did.
+     This worktree was verified clean at setup, so anything you do not recognise is a bug — report it
+     in \`detail\` and set \`committed: false\` rather than leaving it committed.
+   - Report the commit SHA in \`sha\` and the committed paths in \`files\`.
+
+Do NOT push. Do NOT open or merge a PR. Do not modify any source file yourself — not even to fix a
+lint error the gate reported.`;
+}
+
+function reviewPrompt(parsed, p, mode, ctx, gate, sinceSha) {
+  const wt = wtPath(p);
+  const evidence = `
+GATE EVIDENCE — observed, not claimed. \`just gate\` was run by a separate seat and exited
+${gate ? gate.gateExit : "?"} (0 = pass), covering ruff, pyrefly, import-linter, backend+frontend unit
+tests, the production build, api-contract drift and the migration heuristic:
+${((gate && (gate.gateTail || gate.detail)) || "(no tail reported)").slice(-1200)}
+
+So do NOT re-run lint, type-check, the unit suites or the build. Judge whether the diff is what the
+criteria asked for, and run only the targeted tests that prove a specific criterion.`;
+
+  const where = `
+WHERE THE WORK IS: the worktree \`${wt}\`, branch \`${p.branch}\`, and it IS COMMITTED — the gate seat
+committed it before you were called. So the diff is real:
+  \`git -C ${wt} diff origin/main...HEAD --stat\`   then the same without \`--stat\`, per path
+Run targeted tests with \`cd ${wt} && …\`, never in the main checkout.
+Plan: the run's snapshot at \`${parsed.planSnapshot}\` — this PR's section, its acceptance criteria AND
+its "Decisions landing in code" table, whose landing sites you verify actually exist in the code. Read
+it at that absolute path, without a \`cd\`. If it is unreadable, say so in \`processNotes\` and REJECT
+rather than approving against criteria you could not read in full.`;
+
+  if (mode === "targeted") {
     return `TARGETED re-review of "${p.title}" after a fix. Validate ONLY these previously-rejected
 criteria; do not re-open ones that already passed:
-${rejected.map((i) => `- ${i.ac} (${i.area})`).join("\n")}
-
-${where}${handoffBlock(handoff)}
+${(ctx.rejected || []).map((i) => `- ${i.ac} (${i.area})`).join("\n")}
+${where}${evidence}${handoffBlock(ctx.handoff)}
 Confirm each is now genuinely fulfilled — including the edge cases listed under it — citing the test
-that exercises it. Run only the targeted tests for these criteria; the fix agent already re-ran the
-gate. Return the verdict in the structured format.`;
+that exercises it. Return the verdict in the structured format.`;
   }
+
+  if (mode === "since") {
+    return `SCOPED re-review of "${p.title}" after a CI fix. Every acceptance criterion was already
+APPROVED at commit \`${sinceSha}\`; what is new is the CI fix committed on top.
+
+Judge exactly one question: does the new work break, weaken or hollow out any criterion that was
+already approved? Read only the incremental diff:
+  \`git -C ${wt} diff ${sinceSha}..HEAD\`
+Then check the criteria that diff actually touches — a test whose assertion was relaxed, a behaviour
+changed to satisfy a schema, an edge case now unreachable. Do NOT re-derive the whole review; the
+criteria below are context, not a re-run:
+${acBlock(p)}
+${where}${evidence}${handoffBlock(ctx.handoff)}
+REJECT with the specific criterion if the fix damaged one. APPROVE if the fix is orthogonal or
+strengthens it. Return the verdict in the structured format.`;
+  }
+
   return `Review the pull request "${p.title}".
 ${whyBlock(parsed, p)}
 Judge the delivered diff against these acceptance criteria, one at a time. Each lists the edge cases
 its tests must cover: an AC whose happy path passes but whose listed edges have no test is PARTIAL,
 not FULFILLED. Record what you found per criterion in \`edgeCasesCovered\`.
 ${acBlock(p)}
-
-${where}${handoffBlock(handoff)}
-\`just check\` is already GREEN on this branch — do not re-run lint, type-check, unit tests or the
-build. Judge whether the diff is what the criteria asked for, and run only the targeted tests that
-prove a specific criterion. Return the verdict in the structured format.`;
+${where}${evidence}${handoffBlock(ctx.handoff)}
+Return the verdict in the structured format.`;
 }
 
-function prPrompt(p) {
+function pushPrompt(parsed, p, gate) {
   const wt = wtPath(p);
-  return `"${p.title}" passed independent review. Commit it, push it, and open its PR.
+  return `"${p.title}" passed the gate and independent review, and is committed at \`${gate.sha}\` in
+\`${wt}\`. Push it and open its PR.
 
-All git work happens with \`-C ${wt}\` or after \`cd ${wt}\`.
-
-1. Stage explicitly by path. Run \`git -C ${wt} status --porcelain -uall\` and stage every path that
-   belongs to this PR with \`git -C ${wt} add -- <path> …\`. NEVER \`git add -A\`, \`.\` or \`-u\`.
-   Always exclude anything under \`.claude/agent-memory/\` at any depth, and \`CHANGELOG.md\`.
-2. Commit. Subject in Conventional Commits, scoped by subsystem; body wrapped at ~76 columns.
-   NEVER \`--no-verify\` — pre-commit hooks may rewrite files (api-schema-sync regenerates
-   \`frontend/generated/api/\`); if a hook aborts the commit, re-derive the path list the same way,
-   \`git add --\` exactly those, and commit again.
-3. Push: \`git -C ${wt} push -u origin ${p.branch}\`. This runs the pre-push hooks (pyrefly,
-   import-linter, backend unit tests, frontend type-check, frontend unit tests) and takes minutes —
-   give it a generous timeout and do not bypass it. If it fails on something unrelated, report it.
-4. Open the PR with EXACTLY this title — it is a required CI check that it be a lowercase-start,
+1. Push. The pre-push hooks (pyrefly, import-linter, backend unit tests, frontend type-check,
+   frontend unit tests, the production build) take MINUTES, and a foreground push has hit the tool
+   timeout before — so start it in the background and poll:
+     \`cd ${wt} && git push -u origin ${p.branch} > /tmp/push-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
+   then poll for completion and read the log's tail. Never \`--no-verify\`.
+   If the push fails, REPORT it with the tail and set \`ok: false\`. Do not reconfigure anything —
+   not \`git remote\`, not \`git config\`, not \`~/.ssh\` — they are shared with every other worktree
+   and with the operator.
+2. Open the PR with EXACTLY this title — it is a required CI check that it be a lowercase-start,
    no-trailing-period Conventional Commit, and squash-merge makes it the commit subject on main:
      ${p.title}
    Write the body to a file and pass \`--body-file\`; it is full of backticks and brackets:
@@ -634,108 +812,143 @@ All git work happens with \`-C ${wt}\` or after \`cd ${wt}\`.
    Fill in \`.github/pull_request_template.md\` and tick only what you actually verified.
    THE BODY BECOMES THE COMMIT BODY ON MAIN, so lead with WHY this change exists — the problem it
    solves, not a list of files. Write for a reader outside the branch: one line per paragraph, NO
-   hard wrapping (GitHub renders PR bodies with hard line breaks on, so a wrapped paragraph becomes a
-   ragged column; GitHub re-wraps it itself for the squash commit). Keep it flat: no nested lists, no
-   tables, no \`Key: value\` trailers.
-5. Before reporting success, run \`git -C ${wt} show --stat --oneline HEAD\` and read the file list.
-   Every path must be work this PR actually did. This worktree was verified clean at setup, so
-   anything you do not recognise is a bug — report it as a FAILURE rather than opening the PR.
-6. Report the PR number, URL and commit SHA, and the exact list of files committed.
+   hard wrapping. Keep it flat: no nested lists, no tables, no \`Key: value\` trailers.
+3. LINK THE ISSUE, if there is one. Search \`gh issue list --state all --search "<keywords>"\` for the
+   issue this PR closes and, if you find a real match, end the body with \`Closes #<n>\` (one line, one
+   keyword per issue). The plan's source line is the best hint: ${parsed.source || "none recorded — check the plan snapshot's `> **Source**:` line"}.
+   Do not invent a link, and do not close an issue this PR only partially addresses.
+4. Report the PR number, URL and the pushed SHA.
 
 Do NOT merge and do NOT enable auto-merge — a later step decides that.`;
 }
 
-function ciPrompt(p, pr) {
-  return `Watch CI on PR #${pr.number} (${pr.url}) and report the outcome.
+function repushPrompt(p, pr, gate) {
+  const wt = wtPath(p);
+  return `Push the CI fix for "${p.title}" to the existing PR #${pr.number}. It is already committed at
+\`${gate.sha}\` in \`${wt}\` and the gate passed.
 
-Run \`gh pr checks ${pr.number} --watch --interval 30\`. It can exceed a single command timeout — if
-the command times out or still reports pending checks, run it again, up to 6 times total.
+Start the push in the background and poll its log (the pre-push hooks take minutes):
+  \`cd ${wt} && git push > /tmp/repush-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
+Never \`--no-verify\`; never reconfigure git, the remote, or anything under \`~\`.
 
-Classify the result:
-- All checks passed → GREEN.
-- A check failed → RED. List the failing check names in \`failing\`, and for each read the real
-  failure (\`gh run view <run-id> --log-failed\`) and put a one-line diagnosis in \`detail\`. A fix
-  agent works from this, so name the test or the error, not "CI failed".
-- \`pr-title\` failing → RED, and say explicitly that it needs a retitle, not a code fix.
-- **Checks could not run because the Actions budget is exhausted → NO_BUDGET.** Look for: zero checks
-  registered after several minutes; a run whose jobs never started; or an error mentioning spending
-  limit, billing, quota, or minutes exhausted (\`gh run list --branch ${p.branch}\` and
-  \`gh run view <run-id>\` show it). Distinguish this carefully from RED — nothing is wrong with the
-  code, and misreporting it sends a fix agent to hunt a defect that does not exist. Put the exact
-  message you saw in \`detail\`.
-- Anything else, or you could not tell → UNKNOWN, with what you saw.
+If the failing check was \`pr-title\`, also fix it with \`gh pr edit ${pr.number} --title …\`, keeping it
+a lowercase-start Conventional Commit with no trailing period.
 
-Do not change any code, do not push, do not merge.`;
+Report the pushed SHA. Do not merge.`;
 }
 
-function localCiPrompt(p, pr) {
+function ciPrompt(p, pr) {
+  return `Report CI on PR #${pr.number} (${pr.url}). One script decides this — you only relay it.
+
+  \`node scripts/ci-status.mjs ${pr.number} --deadline 480\`
+
+It polls with a bounded deadline and always returns; never use \`gh pr checks --watch\`, which does
+not. Map its EXIT CODE, and nothing else, to \`status\`:
+
+  0 → GREEN      every check that exists concluded, none failed
+  1 → RED        a check failed. Copy the failing names into \`failing\` and the printed log URLs
+                 into \`detail\`, then — only for a RED — read the actual failure with
+                 \`gh run view <run-id> --log-failed\` (redirect, read the tail) and put a one-line
+                 diagnosis in \`detail\`. A fix agent works from this, so name the test or the error.
+  2 → NO_BUDGET  no workflow run ever registered for the head SHA. Nothing is wrong with the code.
+                 Do not investigate billing, do not hunt for an error message.
+  3 → UNKNOWN    still pending at the deadline, or a check was cancelled. RE-RUN the script (up to 4
+                 times total) before reporting UNKNOWN; report the number of invocations.
+  4 → UNKNOWN    the PR could not be read; put the stderr in \`detail\`.
+
+Put the script's exit code in \`exitCode\` verbatim. Do not change any code, do not push, do not merge.`;
+}
+
+function localCiPrompt(parsed, p, pr) {
   const wt = wtPath(p);
-  return `CI could not run on PR #${pr.number} ("${p.title}") because the Actions budget is exhausted.
+  return `CI never ran on PR #${pr.number} ("${p.title}") — no workflow registered for its head SHA.
 Verify the PR LOCALLY against every check CI would have run, then record it on the PR.
 
-You have exclusive use of Docker and the fixed compose ports right now — nothing else is running.
-Work in \`${wt}\`.
+⚠️ TAKE THE DOCKER LOCK FIRST, and release it when you are done:
+  \`bash scripts/docker-lock.sh acquire local-ci-${p.branch}\`
+Exit 3 means another run holds it — these tiers bind fixed host ports and one shared compose project
+name, and on 16 Aug 2026 two runs overlapped for an hour, each believing it was alone. If it is
+BUSY, wait and retry a few times; if it stays busy, record every Docker tier as NOT_RUN with
+"docker lock held by <holder>" and skip to the comment. Release with
+\`bash scripts/docker-lock.sh release local-ci-${p.branch}\` on EVERY exit path.
 
-Run each of these and record the result. Run them in this order; a later one is worthless if an
-earlier one is red:
-1. \`cd ${wt} && just check\`      — ruff, pyrefly, import-linter, backend+frontend unit tests,
-                                     production build, api-contract drift
-2. \`cd ${wt} && just test-int\`    — integration on real Postgres; the ONLY place \`alembic check\`
-                                     runs, so this is what catches model/migration drift
-3. \`cd ${wt} && just e2e\`         — Playwright, UI-only
-4. \`cd ${wt} && just smoke\`       — full Docker stack. It needs \`E2E_PASSWORD\` to match the bcrypt
-                                     hash in \`.env\`; if you do not have it, the login step fails and
-                                     you must record smoke as NOT_RUN with that reason — do NOT
-                                     invent a password and do NOT claim it passed.
-5. schemathesis — only if this PR changed an API route or schema. Follow the reproduction recipe in
-   CLAUDE.md (run the API against the compose test database, log in for a cookie, then
-   \`uvx schemathesis run …\` from \`backend/\`). If you cannot obtain a session cookie, record NOT_RUN
-   with the reason.
+PRE-FLIGHT the Docker tiers before spending time on them: \`timeout 60 docker pull alpine:3\`. If the
+registry is unreachable, \`just smoke\` cannot build its images — record it NOT_RUN with that reason
+immediately rather than watching a stalled pull. That cost ~30 minutes on 16 Aug 2026.
 
-Then post ONE comment on the PR with \`gh pr comment ${pr.number} --body-file <path>\`. It must:
-- state plainly that CI did not run because the GitHub Actions budget was exhausted, and that these
-  checks were therefore run locally on the branch;
-- name the commit SHA they were run against;
-- list every check with PASS / FAIL / NOT_RUN and, for NOT_RUN, the reason it could not be run.
+Work in \`${wt}\`. Run these in order; a later one is worthless if an earlier one is red:
+1. \`just gate\`        — ruff, pyrefly, import-linter, unit suites, production build,
+                          api-contract drift, migration heuristic
+2. \`just test-int\`    — integration on real Postgres; the ONLY place \`alembic check\` runs, so this
+                          is what catches model/migration drift
+3. \`just e2e\`         — Playwright, UI-only
+4. \`just smoke\`       — full Docker stack. \`E2E_PASSWORD\` must match the bcrypt hash in \`.env\`; it
+                          is in this environment if the operator exported it. If it is absent, record
+                          smoke NOT_RUN with that reason — do NOT invent a password and do NOT claim
+                          it passed.
+5. schemathesis — only if this PR changed an API route or schema. Follow the recipe in CLAUDE.md. If
+   you cannot obtain a session cookie, record NOT_RUN with the reason.
 
-BE HONEST. This comment stands in for CI on a public pull request, and a comment claiming coverage
-that was not achieved is worse than no comment at all. Never mark something PASS that you did not
-observe pass. Never omit a check you skipped.
+ATTRIBUTION. If a tier fails, find out whether it fails for THIS PR before reporting it. Run the same
+tier on the main checkout at \`origin/main\` as a control (a read-only clone under /tmp if you need
+one — do NOT build in the main checkout, other PRs are being built there). If it fails identically,
+record it \`PREEXISTING — reproduces on <main-sha>\` in \`checks\`, list its name in \`preexisting\`, and
+do NOT count it as this PR's failure. That distinction halted a whole DAG once over four e2e tests
+that were already broken on main.
 
-Return \`status\` GREEN only if every check that RAN passed; RED if any failed. Report each check as
-"<name>: PASS|FAIL|NOT_RUN — <detail>" in \`checks\`, and whether the comment was posted.
+Then post ONE comment with \`gh pr comment ${pr.number} --body-file <path>\` stating: that CI did not
+run because no workflow registered for the head SHA; the commit SHA these checks ran against; and
+every check as PASS / FAIL / NOT_RUN / PREEXISTING with the reason for anything not PASS.
 
-⚠️ \`notRun\` MUST list the name of every check you could not run — all of them, with no rounding
-down and no "it probably would have passed". That field decides whether this PR is allowed to merge
-without a human: a verification that skipped the Docker tiers is green on \`just check\` alone, which
-the pre-push hook already ran, so it proves nothing new. Under-reporting here is the one mistake in
-this task that could put unverified code on \`main\`. If everything ran, return an empty array.
+BE HONEST. This comment stands in for CI on a public pull request, and one claiming coverage that was
+not achieved is worse than no comment at all. Never mark something PASS you did not observe pass.
 
-Do not change any code and do not merge.`;
+Return \`status\` GREEN only if every check that ran passed or was PREEXISTING; RED if any failed for
+this PR. ⚠️ \`notRun\` MUST list every check you could not run — all of them, no rounding down and no
+"it probably would have passed". That field decides whether this PR may merge without a human: a
+verification that skipped the Docker tiers is green on the gate alone, which the pre-push hook already
+ran, so it proves nothing new.
+
+Do not change any code and do not merge. Plan snapshot, if you need it: ${parsed.planSnapshot}`;
 }
 
-function mergePrompt(p, pr) {
-  return `PR #${pr.number} ("${p.title}") is review-approved and CI-verified, and other pull requests in
-this plan DEPEND on it being merged before they can start. Merge it.
+function finishPrompt(p, pr, doMerge, localCiNote) {
+  const wt = wtPath(p);
+  return `PR #${pr.number} ("${p.title}") is ${doMerge ? "review-approved and CI-verified" : "finished for this run"}.
+${doMerge ? "Merge it, then clean up." : "Clean up. Do NOT merge it — nothing in this plan is waiting on it."}
 
-\`main\` is protected: squash-only, PR required. Use:
-  \`gh pr merge ${pr.number} --squash --auto\`
-If auto-merge is not enabled for this repository the command errors — in that case, confirm the
-checks are currently passing (\`gh pr checks ${pr.number}\`) and merge directly:
-  \`gh pr merge ${pr.number} --squash\`
-If CI did not run at all (the budget-exhausted case), \`--auto\` will never fire, so merge directly —
-but ONLY after reading the local-verification comment on the PR yourself and confirming it records
-every check as PASS. If that comment is missing, or records any check as NOT_RUN or FAIL, do NOT
-merge: report \`merged: false\` with what it said. The workflow only routes a PR here when it
-believes every check ran, so a NOT_RUN you find in that comment means the two disagree — and the
-comment, being the written record on the PR, wins.
+1. Confirm the work is safely on the remote: \`git ls-remote --heads origin ${p.branch}\` must return a
+   ref, and \`git -C ${wt} status --porcelain -uall\` must be empty. If EITHER fails, STOP: report it
+   and remove nothing. An uncommitted change here exists nowhere else.
+${
+  doMerge
+    ? `2. Merge. Other pull requests in this plan DEPEND on this being on main before they can start.
+   \`main\` is protected: squash-only, PR required.
+     \`gh pr merge ${pr.number} --squash --auto\`
+   If auto-merge is not enabled for the repository the command errors — then confirm the checks are
+   currently passing (\`gh pr checks ${pr.number}\`) and merge directly with \`gh pr merge ${pr.number} --squash\`.${
+     localCiNote
+       ? `
+   ⚠️ CI never ran on this PR; it was verified locally. Before merging, READ the verification comment
+   on the PR yourself and confirm it records every check as PASS or PREEXISTING. If it is missing, or
+   records any check as NOT_RUN or FAIL, do NOT merge: report \`merged: false\` with what it said. The
+   workflow only routes a PR here when it believes every check ran, so a NOT_RUN you find there means
+   the two disagree — and the comment, being the written record on the PR, wins.`
+       : ""
+   }
+   Then poll \`gh pr view ${pr.number} --json state,mergeStateStatus,mergedAt\` until \`state\` is
+   \`MERGED\`, up to 10 times. Report \`merged: true\` with the resulting SHA only when you have SEEN it
+   merged — never optimistically. If it will not merge (conflicts, a failing required check, a
+   blocked branch), report \`merged: false\` with the exact reason. Do NOT force anything and do NOT
+   change branch protection.
+3. `
+    : "2. "
+}Remove the worktree, which holds ~1.4 GB of installed dependencies it no longer needs:
+   \`git worktree remove ${wt}\` from the main checkout. Do NOT pass --force: if git refuses because
+   the tree is dirty, that is step 1's guarantee failing — keep the worktree and say so. Do NOT
+   delete the branch \`${p.branch}\`.
 
-Then poll \`gh pr view ${pr.number} --json state,mergeStateStatus,mergedAt\` until \`state\` is
-\`MERGED\`, up to 10 times. Report \`merged: true\` with the resulting SHA only when you have SEEN it
-merged — never optimistically.
-
-If it will not merge (conflicts, a failing required check, a blocked branch), report \`merged: false\`
-with the exact reason. Do NOT force anything and do NOT change the branch protection.`;
+Report what happened. \`merged\` MUST be false unless you saw state MERGED.`;
 }
 
 // ── Stage 0: parse ───────────────────────────────────────────────────────────
@@ -752,12 +965,31 @@ const parsed = await agent(parsePrompt(), {
   label: "parse-plan",
   phase: "Parse",
   schema: PARSE_SCHEMA,
-  model: "sonnet",
+  ...CHEAP,
 });
 
-if (!parsed || !parsed.prs || parsed.prs.length === 0) {
-  log("No pull requests parsed from the plan — aborting.");
-  return { error: "parse-failed", parsed };
+if (!parsed) {
+  log("The parse seat returned nothing. Nothing was built.");
+  return { error: "parse-agent-died" };
+}
+if (!parsed.ok) {
+  // Exit 2 is a plan defect, 3 an unreachable remote, 4 usage — all of them the
+  // operator's to fix, all of them reported in the script's own words.
+  log(
+    `HARD STOP: scripts/parse-plan.mjs refused (exit ${parsed.exitCode}).\n` +
+      (parsed.stderr || "(no stderr reported)"),
+  );
+  return { error: parsed.exitCode === 2 ? "plan-defects" : "parse-refused", exitCode: parsed.exitCode, stderr: parsed.stderr };
+}
+
+const echoBad = echoProblems(parsed);
+if (echoBad.length) {
+  log(
+    `HARD STOP: the parse seat's copy of the plan JSON does not hold up:\n` +
+      echoBad.map((s) => `  - ${s}`).join("\n") +
+      `\nRe-launch; if it repeats, run \`node scripts/parse-plan.mjs ${PLAN}\` by hand and read it.`,
+  );
+  return { error: "parse-echo-corrupt", problems: echoBad };
 }
 
 // ── Guards: plan defects, caught before any agent runs ───────────────────────
@@ -901,8 +1133,14 @@ ${parsed.why}
 Work in the MAIN checkout (\`git fetch origin main && git switch main && git pull\` first). These
 criteria concern capabilities that exist only once the PRs are integrated, so look for what per-PR
 review could not see: duplicated work between PRs, one surface contradicting another, a capability
-that reached the API but not MCP, a decision that landed in two places with two meanings. Run the
-suites you need, including \`just test-int\` — nothing else is running now.
+that reached the API but not MCP, a decision that landed in two places with two meanings.
+
+Run the suites you need. \`just test-int\` and \`just smoke\` bind fixed host ports shared with every
+worktree, so take the lock around them and release it on every exit path:
+  \`bash scripts/docker-lock.sh acquire verify-feature\` (exit 3 = another run holds it; wait, retry,
+  or record the tier as not run) … \`bash scripts/docker-lock.sh release verify-feature\`
+
+Plan snapshot: ${parsed.planSnapshot}. Redirect long runs to a log and read the tail.
 
 This is the report the operator signs off on. Be exhaustive about any criterion that is partial,
 misread, or only superficially covered. Return the verdict in the structured format.`;
@@ -916,7 +1154,7 @@ misread, or only superficially covered. Return the verdict in the structured for
     log("Feature verification produced no report. Re-launch with { verifyFeature: true }.");
     return { feature: parsed.feature, note: "verification-missing" };
   }
-  return { feature: parsed.feature, featureVerdict: report };
+  return { feature: parsed.feature, planSha: parsed.planSha, featureVerdict: report };
 }
 
 // ── Select what to build ─────────────────────────────────────────────────────
@@ -950,8 +1188,8 @@ if (ONLY_BRANCH && byBranch.get(ONLY_BRANCH).prExists) {
 // Groups are derived from `depends` against what is actually MERGED. An open
 // prerequisite does not count: a dependent is cut from `origin/main`, and code
 // that is only on an open PR is not there.
-const mergedBranches = parsed.prs.filter((p) => p.merged).map((p) => p.branch);
-const layered = groupsOf(pending, mergedBranches);
+const planMerged = parsed.prs.filter((p) => p.merged).map((p) => p.branch);
+const layered = groupsOf(pending, planMerged);
 if (layered.error) {
   log(
     `HARD STOP: nothing is buildable — every remaining PR waits on a dependency that is not merged ` +
@@ -983,26 +1221,28 @@ if (collisions.length) {
   };
 }
 
-// Who is depended on: those PRs auto-merge when green, because the whole DAG
-// waits on them. Leaves stay open for the operator to review at leisure.
-const dependedOn = new Set(parsed.prs.flatMap((p) => p.depends || []));
-
 log(
-  `${parsed.feature} — ${pending.length} PR(s) to build in ${groups.length} group(s):\n` +
+  `${parsed.feature} (plan ${parsed.planSha}) — ${pending.length} PR(s) to build in ${groups.length} group(s):\n` +
     groups
       .map(
         (g, i) =>
-          `  ${i + 1}. ${g.map((p) => p.branch + (dependedOn.has(p.branch) ? " (auto-merges)" : "")).join(" ∥ ")}`,
+          `  ${i + 1}. ${g
+            .map((p) => p.branch + (AUTO_MERGE && blocksSomething(parsed.prs, p.branch) ? " (auto-merges)" : ""))
+            .join(" ∥ ")}`,
       )
       .join("\n"),
 );
 
 // ── The per-PR pipeline ──────────────────────────────────────────────────────
-// implement → independent review (bounded fix loop) → commit/push/PR → CI green.
+// implement → GATE+commit → independent review (bounded fix loop) → push+PR →
+// CI green → finish (merge if the DAG waits on it, then clean up).
+//
 // Every seat is a FRESH agent: the reviewer never wrote the code it judges, and
 // the fixer is never the implementer either. The reviewer additionally has no
 // write tools (see .claude/agents/arc-reviewer.md), so it structurally cannot
 // repair what it finds — independence enforced by the toolset, not by a prompt.
+// The gate seat is not a judge and not a developer: it runs one command, commits
+// on success, and is explicitly forbidden to fix anything.
 
 async function buildPr(p) {
   // Every agent carries `phase:` explicitly rather than calling the global
@@ -1010,14 +1250,13 @@ async function buildPr(p) {
   const title = p.branch;
   const dev = { phase: title, model: "opus", schema: HANDOFF_SCHEMA };
   const rev = { phase: title, agentType: "arc-reviewer", schema: REVIEW_SCHEMA };
+  const cheap = (label, schema) => ({ label: `${title}:${label}`, phase: title, schema, ...CHEAP });
   const fail = (reason, extra) => {
     log(`HARD STOP — ${p.branch}: ${reason}`);
-    return { branch: p.branch, title: p.title, ok: false, reason, ...extra };
+    return { branch: p.branch, title: p.title, ok: false, merged: false, reason, ...extra };
   };
 
-  const setup = await agent(setupPrompt(p), {
-    label: `${title}:setup`, phase: title, model: "sonnet", schema: SETUP_SCHEMA,
-  });
+  const setup = await agent(setupPrompt(parsed, p), cheap("setup", SETUP_SCHEMA));
   if (setup == null) return fail("worktree-setup-failed");
   // Act on what it reported. Without these checks the schema would be decoration
   // and the dirty-worktree stop could never fire.
@@ -1035,7 +1274,7 @@ async function buildPr(p) {
   }
 
   // A dead implement agent must never advance to review against an empty diff.
-  let handoff = await agent(implementPrompt(parsed, p, null, null, null), { ...dev, label: `${title}:implement` });
+  let handoff = await agent(implementPrompt(parsed, p, null), { ...dev, label: `${title}:implement` });
   if (handoff == null) {
     log(`${p.branch}: implement agent returned nothing — retrying once.`);
     handoff = await agent(
@@ -1044,7 +1283,7 @@ async function buildPr(p) {
 is not, and do not be derailed if some tests already exist or already pass. Reach the same end state
 as a clean run.
 
-` + implementPrompt(parsed, p, null, null, null),
+` + implementPrompt(parsed, p, null),
       { ...dev, label: `${title}:implement-retry` },
     );
   }
@@ -1054,175 +1293,279 @@ as a clean run.
     });
   }
 
-  let verdict = await agent(reviewPrompt(parsed, p, null, handoff), { ...rev, label: `${title}:review` });
+  // The gate, then the commit. Bounded: a gate that stays red after two fixes is
+  // a human's problem, and nothing is pushed.
+  let gate = null;
+  let gateLoops = 0;
+  // Nothing is committed on this branch yet, so the first commit that lands
+  // carries the PR title as its subject however many gate fixes it took to get
+  // there. A "make the gate green" subject on a branch's only commit reads as if
+  // the PR were a repair of something.
+  let committedYet = false;
+  for (;;) {
+    const tag = gateLoops === 0 ? "gate" : `gate-retry${gateLoops}`;
+    gate = await agent(gatePrompt(p, p.title, !committedYet), cheap(tag, GATE_SCHEMA));
+    if (gate == null) return fail("gate-agent-died", { recovery: `Run \`cd ${wtPath(p)} && just gate\` by hand to see where it stands. The work is uncommitted.` });
+    if (gate.gateExit === 0 && gate.committed) {
+      committedYet = true;
+      break;
+    }
+    if (gate.gateExit === 0 && !gate.committed) {
+      // Green but refused to commit — the seat saw something it did not
+      // recognise in the tree. That is a stop, not a retry, and it is NOT the
+      // same finding as a red gate, so it is checked before the loop bound.
+      return fail("commit-refused", {
+        gate,
+        recovery: `The gate passed but the commit seat refused: ${gate.detail}. Inspect ${wtPath(p)} by hand.`,
+      });
+    }
+    if (gateLoops >= MAX_GATE_LOOPS) {
+      return fail(`gate red after ${gateLoops} fix loop(s) — no PR opened`, {
+        gate,
+        recovery: `\`just gate\` exits ${gate.gateExit} in ${wtPath(p)} and the work is uncommitted. Read its tail, decide by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
+      });
+    }
+    gateLoops++;
+    log(`${p.branch}: gate red (fix ${gateLoops}/${MAX_GATE_LOOPS}) — ${(gate.detail || "").slice(0, 200)}`);
+    const fixed = await agent(gateFixPrompt(parsed, p, gate, handoff), { ...dev, label: `${title}:gate-fix${gateLoops}` });
+    // A dead fix agent leaves the tree exactly as it was, so re-gating would
+    // produce the same red and burn a second loop for nothing.
+    if (fixed == null) {
+      return fail("gate-fix-agent-died", {
+        gate,
+        recovery: `The gate is red in ${wtPath(p)} and the fix agent died. Read \`just gate\`'s output by hand.`,
+      });
+    }
+    handoff = fixed;
+  }
+
+  let verdict = await agent(reviewPrompt(parsed, p, "full", { handoff }, gate), { ...rev, label: `${title}:review` });
   let loops = 0;
   while (verdict && verdict.status === "REJECTED" && loops < MAX_REVIEW_LOOPS) {
     loops++;
     const rejected = verdict.issues;
     log(`${p.branch} REJECTED (fix ${loops}/${MAX_REVIEW_LOOPS}): ${verdict.gaps}`);
-    handoff =
-      (await agent(implementPrompt(parsed, p, rejected, handoff, null), { ...dev, label: `${title}:fix${loops}` })) ||
-      handoff;
-    verdict = await agent(reviewPrompt(parsed, p, rejected, handoff), { ...rev, label: `${title}:review${loops}` });
+    const fixed = await agent(fixPrompt(parsed, p, rejected, handoff), { ...dev, label: `${title}:fix${loops}` });
+    if (fixed == null) {
+      return fail("fix-agent-died", {
+        verdict,
+        recovery: `The fix agent for ${p.branch} died; the tree is as the reviewer saw it, plus nothing. Decide by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
+      });
+    }
+    handoff = fixed;
+    // The fix has to pass the gate and be committed before it can be reviewed —
+    // otherwise the re-review reads a tree that does not match any commit.
+    const regate = await agent(
+      gatePrompt(p, `fix(${p.branch.split("/")[1] || "review"}): address the review`, false),
+      cheap(`gate-fix-commit${loops}`, GATE_SCHEMA),
+    );
+    if (regate == null || regate.gateExit !== 0 || !regate.committed) {
+      return fail("gate-red-after-review-fix", {
+        verdict,
+        gate: regate,
+        recovery: `The review fix left the gate red (exit ${regate ? regate.gateExit : "?"}) in ${wtPath(p)} and it was not committed. Nothing was pushed.`,
+      });
+    }
+    gate = regate;
+    verdict = await agent(reviewPrompt(parsed, p, "targeted", { handoff, rejected }, gate), {
+      ...rev,
+      label: `${title}:review${loops}`,
+    });
   }
   if (!verdict || verdict.status !== "APPROVED") {
     // No PR is opened. Nothing reaches the remote that has not passed an
     // independent check against its own acceptance criteria.
     return fail(`review rejected after ${loops} fix loop(s) — no PR opened`, {
       verdict,
-      recovery: `The work is in ${wtPath(p)}, uncommitted. Read the gaps, decide by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
+      recovery: `The work is committed on branch ${p.branch} in ${wtPath(p)} but NOT pushed. Read the gaps, decide by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
     });
   }
+  let approvedSha = gate.sha;
 
-  const pr = await agent(prPrompt(p), { label: `${title}:pr`, phase: title, model: "sonnet", schema: PR_SCHEMA });
+  const pr = await agent(pushPrompt(parsed, p, gate), cheap("pr", PR_SCHEMA));
   if (pr == null || !pr.ok || !pr.number) {
     return fail("pr-failed", {
       verdict,
       detail: pr ? pr.detail : "agent returned nothing",
-      recovery: `Review-approved but not on the remote. Check \`git -C ${wtPath(p)} status\` and \`gh pr list\` before re-launching.`,
+      recovery: `Review-approved and committed, but not on the remote. Check \`git -C ${wtPath(p)} log --oneline -3\` and \`gh pr list\` before re-launching.`,
     });
   }
   log(`${p.branch}: PR #${pr.number} opened — ${pr.url}`);
 
-  let ci = await agent(ciPrompt(p, pr), { label: `${title}:ci`, phase: title, model: "sonnet", schema: CI_SCHEMA });
+  let ci = await agent(ciPrompt(p, pr), cheap("ci", CI_SCHEMA));
   let ciLoops = 0;
   while (ci && ci.status === "RED" && ciLoops < MAX_CI_LOOPS) {
     ciLoops++;
     log(`${p.branch} CI RED (fix ${ciLoops}/${MAX_CI_LOOPS}): ${ci.detail}`);
-    handoff =
-      (await agent(implementPrompt(parsed, p, null, handoff, ci), { ...dev, label: `${title}:ci-fix${ciLoops}` })) ||
-      handoff;
-    // A CI fix changes behaviour, so it is re-reviewed before it goes back up:
-    // no code reaches the PR without an independent pass over the criteria.
-    const recheck = await agent(reviewPrompt(parsed, p, null, handoff), { ...rev, label: `${title}:review-ci${ciLoops}` });
-    // A DEAD re-review is not an approval. Reading `recheck && …` let a null fall
-    // through to the push below, which contradicted the guarantee this step
-    // exists for — and was inconsistent with the initial review, where a null
-    // verdict is a hard stop.
+    const fixed = await agent(ciFixPrompt(parsed, p, ci, handoff), { ...dev, label: `${title}:ci-fix${ciLoops}` });
+    if (fixed == null) {
+      return fail("ci-fix-agent-died", {
+        pr, verdict, ci,
+        recovery: `PR #${pr.number} is red and the fix agent died. Nothing new was pushed.`,
+      });
+    }
+    handoff = fixed;
+    const regate = await agent(
+      gatePrompt(p, `fix(ci): ${(ci.failing || ["ci"]).join(", ").slice(0, 40)}`, false),
+      cheap(`gate-ci${ciLoops}`, GATE_SCHEMA),
+    );
+    if (regate == null || regate.gateExit !== 0 || !regate.committed) {
+      return fail("gate-red-after-ci-fix", {
+        pr, verdict, gate: regate,
+        recovery: `The CI fix left the gate red (exit ${regate ? regate.gateExit : "?"}) in ${wtPath(p)}. PR #${pr.number} still carries the old head.`,
+      });
+    }
+    gate = regate;
+    // A CI fix changes behaviour, so it is re-reviewed before it goes back up —
+    // but SCOPED to the diff since the approval, not a full re-judgement of
+    // every criterion. The full pass cost an opus review of 5 ACs for a two-file
+    // schemathesis fix (PR #54, 16 Aug 2026).
+    const recheck = await agent(reviewPrompt(parsed, p, "since", { handoff }, gate, approvedSha), {
+      ...rev,
+      label: `${title}:review-ci${ciLoops}`,
+    });
+    // A DEAD re-review is not an approval.
     if (!recheck || recheck.status !== "APPROVED") {
       return fail(
         recheck ? "CI fix broke the acceptance criteria" : "re-review agent died after a CI fix",
         {
           verdict: recheck, pr,
-          recovery: `PR #${pr.number} is open and its latest work is unreviewed — nothing was pushed. Decide by hand.`,
+          recovery: `PR #${pr.number} is open and its latest commit is unreviewed — nothing was pushed. Decide by hand.`,
         },
       );
     }
-    const repush = await agent(
-      `Commit and push the CI fix for "${p.title}" to the existing PR #${pr.number}, from \`${wtPath(p)}\`.
-Stage explicitly by path (never \`git add -A\`/\`.\`/\`-u\`), exclude \`.claude/agent-memory/\` and
-\`CHANGELOG.md\`, commit with a Conventional Commit subject, then \`git -C ${wtPath(p)} push\`. The
-pre-push hooks take minutes — generous timeout, never \`--no-verify\`. If the failing check was
-\`pr-title\`, fix it with \`gh pr edit ${pr.number} --title …\`, keeping it a lowercase-start
-Conventional Commit with no trailing period. Report the pushed SHA.`,
-      { label: `${title}:ci-push${ciLoops}`, phase: title, model: "sonnet", schema: PR_SCHEMA },
-    );
+    approvedSha = gate.sha;
+    const repush = await agent(repushPrompt(p, pr, gate), cheap(`ci-push${ciLoops}`, PR_SCHEMA));
     if (repush == null || !repush.ok) return fail("ci-push-failed", { pr, verdict });
-    ci = await agent(ciPrompt(p, pr), { label: `${title}:ci-recheck${ciLoops}`, phase: title, model: "sonnet", schema: CI_SCHEMA });
+    ci = await agent(ciPrompt(p, pr), cheap(`ci-recheck${ciLoops}`, CI_SCHEMA));
   }
 
   const status = ci ? ci.status : "UNKNOWN";
-  // Budget exhausted is not a defect. It needs a local run of everything CI would
-  // have done — which is Docker-bound, so it is deferred to the serial pass
+  // No run ever registered is not a defect. It needs a local run of everything CI
+  // would have done — which is Docker-bound, so it is deferred to the serial pass
   // rather than run here inside a concurrent branch.
   if (status === "NO_BUDGET") {
-    log(`${p.branch}: CI did not run — Actions budget exhausted. Deferring local verification.`);
-    return { branch: p.branch, title: p.title, ok: false, reason: "needs-local-ci", pr, verdict, ci, pr_obj: p };
+    log(`${p.branch}: CI never registered a run — deferring local verification.`);
+    return { branch: p.branch, title: p.title, ok: false, merged: false, reason: "needs-local-ci", pr, verdict, ci, gate, pr_obj: p };
   }
   if (status !== "GREEN") {
-    return fail(`CI ${status} after ${ciLoops} fix loop(s)`, {
+    const r = fail(`CI ${status} after ${ciLoops} fix loop(s)`, {
       pr, verdict, ci,
-      recovery: `PR #${pr.number} is open with ${status.toLowerCase()} CI. It needs a human decision before merge.`,
+      recovery: `PR #${pr.number} is open with ${status.toLowerCase()} CI. It needs a human decision before merge. Its worktree was removed; restore it with \`git worktree add ${wtPath(p)} ${p.branch}\` then \`just worktree-init\`.`,
     });
+    await reclaimWorktree(p, pr);
+    return r;
   }
   log(`✅ ${p.branch}: PR #${pr.number} green.`);
-  await removeWorktree(p, title);
-  return { branch: p.branch, title: p.title, ok: true, pr, verdict, reviewLoops: loops, ciLoops, ciMode: "github" };
+  return await finish(p, pr, verdict, { reviewLoops: loops, ciLoops, gateLoops, ciMode: "github" });
 }
 
-// A finished worktree holds ~1.4 GB of installed dependencies (.venv +
-// node_modules) and its work is already on the remote, so it is pure dead
-// weight. Removed ONLY on the success path: every hard stop leaves the worktree
-// standing, because the recovery lines point at it and an uncommitted rejected
-// implementation exists nowhere else. The branch is never deleted here — the PR
-// is still open, and `/clean-gone` reaps branches after they merge.
-async function removeWorktree(p, title) {
-  const wt = wtPath(p);
-  await agent(
-    `The PR for "${p.title}" is open and its work is pushed, so the worktree \`${wt}\` is no longer
-needed. Remove it and free the ~1.4 GB of installed dependencies it holds.
+// Merge if the DAG is waiting on this PR, then remove the worktree. `merged` is
+// returned as data on this PR's own result — never assigned onto an object that
+// crossed a `parallel()` boundary, which is how a real merge came back as
+// "Merged: none" on 16 Aug 2026.
+async function finish(p, pr, verdict, extra) {
+  const doMerge = AUTO_MERGE && blocksSomething(parsed.prs, p.branch) && extra.ciMode !== "local-partial";
+  const res = await agent(finishPrompt(p, pr, doMerge, extra.ciMode !== "github"), {
+    label: `${p.branch}:${doMerge ? "merge-and-cleanup" : "cleanup"}`,
+    phase: p.branch,
+    schema: FINISH_SCHEMA,
+    ...CHEAP,
+  });
+  // `doMerge &&` is load-bearing, not defensive: a cleanup-only seat was never
+  // asked to merge and cannot have, so a `merged: true` from one is noise — and
+  // trusting it would report an unmerged PR as merged and let the next group cut
+  // from a main that lacks it. The mirror image of the bug that reported a real
+  // merge as unmerged, and the more dangerous direction of the two.
+  const merged = doMerge && !!(res && res.merged);
+  if (doMerge) {
+    log(
+      merged
+        ? `🔀 ${p.branch}: PR #${pr.number} squash-merged (${(res.mergeSha || "").slice(0, 9)}).`
+        : `${p.branch}: PR #${pr.number} did NOT merge — ${res ? res.detail : "the finish seat returned nothing"}`,
+    );
+  }
+  return {
+    branch: p.branch, title: p.title, ok: true, pr, verdict, merged,
+    mergeDetail: res ? res.detail : "finish seat returned nothing",
+    ...extra,
+  };
+}
 
-1. Confirm the work is safely on the remote: \`git ls-remote --heads origin ${p.branch}\` must return a
-   ref, and \`git -C ${wt} status --porcelain -uall\` must be empty. If EITHER check fails, STOP and
-   report it — do not remove anything. An uncommitted change here exists nowhere else.
-2. \`git worktree remove ${wt}\` from the main checkout. Do NOT pass --force: if git refuses because
-   the tree is dirty, that is step 1's guarantee failing and the worktree must be kept.
-3. Do NOT delete the branch \`${p.branch}\` — its PR is still open.
-4. Report what was removed, or why it was kept.`,
-    { label: `${title}:cleanup`, phase: title, model: "sonnet" },
-  );
+// A worktree whose work is pushed is 1.4 GB of dead weight: the PR carries every
+// commit, so the stop paths that happen AFTER the push reclaim it and say in
+// their recovery line how to get it back. The pre-push stops do the opposite and
+// keep it — there the tree holds the only copy of the work.
+async function reclaimWorktree(p, pr) {
+  await agent(finishPrompt(p, pr, false, false), {
+    label: `${p.branch}:cleanup`, phase: p.branch, schema: FINISH_SCHEMA, ...CHEAP,
+  });
 }
 
 // Run everything CI would have run, locally, and record it on the PR. Serial by
 // construction: it uses `test-int`/`smoke`, which bind fixed host ports and one
-// shared compose project name across every checkout.
+// shared compose project name across every checkout — and it takes the lock, so
+// a second concurrent run cannot walk into it.
 async function localCiVerify(r) {
   const p = r.pr_obj;
-  const title = p.branch;
-  const res = await agent(localCiPrompt(p, r.pr), {
-    label: `${title}:local-ci`,
-    phase: title,
+  const res = await agent(localCiPrompt(parsed, p, r.pr), {
+    label: `${p.branch}:local-ci`,
+    phase: p.branch,
     model: "opus",
     schema: LOCAL_CI_SCHEMA,
   });
+  const restore = `Its worktree was reclaimed; restore it with \`git worktree add ${wtPath(p)} ${p.branch}\` then \`just worktree-init\`.`;
   if (res == null) {
-    return { ...r, reason: "local-ci-failed", recovery: `PR #${r.pr.number} is open and unverified — CI had no budget and the local run produced nothing.` };
+    await reclaimWorktree(p, r.pr);
+    return { ...r, reason: "local-ci-failed", recovery: `PR #${r.pr.number} is open and unverified — CI never ran and the local run produced nothing. ${restore}` };
   }
   if (res.status !== "GREEN") {
-    return { ...r, reason: "local-ci-red", localCi: res, recovery: `PR #${r.pr.number} failed local verification: ${res.detail}` };
+    await reclaimWorktree(p, r.pr);
+    return { ...r, reason: "local-ci-red", localCi: res, recovery: `PR #${r.pr.number} failed local verification: ${res.detail} ${restore}` };
   }
   // The comment IS the evidence. Without it the PR carries no record that CI
-  // was replaced by a local run, and the merge step is told to merge only "if
-  // that local-verification comment is present and green" — a precondition an
-  // agent would be self-policing against a record that does not exist.
+  // was replaced by a local run, and the merge step is told to merge only when
+  // that comment is present and green.
   if (!res.commented) {
+    await reclaimWorktree(p, r.pr);
     return {
       ...r, reason: "local-ci-unrecorded", localCi: res,
-      recovery: `PR #${r.pr.number} passed locally but the verification comment was not posted, so the PR carries no evidence. Post it by hand or re-run before merging.`,
+      recovery: `PR #${r.pr.number} passed locally but the verification comment was not posted, so the PR carries no evidence. Post it by hand or re-run before merging. ${restore}`,
     };
   }
 
-  // GREEN with skipped tiers is NOT the same claim as GREEN. `just check` was
-  // already run by the pre-push hook, so a "verification" where test-int, e2e,
-  // smoke and schemathesis were all NOT_RUN adds exactly nothing — and this
-  // result feeds the auto-merge filter, which would squash it into protected
-  // main on that evidence. The documented case is real: `just smoke` needs
-  // E2E_PASSWORD to match the hash in .env, and without it the tier cannot run.
+  // GREEN with skipped tiers is NOT the same claim as GREEN. The gate was already
+  // run by the pre-push hook, so a "verification" where test-int, e2e, smoke and
+  // schemathesis were all NOT_RUN adds exactly nothing — and this result feeds
+  // the auto-merge decision. A PREEXISTING tier is different: it ran, it failed
+  // the same way on main, and that is evidence rather than absence.
   const skipped = res.notRun || [];
+  const mode = skipped.length ? "local-partial" : "local";
   if (skipped.length) {
     log(
       `⚠️ ${p.branch}: PR #${r.pr.number} verified locally but ${skipped.length} check(s) could not ` +
         `run (${skipped.join(", ")}). It will NOT auto-merge — a human decides whether that evidence ` +
         `is enough.`,
     );
-    await removeWorktree(p, title);
-    return {
-      branch: p.branch, title: p.title, ok: true, pr: r.pr, verdict: r.verdict,
-      localCi: res, ciMode: "local-partial", notRun: skipped,
-    };
+  } else {
+    log(`✅ ${p.branch}: PR #${r.pr.number} verified locally (CI never ran), recorded on the PR.`);
   }
-
-  log(`✅ ${p.branch}: PR #${r.pr.number} verified locally (CI budget exhausted), recorded on the PR.`);
-  await removeWorktree(p, title);
-  return { branch: p.branch, title: p.title, ok: true, pr: r.pr, verdict: r.verdict, localCi: res, ciMode: "local" };
+  if (res.preexisting && res.preexisting.length) {
+    log(`   ${p.branch}: ${res.preexisting.join(", ")} fail identically on main — not attributed to this PR.`);
+  }
+  const done = await finish(p, r.pr, r.verdict, {
+    reviewLoops: r.reviewLoops, ciLoops: r.ciLoops, gateLoops: r.gateLoops, ciMode: mode,
+  });
+  return { ...done, localCi: res, notRun: skipped };
 }
 
 // ── Run the groups ───────────────────────────────────────────────────────────
 // Within a group: non-Docker PRs concurrently (a review is Read/Grep plus
 // targeted tests — no ports, no compose project, so the expensive gate is the
 // parallelisable one), then Docker PRs strictly one at a time, then the deferred
-// local-CI verifications. Between groups: merge the depended-on PRs and wait, so
-// the next group cuts from a main that actually contains its prerequisites.
+// local-CI verifications. Between groups: nothing merges here — each PR's own
+// finish seat merged it if the DAG was waiting — so the barrier only checks that
+// what the next group depends on is demonstrably on main.
 
 const done = [];
 let halted = null;
@@ -1253,55 +1596,16 @@ for (let gi = 0; gi < groups.length && !halted; gi++) {
 
   done.push(...results);
 
-  // Merge the prerequisites so the next group can branch off them. A leaf PR is
-  // never merged here: it exists to be read by a human.
-  // `local-partial` is deliberately excluded: it is green on the tiers that ran
-  // and silent on the ones that did not, which is not enough evidence to squash
-  // into a protected branch unattended. The DAG halts instead, and the operator
-  // decides — which is the right place for that call.
-  const toMerge = results.filter(
-    (r) => r.ok && r.ciMode !== "local-partial" && dependedOn.has(r.branch),
-  );
-  const heldBack = results.filter(
-    (r) => r.ok && r.ciMode === "local-partial" && dependedOn.has(r.branch),
-  );
-  if (heldBack.length) {
-    log(
-      `Holding back ${heldBack.length} prerequisite PR(s) from auto-merge: their local verification ` +
-        `skipped ${[...new Set(heldBack.flatMap((r) => r.notRun || []))].join(", ")}. Merge them by ` +
-        `hand if that is acceptable, then re-launch.`,
-    );
-  }
-  if (AUTO_MERGE && toMerge.length && gi < groups.length - 1) {
-    log(`Merging ${toMerge.length} prerequisite PR(s) so group ${gi + 2} can start.`);
-    const merges = await parallel(
-      toMerge.map((r) => () =>
-        agent(mergePrompt(byBranch.get(r.branch), r.pr), {
-          label: `${r.branch}:merge`,
-          phase: r.branch,
-          model: "sonnet",
-          schema: MERGE_SCHEMA,
-        }).then((m) => ({ r, m })),
-      ),
-    );
-    for (const entry of merges.filter(Boolean)) {
-      entry.r.merged = !!(entry.m && entry.m.merged);
-      entry.r.mergeDetail = entry.m ? entry.m.detail : "merge agent returned nothing";
-    }
-  }
-
   // A later group whose prerequisite did not merge would branch off a main that
-  // lacks what it builds on — stop rather than build on sand.
+  // lacks what it builds on — stop rather than build on sand. `mergedNow` is
+  // data each finish seat returned, and the next group's setup seat verifies it
+  // independently against `git log origin/main`.
   const nextGroup = groups[gi + 1];
   if (nextGroup) {
-    const missing = nextGroup.flatMap((p) =>
-      (p.depends || []).filter((d) => {
-        const r = done.find((x) => x.branch === d);
-        return r ? !r.merged : !byBranch.get(d)?.merged;
-      }),
-    );
+    const mergedNow = done.filter((r) => r.merged).map((r) => r.branch);
+    const missing = missingPrerequisites(nextGroup, mergedNow, planMerged);
     if (missing.length) {
-      halted = `group ${gi + 2} needs these merged first: ${[...new Set(missing)].join(", ")}`;
+      halted = `group ${gi + 2} needs these merged first: ${missing.join(", ")}`;
       log(`STOPPING: ${halted}`);
     }
   }
@@ -1316,7 +1620,8 @@ const open = green.filter((r) => !r.merged);
 log(
   `Done. Merged: ${merged.map((r) => `${r.branch}(#${r.pr.number})`).join(", ") || "none"}. ` +
     `Open for review: ${open.map((r) => `${r.branch}(#${r.pr.number})`).join(", ") || "none"}. ` +
-    `Stopped: ${stopped.map((r) => `${r.branch}(${r.reason})`).join(", ") || "none"}.`,
+    `Stopped: ${stopped.map((r) => `${r.branch}(${r.reason})`).join(", ") || "none"}.` +
+    (halted ? ` HALTED: ${halted}` : ""),
 );
 const allShipped = parsed.prs.every(
   (p) => p.merged || done.some((r) => r.branch === p.branch && r.merged),
@@ -1325,23 +1630,30 @@ if (allShipped) log(`Every PR is merged — re-launch with { verifyFeature: true
 
 return {
   feature: parsed.feature,
+  planSha: parsed.planSha,
   merged: merged.map((r) => ({ branch: r.branch, title: r.title, pr: r.pr.number, url: r.pr.url })),
   open: open.map((r) => ({
     branch: r.branch, title: r.title, pr: r.pr.number, url: r.pr.url,
-    reviewLoops: r.reviewLoops, ciLoops: r.ciLoops, ciMode: r.ciMode,
+    reviewLoops: r.reviewLoops, ciLoops: r.ciLoops, gateLoops: r.gateLoops, ciMode: r.ciMode,
     localCi: r.localCi ? r.localCi.checks : undefined,
+    notRun: r.notRun && r.notRun.length ? r.notRun : undefined,
+    preexisting: r.localCi && r.localCi.preexisting && r.localCi.preexisting.length ? r.localCi.preexisting : undefined,
   })),
   stopped: stopped.map((r) => ({
     branch: r.branch, reason: r.reason,
     gaps: r.verdict ? r.verdict.gaps : undefined,
+    processNotes: r.verdict ? r.verdict.processNotes : undefined,
+    gateExit: r.gate ? r.gate.gateExit : undefined,
     recovery: r.recovery,
   })),
   halted,
   nextAction: halted
     ? `Resolve the stop, then re-launch: ${halted}`
-    : allShipped
-      ? "Re-launch with { verifyFeature: true }."
-      : open.length
-        ? "Review and squash-merge the open PRs."
-        : "Resolve the hard stops first.",
+    : stopped.length
+      ? "Resolve the hard stops first — each carries its own recovery line."
+      : allShipped
+        ? "Re-launch with { verifyFeature: true }."
+        : open.length
+          ? "Review and squash-merge the open PRs."
+          : "Nothing to do.",
 };

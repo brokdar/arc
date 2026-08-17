@@ -2,6 +2,13 @@
 # Validation harness for scripts/check-migration-required.sh
 set -uo pipefail
 
+# HERMETIC. `git commit` exports GIT_DIR, GIT_INDEX_FILE and friends to its hooks,
+# so a suite that builds its own repository in a temp directory silently operates
+# on the REAL one instead — which is how this passed standalone and failed inside
+# a commit. Unset them before touching git at all.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_QUARANTINE_PATH
+
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-migration-required.sh"
 ROOT="$(mktemp -d)"
 PASS=0; FAIL=0

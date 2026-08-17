@@ -17,7 +17,7 @@
 //
 // Run: node scripts/workflow-guards.test.mjs
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,7 +53,8 @@ const EXPORTS = [
   "TITLE_RE", "POSITIONAL_RE", "SHELL_UNSAFE_RE", "BRANCH_RE",
   "badTitles", "unsafeTitles", "positionalOffenders", "badBranches",
   "duplicateBranches", "acceptanceless", "unknownDependencies",
-  "migrationCollisions", "groupsOf",
+  "migrationCollisions", "groupsOf", "blocksSomething", "missingPrerequisites",
+  "echoProblems",
 ];
 const G = new Function(`${block}\nreturn {${EXPORTS.join(",")}};`)();
 
@@ -87,6 +88,9 @@ group("titles — must state the pr-title CI rule and nothing stricter");
     "build(devcontainer): worktrees on linux storage, api-types guard",
     "revert: the daily series",
     "fix: a one word",
+    // CI's rule is `.+` after the colon: a one-character subject is legal, and
+    // demanding a second character made the guard refuse titles CI accepts.
+    "fix(a): x",
     // CI's rule is "does not START uppercase"; it does not demand a letter.
     // This repo's prose is full of backticked identifiers and these are legal.
     "feat(api): `GET /wellness/days` returns null, never 0",
@@ -242,6 +246,122 @@ group("groupsOf — only MERGED branches satisfy a dependency");
   ok("detects a self-dependency", G.groupsOf([s], []).error === "unbuildable");
 
   ok("empty input yields no groups", (G.groupsOf([], []).groups || []).length === 0);
+}
+
+// ── the merge accounting that a real merge once failed to survive ────────────
+// Run wf_a4a6a27e (16 Aug 2026) squash-merged PR #54, its merge seat returned
+// `merged: true`, and the run still halted with "group 2 needs these merged
+// first" and reported "Merged: none" — because the flag was assigned onto an
+// object that had crossed a `parallel()` boundary. The fix is that merge state is
+// only ever DATA, decided by these two pure functions.
+group("blocksSomething — only merge what the DAG is actually waiting on");
+{
+  const a = pr({ branch: "feat/a", title: "feat(a): a" });
+  const b = pr({ branch: "feat/b", title: "feat(b): b", depends: ["feat/a"] });
+  ok("a prerequisite with an unmerged dependent blocks", G.blocksSomething([a, b], "feat/a") === true);
+  ok("a leaf blocks nothing", G.blocksSomething([a, b], "feat/b") === false);
+  ok(
+    "a prerequisite whose only dependent already merged blocks nothing",
+    G.blocksSomething([a, { ...b, merged: true }], "feat/a") === false,
+  );
+  ok("a branch nobody names blocks nothing", G.blocksSomething([a, b], "feat/zzz") === false);
+  ok("no PRs, nothing blocked", G.blocksSomething([], "feat/a") === false);
+  ok("a PR with no depends array is tolerated", G.blocksSomething([{ branch: "feat/a" }], "feat/a") === false);
+}
+
+group("missingPrerequisites — what the next group cannot start without");
+{
+  const next = [pr({ branch: "feat/c", title: "feat(c): c", depends: ["feat/a", "feat/b"] })];
+  ok("both missing", G.missingPrerequisites(next, [], []).join() === "feat/a,feat/b");
+  ok("one merged this run", G.missingPrerequisites(next, ["feat/a"], []).join() === "feat/b");
+  ok("one already on main from the plan", G.missingPrerequisites(next, [], ["feat/b"]).join() === "feat/a");
+  ok("both accounted for", G.missingPrerequisites(next, ["feat/a"], ["feat/b"]).length === 0);
+  ok(
+    "a prerequisite named by two PRs is reported once",
+    G.missingPrerequisites(
+      [next[0], pr({ branch: "feat/d", title: "feat(d): d", depends: ["feat/a"] })],
+      [],
+      [],
+    ).join() === "feat/a,feat/b",
+  );
+  ok("a group with no dependencies needs nothing", G.missingPrerequisites([pr()], [], []).length === 0);
+  ok("undefined lists are tolerated", G.missingPrerequisites(next, undefined, undefined).length === 2);
+}
+
+// ── the integrity check on the parse seat's echo ─────────────────────────────
+group("echoProblems — a truncated copy of the plan JSON is detected");
+{
+  const good = { prCount: 2, planSnapshot: "/x/plan.md", prs: [
+    { title: "feat(a): a", branch: "feat/a", why: "w", delivers: "d" },
+    { title: "feat(b): b", branch: "feat/b", why: "w", delivers: "d" },
+  ] };
+  ok("a faithful echo has no problems", G.echoProblems(good).length === 0, JSON.stringify(G.echoProblems(good)));
+  ok(
+    "a dropped PR is caught by the count",
+    G.echoProblems({ ...good, prs: good.prs.slice(0, 1) }).some((s) => s.includes("reported 2")),
+  );
+  ok("no PRs at all is caught", G.echoProblems({ ...good, prs: [] }).length >= 1);
+  ok("a missing snapshot path is caught", G.echoProblems({ ...good, planSnapshot: "" }).some((s) => s.includes("planSnapshot")));
+  ok(
+    "a PR that lost its branch is caught",
+    G.echoProblems({ ...good, prs: [{ ...good.prs[0], branch: "" }, good.prs[1]] }).some((s) => s.includes("title or branch")),
+  );
+  ok(
+    "a PR that lost its why is caught",
+    G.echoProblems({ ...good, prs: [{ ...good.prs[0], why: "" }, good.prs[1]] }).some((s) => s.includes("why/delivers")),
+  );
+  ok(
+    "a missing prCount is not treated as a mismatch",
+    G.echoProblems({ planSnapshot: "/x", prs: good.prs }).length === 0,
+  );
+}
+
+// ── the whole script must be loadable by the runtime ─────────────────────────
+// The Workflow runtime evaluates this file as an ASYNC FUNCTION BODY — which is
+// why `node --check` cannot validate it (top-level `return` and `await` are legal
+// there and illegal in a module). A syntax error is otherwise discovered only at
+// launch, after the operator has been told the run started.
+group("the workflow script itself");
+{
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  let err = null;
+  try {
+    // The runtime lifts `export const meta` out before evaluating the body, so
+    // the export keyword is stripped here for the same reason.
+    new AsyncFunction(
+      "args", "log", "phase", "agent", "parallel", "pipeline", "budget", "workflow",
+      source.replace(/^export const meta/m, "const meta"),
+    );
+  } catch (e) {
+    err = e;
+  }
+  ok("parses as an async function body, the way the runtime evaluates it", err === null, err && err.message);
+  ok("declares its meta block as an export", /^export const meta = \{/m.test(source));
+
+  // The mechanical steps must stay mechanical. Each of these replaced an agent's
+  // judgement after it cost a real run; a prompt that stops invoking the script
+  // silently hands the job back to a model.
+  for (const [what, needle] of [
+    ["the plan parser", "scripts/parse-plan.mjs"],
+    ["the CI classifier", "scripts/ci-status.mjs"],
+    ["the Docker lock", "scripts/docker-lock.sh"],
+    ["the one-command gate", "just gate"],
+  ]) {
+    ok(`invokes ${what} (${needle})`, source.includes(needle));
+  }
+  for (const script of ["parse-plan.mjs", "ci-status.mjs", "docker-lock.sh"]) {
+    ok(`${script} exists on disk`, existsSync(resolve(here, script)));
+  }
+  // `gh pr checks --watch` does not return: two seats blocked on it for 155
+  // minutes on 16 Aug 2026 and only woke when the operator typed into the parent
+  // session. Nothing in this workflow may use it again.
+  const watchLines = source.split("\n").filter((l) => /pr checks[^\n]*--watch/.test(l));
+  ok(
+    "never blocks on `gh pr checks --watch` — it may only appear as a prohibition",
+    watchLines.every((l) => /never/i.test(l)),
+    JSON.stringify(watchLines),
+  );
+  ok("and the prohibition is actually stated", watchLines.length > 0);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
