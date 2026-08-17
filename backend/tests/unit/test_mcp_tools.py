@@ -41,12 +41,14 @@ from app.domain.athlete import Discipline
 from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
+from app.mcp import views
 from app.mcp.tools import register_tools
 from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.audit import AuditLogEntry
 from app.persistence.db import session_scope
+from app.persistence.metrics import SessionMetricsRow
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
 from app.services.wellness import WellnessService
@@ -2593,3 +2595,391 @@ async def test_an_over_long_workout_name_is_a_refusal_not_a_crash(
 
     assert "name" in str(excinfo.value)
     assert await rows(db_session, WorkoutRow) == []
+
+
+# --- the measured channels and the local clock (#46, #48) --------------------------
+
+#: The eight stream-measured channels a detail read must carry, and the path
+#: to each one's assessment in the artefact REST serves.
+MEASURED_CHANNELS: dict[str, tuple[str, ...]] = {
+    "max_hr": ("heart_rate", "max_hr"),
+    "max_power": ("power", "max_power"),
+    "average_cadence": ("cadence", "average_cadence"),
+    "max_cadence": ("cadence", "max_cadence"),
+    "elevation_gain_m": ("elevation_gain_m",),
+    "average_temp_c": ("temperature", "average_temp_c"),
+    "min_temp_c": ("temperature", "min_temp_c"),
+    "max_temp_c": ("temperature", "max_temp_c"),
+}
+
+
+async def rest_metrics(client: AsyncClient, session_id: str) -> dict[str, Any]:
+    """The metric artefact as the athlete's own API serves it."""
+    response = await client.get(f"/api/v1/sessions/{session_id}")
+    assert response.status_code == 200, response.text
+    metrics = response.json()["metrics"]
+    assert metrics is not None
+    return dict(metrics)
+
+
+def rest_value(metrics: dict[str, Any], path: tuple[str, ...]) -> Any:
+    """One assessment's ``value`` out of the REST artefact."""
+    node: Any = metrics
+    for key in path:
+        node = node[key]
+    return node["value"]
+
+
+async def test_the_detail_metrics_carry_the_measured_channels(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-1: every channel the artefact already stores is on the detail read,
+    # as the same number the athlete's own API serves. Compared against REST
+    # rather than typed in, so the two renders of one artefact cannot drift.
+    await append_ftp(client)
+    session_id = await ingest(client, "outdoor_ride.fit")
+    served = await rest_metrics(client, session_id)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    metrics = data["metrics"]
+    for field, path in MEASURED_CHANNELS.items():
+        expected = rest_value(served, path)
+        assert expected is not None, f"the golden ride must measure {field}"
+        assert metrics[field] == pytest.approx(expected), field
+    # And nothing the block already answered has moved.
+    assert metrics["training_load"] == pytest.approx(served["load"]["training_load"])
+    assert metrics["zone_channel"] == "power"
+    assert metrics["normalized_power"] == pytest.approx(
+        served["power"]["normalized_power"]["value"]
+    )
+    assert metrics["average_hr"] == pytest.approx(
+        served["heart_rate"]["average_hr"]["value"]
+    )
+    assert metrics["distance_km"] == pytest.approx(
+        served["speed"]["distance_km"]["value"]
+    )
+
+
+async def test_a_session_with_no_streams_answers_null_on_every_channel(
+    client: AsyncClient,
+) -> None:
+    # AC-1 edge: a manually logged session has a metric artefact and no
+    # streams. Absent is a different answer from zero, and the key has to be
+    # there to say so.
+    session_id = await record(client)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    metrics = data["metrics"]
+    assert {field: metrics[field] for field in MEASURED_CHANNELS} == dict.fromkeys(
+        MEASURED_CHANNELS, None
+    )
+
+
+async def test_a_heart_rate_only_recording_measures_only_heart_rate(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-1 edge: `strength_watch.fit` carries HR and nothing else.
+    session_id = await ingest(client, "strength_watch.fit")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    metrics = data["metrics"]
+    assert isinstance(metrics["max_hr"], int | float)
+    silent = set(MEASURED_CHANNELS) - {"max_hr"}
+    assert {field: metrics[field] for field in silent} == dict.fromkeys(silent, None)
+
+
+async def test_an_indoor_ride_has_power_and_no_elevation(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-1 edge: `indoor_trainer.fit` has power and no GPS.
+    session_id = await ingest(client, "indoor_trainer.fit")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert isinstance(data["metrics"]["max_power"], int | float)
+    assert data["metrics"]["elevation_gain_m"] is None
+
+
+async def test_an_artefact_written_before_these_blocks_reads_as_null(
+    data_root: Path, client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # AC-1 edge: the tolerance `summarise()` documents, applied to the new
+    # reader. A payload written by an earlier metric set is missing keys this
+    # reads, and the honest answer is `null` — not a 500 that makes one old
+    # artefact unreadable.
+    session_id = await ingest(client, "outdoor_ride.fit")
+    row = (
+        await db_session.execute(
+            select(SessionMetricsRow).where(
+                SessionMetricsRow.session_id == uuid.UUID(session_id)
+            )
+        )
+    ).scalar_one()
+    row.payload = {
+        key: value
+        for key, value in row.payload.items()
+        if key not in {"temperature", "cadence"}
+    }
+    await db_session.commit()
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    metrics = data["metrics"]
+    dropped = (
+        "average_cadence",
+        "max_cadence",
+        "average_temp_c",
+        "min_temp_c",
+        "max_temp_c",
+    )
+    assert {field: metrics[field] for field in dropped} == dict.fromkeys(dropped, None)
+    assert isinstance(metrics["max_hr"], int | float), "the rest still reads"
+    assert isinstance(metrics["max_power"], int | float)
+
+
+async def test_the_measured_temperature_and_the_reported_one_are_two_fields(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-2: the failure this feature exists for. The athlete remembered 29.5,
+    # the stream measured 17.0, and one read shows both without either write
+    # or render collapsing them.
+    session_id = await ingest(client, "outdoor_ride.fit")
+    await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "temperature_c": 29.5},
+    )
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["session"]["temperature_c"] == 29.5
+    assert data["metrics"]["average_temp_c"] == pytest.approx(17.0)
+
+
+async def test_without_a_context_write_the_measurement_still_stands(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-2 edge: nobody reported anything, and the stream is still measured.
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["session"]["temperature_c"] is None
+    assert data["metrics"]["average_temp_c"] == pytest.approx(17.0)
+
+
+async def test_a_manual_session_reports_a_temperature_it_never_measured(
+    client: AsyncClient,
+) -> None:
+    # AC-2 edge: the mirror image — a reported number and no measurement.
+    session_id = await record(client, temperature_c=23)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["session"]["temperature_c"] == 23
+    assert data["metrics"]["average_temp_c"] is None
+    assert data["metrics"]["min_temp_c"] is None
+    assert data["metrics"]["max_temp_c"] is None
+
+
+async def test_the_session_carries_its_local_start_time_beside_the_utc_one(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-3: the ride that produced the wrong coaching. `start_time` stays the
+    # UTC instant — it is what orders two rides in two timezones — and the
+    # local clock is a second field, offset and all.
+    session_id = await ingest(client, "outdoor_ride.fit")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    session = data["session"]
+    assert session["timezone"] == "UTC+02:00"
+    assert session["start_time"] == "2026-05-04T07:30:00+00:00"
+    assert session["start_time_local"] == "2026-05-04T09:30:00+02:00"
+
+
+async def test_a_session_recorded_in_utc_reads_the_same_on_both_clocks(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-3 edge: `indoor_trainer.fit` wrote no local offset, so the timezone
+    # falls back to `UTC` and the two fields agree — which is an answer, not a
+    # missing field.
+    session_id = await ingest(client, "indoor_trainer.fit")
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    session = data["session"]
+    assert session["timezone"] == "UTC"
+    assert session["start_time_local"] == session["start_time"]
+    assert session["start_time"].endswith("+00:00")
+
+
+@pytest.mark.parametrize(
+    ("start", "expected"),
+    [
+        ("2026-01-15T12:00:00Z", "2026-01-15T13:00:00+01:00"),
+        ("2026-07-15T12:00:00Z", "2026-07-15T14:00:00+02:00"),
+    ],
+)
+async def test_an_iana_zone_renders_with_its_own_daylight_saving(
+    client: AsyncClient, start: str, expected: str
+) -> None:
+    # AC-3 edge: a region name, not an offset — so the answer is only right if
+    # the view resolves it through the zone database rather than reading two
+    # digits off a string.
+    session_id = await record(client, start_time=start)
+    response = await client.patch(
+        f"/api/v1/sessions/{session_id}", json={"timezone": "Europe/Berlin"}
+    )
+    assert response.status_code == 200, response.text
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert data["session"]["start_time_local"] == expected
+
+
+async def test_a_late_evening_ride_reads_local_on_the_next_day(
+    client: AsyncClient,
+) -> None:
+    # AC-3 edge: the midnight crosser. The local clock and the `local_date`
+    # the row already carries must name the same day, or the asymmetry that
+    # caused this feature simply moves.
+    session_id = await record(
+        client, start_time="2026-08-14T23:30:00Z", timezone="UTC+02:00"
+    )
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    session = data["session"]
+    assert session["start_time_local"] == "2026-08-15T01:30:00+02:00"
+    assert session["local_date"] == "2026-08-15"
+    assert session["start_time_local"].startswith(session["local_date"])
+
+
+async def test_the_local_clock_is_resolved_by_the_domain_parser(
+    data_root: Path, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # AC-3 edge: no defensive fallback and no string arithmetic. The stored
+    # timezone is validated at every write boundary, so the view hands it to
+    # the one resolver `local_date` is already derived through — spied on
+    # here, because "the right answer" alone cannot tell the two apart for a
+    # fixed offset.
+    session_id = await ingest(client, "outdoor_ride.fit")
+    seen: list[str] = []
+    resolver = views.parse_timezone
+
+    def spy(tz: str) -> dt.tzinfo:
+        seen.append(tz)
+        return resolver(tz)
+
+    monkeypatch.setattr(views, "parse_timezone", spy)
+
+    data = await call(READER, "get_session_detail", {"session_id": session_id})
+
+    assert "UTC+02:00" in seen
+    assert data["session"]["start_time_local"].endswith("+02:00")
+
+
+async def test_every_session_summary_on_the_surface_carries_the_local_clock(
+    data_root: Path, client: AsyncClient
+) -> None:
+    # AC-3: one view feeds five tools, so the field either reaches all of them
+    # or the coach gets a local time on some reads and not others.
+    session_id = await ingest(client, "outdoor_ride.fit")
+    expected = "2026-05-04T09:30:00+02:00"
+
+    listed = await call(READER, "list_sessions", {})
+    context = await call(READER, "get_coaching_context", {})
+    written = await call(
+        COACH, "record_session_context", {"session_id": session_id, "rpe": 4}
+    )
+
+    [row] = [item for item in listed["items"] if item["id"] == session_id]
+    assert row["start_time_local"] == expected
+    [recent] = [item for item in context["recent_sessions"] if item["id"] == session_id]
+    assert recent["start_time_local"] == expected
+    assert written["session"]["start_time_local"] == expected
+
+
+async def test_a_manual_session_dry_run_shows_the_local_clock_it_would_store(
+    client: AsyncClient,
+) -> None:
+    # AC-4: the dry run and the write agree on everything else; the local
+    # clock is no exception, and it is computed from the `timezone` argument.
+    draft = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": "2026-08-12T17:30:00+02:00",
+            "duration_s": 3_600,
+            "timezone": "UTC+02:00",
+            "dry_run": True,
+        },
+    )
+
+    assert draft["session"]["timezone"] == "UTC+02:00"
+    assert draft["session"]["start_time_local"] == "2026-08-12T17:30:00+02:00"
+    assert draft["session"]["local_date"] == "2026-08-12"
+
+
+async def test_a_draft_in_utc_reads_the_same_on_both_clocks(
+    client: AsyncClient,
+) -> None:
+    # AC-4 edge: the default timezone.
+    draft = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": "2026-08-12T17:30:00+00:00",
+            "duration_s": 3_600,
+            "dry_run": True,
+        },
+    )
+
+    session = draft["session"]
+    assert session["timezone"] == "UTC"
+    assert session["start_time_local"] == session["start_time"]
+
+
+async def test_the_written_session_reads_back_the_draft_s_local_clock(
+    client: AsyncClient,
+) -> None:
+    # AC-4 edge: the dry run is only worth reading if the write matches it.
+    arguments = {
+        "start_time": "2026-08-12T17:30:00+02:00",
+        "duration_s": 3_600,
+        "timezone": "UTC+02:00",
+    }
+    draft = await call(COACH, "record_manual_session", arguments | {"dry_run": True})
+
+    written = await call(COACH, "record_manual_session", arguments)
+    detail = await call(
+        READER, "get_session_detail", {"session_id": written["session"]["id"]}
+    )
+
+    assert (
+        written["session"]["start_time_local"] == (draft["session"]["start_time_local"])
+    )
+    assert (
+        detail["session"]["start_time_local"] == (draft["session"]["start_time_local"])
+    )
+
+
+async def test_the_detail_tool_documents_the_two_temperatures(
+    session_factory: Any,
+) -> None:
+    # AC-5: the distinction only holds if the agent is told which number is
+    # whose. The measurement and the report have the same unit and different
+    # authors, and a coach that reads them as one repeats the mistake this
+    # feature was built for.
+    async with connected_as(server_for(COACH, READER), READER) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+
+    description = tools["get_session_detail"].description or ""
+    missing = [field for field in MEASURED_CHANNELS if field not in description]
+    assert missing == [], f"the docstring must name every channel it returns: {missing}"
+    assert "`metrics.average_temp_c`" in description
+    assert "`session.temperature_c`" in description
