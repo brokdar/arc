@@ -168,7 +168,7 @@ describe("with a connected account", () => {
 });
 
 describe("what each folder has delivered", () => {
-  it("shows the folder and its last delivery as a monospace timestamp", async () => {
+  it("labels the stamp as when arc last checked, not when a ride landed", async () => {
     seedDropboxConnection({
       feeds: [
         dropboxFeed({
@@ -187,18 +187,22 @@ describe("what each folder has delivered", () => {
     // A timestamp is a numeral: convention 5.
     expect(delivery).toHaveClass("font-mono");
     expect(delivery).toHaveTextContent("16.08 06:12");
+    // The field moves on every completed poll, empty folder included, so an
+    // unlabelled stamp read as "a ride arrived then" — which made a rest week
+    // and a broken feed look alike, the one thing this row must separate.
+    expect(within(row).getByText(/last checked/i)).toBeInTheDocument();
   });
 
-  it("says a folder has delivered nothing rather than showing a blank", async () => {
+  it("says a folder has never been reached rather than showing a blank", async () => {
     seedDropboxConnection({
       feeds: [dropboxFeed({ last_delivery_at: null })],
     });
     renderPanel();
 
     const surface = await panel();
-    // Not an em dash in a slot: "never delivered" is the fact the athlete is
-    // looking for when a week is empty.
-    expect(within(surface).getByText(/no deliveries yet/i)).toBeInTheDocument();
+    // Not an em dash in a slot: "arc has not got through to this folder yet"
+    // is the fact the athlete is looking for when a week is empty.
+    expect(within(surface).getByText(/not checked yet/i)).toBeInTheDocument();
   });
 
   it("renders a feed's own error beside its folder", async () => {

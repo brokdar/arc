@@ -126,6 +126,36 @@ class _Refusal:
     recorded: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _BatchFailure:
+    """Why a page stopped, and whether it counts against the give-up budget.
+
+    ``cursor_attempts`` buys **liveness**: after enough consecutive failures the
+    cursor moves past a page so one stuck batch cannot dam every ride behind it
+    for ever (:func:`_record_failure`). That is worth paying for a page that
+    keeps refusing — a file Dropbox answers 503 for on every attempt is one
+    nothing is going to fix, and the rides recorded since must not queue behind
+    it.
+
+    It is worth nothing at all for a condition that suspends *all* progress and
+    lifts on its own. There is no dam to break: when the condition clears the
+    same page proceeds untouched. Spending the budget there trades rides away
+    and buys nothing back, because the failure never said anything about the
+    page — arc has been told to wait, and waiting is the whole remedy. A
+    throttled afternoon would otherwise advance the cursor past files that were
+    never downloaded once, which is the silent loss the batch rule exists to
+    prevent (`_poll_feed`).
+
+    This is the same judgement `_list_changes` already makes for a cursor
+    reset, which never reaches this module's accounting at all.
+    """
+
+    detail: str
+    #: Whether this spends an attempt. False for a suspension arc waits out —
+    #: a 429, or a local fault that stopped arc storing what it downloaded.
+    blames_batch: bool
+
+
 def _should_take(entry: DropboxFile) -> _Refusal | None:
     """Decide an entry from its listing alone. ``None`` means download it.
 
@@ -248,18 +278,36 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
             changes = await _list_changes(client, feed)
         except DropboxError as exc:
             # No batch, so nothing to advance past: the listing itself failed.
+            # It does not spend an attempt either — arc never got as far as a
+            # page, so there is nothing here to give up on, and a counter that
+            # climbed through an outage would leave the *next* genuine failure
+            # already at the threshold, skipping a page on its first refusal.
             await _record_failure(
                 session,
                 feed,
-                detail=f"Dropbox would not list {feed.remote_path or '/'}: {exc}",
+                failure=_BatchFailure(
+                    f"Dropbox would not list {feed.remote_path or '/'}: {exc}",
+                    blames_batch=False,
+                ),
                 advance_to=None,
             )
             return
 
-        failure = await _take_batch(session, client, feed, changes)
+        # Nothing between a listing and a resolved page may unwind past this
+        # accounting. `_deliver` writes to the disk and the database, and a
+        # failure in either is exactly the "feed that has silently stopped
+        # collecting" this module exists to make visible — but it is not the
+        # page's fault, so it holds the cursor rather than spending an attempt.
+        try:
+            failure = await _take_batch(session, client, feed, changes)
+        except Exception as exc:  # noqa: BLE001 — a silent feed is the failure
+            logger.exception("dropbox_batch_errored", feed_id=str(feed.id))
+            failure = _BatchFailure(
+                f"arc could not store this batch: {exc}", blames_batch=False
+            )
         if failure is not None:
             await _record_failure(
-                session, feed, detail=failure, advance_to=changes.cursor
+                session, feed, failure=failure, advance_to=changes.cursor
             )
             return
 
@@ -305,11 +353,12 @@ async def _take_batch(
     client: DropboxClient,
     feed: FeedRow,
     changes: DropboxChanges,
-) -> str | None:
+) -> _BatchFailure | None:
     """Download and ingest every activity file in one page.
 
-    Returns ``None`` when the whole page resolved, or a sentence naming the
-    entry that stopped it. Stopping at the first failure rather than carrying
+    Returns ``None`` when the whole page resolved, or the failure that stopped
+    it — naming the entry, and saying whether the page is what went wrong (see
+    :class:`_BatchFailure`). Stopping at the first failure rather than carrying
     on is what makes the batch rule meaningful: the cursor is not going to
     advance either way, so pulling the rest would be bytes moved twice.
     """
@@ -336,14 +385,23 @@ async def _take_batch(
         except DropboxRateLimitedError as exc:
             # Stop, do not walk into the next entry: Dropbox has said how long
             # it wants arc to wait, and the next request would be the one that
-            # earns a longer ban.
-            return (
+            # earns a longer ban. It does not spend an attempt — a throttle
+            # lifts on its own and says nothing about this page, and the
+            # entries after this one have not been tried even once, so giving
+            # up on the page over it would discard rides arc never fetched.
+            return _BatchFailure(
                 f"Dropbox asked arc to wait {int(exc.retry_after)} seconds before "
                 f"fetching {entry.name}; the rest of this batch waits for the "
-                "next poll"
+                "next poll",
+                blames_batch=False,
             )
         except DropboxError as exc:
-            return f"{entry.name} could not be downloaded: {exc}"
+            # A file Dropbox refuses on every attempt is the case the give-up
+            # budget is for: it is not going to start working, and the rides
+            # behind it must not queue for ever (AC-16).
+            return _BatchFailure(
+                f"{entry.name} could not be downloaded: {exc}", blames_batch=True
+            )
 
         await _deliver(feed_id=feed.id, entry=entry, content=content)
     return None
@@ -413,13 +471,25 @@ async def _deliver(*, feed_id: uuid.UUID, entry: DropboxFile, content: bytes) ->
 
 
 async def _record_failure(
-    session: AsyncSession, feed: FeedRow, *, detail: str, advance_to: str | None
+    session: AsyncSession,
+    feed: FeedRow,
+    *,
+    failure: _BatchFailure,
+    advance_to: str | None,
 ) -> None:
-    """Count a failed attempt on this cursor, and give up once it is hopeless.
+    """Say what went wrong, and give up on the batch once it is hopeless.
 
-    ``cursor_attempts`` counts **consecutive** failures against the position
-    the feed is currently stuck at; any resolved batch puts it back to zero, so
-    one bad afternoon a month never adds up to a skipped file.
+    **Every failure is written down**, whatever its kind: ``last_error`` is
+    what turns a feed that has silently stopped collecting into a `failing` one
+    on the settings panel and in the coach's `get_ingest_status`, and a poll
+    that returns without recording anything is the one failure mode this whole
+    feature exists to prevent. The next resolved batch clears it.
+
+    Only a failure that **blames the batch** spends an attempt
+    (:class:`_BatchFailure`). ``cursor_attempts`` counts *consecutive* such
+    failures against the position the feed is stuck at; any resolved batch puts
+    it back to zero, so one bad afternoon a month never adds up to a skipped
+    file.
 
     After ``DROPBOX__MAX_BATCH_ATTEMPTS`` of them the cursor advances past the
     batch anyway and the entry that defeated it is written into ``last_error``.
@@ -429,7 +499,21 @@ async def _record_failure(
     behind it — every ride recorded since — waits behind one that is never
     going to work. Moving on loses at most that batch, says so on the settings
     panel and in the coach's own read, and lets the rides through.
+
+    A suspension arc waits out takes the early return: the error is recorded
+    and nothing else moves. Holding the cursor costs a re-download of the page
+    once the condition lifts, which is the right way round — the alternative is
+    advancing past rides arc never stored.
     """
+    if not failure.blames_batch:
+        feed.last_error = failure.detail[:MAX_ERROR_LENGTH]
+        await commit(session)
+        logger.warning(
+            "dropbox_batch_deferred", feed_id=str(feed.id), detail=failure.detail
+        )
+        return
+
+    detail = failure.detail
     attempts = feed.cursor_attempts + 1
     if advance_to is not None and attempts >= get_settings().dropbox.max_batch_attempts:
         feed.cursor = advance_to

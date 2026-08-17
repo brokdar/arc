@@ -388,13 +388,20 @@ function FeedRow({ feed }: { readonly feed: Feed }) {
         {feed.last_delivery_at === null ? (
           // Not an em dash in a slot: "nothing has come through yet" is a
           // fact about setup, and it is what the athlete came here to read.
-          <span className="text-ink-faint">no deliveries yet</span>
+          <span className="text-ink-faint">not checked yet</span>
         ) : (
-          <span
-            data-testid="dropbox-feed-delivery"
-            className="font-mono text-ink-faint"
-          >
-            {formatUtcStamp(feed.last_delivery_at)}
+          // "Checked", not "delivered": the stamp moves on every poll arc
+          // completes, including one that found an empty folder, because the
+          // field means "arc heard from Dropbox at all" (see `FeedRead`). A
+          // bare timestamp here read as "a ride arrived then", so a fresh
+          // stamp on a rest week looked like a delivery and a broken feed
+          // could not be told from a quiet one — the exact confusion the two
+          // states on this row exist to keep apart.
+          <span className="text-ink-faint">
+            last checked{" "}
+            <span data-testid="dropbox-feed-delivery" className="font-mono">
+              {formatUtcStamp(feed.last_delivery_at)}
+            </span>
           </span>
         )}
         {feed.last_error === null ? null : (

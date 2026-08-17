@@ -33,7 +33,11 @@ from app.connectors.dropbox import READ_SCOPES
 from app.core.config import get_settings
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
-from app.domain.connections import ConnectionProvider, ConnectionStatus
+from app.domain.connections import (
+    ConnectionProvider,
+    ConnectionStatus,
+    FeedDeliveryState,
+)
 from app.ingest import feeds
 from app.ingest.inbox import scan_inbox
 from app.ingest.pipeline import IngestPipeline
@@ -45,7 +49,9 @@ from app.persistence.connections import (
     EncryptedCredentials,
     FeedRow,
 )
+from app.persistence.db import session_scope
 from app.persistence.ingest_log import IngestEventRow, QuarantineRecordRow
+from app.services.connections import ConnectionService
 from tests.unit.dropbox_fake import (
     DOWNLOAD_PATH,
     LIST_FOLDER_CONTINUE_PATH,
@@ -741,6 +747,128 @@ async def test_the_attempt_counter_resets_after_any_successful_batch(
     stored = await reread(db_session, feed)
     assert stored.cursor_attempts == 0
     assert stored.last_error is None
+
+
+# --- what the give-up budget is *not* for ------------------------------------------
+#
+# `cursor_attempts` buys liveness: a page that keeps refusing must not dam the
+# rides behind it for ever. It buys nothing against a condition that suspends
+# all progress and lifts on its own, and spending it there advances the cursor
+# past files that were never downloaded once. Each test below is one such
+# condition, and each one skipped a real ride before it was written.
+
+
+async def test_a_throttled_batch_is_never_given_up_on(
+    fake: FakeDropbox, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 429 lifts on its own, so it may not spend the give-up budget.
+
+    Counting it advanced the cursor past `b.fit` — an ordinary ride arc never
+    attempted even once, because the poll stops at the first refusal — and
+    nothing would have offered it again.
+    """
+    monkeypatch.setenv("DROPBOX__MAX_BATCH_ATTEMPTS", "3")
+    get_settings.cache_clear()
+    throttled = file_entry("a.fit", f"{WATCHED}/a.fit")
+    behind = file_entry("b.fit", f"{WATCHED}/b.fit")
+    fake.by_cursor = {None: page(throttled, behind, cursor="cursor-1")}
+    fake.download_failures[throttled["id"]] = rate_limited("3600")
+    fake.files[throttled["id"]] = ride_bytes()
+    fake.files[behind["id"]] = other_ride_bytes()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    for _ in range(4):  # one poll more than the budget would have allowed
+        await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor is None, "a throttle may not advance the cursor"
+    assert stored.cursor_attempts == 0, "a throttle is not the batch's fault"
+    assert stored.last_error is not None, "but it is visible while it lasts"
+    assert await rows_of(db_session, SessionRow) == []
+
+    # The throttle lifts, and the whole page arrives — including the entry
+    # that was sitting behind the one Dropbox would not serve.
+    del fake.download_failures[throttled["id"]]
+    await feeds.poll_feeds()
+
+    assert len(await rows_of(db_session, SessionRow)) == 2
+    stored = await reread(db_session, feed)
+    assert stored.cursor == "cursor-1"
+    assert stored.last_error is None, "a resolved batch clears what it left"
+
+
+async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
+    fake: FakeDropbox, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A local fault must not read as a healthy feed.
+
+    `_deliver` writes to the disk and the database, and a failure in either is
+    not Dropbox's fault and not the page's. It used to unwind to the sweep's
+    per-feed catch, which logged it and touched nothing: the row kept its old
+    `last_delivery_at`, so the settings panel and the coach's
+    `get_ingest_status` both went on reporting a feed that was storing nothing.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    async def full_disk(**_: Any) -> None:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(feeds, "_deliver", full_disk)
+    for _ in range(3):
+        await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor is None, "nothing was stored, so the position holds"
+    assert stored.cursor_attempts == 0, "a full disk is not the batch's fault"
+    assert stored.last_error is not None
+    assert "No space left on device" in stored.last_error
+    assert await rows_of(db_session, SessionRow) == []
+
+    # And the coach is told, rather than being shown a working pipe.
+    async with session_scope() as session:
+        status = await ConnectionService.from_session(session).ingest_status()
+    [reported] = status.feeds
+    assert reported.state is FeedDeliveryState.FAILING
+
+
+async def test_a_listing_outage_does_not_spend_the_batchs_budget(
+    fake: FakeDropbox, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attempts count failures of a *page*, not of the connection.
+
+    A counter that climbed through an outage would leave the next genuine
+    download failure already at the threshold, abandoning a page on its first
+    refusal — files skipped by arithmetic rather than by the rule.
+    """
+    monkeypatch.setenv("DROPBOX__MAX_BATCH_ATTEMPTS", "3")
+    get_settings.cache_clear()
+    fake.list_failures[WATCHED] = server_error()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    for _ in range(4):
+        await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor_attempts == 0, "no page was reached, so none was attempted"
+    assert stored.last_error is not None
+
+    # Dropbox comes back and one entry will not download. The page gets its own
+    # full budget rather than inheriting the outage's.
+    del fake.list_failures[WATCHED]
+    flaky = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(flaky, cursor="cursor-1")}
+    fake.download_failures[flaky["id"]] = server_error()
+    await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor is None, "not abandoned on the page's first refusal"
+    assert stored.cursor_attempts == 1
 
 
 async def test_an_invalid_cursor_relists_from_scratch_on_the_same_poll(
