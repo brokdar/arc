@@ -46,6 +46,7 @@ from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.dropbox import (
+    DropboxAuthError,
     DropboxChanges,
     DropboxClient,
     DropboxCursorResetError,
@@ -266,6 +267,8 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
         feed = await repository.get_feed(feed_id)
         if feed is None:  # deleted between the sweep's read and now
             return
+        if not feed.enabled:  # paused between the sweep's read and now
+            return
         connection = await repository.get(feed.connection_id)
         if connection is None:  # pragma: no cover — cascade removes the feed
             return
@@ -344,7 +347,14 @@ async def _list_changes(client: DropboxClient, feed: FeedRow) -> DropboxChanges:
         return await client.changes(path=feed.remote_path, cursor=feed.cursor)
     except DropboxCursorResetError:
         logger.info("dropbox_cursor_reset", feed_id=str(feed.id), path=feed.remote_path)
-        feed.cursor = None
+        # Passed as an argument, not written to `feed.cursor`: the row's
+        # cursor is the caller's to advance, only once a page has actually
+        # resolved (`_poll_feed`). Writing it here would be visible to
+        # nothing on success — `_poll_feed` overwrites it with the resolved
+        # page's cursor regardless — and on a *failed* retry it would survive
+        # into `_record_failure`'s commit and erase the feed's last known
+        # position over a condition this function's own docstring says must
+        # "touch nothing" until it resolves.
         return await client.changes(path=feed.remote_path, cursor=None)
 
 
@@ -393,6 +403,21 @@ async def _take_batch(
                 f"Dropbox asked arc to wait {int(exc.retry_after)} seconds before "
                 f"fetching {entry.name}; the rest of this batch waits for the "
                 "next poll",
+                blames_batch=False,
+            )
+        except DropboxAuthError as exc:
+            # Not the page's fault, and not (yet) proof the credential is
+            # dead: `DropboxClient._content_failure` deliberately does not
+            # retry-and-refresh inline, so a download-only 401 has not been
+            # through the one retry that would tell arc whether the token was
+            # merely stale or genuinely revoked — that happens on the next
+            # listing call. Blaming the page here would spend the give-up
+            # budget on a credential problem and, once past the threshold,
+            # advance the cursor past a file that was never actually
+            # downloaded — silent loss over a condition that, like a 429,
+            # arc waits out rather than gives up on.
+            return _BatchFailure(
+                f"Dropbox rejected arc's credential fetching {entry.name}: {exc}",
                 blames_batch=False,
             )
         except DropboxError as exc:

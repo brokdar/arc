@@ -58,6 +58,7 @@ from tests.unit.dropbox_fake import (
     LIST_FOLDER_PATH,
     FakeDropbox,
     deleted_entry,
+    expired_access_token,
     file_entry,
     folder_entry,
     page,
@@ -490,6 +491,33 @@ async def test_a_folder_entry_inside_the_watched_folder_is_ignored(
     assert (await reread(db_session, feed)).cursor == "cursor-1"
 
 
+async def test_an_empty_page_still_moves_the_delivery_clock(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """`last_delivery_at` means *heard from Dropbox*, not *a ride landed*.
+
+    A rest week with nothing new in the folder is a resolved, empty batch —
+    exactly the case the column exists to tell apart from a broken feed. If
+    only an ingest moved the clock, a quiet week and a dead connector would
+    read identically on the settings panel and in `get_ingest_status`.
+    """
+    fake.by_cursor = {None: page(cursor="cursor-1")}
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    stale = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    stored = await reread(db_session, feed)
+    stored.last_delivery_at = stale
+    await db_session.commit()
+
+    await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor == "cursor-1"
+    assert stored.last_delivery_at is not None
+    assert stored.last_delivery_at > stale
+    assert await rows_of(db_session, SessionRow) == []
+
+
 # --- AC-14: the same file twice is one session -------------------------------------
 
 
@@ -798,6 +826,48 @@ async def test_a_throttled_batch_is_never_given_up_on(
     assert stored.last_error is None, "a resolved batch clears what it left"
 
 
+async def test_a_stale_credential_on_download_is_never_given_up_on(
+    fake: FakeDropbox, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A download-only 401 is not proof the credential is dead.
+
+    `DropboxClient._content_failure` deliberately does not retry-and-refresh
+    inline (see its own docstring) — that happens on the *next listing*. So a
+    401 here has not been through the one retry that would say whether the
+    token was merely stale or genuinely revoked, and blaming this page for it
+    would advance the cursor past `b.fit` — an entry never attempted even
+    once — before arc ever finds out which.
+    """
+    monkeypatch.setenv("DROPBOX__MAX_BATCH_ATTEMPTS", "3")
+    get_settings.cache_clear()
+    stale = file_entry("a.fit", f"{WATCHED}/a.fit")
+    behind = file_entry("b.fit", f"{WATCHED}/b.fit")
+    fake.by_cursor = {None: page(stale, behind, cursor="cursor-1")}
+    fake.download_failures[stale["id"]] = expired_access_token()
+    fake.files[stale["id"]] = ride_bytes()
+    fake.files[behind["id"]] = other_ride_bytes()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    for _ in range(4):  # one poll more than the budget would have allowed
+        await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor is None, "a stale credential may not advance the cursor"
+    assert stored.cursor_attempts == 0, "a credential problem is not the page's fault"
+    assert stored.last_error is not None
+    assert await rows_of(db_session, SessionRow) == []
+
+    # The credential is refreshed (elsewhere), and the whole page arrives.
+    del fake.download_failures[stale["id"]]
+    await feeds.poll_feeds()
+
+    assert len(await rows_of(db_session, SessionRow)) == 2
+    stored = await reread(db_session, feed)
+    assert stored.cursor == "cursor-1"
+    assert stored.last_error is None, "a resolved batch clears what it left"
+
+
 async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
     fake: FakeDropbox, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -814,6 +884,12 @@ async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
     fake.files[entry["id"]] = ride_bytes()
     connection = await connect(db_session)
     feed = await watch(db_session, connection)
+    # A baseline older than "now": proves the fault does not touch the clock,
+    # rather than merely leaving an already-null one alone.
+    baseline = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    stored = await reread(db_session, feed)
+    stored.last_delivery_at = baseline
+    await db_session.commit()
 
     async def full_disk(**_: Any) -> None:
         raise OSError("No space left on device")
@@ -828,6 +904,9 @@ async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
     assert stored.last_error is not None
     assert "No space left on device" in stored.last_error
     assert await rows_of(db_session, SessionRow) == []
+    assert stored.last_delivery_at == baseline, (
+        "a local fault must not look like a heard-from-Dropbox poll"
+    )
 
     # And the coach is told, rather than being shown a working pipe.
     async with session_scope() as session:
@@ -893,6 +972,34 @@ async def test_an_invalid_cursor_relists_from_scratch_on_the_same_poll(
     assert stored.cursor_attempts == 0, "a reset is not the batch's fault"
     assert stored.last_error is None
     assert len(await rows_of(db_session, SessionRow)) == 1
+
+
+async def test_a_relisting_that_also_fails_does_not_erase_the_stored_cursor(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """A reset's own retry can fail too, and that must still touch nothing.
+
+    The retry is passed `cursor=None` as an argument; it must not be written
+    to `feed.cursor` before the retry is known to succeed, or a failure here
+    would commit that write alongside `last_error` and erase the feed's last
+    known position over a condition arc has not actually resolved.
+    """
+    fake.by_cursor = {}  # any cursor presented comes back `reset`
+    fake.list_failures[WATCHED] = server_error()  # the retried opening listing
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    stored = await reread(db_session, feed)
+    stored.cursor = "cursor-from-last-year"
+    await db_session.commit()
+
+    await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.cursor == "cursor-from-last-year", (
+        "a listing failure after a reset must not erase the last known position"
+    )
+    assert stored.cursor_attempts == 0, "no page was reached, so none was attempted"
+    assert stored.last_error is not None
 
 
 # --- AC-17: a connector failure may not reach the local inbox ----------------------
@@ -968,6 +1075,30 @@ async def test_one_feeds_failure_does_not_stop_the_next_feed(
     assert (await reread(db_session, broken)).last_error is not None
     assert (await reread(db_session, healthy)).cursor == "cursor-1"
     assert len(await rows_of(db_session, SessionRow)) == 1
+
+
+async def test_a_feed_disabled_after_the_sweep_selected_it_is_not_polled(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """`_due_feeds` and `_poll_feed` read the row at two different moments.
+
+    A feed the athlete pauses in the gap between them must not still spend
+    one more poll — `_poll_feed` is driven directly here, standing in for
+    `_due_feeds` having already selected this feed a moment before it was
+    disabled.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    feed.enabled = False
+    await db_session.commit()
+
+    await feeds._poll_feed(feed.id)  # standing in for `_due_feeds` having just run
+
+    assert fake.calls == []
+    assert (await reread(db_session, feed)).cursor is None
 
 
 async def test_a_feed_records_its_own_deliveries_in_the_audit_trail(

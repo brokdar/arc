@@ -519,8 +519,10 @@ class DropboxClient:
             )
         if response.status_code == 401:
             return DropboxAuthError("Dropbox rejected arc's access token")
-        # The content endpoint reports errors in a header, not the body.
-        summary = response.headers.get("Dropbox-API-Result", "") or response.text[:200]
+        # `Dropbox-API-Result` carries the metadata JSON on a 200; on a
+        # failure the content endpoint answers exactly like an RPC one, with
+        # the tagged-error JSON in the body.
+        summary = str(_json_or_empty(response).get("error_summary", ""))
         if response.status_code == 409 and "not_found" in summary:
             return DropboxPathNotFoundError(file_id)
         return DropboxUpstreamError(

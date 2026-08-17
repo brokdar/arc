@@ -3315,6 +3315,39 @@ async def test_get_ingest_status_reports_a_feed_that_has_never_delivered(
     assert entry["connection_status"] == "connected"
 
 
+async def test_get_ingest_status_reports_a_paused_feed_even_with_an_error_set(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    # `enabled=False` wins over `last_error`: the athlete paused this feed on
+    # purpose, and reporting `failing` would send the coach hunting a fault
+    # that isn't one.
+    connection = await seed_dropbox(db_session)
+    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
+    feed.enabled = False
+    feed.last_error = "Dropbox would not list /apps/wahoofitness: 503"
+    await db_session.commit()
+
+    data = await call(READER, "get_ingest_status")
+
+    [entry] = data["feeds"]
+    assert entry["state"] == "paused"
+
+
+async def test_get_ingest_status_reports_a_failing_feed(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    connection = await seed_dropbox(db_session)
+    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
+    feed.last_error = "Dropbox would not list /apps/wahoofitness: 503"
+    await db_session.commit()
+
+    data = await call(READER, "get_ingest_status")
+
+    [entry] = data["feeds"]
+    assert entry["state"] == "failing"
+    assert entry["last_error"] == feed.last_error
+
+
 async def test_get_ingest_status_counts_the_last_seven_days_of_deliveries(
     dropbox_env: None,
     data_root: Path,
