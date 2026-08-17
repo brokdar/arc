@@ -13,7 +13,7 @@
 //   node scripts/parse-plan.test.mjs
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,12 +21,15 @@ import { fileURLToPath } from "node:url";
 import {
   annotate,
   blockquoteFields,
+  fenceMask,
   labelled,
   listField,
+  normalizeEol,
   parseAcceptance,
   parseDecisions,
   parsePlan,
   section,
+  splitPrSections,
 } from "./parse-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -321,6 +324,122 @@ group("remote annotation — open is not merged");
   );
 }
 
+
+// ── the silent-loss cases, which are the ones that matter ────────────────────
+group("CRLF: a plan saved on Windows must not lose its marked lines");
+{
+  ok("normalizeEol strips CR", normalizeEol("a\r\nb\rc") === "a\nb\nc");
+  ok("blockquote fields survive a CR", blockquoteFields(normalizeEol("> **Branch**: `feat/a`\r\n")).Branch === "`feat/a`");
+  const crlf = parsePlan(PLAN.replace(/\n/g, "\r\n"));
+  ok("a CRLF plan has no defects", crlf.problems.length === 0, JSON.stringify(crlf.problems, null, 1));
+  ok("  …its branches parse", crlf.prs.map((x) => x.branch).join() === "feat/mcp-agent-notes-read-path,feat/mcp-week-ids");
+  ok("  …its Needs Docker parses", crlf.prs[0].needsDocker === false && crlf.prs[1].needsDocker === true);
+  ok("  …its edges survive", (crlf.prs[0].acceptance[0].match(/- Edge:/g) || []).length === 2);
+  ok("  …and no stray CR is left in the text", !JSON.stringify(crlf).includes("\\r"));
+}
+
+group("fenced blocks: a plan may show the shape it wants emitted");
+{
+  ok("fenceMask marks the inside of a fence", fenceMask(["a", "```", "in", "```", "b"]).join() === "false,true,true,true,false");
+  ok("tildes fence too", fenceMask(["~~~", "in", "~~~"]).join() === "true,true,true");
+  ok("a longer closing fence closes", fenceMask(["```js", "in", "````", "out"]).join() === "true,true,true,false");
+
+  const fenced = PLAN.replace(
+    "## Done means",
+    "The shape we emit:\n\n```markdown\n## Not a heading\n### Not a PR\n```\n\nAnd the real reason continues here.\n\n## Done means",
+  );
+  const p2 = parsePlan(fenced);
+  ok("a fenced `## ` does not truncate the section", section(fenced, "Why").includes("the real reason continues here"), JSON.stringify(section(fenced, "Why")));
+  ok("a fenced `### ` does not invent a PR", p2.prs.length === 2, JSON.stringify(p2.prs.map((x) => x.title)));
+  ok("and the plan still has no defects", p2.problems.length === 0, JSON.stringify(p2.problems, null, 1));
+  ok("splitPrSections ignores a fenced heading", splitPrSections("### real\n\n```\n### fake\n```\n").length === 1);
+}
+
+group("near-miss acceptance bullets are read, or reported — never dropped");
+{
+  const shapes = [
+    ["* [ ] **AC-1** starred bullet — *unit*, `t.py`", "an asterisk bullet"],
+    ["+ [ ] **AC-1** plus bullet — *unit*, `t.py`", "a plus bullet"],
+    ["-  [ ]  **AC-1** loose spacing — *unit*, `t.py`", "doubled spaces inside the bullet"],
+    ["- [X] **AC-1** upper-case tick — *unit*, `t.py`", "an upper-case tick"],
+  ];
+  for (const [line, what] of shapes) {
+    ok(`reads ${what}`, parseAcceptance(line).length === 1, JSON.stringify(parseAcceptance(line)));
+  }
+  // A `- Edge:` at column zero is the dangerous one: it used to be swallowed as
+  // nothing at all, so the criterion lost its edge case in silence.
+  const orphans = [];
+  const acs = parseAcceptance("- [ ] **AC-1** the thing — *unit*, `t.py`\n- Edge: at column zero\n", orphans);
+  ok("a column-0 edge does not silently vanish", orphans.length === 1 && /column zero/.test(orphans[0]), JSON.stringify({ acs, orphans }));
+  const p3 = parsePlan(PLAN.replace("      - Edge: a Monday with no notes — `[]`, not `null`", "- Edge: a Monday with no notes"));
+  ok("and a plan containing one is a reported defect", p3.problems.some((x) => /belongs to no criterion/.test(x)), JSON.stringify(p3.problems));
+  ok("  …naming the line", p3.problems.some((x) => /a Monday with no notes/.test(x)));
+  // Narrow on purpose: prose inside a section is not a lost criterion. Flagging it
+  // made the template's own example fail the parser the template tells you to run.
+  const prose = [];
+  parseAcceptance("<Criteria no single PR can satisfy — verified against `main`.>\n\n- [ ] **AC-1** x — *unit*, `t.py`", prose);
+  ok("explanatory prose is not reported as a lost criterion", prose.length === 0, JSON.stringify(prose));
+  const numbered = [];
+  parseAcceptance("1. **AC-9** a numbered criterion", numbered);
+  ok("but a numbered pseudo-criterion is", numbered.length === 1, JSON.stringify(numbered));
+
+  // The template's own fenced example must parse with zero defects — it is what
+  // the template tells the planner to check with this exact parser.
+  const tmpl = readFileSync(resolve(here, "../.claude/skills/feature-plan/plan-template.md"), "utf8");
+  const fenced = /^````markdown\n([\s\S]*?)^````$/m.exec(tmpl);
+  ok("the template has its fenced example", !!fenced);
+  if (fenced) {
+    const parsedTemplate = parsePlan(fenced[1]);
+    ok("plan-template.md's example parses with no defects", parsedTemplate.problems.length === 0, JSON.stringify(parsedTemplate.problems, null, 1));
+    ok("  …into two PRs, each with criteria", parsedTemplate.prs.length === 2 && parsedTemplate.prs.every((x) => x.acceptance.length > 0));
+    ok("  …and its Open questions placeholder does not trip the confirm stop", parsedTemplate.openQuestions.length === 0);
+  }
+}
+
+group("a pipe inside a decisions cell keeps the landing site");
+{
+  const rows = parseDecisions(
+    "**Decisions landing in code**\n\n| Decision | Displaces | Lands in |\n| --- | --- | --- |\n" +
+      "| scopes are `read\\|write` | one scope | `identity.py` docstring |\n",
+  );
+  ok("the row parses", rows.length === 1, JSON.stringify(rows));
+  ok("the escaped pipe is restored", rows[0].includes("`read|write`"), rows[0]);
+  ok("the landing site survives", rows[0].endsWith("lands in `identity.py` docstring"), rows[0]);
+  const extra = parseDecisions(
+    "**Decisions landing in code**\n| a | b | c | d |\n",
+  );
+  ok("a fourth column is folded into the landing site, not dropped", extra[0] === "a | displaces b | lands in c | d", JSON.stringify(extra));
+}
+
+group("remote state: closed is not built-already, and MERGED wins a collision");
+{
+  const a = annotate(
+    [{ title: "feat(a): a" }, { title: "feat(b): b" }],
+    [
+      { number: 1, title: "feat(a): a", state: "CLOSED" },
+      { number: 2, title: "feat(b): b", state: "OPEN" },
+    ],
+    [],
+  );
+  ok("a CLOSED PR does not count as existing", a[0].prExists === false, JSON.stringify(a[0]));
+  ok("  …and its state is carried for the report", a[0].prState === "CLOSED");
+  ok("an OPEN PR still counts", a[1].prExists === true);
+
+  const collide = annotate(
+    [{ title: "feat(x): dup" }],
+    [
+      { number: 10, title: "feat(x): dup", state: "CLOSED" },
+      { number: 9, title: "feat(x): dup", state: "MERGED" },
+    ],
+    [],
+  );
+  ok("MERGED wins a title collision whatever the order", collide[0].merged === true && collide[0].prNumber === 9, JSON.stringify(collide[0]));
+
+  const spaced = annotate([{ title: " feat(y): y " }], [{ number: 3, title: "feat(y): y", state: "OPEN" }], []);
+  ok("a stray space either side still matches", spaced[0].prExists === true);
+  ok("a subject on main matches with surrounding space", annotate([{ title: "feat(z): z" }], [], [" feat(z): z "])[0].merged === true);
+}
+
 // ── the CLI contract the workflow depends on ─────────────────────────────────
 group("CLI");
 {
@@ -353,11 +472,16 @@ group("CLI");
     ok("planSha is present", typeof json.planSha === "string" && json.planSha.length === 12);
     ok("problems are not shipped to the workflow", json.problems === undefined);
     ok("every PR carries prExists/merged", json.prs.every((p) => "prExists" in p && "merged" in p));
-    ok(
-      "the JSON is compact enough to echo — under 12 KB for a two-PR plan",
-      r.out.length < 12_000,
-      `${r.out.length} bytes`,
-    );
+    // The parse seat has to copy this document into its structured output, so its
+    // size is a real constraint. Calibrated on the LIVE plan, not on the toy
+    // fixture: the toy is ~2 KB and could never fail this.
+    const live = execFileSync("bash", ["-c", `ls ${resolve(here, "..")}/*-plan.md 2>/dev/null | head -1`], { encoding: "utf8" }).trim();
+    if (live) {
+      const big = call([live, "--no-remote", "--no-snapshot"]);
+      ok("a real plan's JSON stays inside the ~20 KB echo budget", big.code === 0 && big.out.length < 20_000, `${big.out.length} bytes`);
+    } else {
+      ok("the fixture's JSON is compact", r.out.length < 12_000, `${r.out.length} bytes`);
+    }
   }
 
   const missingBranch = join(dir, "broken-plan.md");
@@ -369,6 +493,33 @@ group("CLI");
 
   ok("exits 4 on a missing file", call([join(dir, "nope.md"), "--no-remote"]).code === 4);
   ok("exits 4 with no argument", call(["--no-remote"]).code === 4);
+  // A directory passed existsSync and then threw EISDIR, exiting 1 — a code that
+  // means something else to this script's callers.
+  ok("exits 4 on a directory", call([dir, "--no-remote"]).code === 4);
+  // `--no-remote=true` was filtered out of the positional args AND not recognised
+  // as the flag, so it silently meant "do query the remote".
+  const eq = call([good, "--no-remote=true", "--no-snapshot=true"]);
+  ok("honours --flag=value form", eq.code === 0 && JSON.parse(eq.out).remote.ghPrs === 0, JSON.stringify(eq).slice(0, 200));
+
+  // Remote failure: exit 3, with nothing on stdout for anything downstream to
+  // half-parse. A fake `gh` on PATH is the only way to reach this branch.
+  const fakeBin = join(dir, "bin");
+  execFileSync("mkdir", ["-p", fakeBin]);
+  writeFileSync(join(fakeBin, "gh"), "#!/bin/sh\necho 'gh: could not authenticate' >&2\nexit 1\n");
+  execFileSync("chmod", ["+x", join(fakeBin, "gh")]);
+  let remoteFail;
+  try {
+    execFileSync("node", [script, good, "--no-snapshot"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+    });
+    remoteFail = { code: 0, out: "", err: "" };
+  } catch (e) {
+    remoteFail = { code: e.status, out: e.stdout || "", err: e.stderr || "" };
+  }
+  ok("exits 3 when gh cannot answer", remoteFail.code === 3, JSON.stringify(remoteFail).slice(0, 300));
+  ok("  …says why, on stderr", /Remote state unavailable/.test(remoteFail.err));
+  ok("  …and prints nothing on stdout", remoteFail.out === "");
 
   // The snapshot is what makes the run survive the plan being deleted.
   const snap = call([good, "--no-remote"]);
@@ -378,8 +529,14 @@ group("CLI");
 }
 
 // ── the real plan in this checkout, if one is present ────────────────────────
-group("live plan in the repository root, if any");
+group("live plan in the repository root (opt in with PARSE_PLAN_CHECK_LIVE=1)");
 {
+  // Off by default: these are untracked, gitignored, work-in-progress files, and
+  // `parse-plan-test` runs on every edit to the parser — so a half-written plan
+  // sitting in the root would fail a commit that has nothing to do with it.
+  if (!process.env.PARSE_PLAN_CHECK_LIVE) {
+    console.log("  (skipped — set PARSE_PLAN_CHECK_LIVE=1 to check the working tree's plans)");
+  } else {
   const root = resolve(here, "..");
   const plans = existsSync(root)
     ? execFileSync("bash", ["-c", `ls ${root}/*-plan.md 2>/dev/null || true`], { encoding: "utf8" })
@@ -387,13 +544,15 @@ group("live plan in the repository root, if any");
         .filter(Boolean)
     : [];
   if (!plans.length) {
-    console.log("  (skipped — no *-plan.md in the repository root)");
-  } else {
-    for (const p of plans) {
-      const parsed = parsePlan(execFileSync("cat", [p], { encoding: "utf8" }));
-      ok(`${p.split("/").pop()} parses with no defects`, parsed.problems.length === 0, JSON.stringify(parsed.problems, null, 1));
-      ok(`${p.split("/").pop()} yields at least one PR with criteria`, parsed.prs.length > 0 && parsed.prs.every((x) => x.acceptance.length > 0));
-      ok(`${p.split("/").pop()} yields a Why long enough to reason from`, parsed.why.length > 80);
+      console.log("  (skipped — no *-plan.md in the repository root)");
+    } else {
+      for (const p of plans) {
+        const parsed = parsePlan(readFileSync(p, "utf8"));
+        const name = p.split("/").pop();
+        ok(`${name} parses with no defects`, parsed.problems.length === 0, JSON.stringify(parsed.problems, null, 1));
+        ok(`${name} yields at least one PR with criteria`, parsed.prs.length > 0 && parsed.prs.every((x) => x.acceptance.length > 0));
+        ok(`${name} yields a Why long enough to reason from`, parsed.why.length > 80);
+      }
     }
   }
 }

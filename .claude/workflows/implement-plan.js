@@ -32,7 +32,11 @@ function parseFreeform(str) {
   if (md.length) out.plan = md[0];
   const br = str.match(/\b((?:feat|fix|perf|refactor|revert|docs|chore|build|ci|test|style)\/[\w./-]+)/);
   if (br) out.onlyBranch = br[1];
-  if (/\bverify\b/i.test(str)) out.verifyFeature = true;
+  // Tested against the string WITHOUT the plan filename: `implement
+  // verify-zones-plan.md` used to parse as a feature-verification of a plan it
+  // then refused to build.
+  const rest = md.length ? str.replace(md[0], " ") : str;
+  if (/\bverify\b/i.test(rest)) out.verifyFeature = true;
   if (!out.plan) out.plan = str.trim();
   return out;
 }
@@ -71,6 +75,17 @@ if (!PLAN) {
   log("No plan given. Pass { plan: '<slug>-plan.md' }. Aborting.");
   return { error: "no-plan" };
 }
+// The freeform fallback accepts any string, and PLAN is interpolated into
+// `node scripts/parse-plan.mjs <PLAN>` for an agent to run. The guard block
+// validates titles and branches for exactly this reason; a path deserves the
+// same, and a bare phrase ("build the thing") is a mis-parse, not a plan.
+if (!/^[\w][\w./-]*\.md$/.test(PLAN) || PLAN.includes("..")) {
+  log(
+    `HARD STOP: "${PLAN}" is not a plan path. Pass { plan: "<slug>-plan.md" } — a relative path to a ` +
+      `markdown file in the repository root. Nothing was run.`,
+  );
+  return { error: "bad-plan-path", plan: PLAN };
+}
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -102,6 +117,10 @@ const PARSE_SCHEMA = {
     // document into its structured output, and a truncated echo that drops a PR
     // would otherwise read as a shorter plan.
     prCount: { type: "number" },
+    // The script prints this and the prompt says to copy the JSON verbatim, so
+    // `additionalProperties: false` made those two instructions contradict each
+    // other at the first seat of every run.
+    remote: { type: "object" },
     prs: {
       type: "array",
       items: {
@@ -154,7 +173,11 @@ const HANDOFF_SCHEMA = {
 const GATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["gateExit", "committed", "detail"],
+  // `sha` is required because two later steps interpolate it into a shell
+  // command: the push seat names the commit, and the post-CI-fix re-review reads
+  // `git diff <sha>..HEAD`. Optional, it rendered `git diff undefined..HEAD` and
+  // the one review mode that may only read an incremental diff got none.
+  required: ["gateExit", "committed", "sha", "detail"],
   properties: {
     gateExit: { type: "number" },
     // The last ~25 lines of `just gate` output. Carried to the reviewer as
@@ -250,10 +273,12 @@ const CI_SCHEMA = {
   required: ["exitCode", "status", "detail"],
   properties: {
     exitCode: { type: "number" },
-    // NO_BUDGET: exit 2 — no workflow run ever registered for the head SHA. A
+    // NO_RUNS: exit 2 — no workflow run ever registered for the head SHA. A
     // distinct outcome from RED: nothing is wrong with the code, and the answer
     // is a local verification, not a fix agent hunting a defect that isn't there.
-    status: { type: "string", enum: ["GREEN", "RED", "NO_BUDGET", "UNKNOWN"] },
+    // Named exactly as `scripts/ci-status.mjs` prints it, so the seat relays a
+    // word instead of translating one.
+    status: { type: "string", enum: ["GREEN", "RED", "NO_RUNS", "UNKNOWN"] },
     failing: { type: "array", items: { type: "string" } },
     detail: { type: "string" },
     invocations: { type: "number" },
@@ -298,6 +323,9 @@ const FINISH_SCHEMA = {
   properties: {
     merged: { type: "boolean" },
     mergeSha: { type: "string" },
+    // Read, not decoration: a worktree the seat refused to remove makes the
+    // recovery line "restore it with `git worktree add …`" wrong, because the
+    // path still exists.
     worktreeRemoved: { type: "boolean" },
     detail: { type: "string" },
   },
@@ -323,11 +351,33 @@ const FINISH_SCHEMA = {
 // full of backticked identifiers.
 const TITLE_TYPES = "feat|fix|perf|refactor|revert|docs|chore|build|ci|test|style";
 const TITLE_RE = new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?: (?![A-Z])\\S(?:.*[^.\\s])?$`);
+// The hard stop used to print one sentence — "must not start uppercase and must
+// not end with a period" — for every rejection, including the ones where neither
+// was true (a doubled space after the colon, an unparseable prefix). A guard that
+// refuses an entire plan has to say which rule it applied.
+const TITLE_SHAPE_RE = new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?: \\S`);
+function titleProblem(title) {
+  if (TITLE_RE.test(title)) return null;
+  if (!new RegExp(`^(${TITLE_TYPES})(\\([^)]+\\))?:`).test(title)) {
+    return "not `<type>(<scope>): <subject>` with one of the eleven types";
+  }
+  if (/:\s{2,}/.test(title) || /: *$/.test(title)) return "the subject is empty or starts with a doubled space";
+  if (!TITLE_SHAPE_RE.test(title)) return "there is no single space after the colon";
+  if (/: [A-Z]/.test(title)) return "the subject starts with an uppercase letter, which `pr-title` refuses";
+  if (/[.\s]$/.test(title)) return "the subject ends with a period or whitespace, which `pr-title` refuses";
+  return "it does not match the `pr-title` rule";
+}
 
 // A positional label tells a reader nothing and outlives the plan that gave it
 // meaning — the title is the permanent commit subject on main and the changelog
-// entry.
+// entry. Applied to the SCOPE and the BRANCH, which is where they actually
+// appeared in this repo's history (`feat(wp-5): …`, `feat/phase2-…`), plus the
+// `wp-n` form anywhere. Not to the whole subject: this is a training app, so
+// "base phase 1 template" and "step 3 of the ramp test" are domain nouns, and
+// this guard refuses the entire plan when it fires.
 const POSITIONAL_RE = /\b(wp|pr|phase|slice|step|part|increment)[\s._-]?\d+\b/i;
+const WP_ANYWHERE_RE = /\bwp[\s._-]?\d+\b/i;
+const scopeOf = (title) => (title.match(/^[a-z]+\(([^)]+)\)/) || [])[1] || "";
 
 // The title is pasted into a double-quoted shell command by an agent
 // (`gh pr create --title "…"`), so a backtick or `$` in it is command
@@ -335,19 +385,52 @@ const POSITIONAL_RE = /\b(wp|pr|phase|slice|step|part|increment)[\s._-]?\d+\b/i;
 const SHELL_UNSAFE_RE = /[`$"\\]/;
 
 // Branch names are interpolated into `git worktree add` / `git push` the same way.
-const BRANCH_RE = new RegExp(`^(${TITLE_TYPES})\\/[a-z0-9][a-z0-9._-]*$`);
+// The trailing rules are git's own refname rules (`git check-ref-format`): no
+// `..`, no `.lock` suffix, no trailing `.` or `-`. Without them the guard passed
+// and `git worktree add` failed later, off in an agent.
+const BRANCH_RE = new RegExp(`^(${TITLE_TYPES})\\/(?!.*\\.\\.)(?!.*\\.lock$)[a-z0-9][a-z0-9._-]*[a-z0-9_]$|^(${TITLE_TYPES})\\/[a-z0-9]$`);
 
-const isMigration = (owned) => /alembic[\\/]|\bmigration/i.test(owned);
+// Matches an Alembic revision file, not the word "migration": the old
+// `/\bmigration/i` also matched `scripts/check-migration-required.sh` and
+// `docs/migration-guide.md`, so two PRs that merely mention one in `Owns` were
+// refused as a two-Alembic-heads collision — a false hard stop over the whole
+// plan.
+const isMigration = (owned) =>
+  /alembic[\\/]versions[\\/]|(^|[\\/])versions[\\/][0-9]{2,}[\w.*-]*(\.py)?$|\bmigrations?[\\/]/i.test(owned);
 
 function badTitles(prs) {
   return prs.filter((p) => !TITLE_RE.test(p.title));
+}
+// Optional fields the parse seat may legitimately omit when they are empty. Read
+// unguarded, `p.decisions.length` threw inside `guardrails()` — and a throw in a
+// concurrent `buildPr` is swallowed by `parallel()`, so the pull request
+// disappeared from `merged`, `open` AND `stopped` and the report said "Nothing to
+// do." Normalising once, here, is the only place that cannot be forgotten.
+function normalizePrs(prs) {
+  return prs.map((p) => ({
+    ...p,
+    depends: p.depends || [],
+    owns: p.owns || [],
+    triggers: p.triggers || [],
+    decisions: p.decisions || [],
+    acceptance: p.acceptance || [],
+    why: p.why || "",
+    delivers: p.delivers || "",
+    reuses: p.reuses || "",
+    // Absent reads as "needs Docker": the expensive-but-correct default, matching
+    // the parser. A PR wrongly marked otherwise runs `test-int` beside another.
+    needsDocker: p.needsDocker !== false,
+  }));
 }
 function unsafeTitles(prs) {
   return prs.filter((p) => SHELL_UNSAFE_RE.test(p.title));
 }
 function positionalOffenders(prs) {
   return prs.filter(
-    (p) => POSITIONAL_RE.test(p.title) || POSITIONAL_RE.test(p.branch),
+    (p) =>
+      POSITIONAL_RE.test(scopeOf(p.title)) ||
+      POSITIONAL_RE.test(p.branch) ||
+      WP_ANYWHERE_RE.test(p.title),
   );
 }
 function badBranches(prs) {
@@ -359,6 +442,19 @@ function duplicateBranches(prs) {
   for (const p of prs) {
     if (seen.has(p.branch)) dupes.add(p.branch);
     seen.add(p.branch);
+  }
+  return [...dupes];
+}
+// The TITLE is the identity `prExists` and `merged` are keyed on — it is what
+// `gh pr list` is matched against and what squash-merge puts on main. Two PRs
+// sharing one means that once the first merges, the second reads as already
+// shipped and is silently dropped from the run.
+function duplicateTitles(prs) {
+  const seen = new Set();
+  const dupes = new Set();
+  for (const p of prs) {
+    if (seen.has(p.title)) dupes.add(p.title);
+    seen.add(p.title);
   }
   return [...dupes];
 }
@@ -433,7 +529,10 @@ function echoProblems(parsed) {
   if (!parsed.planSnapshot) out.push("no planSnapshot path");
   for (const p of parsed.prs || []) {
     if (!p.title || !p.branch) out.push("a PR is missing its title or branch");
-    if (!p.why || !p.delivers) out.push(`"${p.title || "?"}" is missing why/delivers`);
+    // Only for PRs still to be built. A long-lived plan legitimately has its
+    // shipped sections trimmed to a heading, and refusing the run for that
+    // reports a corrupt echo when the echo is fine.
+    if (!p.merged && (!p.why || !p.delivers)) out.push(`"${p.title || "?"}" is missing why/delivers`);
   }
   return out;
 }
@@ -621,10 +720,14 @@ ${
   (p.depends || []).length
     ? `
 7. ⚠️ PREREQUISITE CHECK — an INDEPENDENT confirmation that what this PR extends is really on main,
-   not merely reported merged by an earlier step. Run \`git log origin/main --oneline -40\` and
-   confirm each of these appears:
-${p.depends.map((d) => `     - the PR whose branch is \`${d}\``).join("\n")}
-   List the ones you found in \`prerequisitesOnMain\`. If any is NOT on origin/main, return
+   not merely reported merged by an earlier step. Confirm each of these subjects appears on main:
+${p.depends
+     .map((d) => `     - "${(byBranch.get(d) || {}).title || d}"   (branch \`${d}\`)`)
+     .join("\n")}
+   Those are PR TITLES, and they are what to look for: \`main\` is squash-only, so the merge commit's
+   subject IS the pull request's title. Searching for the branch name finds nothing.
+   \`git log origin/main --format=%s -120\` and match each one exactly.
+   List the TITLES you found in \`prerequisitesOnMain\`. If any is NOT on origin/main, return
    \`ok: false\` and say which — this worktree would be built against a main that lacks the work it
    extends.
 `
@@ -651,10 +754,16 @@ ${acBlock(p)}
 ${guardrails(parsed, p)}${handoffBlock(handoff)}${HANDOFF_INSTRUCTION}`;
 }
 
-function fixPrompt(parsed, p, issues, handoff) {
-  return `The independent review of "${p.title}" REJECTED these acceptance criteria. Fix ONLY these —
-do not refactor beyond them:
-${issues.map((i) => `- ${i.ac} — responsible area: ${i.area}`).join("\n")}
+function fixPrompt(parsed, p, issues, handoff, verdict) {
+  const what = issues
+    ? `REJECTED these acceptance criteria. Fix ONLY these — do not refactor beyond them:
+${issues.map((i) => `- ${i.ac} — responsible area: ${i.area}`).join("\n")}`
+    : `REJECTED the work without naming a criterion, which means the obstacle is the review itself.
+What it reported:
+  gaps: ${verdict && verdict.gaps ? verdict.gaps : "(none given)"}
+  process notes: ${verdict && verdict.processNotes ? verdict.processNotes : "(none given)"}
+Read that, fix the cause it names, and change nothing else.`;
+  return `The independent review of "${p.title}" ${what}
 
 For each, make the criterion genuinely true and prove it with a test that asserts that specific claim
 at the right level, covering the edge cases the plan lists under it. Run the targeted tests for what
@@ -665,8 +774,9 @@ ${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_
 function gateFixPrompt(parsed, p, gate, handoff) {
   return `\`just gate\` FAILED on "${p.title}" (exit ${gate.gateExit}). Fix the cause.
 
-The gate is ruff · pyrefly · import-linter · backend+frontend unit tests · the production frontend
-build · api-contract drift · the migration heuristic. Its tail:
+\`just gate\` is the repository's one pre-review gate — its exact tiers are listed in the recipe's
+comment in the \`justfile\`, and it does NOT include the Docker tiers or the commit-time hygiene
+hooks. Its tail:
 
 ${(gate.gateTail || gate.detail || "").slice(-2500)}
 
@@ -703,7 +813,7 @@ ${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_
 // reviewer's diff real: the implementer is forbidden to commit, so
 // `git diff origin/main...HEAD` was empty for every reviewer until now, and all
 // seven of them had to improvise their way to the working tree.
-function gatePrompt(p, subject, isFirst) {
+function gatePrompt(p, subject) {
   const wt = wtPath(p);
   return `Run the gate on "${p.title}" and, only if it passes, commit the work. Two steps, no judgement.
 
@@ -717,12 +827,13 @@ function gatePrompt(p, subject, isFirst) {
    - \`git -C ${wt} status --porcelain -uall\`, then \`git -C ${wt} add -- <path> …\` for every path
      that belongs to this PR. NEVER \`git add -A\`, \`.\` or \`-u\`. Always exclude anything under
      \`.claude/agent-memory/\` at any depth, and \`CHANGELOG.md\`.
-   - Commit. ${
-     isFirst
-       ? `Subject EXACTLY: \`${subject}\`  (it is the PR title, and squash-merge makes it the
-     subject on main).`
-       : `Subject: a Conventional Commit describing this follow-up, e.g. \`${subject}\`.`
-   } Body wrapped at ~76 columns, saying WHY.
+   - Commit. Check first whether this branch already has commits of its own:
+     \`git -C ${wtPath(p)} log --oneline origin/main..HEAD\`.
+     · none yet → subject EXACTLY: \`${subject}\`  (it is the PR title, and squash-merge makes it
+       the subject on main).
+     · some already → a Conventional Commit describing THIS commit, e.g.
+       \`fix(${p.branch.split("/")[1] || "gate"}): <what this commit changes>\`.
+     Body wrapped at ~76 columns, saying WHY.
    - NEVER \`--no-verify\`. Pre-commit hooks may rewrite files (api-schema-sync regenerates
      \`frontend/generated/api/\`); if a hook aborts the commit, re-derive the path list the same way,
      \`git add --\` exactly those, and commit again.
@@ -739,8 +850,10 @@ function reviewPrompt(parsed, p, mode, ctx, gate, sinceSha) {
   const wt = wtPath(p);
   const evidence = `
 GATE EVIDENCE — observed, not claimed. \`just gate\` was run by a separate seat and exited
-${gate ? gate.gateExit : "?"} (0 = pass), covering ruff, pyrefly, import-linter, backend+frontend unit
-tests, the production build, api-contract drift and the migration heuristic:
+${gate.gateExit} (0 = pass). Its tiers are listed in the \`gate\` recipe's comment in the \`justfile\`
+(lint, types, both unit suites, the production build, api-contract drift); the Docker tiers and the
+commit-time hooks are NOT in it, and on a first pass the migration heuristic has no commit range to
+read, so it says nothing:
 ${((gate && (gate.gateTail || gate.detail)) || "(no tail reported)").slice(-1200)}
 
 So do NOT re-run lint, type-check, the unit suites or the build. Judge whether the diff is what the
@@ -796,20 +909,27 @@ function pushPrompt(parsed, p, gate) {
   return `"${p.title}" passed the gate and independent review, and is committed at \`${gate.sha}\` in
 \`${wt}\`. Push it and open its PR.
 
-1. Push. The pre-push hooks (pyrefly, import-linter, backend unit tests, frontend type-check,
-   frontend unit tests, the production build) take MINUTES, and a foreground push has hit the tool
-   timeout before — so start it in the background and poll:
+1. Push. The pre-push hooks take MINUTES — they re-run the type-checkers, both unit suites, the
+   production build and the repository's own tooling suites — and a foreground push has hit the tool
+   timeout before, so start it in the background and poll:
      \`cd ${wt} && git push -u origin ${p.branch} > /tmp/push-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
    then poll for completion and read the log's tail. Never \`--no-verify\`.
    If the push fails, REPORT it with the tail and set \`ok: false\`. Do not reconfigure anything —
    not \`git remote\`, not \`git config\`, not \`~/.ssh\` — they are shared with every other worktree
    and with the operator.
-2. Open the PR with EXACTLY this title — it is a required CI check that it be a lowercase-start,
+2. ${
+     p.prExists && p.prNumber
+       ? `This branch ALREADY has pull request #${p.prNumber} — this run is building onto it, so do NOT
+   run \`gh pr create\`, which would fail. Confirm it with \`gh pr view ${p.prNumber} --json number,state,title\`,
+   update its body if the work has moved on (\`gh pr edit ${p.prNumber} --body-file <path>\`), and report
+   its number.`
+       : `Open the PR with EXACTLY this title — it is a required CI check that it be a lowercase-start,
    no-trailing-period Conventional Commit, and squash-merge makes it the commit subject on main:
      ${p.title}
    Write the body to a file and pass \`--body-file\`; it is full of backticks and brackets:
      \`gh pr create --base main --title "${p.title}" --body-file <path>\`
-   Fill in \`.github/pull_request_template.md\` and tick only what you actually verified.
+   Fill in \`.github/pull_request_template.md\` and tick only what you actually verified.`
+   }
    THE BODY BECOMES THE COMMIT BODY ON MAIN, so lead with WHY this change exists — the problem it
    solves, not a list of files. Write for a reader outside the branch: one line per paragraph, NO
    hard wrapping. Keep it flat: no nested lists, no tables, no \`Key: value\` trailers.
@@ -850,7 +970,7 @@ not. Map its EXIT CODE, and nothing else, to \`status\`:
                  into \`detail\`, then — only for a RED — read the actual failure with
                  \`gh run view <run-id> --log-failed\` (redirect, read the tail) and put a one-line
                  diagnosis in \`detail\`. A fix agent works from this, so name the test or the error.
-  2 → NO_BUDGET  no workflow run ever registered for the head SHA. Nothing is wrong with the code.
+  2 → NO_RUNS  no workflow run ever registered for the head SHA. Nothing is wrong with the code.
                  Do not investigate billing, do not hunt for an error message.
   3 → UNKNOWN    still pending at the deadline, or a check was cancelled. RE-RUN the script (up to 4
                  times total) before reporting UNKNOWN; report the number of invocations.
@@ -877,8 +997,7 @@ registry is unreachable, \`just smoke\` cannot build its images — record it NO
 immediately rather than watching a stalled pull. That cost ~30 minutes on 16 Aug 2026.
 
 Work in \`${wt}\`. Run these in order; a later one is worthless if an earlier one is red:
-1. \`just gate\`        — ruff, pyrefly, import-linter, unit suites, production build,
-                          api-contract drift, migration heuristic
+1. \`just gate\`        — the repository's pre-review gate; the recipe's comment lists its tiers
 2. \`just test-int\`    — integration on real Postgres; the ONLY place \`alembic check\` runs, so this
                           is what catches model/migration drift
 3. \`just e2e\`         — Playwright, UI-only
@@ -912,10 +1031,16 @@ ran, so it proves nothing new.
 Do not change any code and do not merge. Plan snapshot, if you need it: ${parsed.planSnapshot}`;
 }
 
-function finishPrompt(p, pr, doMerge, localCiNote) {
+function finishPrompt(p, pr, doMerge, localCiNote, heldBackWhy) {
   const wt = wtPath(p);
   return `PR #${pr.number} ("${p.title}") is ${doMerge ? "review-approved and CI-verified" : "finished for this run"}.
-${doMerge ? "Merge it, then clean up." : "Clean up. Do NOT merge it — nothing in this plan is waiting on it."}
+${
+  doMerge
+    ? "Merge it, then clean up."
+    : heldBackWhy
+      ? `Clean up. Do NOT merge it: something in this plan does depend on it, but it may not merge unattended because ${heldBackWhy}. It stays open for the operator.`
+      : "Clean up. Do NOT merge it — nothing unmerged in this plan is waiting on it."
+}
 
 1. Confirm the work is safely on the remote: \`git ls-remote --heads origin ${p.branch}\` must return a
    ref, and \`git -C ${wt} status --porcelain -uall\` must be empty. If EITHER fails, STOP: report it
@@ -979,8 +1104,16 @@ if (!parsed.ok) {
     `HARD STOP: scripts/parse-plan.mjs refused (exit ${parsed.exitCode}).\n` +
       (parsed.stderr || "(no stderr reported)"),
   );
-  return { error: parsed.exitCode === 2 ? "plan-defects" : "parse-refused", exitCode: parsed.exitCode, stderr: parsed.stderr };
+  const why =
+    parsed.exitCode === 2 ? "plan-defects" : parsed.exitCode === 4 ? "plan-not-found" : "parse-refused";
+  return { error: why, exitCode: parsed.exitCode, stderr: parsed.stderr };
 }
+
+// Fill every optional field before anything reads one. Unguarded,
+// `p.decisions.length` threw inside a concurrent `buildPr`, `parallel()` turned
+// the rejection into `null`, `.filter(Boolean)` dropped it, and the run reported
+// "Nothing to do." for a plan it had been asked to build.
+parsed.prs = normalizePrs(parsed.prs);
 
 const echoBad = echoProblems(parsed);
 if (echoBad.length) {
@@ -1021,9 +1154,9 @@ const live = parsed.prs.filter((p) => !p.merged);
 const bad = badTitles(live);
 if (bad.length) {
   log(
-    `HARD STOP: ${bad.length} title(s) would fail the required \`pr-title\` check — the subject must ` +
-      `not start with an uppercase letter and must not end with a period:\n` +
-      bad.map((p) => `  - "${p.title}"`).join("\n"),
+    `HARD STOP: ${bad.length} title(s) would fail the required \`pr-title\` check. The title becomes ` +
+      `the commit subject on main, so each is refused for a stated reason:\n` +
+      bad.map((p) => `  - "${p.title}" — ${titleProblem(p.title)}`).join("\n"),
   );
   return { error: "bad-pr-title", titles: bad.map((p) => p.title) };
 }
@@ -1073,6 +1206,17 @@ if (dupes.length) {
 // A PR with no criteria is an unreviewed push: the reviewer is handed an empty
 // list, has nothing to reject, approves, and — if anything depends on it — the
 // result is squash-merged into protected main.
+const dupeTitles = duplicateTitles(parsed.prs);
+if (dupeTitles.length) {
+  log(
+    `HARD STOP: ${dupeTitles.length} title(s) appear on more than one PR. The title is what \`gh pr ` +
+      `list\` is matched against, so once the first merges the second reads as already shipped and is ` +
+      `dropped without a word:\n` +
+      dupeTitles.map((t) => `  - "${t}"`).join("\n"),
+  );
+  return { error: "duplicate-title", titles: dupeTitles };
+}
+
 const noAcs = acceptanceless(live);
 if (noAcs.length) {
   log(
@@ -1239,8 +1383,10 @@ log(
 //
 // Every seat is a FRESH agent: the reviewer never wrote the code it judges, and
 // the fixer is never the implementer either. The reviewer additionally has no
-// write tools (see .claude/agents/arc-reviewer.md), so it structurally cannot
-// repair what it finds — independence enforced by the toolset, not by a prompt.
+// editing tools — `tools: Read, Bash, Glob, Grep` in .claude/agents/arc-reviewer.md
+// — so repairing what it finds would take a deliberate detour through the shell,
+// which its own instructions forbid. Not a sandbox; a seat with no reason and no
+// convenient means to fix its own findings.
 // The gate seat is not a judge and not a developer: it runs one command, commits
 // on success, and is explicitly forbidden to fix anything.
 
@@ -1257,7 +1403,11 @@ async function buildPr(p) {
   };
 
   const setup = await agent(setupPrompt(parsed, p), cheap("setup", SETUP_SCHEMA));
-  if (setup == null) return fail("worktree-setup-failed");
+  if (setup == null) {
+    return fail("worktree-setup-failed", {
+      recovery: `The setup seat died before reporting. Check \`git worktree list\` and \`git -C ${wtPath(p)} status\`: a worktree may exist half-initialised, and \`just worktree-init\` in it is the repair. Nothing was implemented.`,
+    });
+  }
   // Act on what it reported. Without these checks the schema would be decoration
   // and the dirty-worktree stop could never fire.
   if (setup.dirty && setup.dirty.length) {
@@ -1270,6 +1420,22 @@ async function buildPr(p) {
     return fail("worktree-unsafe", {
       detail: setup.detail,
       recovery: `Expected HEAD ${p.branch} in ${wtPath(p)}, agent reported "${setup.headBranch}". Nothing was implemented.`,
+    });
+  }
+  // The SECOND, independent confirmation that a prerequisite really landed — and
+  // it has to be READ, or the schema is decoration and the only evidence a merge
+  // happened is the seat that claimed to perform it. Titles, not branches:
+  // squash-merge puts the PR TITLE on main.
+  const absent = (p.depends || []).filter(
+    (d) => !(setup.prerequisitesOnMain || []).some((seen) => seen.includes(byBranch.get(d)?.title || d)),
+  );
+  if (setup.reused) {
+    log(`${p.branch}: reusing the existing worktree at ${wtPath(p)} (it was clean).`);
+  }
+  if (absent.length) {
+    return fail("prerequisite-not-on-main", {
+      detail: setup.detail,
+      recovery: `${p.branch} extends ${absent.join(", ")}, and the setup seat did not find that subject on origin/main. Confirm the prerequisite merged (\`git log origin/main --oneline\`), then re-launch with { onlyBranch: "${p.branch}" }.`,
     });
   }
 
@@ -1297,18 +1463,19 @@ as a clean run.
   // a human's problem, and nothing is pushed.
   let gate = null;
   let gateLoops = 0;
-  // Nothing is committed on this branch yet, so the first commit that lands
-  // carries the PR title as its subject however many gate fixes it took to get
-  // there. A "make the gate green" subject on a branch's only commit reads as if
-  // the PR were a repair of something.
-  let committedYet = false;
   for (;;) {
     const tag = gateLoops === 0 ? "gate" : `gate-retry${gateLoops}`;
-    gate = await agent(gatePrompt(p, p.title, !committedYet), cheap(tag, GATE_SCHEMA));
+    gate = await agent(gatePrompt(p, p.title), cheap(tag, GATE_SCHEMA));
     if (gate == null) return fail("gate-agent-died", { recovery: `Run \`cd ${wtPath(p)} && just gate\` by hand to see where it stands. The work is uncommitted.` });
-    if (gate.gateExit === 0 && gate.committed) {
-      committedYet = true;
-      break;
+    if (gate.gateExit === 0 && gate.committed && gate.sha) break;
+    // Committed but no SHA is the same class of failure as not committing: two
+    // later steps interpolate that SHA into a git command, and `undefined` there
+    // gives the scoped re-review no diff at all.
+    if (gate.gateExit === 0 && gate.committed && !gate.sha) {
+      return fail("commit-sha-missing", {
+        gate,
+        recovery: `The gate seat reported a commit in ${wtPath(p)} but no SHA. Check \`git -C ${wtPath(p)} log --oneline -3\` before re-launching.`,
+      });
     }
     if (gate.gateExit === 0 && !gate.committed) {
       // Green but refused to commit — the seat saw something it did not
@@ -1343,9 +1510,12 @@ as a clean run.
   let loops = 0;
   while (verdict && verdict.status === "REJECTED" && loops < MAX_REVIEW_LOOPS) {
     loops++;
-    const rejected = verdict.issues;
+    // A rejection may legitimately name no criterion — the review prompt itself
+    // says to REJECT when the plan snapshot is unreadable. Handing the fix agent
+    // an empty list burned both loops on nothing.
+    const rejected = verdict.issues && verdict.issues.length ? verdict.issues : null;
     log(`${p.branch} REJECTED (fix ${loops}/${MAX_REVIEW_LOOPS}): ${verdict.gaps}`);
-    const fixed = await agent(fixPrompt(parsed, p, rejected, handoff), { ...dev, label: `${title}:fix${loops}` });
+    const fixed = await agent(fixPrompt(parsed, p, rejected, handoff, verdict), { ...dev, label: `${title}:fix${loops}` });
     if (fixed == null) {
       return fail("fix-agent-died", {
         verdict,
@@ -1356,8 +1526,8 @@ as a clean run.
     // The fix has to pass the gate and be committed before it can be reviewed —
     // otherwise the re-review reads a tree that does not match any commit.
     const regate = await agent(
-      gatePrompt(p, `fix(${p.branch.split("/")[1] || "review"}): address the review`, false),
-      cheap(`gate-fix-commit${loops}`, GATE_SCHEMA),
+      gatePrompt(p, `fix(${p.branch.split("/")[1] || "review"}): address the review`),
+      cheap(`gate-review${loops}`, GATE_SCHEMA),
     );
     if (regate == null || regate.gateExit !== 0 || !regate.committed) {
       return fail("gate-red-after-review-fix", {
@@ -1367,9 +1537,21 @@ as a clean run.
       });
     }
     gate = regate;
-    verdict = await agent(reviewPrompt(parsed, p, "targeted", { handoff, rejected }, gate), {
-      ...rev,
-      label: `${title}:review${loops}`,
+    verdict = await agent(
+      reviewPrompt(parsed, p, rejected ? "targeted" : "full", { handoff, rejected }, gate),
+      { ...rev, label: `${title}:review${loops}` },
+    );
+  }
+  // An APPROVED verdict whose own criteria say NOT_FULFILLED is not an approval.
+  // arc-reviewer.md forbids it, the data to check it was already in hand, and
+  // nothing checked it — so it pushed and squash-merged.
+  const unmet = verdict && verdict.status === "APPROVED"
+    ? (verdict.criteria || []).filter((c) => c.verdict && c.verdict !== "FULFILLED")
+    : [];
+  if (unmet.length) {
+    return fail("review-self-contradictory", {
+      verdict,
+      recovery: `The review returned APPROVED while marking ${unmet.map((c) => c.ac).join(", ")} as ${[...new Set(unmet.map((c) => c.verdict))].join("/")}. Nothing was pushed. Read the criteria, decide by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
     });
   }
   if (!verdict || verdict.status !== "APPROVED") {
@@ -1393,6 +1575,9 @@ as a clean run.
   log(`${p.branch}: PR #${pr.number} opened — ${pr.url}`);
 
   let ci = await agent(ciPrompt(p, pr), cheap("ci", CI_SCHEMA));
+  if (ci && ci.invocations > 1) {
+    log(`${p.branch}: CI status took ${ci.invocations} bounded polls — ${ci.status}.`);
+  }
   let ciLoops = 0;
   while (ci && ci.status === "RED" && ciLoops < MAX_CI_LOOPS) {
     ciLoops++;
@@ -1406,7 +1591,7 @@ as a clean run.
     }
     handoff = fixed;
     const regate = await agent(
-      gatePrompt(p, `fix(ci): ${(ci.failing || ["ci"]).join(", ").slice(0, 40)}`, false),
+      gatePrompt(p, `fix(ci): ${(ci.failing || ["ci"]).join(", ").slice(0, 40)}`),
       cheap(`gate-ci${ciLoops}`, GATE_SCHEMA),
     );
     if (regate == null || regate.gateExit !== 0 || !regate.committed) {
@@ -1436,7 +1621,18 @@ as a clean run.
     }
     approvedSha = gate.sha;
     const repush = await agent(repushPrompt(p, pr, gate), cheap(`ci-push${ciLoops}`, PR_SCHEMA));
-    if (repush == null || !repush.ok) return fail("ci-push-failed", { pr, verdict });
+    if (repush && repush.ok && repush.sha && gate.sha && !repush.sha.startsWith(gate.sha.slice(0, 7)) && !gate.sha.startsWith(repush.sha.slice(0, 7))) {
+      return fail("pushed-a-different-commit", {
+        pr, verdict, gate,
+        recovery: `The re-review approved ${gate.sha} but the push seat reported pushing ${repush.sha}. PR #${pr.number} may now carry work nothing reviewed. Compare \`git -C ${wtPath(p)} log --oneline -5\` against the PR's head before doing anything else.`,
+      });
+    }
+    if (repush == null || !repush.ok) {
+      return fail("ci-push-failed", {
+        pr, verdict, gate,
+        recovery: `PR #${pr.number} is open and RED, and a reviewed fix is committed at ${gate.sha} in ${wtPath(p)} but NOT pushed — the worktree is kept because it holds the only copy. Push it by hand (\`git -C ${wtPath(p)} push\`) or reset it.${repush ? ` The seat said: ${repush.detail}` : ""}`,
+      });
+    }
     ci = await agent(ciPrompt(p, pr), cheap(`ci-recheck${ciLoops}`, CI_SCHEMA));
   }
 
@@ -1444,9 +1640,15 @@ as a clean run.
   // No run ever registered is not a defect. It needs a local run of everything CI
   // would have done — which is Docker-bound, so it is deferred to the serial pass
   // rather than run here inside a concurrent branch.
-  if (status === "NO_BUDGET") {
+  if (status === "NO_RUNS") {
     log(`${p.branch}: CI never registered a run — deferring local verification.`);
-    return { branch: p.branch, title: p.title, ok: false, merged: false, reason: "needs-local-ci", pr, verdict, ci, gate, pr_obj: p };
+    return {
+      branch: p.branch, title: p.title, ok: false, merged: false, reason: "needs-local-ci",
+      pr, verdict, ci, gate, pr_obj: p,
+      // Carried through localCiVerify → finish, which reports them. Omitted, the
+      // report for every no-CI PR silently lost its loop counts.
+      reviewLoops: loops, ciLoops, gateLoops,
+    };
   }
   if (status !== "GREEN") {
     const r = fail(`CI ${status} after ${ciLoops} fix loop(s)`, {
@@ -1465,8 +1667,14 @@ as a clean run.
 // crossed a `parallel()` boundary, which is how a real merge came back as
 // "Merged: none" on 16 Aug 2026.
 async function finish(p, pr, verdict, extra) {
-  const doMerge = AUTO_MERGE && blocksSomething(parsed.prs, p.branch) && extra.ciMode !== "local-partial";
-  const res = await agent(finishPrompt(p, pr, doMerge, extra.ciMode !== "github"), {
+  const waited = blocksSomething(parsed.prs, p.branch);
+  const doMerge = AUTO_MERGE && waited && extra.ciMode !== "local-partial";
+  const heldBackWhy = waited && !doMerge
+    ? extra.ciMode === "local-partial"
+      ? "its local verification could not run every check"
+      : "auto-merge is off for this run"
+    : null;
+  const res = await agent(finishPrompt(p, pr, doMerge, extra.ciMode !== "github", heldBackWhy), {
     label: `${p.branch}:${doMerge ? "merge-and-cleanup" : "cleanup"}`,
     phase: p.branch,
     schema: FINISH_SCHEMA,
@@ -1478,6 +1686,11 @@ async function finish(p, pr, verdict, extra) {
   // from a main that lacks it. The mirror image of the bug that reported a real
   // merge as unmerged, and the more dangerous direction of the two.
   const merged = doMerge && !!(res && res.merged);
+  // A merge that was ATTEMPTED and did not land must not read like a leaf that was
+  // never meant to merge. Without this the reason lived only in a log line, and in
+  // the last group — where there is no next group to halt — the report said
+  // "Review and squash-merge the open PRs" as if nothing had gone wrong.
+  const mergeFailed = doMerge && !merged;
   if (doMerge) {
     log(
       merged
@@ -1485,9 +1698,13 @@ async function finish(p, pr, verdict, extra) {
         : `${p.branch}: PR #${pr.number} did NOT merge — ${res ? res.detail : "the finish seat returned nothing"}`,
     );
   }
+  if (res && res.worktreeRemoved === false) {
+    log(`⚠️ ${p.branch}: the worktree was NOT removed — ${res.detail}`);
+  }
   return {
-    branch: p.branch, title: p.title, ok: true, pr, verdict, merged,
+    branch: p.branch, title: p.title, ok: true, pr, verdict, merged, mergeFailed,
     mergeDetail: res ? res.detail : "finish seat returned nothing",
+    worktreeRemoved: res ? res.worktreeRemoved !== false : false,
     ...extra,
   };
 }
@@ -1539,7 +1756,23 @@ async function localCiVerify(r) {
   // schemathesis were all NOT_RUN adds exactly nothing — and this result feeds
   // the auto-merge decision. A PREEXISTING tier is different: it ran, it failed
   // the same way on main, and that is evidence rather than absence.
-  const skipped = res.notRun || [];
+  // `checks` entries are "<name>: PASS|FAIL|NOT_RUN|PREEXISTING — <detail>" by
+  // contract, so a NOT_RUN/FAIL entry whose name is in neither `notRun` nor
+  // `preexisting` means the structured fields and the written record disagree.
+  // That is not a verification, and the old file's decision not to regex prose
+  // does not extend to a field whose shape this prompt dictates.
+  const accounted = new Set([...(res.notRun || []), ...(res.preexisting || [])]);
+  const contradictions = (res.checks || [])
+    .filter((c) => /:\s*(NOT_RUN|FAIL)\b/i.test(c))
+    .map((c) => c.split(":")[0].trim())
+    .filter((name) => ![...accounted].some((a) => a.includes(name) || name.includes(a)));
+  const skipped = [...new Set([...(res.notRun || []), ...contradictions])];
+  if (contradictions.length) {
+    log(
+      `⚠️ ${p.branch}: the local verification reports ${contradictions.join(", ")} as NOT_RUN/FAIL in ` +
+        `\`checks\` but not in \`notRun\`. Treating them as not run — it will NOT auto-merge.`,
+    );
+  }
   const mode = skipped.length ? "local-partial" : "local";
   if (skipped.length) {
     log(
@@ -1605,7 +1838,19 @@ for (let gi = 0; gi < groups.length && !halted; gi++) {
     const mergedNow = done.filter((r) => r.merged).map((r) => r.branch);
     const missing = missingPrerequisites(nextGroup, mergedNow, planMerged);
     if (missing.length) {
-      halted = `group ${gi + 2} needs these merged first: ${missing.join(", ")}`;
+      // Naming the stop matters: "needs these merged first: feat/a" reads as
+      // "go merge feat/a" even when feat/a never got a pull request at all,
+      // and the real recovery is then buried in `stopped`.
+      const why = missing
+        .map((b) => {
+          const r = done.find((x) => x.branch === b);
+          if (r && !r.ok) return `${b} (stopped: ${r.reason})`;
+          if (r && r.mergeFailed) return `${b} (merge failed: ${r.mergeDetail})`;
+          if (r) return `${b} (open, unmerged)`;
+          return b;
+        })
+        .join(", ");
+      halted = `group ${gi + 2} needs these merged first: ${why}`;
       log(`STOPPING: ${halted}`);
     }
   }
@@ -1623,6 +1868,13 @@ log(
     `Stopped: ${stopped.map((r) => `${r.branch}(${r.reason})`).join(", ") || "none"}.` +
     (halted ? ` HALTED: ${halted}` : ""),
 );
+const mergeFailures = green.filter((r) => r.mergeFailed);
+if (mergeFailures.length) {
+  log(
+    `⚠️ ${mergeFailures.length} PR(s) the DAG waits on did NOT merge: ` +
+      mergeFailures.map((r) => `${r.branch}(#${r.pr.number}) — ${r.mergeDetail}`).join("; "),
+  );
+}
 const allShipped = parsed.prs.every(
   (p) => p.merged || done.some((r) => r.branch === p.branch && r.merged),
 );
@@ -1638,18 +1890,29 @@ return {
     localCi: r.localCi ? r.localCi.checks : undefined,
     notRun: r.notRun && r.notRun.length ? r.notRun : undefined,
     preexisting: r.localCi && r.localCi.preexisting && r.localCi.preexisting.length ? r.localCi.preexisting : undefined,
+    // A PR the workflow tried and failed to merge must be distinguishable from a
+    // leaf it never meant to merge.
+    mergeFailed: r.mergeFailed || undefined,
+    mergeDetail: r.mergeFailed ? r.mergeDetail : undefined,
+    worktreeKept: r.worktreeRemoved === false ? true : undefined,
   })),
   stopped: stopped.map((r) => ({
     branch: r.branch, reason: r.reason,
     gaps: r.verdict ? r.verdict.gaps : undefined,
     processNotes: r.verdict ? r.verdict.processNotes : undefined,
+    // The per-criterion verdicts the expensive seat produced. Without them a
+    // rejection reaches the operator as one prose paragraph.
+    criteria: r.verdict && r.verdict.criteria && r.verdict.criteria.length ? r.verdict.criteria : undefined,
+    rightThingBuilt: r.verdict ? r.verdict.rightThingBuilt : undefined,
     gateExit: r.gate ? r.gate.gateExit : undefined,
     recovery: r.recovery,
   })),
   halted,
   nextAction: halted
     ? `Resolve the stop, then re-launch: ${halted}`
-    : stopped.length
+    : mergeFailures.length
+      ? `Merge ${mergeFailures.map((r) => `#${r.pr.number}`).join(", ")} by hand, or resolve what blocked it: ${mergeFailures.map((r) => r.mergeDetail).join("; ")}`
+      : stopped.length
       ? "Resolve the hard stops first — each carries its own recovery line."
       : allShipped
         ? "Re-launch with { verifyFeature: true }."

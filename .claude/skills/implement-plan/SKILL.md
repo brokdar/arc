@@ -15,15 +15,15 @@ allowed-tools: Read, Bash(git status:*), Bash(git worktree:*), Bash(git log:*), 
 
 This launches the `implement-plan` workflow, which runs the pipeline you cannot run in your head.
 Per PR: a fresh developer implements it TDD in its own worktree; a cheap seat runs **`just gate`** and
-commits only if it passes; a **separate agent with no write tools** judges the committed diff against
+commits only if it passes; a **separate agent with no editing tools** judges the committed diff against
 that PR's acceptance criteria and their edge cases; a **third** agent fixes only what was rejected,
 and the review repeats — bounded at two cycles, then a hard stop with no PR opened. Only then is it
 pushed and opened, and only then is CI driven green.
 
-No agent ever reviews or fixes its own work. That is structural: every seat is a fresh context, and
-`arc-reviewer` has `tools: Read, Bash, Glob, Grep` — it *cannot* edit what it finds. The gate seat is
-neither judge nor developer: it runs one command, commits on success, and is forbidden to fix
-anything it sees fail.
+No agent ever reviews or fixes its own work. Every seat is a fresh context, and `arc-reviewer` is
+given `tools: Read, Bash, Glob, Grep` — no Write, no Edit — so repairing its own findings would take a
+deliberate detour through the shell, which its instructions forbid. The gate seat is neither judge nor
+developer: it runs one command, commits on success, and is forbidden to fix anything it sees fail.
 
 **Mechanical steps are scripts, not judgement.** The workflow itself has no shell — it can only spawn
 agents — so each of these is a tested script that a cheap seat runs and reports the exit code of:
@@ -31,7 +31,7 @@ agents — so each of these is a tested script that a cheap seat runs and report
 | | |
 | --- | --- |
 | `node scripts/parse-plan.mjs <plan>` | plan → JSON, cross-checked against `gh`/`git`, plan snapshotted |
-| `just gate` | the whole pre-review gate, one exit code, non-mutating |
+| `just gate` | the whole pre-review gate, one exit code (see the recipe for its tiers) |
 | `node scripts/ci-status.mjs <pr>` | green / red / never-registered / pending, always returns |
 | `bash scripts/docker-lock.sh` | exclusive use of the fixed compose ports, across worktrees |
 
@@ -39,10 +39,11 @@ agents — so each of these is a tested script that a cheap seat runs and report
 
 1. **There must be a plan.** This skill executes one; it does not write one. If `$ARGUMENTS` names no
    plan, ask for the path — or point at `/feature-plan` if they want one written first.
-2. **Nothing else may be running.** Two `implement-plan` runs in one checkout will fight over Docker
-   and the worktree directory. Check `/workflows`, and `bash scripts/docker-lock.sh status`. The
-   Docker tiers now take that lock, so the collision is refused rather than silent — but two runs
-   still make a mess of everything else.
+2. **Nothing else may be running.** Two `implement-plan` runs in one checkout will fight over Docker,
+   the worktree directory and the git index. Check `/workflows`, and `bash scripts/docker-lock.sh
+   status`. Every seat that touches Docker is *instructed* to take that lock, so two obedient runs
+   refuse each other rather than colliding silently — but the recipes themselves do not take it, so a
+   human running `just test-int` in another terminal is not covered, and nothing protects the index.
 3. **Build the args as a JSON object yourself.** Never pass `$ARGUMENTS` through as a string. The
    script parses a bare string as a safety net, but the blast radius of a mis-parse here is real PRs
    on a real remote.
@@ -53,12 +54,18 @@ agents — so each of these is a tested script that a cheap seat runs and report
    - `autoMerge: false` — never merge anything, even a prerequisite. The DAG then stops after the
      first group and waits for you.
 4. **Check the tree.** `git status` in the main checkout and `git worktree list`. Each PR lives in
-   `.claude/worktrees/<branch>`; a hard-stopped earlier run leaves work there, so read the previous
+   `.claude/worktrees/<branch with its slash flattened to a dash>` — branch `feat/x` is in
+   `.claude/worktrees/feat-x`. A hard-stopped earlier run leaves work there, so read the previous
    run's `recovery` line before re-launching the same branch.
 5. **Dry-run the parse if the plan is new**: `node scripts/parse-plan.mjs <plan>` exits 2 and names
-   every missing marked line. That is the whole plan-defect check, for free, before any agent runs.
-6. **Export `E2E_PASSWORD`** if you have it, so the local-verification fallback can actually run
-   `just smoke` instead of recording it NOT_RUN.
+   every missing marked line, plus any bullet under **Acceptance** that belongs to no criterion. That
+   catches the *structural* defects for free. The rest — the title and branch rules, positional
+   labels, duplicate titles or branches, an unresolved `(confirm)`, a `## Why` under 80 characters, a
+   dangling `Depends`, a cycle, two migrations in one group — are checked at launch, and each refuses
+   the whole run.
+6. **Export `E2E_PASSWORD` yourself, in the shell that launches this**, if you have it — a skill
+   cannot set it for you, and shell state does not survive between commands. Without it the
+   local-verification fallback records `just smoke` as NOT_RUN rather than passing it.
 7. **Say which PRs will be built, and that some will auto-merge**, then launch. This one touches the
    remote and `main`.
 
@@ -94,10 +101,12 @@ contradicting another, a capability that reached the API but not MCP. It runs ag
 
 ## When CI never runs
 
-`scripts/ci-status.mjs` exiting **2** means no workflow run ever registered for the PR's head SHA,
-long after it was pushed — Actions did not start (budget, spending limit, workflows disabled). That is
-deliberately distinct from red: nothing is wrong with the code, and sending a fix agent to hunt a
-defect that does not exist wastes a cycle.
+`scripts/ci-status.mjs` exiting **2** (`NO_RUNS`) means no workflow run ever registered for the PR's
+head SHA — Actions did not start (budget, spending limit, workflows disabled). It is never concluded
+from a single observation: the script must watch zero runs for at least a minute, and either for its
+whole grace window or against a head commit older than it. That is deliberately distinct from red:
+nothing is wrong with the code, and sending a fix agent to hunt a defect that does not exist wastes a
+cycle.
 
 The workflow then verifies the PR locally against everything CI would have run (`just gate`,
 `just test-int`, `just e2e`, `just smoke`, schemathesis where the PR touched a route or schema) under
@@ -111,7 +120,9 @@ identically on `main` is *not* this PR's failure — it is recorded PREEXISTING 
 because a DAG once halted over four e2e tests that were already broken.
 
 A local verification that had to skip anything **never auto-merges**: `notRun` non-empty means a human
-decides whether that evidence is enough.
+decides whether that evidence is enough. The same applies when its own `checks` list contradicts
+`notRun` — a tier written as NOT_RUN or FAIL there but absent from `notRun` is counted as not run, and
+logged.
 
 ## After it returns
 
@@ -119,7 +130,9 @@ decides whether that evidence is enough.
 - **`open`** — PRs awaiting your review, with `reviewLoops` / `ciLoops` / `gateLoops` and `ciMode`. A
   PR that needed two review cycles deserves a closer human read than one that passed first time, and
   `ciMode: "local"` or `"local-partial"` means CI never ran and the evidence is the comment on the PR
-  — check `notRun` and `preexisting`.
+  — check `notRun` and `preexisting`. **`mergeFailed`** means the workflow tried to squash-merge this
+  one and could not: `mergeDetail` says why, and `nextAction` will name it. `worktreeKept` means the
+  finish seat refused to remove the worktree and said why.
 - **`stopped`** — each carries a `reason` and a `recovery` line written for the human who decides.
   Relay both verbatim.
   - `review rejected …` — criteria unmet after two fix cycles. **No PR was opened**, and the work is
@@ -131,8 +144,19 @@ decides whether that evidence is enough.
   - `commit-refused` — the gate passed but the commit seat found a path in the tree it did not
     recognise. Look before you re-launch: something else wrote in that worktree.
   - `CI RED/UNKNOWN …` — the PR is open but red. CI runs the tiers `just gate` omits, so this is
-    usually a real defect. The worktree was removed (the work is pushed); the recovery line has the
-    one command that restores it.
+    usually a real defect. The worktree was removed (the work is pushed); the recovery line names the
+    two commands that restore it.
+  - `prerequisite-not-on-main` — the setup seat could not find the prerequisite's *title* on
+    `origin/main`. Since `main` is squash-only, that subject is what a merge leaves behind; if it is
+    genuinely there, the seat misread and this is worth a look before re-launching.
+  - `review-self-contradictory` — the review returned APPROVED while marking a criterion
+    NOT_FULFILLED or PARTIAL. Nothing was pushed. Read `criteria` in the report.
+  - `commit-sha-missing` / `commit-refused` — the gate passed but the commit did not land, or landed
+    without a SHA the later steps could name. Look at the worktree: either a pre-commit hook is
+    refusing, or something unexpected was in the tree.
+  - `worktree-dirty` — a worktree from an earlier run holds uncommitted work that exists nowhere
+    else. Nothing was built. Keep it or discard it by hand, then re-launch with `onlyBranch`.
+  - `worktree-unsafe` — the worktree is not on the branch it should be on.
   - `local-ci-red` / `local-ci-failed` / `local-ci-unrecorded` — the no-CI fallback found a failure,
     could not run, or could not post its evidence.
   - `implement-failed` / `*-agent-died` / `pr-failed` / `worktree-setup-failed` — usually transient.
@@ -141,8 +165,14 @@ decides whether that evidence is enough.
 - **Plan defects caught before any agent ran** — `plan-defects` (the parser's own stderr, naming
   every missing marked line), `open-questions`, `no-why`, `bad-pr-title`, `positional-label`,
   `unknown-dependency`, `dependency-cycle`, `two-migrations-in-group`.
-- **`parse-refused`** — `gh` or `origin/main` was unreachable. The run refuses rather than guess at
-  what is merged, because guessing rebuilds a shipped PR or starts a dependent too early.
+- **`parse-refused`** — `gh` or `origin/main` was unreachable (exit 3). The run refuses rather than
+  guess at what is merged, because guessing rebuilds a shipped PR or starts a dependent too early.
+- **`plan-not-found`** — the plan path does not exist (exit 4). Usually a typo, or a bare-string
+  launch that was never a path.
+- **`bad-plan-path`** — what was passed is not a `<slug>.md` path inside the repository. Nothing ran.
+- **`duplicate-title`** / **`duplicate-branch`** — two PRs in the plan share a title or a branch.
+- Anything else in `stopped` carries its own `reason` and `recovery`; the reasons are the strings the
+  workflow logs, and every one of them names what to look at.
 - **`parse-echo-corrupt`** — the parse seat's copy of the plan JSON did not match the count the script
   printed. Re-launch; if it repeats, run the parser by hand and read it.
 
@@ -150,6 +180,10 @@ Do not re-run a PR that is already open and green. To redo one, close its PR and
 
 ## Cleaning up
 
-Worktrees are removed automatically once their work is on the remote — on success, and on the stops
-that happen after the push. `/clean-gone` deletes local branches whose upstream is gone — after a
-squash merge, exactly the merged ones — along with any worktree still attached, confirming first.
+Worktrees are removed automatically once their work is on the remote: on success, and on the stops
+where everything is pushed (a red or unknown CI, and the local-verification failures). The stops that
+hold **unpushed** work keep the worktree deliberately — a rejected review, a red gate, a CI fix that
+was committed but never pushed — because there the tree is the only copy.
+
+`/clean-gone` deletes local branches whose upstream is gone — after a squash merge, exactly the merged
+ones — along with any worktree still attached, confirming first.

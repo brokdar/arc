@@ -20,14 +20,15 @@
 // Exit codes are the interface:
 //   0 GREEN    every check that exists concluded, none failed
 //   1 RED      at least one check failed — names and log URLs on stdout
-//   2 NO_RUNS  no run has ever registered for this head SHA, past the grace
-//              window. Nothing is wrong with the code; verify it locally.
+//   2 NO_RUNS  no run has ever registered for this head SHA, and this invocation
+//              watched that for long enough to say so. Nothing is wrong with the
+//              code; verify it locally.
 //   3 UNKNOWN  still pending at the deadline, or a check was cancelled
 //   4 usage / the PR could not be read
 //
 // Usage:
 //   node scripts/ci-status.mjs <pr> [--deadline 480] [--interval 30] [--grace 300]
-//   node scripts/ci-status.mjs <pr> --fixture <checks.json> [--runs N] [--head-age S]
+//   node scripts/ci-status.mjs <pr> --fixture <checks.json> [--runs N|null] [--zero-for S] [--head-age S]
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -39,21 +40,63 @@ import { fileURLToPath } from "node:url";
 // come from `gh pr checks --json bucket`: pass | fail | pending | skipping |
 // cancel.
 
-export function classify(checks, runCount, headAgeS, graceS) {
+const KNOWN_BUCKETS = ["pass", "fail", "pending", "skipping", "cancel"];
+// The shortest run of consecutive zero-run observations that may conclude NO_RUNS.
+// Never zero: the Actions API takes seconds to register a run after a push, and
+// this script is called immediately after one.
+const MIN_ZERO_OBSERVATION_S = 60;
+
+/**
+ * @param checks   what `gh pr checks --json` reported
+ * @param runCount workflow runs for the head SHA — `null` means COULD NOT COUNT,
+ *                 which is not the same as zero and must never conclude NO_RUNS
+ * @param obs      {zeroForS, headAgeS, graceS} — `zeroForS` is how long THIS
+ *                 invocation has observed zero runs, which is the only clock the
+ *                 script controls. `headAgeS` is secondary evidence: the commit is
+ *                 made by the gate seat and pushed after a review, so it is
+ *                 routinely 10–40 minutes old by the time this runs and a grace
+ *                 window measured from it has always already expired.
+ */
+export function classify(checks, runCount, obs) {
+  const { zeroForS = 0, headAgeS = 0, graceS = 300 } = obs || {};
   const named = (bs) => checks.filter((c) => bs.includes(c.bucket)).map((c) => c.name);
 
   if (!checks.length) {
+    if (runCount === null) {
+      return { status: "PENDING", detail: "could not count workflow runs for the head SHA" };
+    }
     // Runs exist but have not reported a check yet — that is pending, not absent.
     if (runCount > 0) return { status: "PENDING", detail: `${runCount} run(s) registered, no checks reported yet` };
-    if (headAgeS >= graceS) {
+    const settled = zeroForS >= MIN_ZERO_OBSERVATION_S && (zeroForS >= graceS || headAgeS >= graceS);
+    if (settled) {
       return {
         status: "NO_RUNS",
         detail:
-          `no workflow run has registered for this head SHA ${Math.round(headAgeS / 60)} minute(s) after ` +
-          `it was pushed — Actions did not start (budget, spending limit, or workflows disabled)`,
+          `no workflow run has registered for this head SHA — observed zero for ${Math.round(zeroForS)}s, ` +
+          `and the head commit is ${Math.round(headAgeS / 60)} minute(s) old. Actions did not start ` +
+          `(budget, spending limit, or workflows disabled)`,
       };
     }
-    return { status: "PENDING", detail: `no checks yet, ${Math.round(headAgeS)}s after push (grace ${graceS}s)` };
+    const need =
+      headAgeS >= graceS
+        ? `${MIN_ZERO_OBSERVATION_S}s of observation (the head is already older than the ${graceS}s grace)`
+        : `${graceS}s of observation, or a head older than ${graceS}s`;
+    return {
+      status: "PENDING",
+      detail: `no checks and no runs yet — observed zero for ${Math.round(zeroForS)}s, need ${need}`,
+    };
+  }
+
+  // A bucket this script does not know must never fall through to "passed": the
+  // GREEN branch below is computed by exclusion, so an unrecognised value used to
+  // read as success in a merge gate.
+  const strange = checks.filter((c) => !KNOWN_BUCKETS.includes(c.bucket));
+  if (strange.length) {
+    return {
+      status: "UNKNOWN",
+      failing: strange.map((c) => c.name),
+      detail: `unrecognised check state(s): ${strange.map((c) => `${c.name}=${c.bucket}`).join(", ")}`,
+    };
   }
 
   const failed = named(["fail"]);
@@ -85,6 +128,10 @@ export function classify(checks, runCount, headAgeS, graceS) {
 }
 
 export const EXIT = { GREEN: 0, RED: 1, NO_RUNS: 2, UNKNOWN: 3, USAGE: 4 };
+// One mapping, used by both the real path and `--fixture`, so what the tests
+// exercise is what ships. PENDING is not an outcome the caller can act on: at the
+// deadline it is UNKNOWN.
+export const exitFor = (status) => EXIT[status === "PENDING" ? "UNKNOWN" : status];
 
 // ── gh plumbing ──────────────────────────────────────────────────────────────
 
@@ -111,6 +158,8 @@ function fetchChecks(pr) {
   }
 }
 
+/** `null` means "could not count" — deliberately distinct from 0, because 0 is
+ * the whole evidence for NO_RUNS and a failed API call must never fabricate it. */
 function fetchRunCount(sha) {
   const r = gh(["api", `repos/{owner}/{repo}/actions/runs?head_sha=${sha}&per_page=1`, "--jq", ".total_count"]);
   if (!r.ok) return null;
@@ -143,34 +192,85 @@ function report(pr, head, verdict, checks) {
     `STATUS ${verdict.status} — ${verdict.detail}`,
   ];
   for (const c of checks) {
-    lines.push(`  ${c.bucket.padEnd(8)} ${c.name}${c.bucket === "fail" && c.link ? `  ${c.link}` : ""}`);
+    lines.push(`  ${String(c.bucket).padEnd(8)} ${c.name}${c.bucket === "fail" && c.link ? `  ${c.link}` : ""}`);
   }
   process.stdout.write(lines.join("\n") + "\n");
 }
 
+const USAGE =
+  "usage: ci-status.mjs <pr> [--deadline 480] [--interval 30] [--grace 300]\n" +
+  "       ci-status.mjs <pr> --fixture <checks.json> [--runs N] [--zero-for S] [--head-age S]\n";
+
 async function main(argv) {
-  const positional = argv.filter((a) => !a.startsWith("--"));
+  // An option's VALUE is not a positional argument: `--deadline 480 55` used to
+  // poll PR 480. The PR is the first token that is not a flag and not consumed by
+  // one.
+  const FLAGS_WITH_VALUES = ["deadline", "interval", "grace", "fixture", "runs", "head-age", "zero-for"];
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      if (FLAGS_WITH_VALUES.includes(a.slice(2).split("=")[0]) && !a.includes("=")) i++;
+      continue;
+    }
+    positional.push(a);
+  }
   const opt = (name, dflt) => {
+    const eq = argv.find((a) => a.startsWith(`--${name}=`));
+    if (eq) return eq.slice(name.length + 3);
     const i = argv.indexOf(`--${name}`);
-    return i === -1 ? dflt : argv[i + 1];
+    if (i === -1) return dflt;
+    const v = argv[i + 1];
+    // A flag with no value, or followed by another flag, is a usage error rather
+    // than `undefined` → NaN → a comparison that is always false → an UNBOUNDED
+    // POLL LOOP. That is the exact defect this script exists to remove.
+    if (v === undefined || v.startsWith("--")) return { missing: name };
+    return v;
   };
+  const num = (name, dflt) => {
+    const v = opt(name, dflt);
+    if (v && v.missing) return { missing: name };
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : { bad: name, value: String(v) };
+  };
+
   const pr = positional[0];
   if (!pr) {
-    process.stderr.write("usage: ci-status.mjs <pr> [--deadline 480] [--interval 30] [--grace 300]\n");
+    process.stderr.write(USAGE);
     return EXIT.USAGE;
   }
-  const deadlineS = Number(opt("deadline", 480));
-  const intervalS = Number(opt("interval", 30));
-  const graceS = Number(opt("grace", 300));
+  const deadlineS = num("deadline", 480);
+  const intervalS = num("interval", 30);
+  const graceS = num("grace", 300);
+  for (const v of [deadlineS, intervalS, graceS]) {
+    if (typeof v !== "number") {
+      process.stderr.write(
+        (v.missing ? `--${v.missing} needs a value\n` : `--${v.bad} must be a positive number, got "${v.value}"\n`) + USAGE,
+      );
+      return EXIT.USAGE;
+    }
+  }
 
-  // Fixture mode: one pass over canned data, no network, no sleeping. This is
-  // what makes the classifier's wiring testable rather than only its logic.
+  // Fixture mode: one pass over canned data, no network, no sleeping — and it
+  // exits through the SAME mapping as the real path, so the tests exercise what
+  // ships rather than a parallel copy.
   const fixture = opt("fixture", null);
-  if (fixture) {
-    const checks = JSON.parse(readFileSync(fixture, "utf8"));
-    const verdict = classify(checks, Number(opt("runs", 0)), Number(opt("head-age", 9999)), graceS);
-    report(pr, null, verdict, checks);
-    return EXIT[verdict.status === "PENDING" ? "UNKNOWN" : verdict.status];
+  if (fixture && !fixture.missing) {
+    let checks;
+    try {
+      checks = JSON.parse(readFileSync(fixture, "utf8"));
+    } catch (e) {
+      process.stderr.write(`could not read fixture ${fixture}: ${e.message}\n`);
+      return EXIT.USAGE;
+    }
+    const runsOpt = opt("runs", "0");
+    const verdict = classify(Array.isArray(checks) ? checks : [], runsOpt === "null" ? null : Number(runsOpt), {
+      zeroForS: Number(opt("zero-for", 9999)),
+      headAgeS: Number(opt("head-age", 9999)),
+      graceS,
+    });
+    report(pr, null, verdict, Array.isArray(checks) ? checks : []);
+    return exitFor(verdict.status);
   }
 
   const head = fetchHead(pr);
@@ -182,6 +282,9 @@ async function main(argv) {
   const headAgeS = fetchHeadAgeS(head.headRefOid, startedMs);
   let verdict = { status: "UNKNOWN", detail: "no observation made" };
   let checks = [];
+  // When the first zero-run observation happened, so the grace window is measured
+  // against a clock this invocation controls.
+  let zeroSinceMs = null;
 
   for (;;) {
     const c = fetchChecks(pr);
@@ -190,9 +293,26 @@ async function main(argv) {
       return EXIT.UNKNOWN;
     }
     checks = c.checks;
-    const runCount = checks.length ? 1 : (fetchRunCount(head.headRefOid) ?? 0);
+    // Re-read the head each pass: a push mid-poll otherwise mixes one commit's
+    // checks with another commit's run count, and a GREEN could be attributed to
+    // a head that is no longer current.
+    const now = fetchHead(pr);
+    if (now && now.headRefOid !== head.headRefOid) {
+      report(pr, head, {
+        status: "UNKNOWN",
+        detail: `the head moved while polling (${head.headRefOid.slice(0, 9)} → ${now.headRefOid.slice(0, 9)}); re-run against the new head`,
+      }, checks);
+      return EXIT.UNKNOWN;
+    }
+    const runCount = checks.length ? 1 : fetchRunCount(head.headRefOid);
+    if (runCount === 0) zeroSinceMs = zeroSinceMs ?? Date.now();
+    else zeroSinceMs = null;
     const elapsedS = (Date.now() - startedMs) / 1000;
-    verdict = classify(checks, runCount, headAgeS + elapsedS, graceS);
+    verdict = classify(checks, runCount, {
+      zeroForS: zeroSinceMs === null ? 0 : (Date.now() - zeroSinceMs) / 1000,
+      headAgeS: headAgeS + elapsedS,
+      graceS,
+    });
     if (verdict.status !== "PENDING") break;
     if (elapsedS + intervalS > deadlineS) {
       verdict = {
@@ -205,9 +325,17 @@ async function main(argv) {
   }
 
   report(pr, head, verdict, checks);
-  return EXIT[verdict.status];
+  return exitFor(verdict.status);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  main(process.argv.slice(2)).then((code) => process.exit(code));
+  // EXIT.RED is 1, which is also node's exit code for an uncaught throw — so a
+  // crash in here used to read as "CI is red" and dispatch a fix agent after a
+  // defect that did not exist. Every abnormal exit is a usage error instead.
+  main(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      process.stderr.write(`ci-status.mjs failed: ${(e && e.stack) || e}\n`);
+      process.exit(EXIT.USAGE);
+    });
 }

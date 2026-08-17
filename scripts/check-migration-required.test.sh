@@ -14,7 +14,7 @@ ROOT="$(mktemp -d)"
 PASS=0; FAIL=0
 
 cd "$ROOT"
-git init -q . && git config user.email t@t && git config user.name t
+git init -q -b throwaway . && git config user.email t@t && git config user.name t
 mkdir -p backend/app/persistence/alembic/versions
 
 cat > backend/app/persistence/wellness.py <<'PY'

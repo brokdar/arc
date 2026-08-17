@@ -52,7 +52,8 @@ first time, plain `git push` after.
 **`git push` runs the pre-push hooks**: `backend-pyrefly`,
 `backend-import-linter`, `backend-unit-tests`, `frontend-type-check`,
 `frontend-unit-tests`. This takes minutes and may exceed a default command
-timeout. Run `just check` first so failures surface before the push, and give
+timeout. Run `just gate` first so failures surface before the push (it is `just check` plus the
+  migration heuristic the pre-push hook runs), and give
 the push a generous timeout. If it fails on something unrelated to your change,
 report it — do not `--no-verify`.
 

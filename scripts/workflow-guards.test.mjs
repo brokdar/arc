@@ -54,7 +54,7 @@ const EXPORTS = [
   "badTitles", "unsafeTitles", "positionalOffenders", "badBranches",
   "duplicateBranches", "acceptanceless", "unknownDependencies",
   "migrationCollisions", "groupsOf", "blocksSomething", "missingPrerequisites",
-  "echoProblems",
+  "echoProblems", "titleProblem", "normalizePrs", "duplicateTitles",
 ];
 const G = new Function(`${block}\nreturn {${EXPORTS.join(",")}};`)();
 
@@ -131,22 +131,51 @@ group("titles — shell-unsafe characters");
   );
 }
 
-group("positional labels");
+group("positional labels — the scope and the branch, not domain prose");
 {
+  // Where they actually appeared in this repo's history: as a scope
+  // (`feat(wp-5): …`) or in a branch name (`feat/phase2-…`).
   for (const [t, b] of [
     ["feat(wp-1): add the thing", "feat/thing"],
+    ["feat(wp 2): add the thing", "feat/thing"],
     ["feat(wellness): baselines", "feat/phase2-baselines"],
-    ["feat(wellness): increment 1 capture", "feat/x"],
-    ["feat(wellness): step 3 of the rollout", "feat/x"],
+    ["feat(wellness): baselines", "feat/step-3-rollout"],
+    ["feat(increment-2): add the thing", "feat/thing"],
+    // `wp-n` is refused wherever it appears, including the subject: it has no
+    // reading in this domain other than "work package n".
+    ["feat(wellness): wp-3 wraps up the rollout", "feat/wellness"],
   ]) {
-    ok(`flags ${JSON.stringify(t)} / ${b}`, G.positionalOffenders([pr({ title: t, branch: b })]).length === 1);
+    ok(`flags ${JSON.stringify(t)} / ${b}`, G.positionalOffenders([pr({ title: t, branch: b })]).length === 1, `${t} / ${b}`);
   }
-  // Must not fire on a legitimate number that is not a position.
+  // Must not fire on a number that is not a position — and, in a training app,
+  // "phase" and "step" are domain nouns. This guard refuses the WHOLE plan, so a
+  // false positive is expensive: these all have to pass.
   for (const [t, b] of [
     ["feat(api): support http2 upgrades", "feat/http2"],
     ["fix(zones): zone 3 boundary is inclusive", "fix/zone-boundary"],
+    ["feat(training): base phase 1 template", "feat/base-phase-template"],
+    ["feat(zones): step 3 of the ramp test is inclusive", "feat/ramp-test-steps"],
+    ["feat(plan): a four-part block, part 2 of it repeats", "feat/plan-blocks"],
   ]) {
-    ok(`allows ${JSON.stringify(t)}`, G.positionalOffenders([pr({ title: t, branch: b })]).length === 0);
+    ok(`allows ${JSON.stringify(t)}`, G.positionalOffenders([pr({ title: t, branch: b })]).length === 0, `${t} / ${b}`);
+  }
+}
+
+group("titleProblem — a guard that refuses a plan must say which rule it applied");
+{
+  ok("a legal title has no problem", G.titleProblem("feat(x): the thing") === null);
+  const cases = [
+    ["Feat(x): uppercase type", /eleven types/],
+    ["not conventional at all", /eleven types/],
+    ["feat(x): Uppercase subject", /uppercase letter/],
+    ["feat(x): trailing period.", /period or whitespace/],
+    ["feat(x):  doubled space", /doubled space/],
+    ["chore: ", /empty or starts with a doubled space/],
+    ["feat(x):no space", /no single space after the colon/],
+  ];
+  for (const [t, re] of cases) {
+    const got = G.titleProblem(t);
+    ok(`explains ${JSON.stringify(t)}`, typeof got === "string" && re.test(got), JSON.stringify(got));
   }
 }
 
@@ -154,9 +183,44 @@ group("branch names");
 {
   ok("accepts feat/wellness-daily-series", G.badBranches([pr()]).length === 0);
   ok("accepts fix/a.b_c-d", G.badBranches([pr({ branch: "fix/a.b_c-d" })]).length === 0);
-  for (const b of ["wellness-daily-series", "feat/Wellness", "feat/", "feat/a b", "feat/a;rm -rf /"]) {
-    ok(`refuses ${JSON.stringify(b)}`, G.badBranches([pr({ branch: b })]).length === 1);
+  ok("accepts a single-character name", G.badBranches([pr({ branch: "fix/a" })]).length === 0);
+  for (const b of [
+    "wellness-daily-series", "feat/Wellness", "feat/", "feat/a b", "feat/a;rm -rf /",
+    // git's own refname rules (`git check-ref-format`): the guard used to pass
+    // these and `git worktree add` failed later, inside an agent.
+    "feat/foo..bar", "feat/foo.lock", "feat/foo.", "feat/foo-",
+  ]) {
+    ok(`refuses ${JSON.stringify(b)}`, G.badBranches([pr({ branch: b })]).length === 1, b);
   }
+}
+
+group("duplicateTitles — the title is the identity gh is matched on");
+{
+  ok(
+    "flags two PRs sharing a title",
+    G.duplicateTitles([pr({ branch: "feat/a" }), pr({ branch: "feat/b" })]).length === 1,
+  );
+  ok(
+    "allows distinct titles",
+    G.duplicateTitles([pr(), pr({ branch: "feat/b", title: "feat(x): other" })]).length === 0,
+  );
+}
+
+group("normalizePrs — no prompt builder may meet an absent optional field");
+{
+  const [n] = G.normalizePrs([{ title: "feat(x): a", branch: "feat/a" }]);
+  ok("decisions defaults to an empty array", Array.isArray(n.decisions) && n.decisions.length === 0);
+  for (const k of ["depends", "owns", "triggers", "acceptance"]) {
+    ok(`${k} defaults to an empty array`, Array.isArray(n[k]));
+  }
+  for (const k of ["why", "delivers", "reuses"]) {
+    ok(`${k} defaults to a string`, n[k] === "");
+  }
+  // The expensive-but-correct default: a PR wrongly marked otherwise runs
+  // `test-int` beside another on the same fixed ports.
+  ok("an absent needsDocker means TRUE", n.needsDocker === true);
+  ok("an explicit false is preserved", G.normalizePrs([{ needsDocker: false }])[0].needsDocker === false);
+  ok("an explicit list is preserved", G.normalizePrs([{ decisions: ["a | displaces b | lands in c"] }])[0].decisions.length === 1);
 }
 
 group("duplicate branches");
@@ -200,13 +264,32 @@ group("migration collisions — one owner per concurrent group");
     "allows one owner per group across two groups",
     G.migrationCollisions([[mig("feat/a")], [mig("feat/b")]]).length === 0,
   );
-  ok(
-    "matches the word 'migration' too",
-    G.migrationCollisions([[
-      pr({ branch: "feat/a", owns: ["a migration for wellness_prompts"] }),
-      pr({ branch: "feat/b", owns: ["the migration chain"] }),
-    ]]).length === 1,
-  );
+  // A revision FILE, not the word. `/\bmigration/i` also matched
+  // `scripts/check-migration-required.sh` and `docs/migration-guide.md`, so two
+  // PRs that merely mentioned one were refused as a two-heads collision.
+  for (const owned of [
+    "backend/app/persistence/alembic/versions/0014_x.py",
+    "backend/alembic/versions/0015_*",
+    "backend/app/persistence/migrations/0003_thing.py",
+  ]) {
+    ok(
+      `treats ${JSON.stringify(owned)} as a migration`,
+      G.migrationCollisions([[pr({ branch: "feat/a", owns: [owned] }), pr({ branch: "feat/b", owns: [owned] })]]).length === 1,
+      owned,
+    );
+  }
+  for (const owned of [
+    "scripts/check-migration-required.sh",
+    "docs/migration-guide.md",
+    "the migration heuristic",
+    "app/services/plan.py",
+  ]) {
+    ok(
+      `does NOT treat ${JSON.stringify(owned)} as a migration`,
+      G.migrationCollisions([[pr({ branch: "feat/a", owns: [owned] }), pr({ branch: "feat/b", owns: [owned] })]]).length === 0,
+      owned,
+    );
+  }
 }
 
 // ── grouping: the finding that an OPEN prerequisite is not a merged one ──────
@@ -313,6 +396,14 @@ group("echoProblems — a truncated copy of the plan JSON is detected");
   ok(
     "a missing prCount is not treated as a mismatch",
     G.echoProblems({ planSnapshot: "/x", prs: good.prs }).length === 0,
+  );
+  // A long-lived plan legitimately has its shipped sections trimmed to a heading.
+  ok(
+    "a MERGED PR with no why/delivers is not a corrupt echo",
+    G.echoProblems({
+      ...good,
+      prs: [{ title: "feat(a): a", branch: "feat/a", merged: true }, good.prs[1]],
+    }).length === 0,
   );
 }
 

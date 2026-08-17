@@ -12,8 +12,10 @@ set -uo pipefail
 # so a suite that builds its own repository in a temp directory silently operates
 # on the REAL one instead — which is how this passed standalone and failed inside
 # a commit. Unset them before touching git at all.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_QUARANTINE_PATH
+# Every GIT_* there is, not a hand-picked three: `GIT_CONFIG_PARAMETERS` alone
+# (exported whenever git was invoked with `-c`) killed this suite at `git clone`
+# with exit 128, no summary and no cleanup.
+for _v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-lock.sh"
 ROOT="$(mktemp -d)"
@@ -25,10 +27,8 @@ echo x > f && git add -A && git commit -qm base
 
 run() { # name expected_exit -- args...
   local name="$1" want="$2"; shift 3
-  set +e
   out="$(bash "$SCRIPT" "$@" 2>&1)"
   got=$?
-  set -e
   if [ "$got" = "$want" ]; then
     printf '  PASS  %-58s (exit %s)\n' "$name" "$got"; PASS=$((PASS+1))
   else
@@ -42,7 +42,10 @@ run "status on a free repo"                    0 -- status
 run "first acquire wins"                       0 -- acquire run-a
 run "status reports it held"                   3 -- status
 run "a second, different holder is refused"    3 -- acquire run-b
-run "the same holder re-enters instead of deadlocking" 0 -- acquire run-a
+# Re-entrancy is for a RETRIED step whose process is gone, not for a second live
+# run: two runs of one plan derive the same label from the same branch name, and
+# both starting compose on the same ports is the collision this lock exists for.
+run "a live holder's own label is still refused"  3 -- acquire run-a
 run "a foreign release is a no-op"             0 -- release run-b
 run "and the lock survives that no-op"         3 -- status
 run "the owner releases"                       0 -- release run-a
@@ -86,6 +89,59 @@ cd "$ROOT"
 
 run "usage error on an unknown verb"           4 -- frobnicate
 run "acquire with no label is a usage error"   4 -- acquire
+# A flag in the label position used to BECOME the label, leaving a lock nobody
+# could release for the full 90-minute TTL.
+run "a flag is not a label"                    4 -- acquire --ttl 100
+run "an unknown flag is refused"               4 -- acquire lbl --frobnicate
+run "a non-numeric ttl is refused"             4 -- acquire lbl --ttl abc
+
+# `--ttl` with no value: `shift 2` shifted nothing and the parse loop spun at 100%
+# CPU forever. The timeout is the assertion.
+printf '  '
+if timeout 5 bash "$SCRIPT" acquire lbl --ttl >/dev/null 2>&1; then code=0; else code=$?; fi
+if [ "$code" = 4 ]; then
+  printf 'PASS  %-58s (exit 4)\n' "--ttl with no value exits, it does not spin"; PASS=$((PASS+1))
+else
+  printf 'FAIL  %-58s (exit %s; 124 means it hung)\n' "--ttl with no value exits, it does not spin" "$code"; FAIL=$((FAIL+1))
+fi
+
+# A lock caught mid-creation has no `epoch`. Treating that as age ~1.8e9 stole a
+# lock a millisecond old.
+rm -rf .claude/docker.lock && mkdir -p .claude/docker.lock && printf 'someone\n999999\n' > .claude/docker.lock/holder
+run "a lock with no epoch is FRESH, not infinitely stale" 3 -- acquire thief --ttl 5400
+run "  and the holder's own label cannot bypass it"       3 -- acquire someone --ttl 5400
+rm -rf .claude/docker.lock
+
+# Two concurrent acquires: exactly one may win.
+race() {
+  local won=0 i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    rm -rf .claude/docker.lock
+    ( bash "$SCRIPT" acquire A >/dev/null 2>&1; echo $? > "$ROOT/.a" ) &
+    ( bash "$SCRIPT" acquire B >/dev/null 2>&1; echo $? > "$ROOT/.b" ) &
+    wait
+    local a b
+    a="$(cat "$ROOT/.a")"; b="$(cat "$ROOT/.b")"
+    [ "$a" = 0 ] && [ "$b" = 0 ] && return 1
+    [ "$a" = 0 ] || [ "$b" = 0 ] || return 1
+    won=$((won+1))
+  done
+  [ "$won" = 10 ]
+}
+printf '  '
+if race; then
+  printf 'PASS  %-58s\n' "10 concurrent pairs: exactly one winner each"; PASS=$((PASS+1))
+else
+  printf 'FAIL  %-58s\n' "10 concurrent pairs: exactly one winner each"; FAIL=$((FAIL+1))
+fi
+rm -rf .claude/docker.lock
+
+# status must not report a lock the next acquire would steal as held.
+run "acquire, to age it"                       0 -- acquire aged
+echo $(( $(date +%s) - 9000 )) > .claude/docker.lock/epoch
+run "status calls a stale lock free"           0 -- status --ttl 3600
+run "status reports it held under a long ttl"  3 -- status --ttl 100000
+rm -rf .claude/docker.lock
 
 rm -rf "$ROOT" "$OTHER"
 printf '\n  %s passed, %s failed\n' "$PASS" "$FAIL"

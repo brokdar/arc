@@ -111,6 +111,12 @@ const ROUTES = [
   ["parse-plan", "parse"],
   [":setup", "setup"],
   [":implement", "implement"],
+  // Before the broader `:gate` / `:ci` needles: `feat/a:gate-fix1` and
+  // `feat/a:ci-fix1` are DEVELOPER seats returning a handoff, and routing them to
+  // the gate/CI schemas rendered "Summary: undefined" into every later prompt
+  // with nothing to catch it.
+  [":gate-fix", "implement"],
+  [":ci-fix", "implement"],
   [":gate", "gate"],
   [":review", "review"],
   [":fix", "implement"],
@@ -141,7 +147,14 @@ async function simulate({ plan, replies = {}, argsIn }) {
     if (kind === "parse") return plan;
     if (!kind) return { detail: "unrouted" };
     const base = DEFAULTS[kind];
-    if (kind === "setup") return { ...base, headBranch: label.split(":")[0] };
+    if (kind === "setup") {
+      const branch = label.split(":")[0];
+      const me = (plan.prs || []).find((x) => x.branch === branch);
+      const titles = ((me && me.depends) || []).map(
+        (d) => ((plan.prs || []).find((x) => x.branch === d) || {}).title || d,
+      );
+      return { ...base, headBranch: branch, prerequisitesOnMain: titles };
+    }
     if (kind === "pr") {
       // A distinct PR number per branch, so the report is checkable.
       const branch = label.split(":")[0];
@@ -170,6 +183,23 @@ async function simulate({ plan, replies = {}, argsIn }) {
 }
 
 const promptFor = (sim, label) => (sim.calls.find((c) => c.label === label) || {}).prompt || "";
+/**
+ * Every branch the run decided to build must be accounted for in exactly one of
+ * merged / open / stopped. `parallel()` turns a thrown `buildPr` into `null` and
+ * `.filter(Boolean)` drops it, so without this a crash inside a prompt builder
+ * reads as "there was nothing to do".
+ */
+function accountsForEvery(sim, branches) {
+  const r = sim.result;
+  const seen = [
+    ...(r.merged || []).map((x) => x.branch),
+    ...(r.open || []).map((x) => x.branch),
+    ...(r.stopped || []).map((x) => x.branch),
+  ];
+  const missing = branches.filter((b) => !seen.includes(b));
+  const twice = seen.filter((b, i) => seen.indexOf(b) !== i);
+  return { ok: !missing.length && !twice.length, missing, twice, seen };
+}
 const seatsFor = (sim, branch) => sim.labels.filter((l) => l.startsWith(`${branch}:`)).map((l) => l.split(":")[1]);
 
 // ── 1. the happy path ────────────────────────────────────────────────────────
@@ -278,10 +308,11 @@ group("a gate that goes green on the second try proceeds, and the first commit k
   });
   ok("it recovered and opened the PR", sim.result.open.length === 1, JSON.stringify(sim.result));
   ok("gateLoops is reported", sim.result.open[0].gateLoops === 1);
+  const retry = promptFor(sim, "feat/a:gate-retry1");
   ok(
-    "the retry still commits under the PR title, not a 'fix the gate' subject",
-    promptFor(sim, "feat/a:gate-retry1").includes("Subject EXACTLY"),
-    promptFor(sim, "feat/a:gate-retry1").slice(0, 200),
+    "the retry decides the subject from git, so the branch's first commit keeps the PR title",
+    /log --oneline origin\/main\.\.HEAD/.test(retry) && /none yet → subject EXACTLY/.test(retry),
+    retry.slice(0, 400),
   );
 }
 
@@ -317,7 +348,7 @@ group("review rejection: bounded, re-gated, and no PR");
   ok("two fix agents ran", sim.counts["feat/a:fix1"] === 1 && sim.counts["feat/a:fix2"] === 1);
   ok(
     "each fix is re-gated and re-committed before it is re-reviewed",
-    sim.counts["feat/a:gate-fix-commit1"] === 1 && sim.counts["feat/a:gate-fix-commit2"] === 1,
+    sim.counts["feat/a:gate-review1"] === 1 && sim.counts["feat/a:gate-review2"] === 1,
   );
   ok(
     "the re-review is TARGETED at the rejected criteria only",
@@ -366,6 +397,9 @@ group("CI red → fix → SCOPED re-review → push → green");
         return { exitCode: 1, status: "RED", failing: ["fuzz"], detail: "schemathesis: undocumented 400", invocations: 1 };
       },
       "feat/a:gate-ci1": { gateExit: 0, gateTail: "GATE OK", committed: true, sha: "f1xsha", files: ["a.py"], detail: "committed" },
+      // The push seat reports the commit it pushed, which is the one the gate seat
+      // made and the re-review approved.
+      "feat/a:ci-push1": { ok: true, number: 126, url: "https://gh/pr/126", sha: "f1xsha", detail: "pushed" },
     },
     argsIn: { plan: "thing-plan.md" },
   });
@@ -378,7 +412,7 @@ group("CI red → fix → SCOPED re-review → push → green");
       ciP.split("\n").filter((l) => l.includes("--watch")).every((l) => /never/i.test(l)),
     ciP.split("\n").filter((l) => l.includes("--watch")).join(" | "),
   );
-  ok("  …and maps exit codes, not prose", /0 → GREEN/.test(ciP) && /2 → NO_BUDGET/.test(ciP));
+  ok("  …and maps exit codes, not prose", /0 → GREEN/.test(ciP) && /2 → NO_RUNS/.test(ciP));
   ok("the fix agent gets the failing check and the diagnosis", promptFor(sim, "feat/a:ci-fix1").includes("fuzz") && promptFor(sim, "feat/a:ci-fix1").includes("undocumented 400"));
   ok("the CI fix is gated and committed before it is pushed", sim.labels.indexOf("feat/a:gate-ci1") < sim.labels.indexOf("feat/a:ci-push1"));
   const rr = promptFor(sim, "feat/a:review-ci1");
@@ -386,6 +420,24 @@ group("CI red → fix → SCOPED re-review → push → green");
   ok("  …and it names the approved SHA", rr.includes("c0mm1t") && rr.includes("diff c0mm1t..HEAD"));
   ok("  …and asks only whether the fix damaged an approved criterion", /does the new work break, weaken or hollow out/.test(rr));
   ok("CI was re-checked after the push", sim.labels.includes("feat/a:ci-recheck1"));
+}
+
+group("a push that carries a different commit than the one reviewed is a stop");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "feat/a:ci": { exitCode: 1, status: "RED", failing: ["fuzz"], detail: "schemathesis", invocations: 1 },
+      "feat/a:gate-ci1": { gateExit: 0, gateTail: "GATE OK", committed: true, sha: "f1xsha", files: ["a.py"], detail: "committed" },
+      // Reports pushing something else entirely: the reviewed commit is not what
+      // the PR now carries, and `PR_SCHEMA.sha` existed all along to catch it.
+      "feat/a:ci-push1": { ok: true, number: 126, url: "u", sha: "deadbee", detail: "pushed something else" },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("stopped as pushed-a-different-commit", sim.result.stopped[0].reason === "pushed-a-different-commit", JSON.stringify(sim.result.stopped));
+  ok("  …naming both SHAs", /f1xsha/.test(sim.result.stopped[0].recovery) && /deadbee/.test(sim.result.stopped[0].recovery));
+  ok("  …and CI was not re-watched as if nothing happened", !sim.labels.includes("feat/a:ci-recheck1"));
 }
 
 group("CI that stays red stops with the PR open, and the worktree is reclaimed");
@@ -419,10 +471,10 @@ group("UNKNOWN CI is not treated as red, and never merges");
 // ── 7. the no-CI fallback ────────────────────────────────────────────────────
 group("no CI run registered → local verification");
 {
-  const noBudget = { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "no run for the head SHA 12m after push", invocations: 1 };
+  const noRuns = { exitCode: 2, status: "NO_RUNS", failing: [], detail: "no run for the head SHA 12m after push", invocations: 1 };
   const sim = await simulate({
     plan: planOf([prOf()]),
-    replies: { "feat/a:ci": noBudget },
+    replies: { "feat/a:ci": noRuns },
     argsIn: { plan: "thing-plan.md" },
   });
   const r = sim.result;
@@ -443,7 +495,7 @@ group("a local verification that skipped a tier never auto-merges");
   const sim = await simulate({
     plan: planOf(prs),
     replies: {
-      "feat/a:ci": { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "none registered", invocations: 1 },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
       "feat/a:local-ci": {
         status: "GREEN", checks: ["gate: PASS", "smoke: NOT_RUN — no E2E_PASSWORD"],
         notRun: ["smoke", "schemathesis"], preexisting: [], commented: true, detail: "partial",
@@ -465,7 +517,7 @@ group("a pre-existing failure is not this PR's failure");
   const sim = await simulate({
     plan: planOf([prOf()]),
     replies: {
-      "feat/a:ci": { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "none registered", invocations: 1 },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
       "feat/a:local-ci": {
         status: "GREEN",
         checks: ["gate: PASS", "e2e: PREEXISTING — reproduces on 28bc389"],
@@ -485,7 +537,7 @@ group("a local verification with no evidence posted does not pass");
   const sim = await simulate({
     plan: planOf([prOf()]),
     replies: {
-      "feat/a:ci": { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "none registered", invocations: 1 },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
       "feat/a:local-ci": { status: "GREEN", checks: ["gate: PASS"], notRun: [], preexisting: [], commented: false, detail: "ok" },
     },
     argsIn: { plan: "thing-plan.md" },
@@ -496,7 +548,7 @@ group("a local verification with no evidence posted does not pass");
   const redLocal = await simulate({
     plan: planOf([prOf()]),
     replies: {
-      "feat/a:ci": { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "none registered", invocations: 1 },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
       "feat/a:local-ci": { status: "RED", checks: ["test-int: FAIL"], notRun: [], preexisting: [], commented: true, detail: "alembic drift" },
     },
     argsIn: { plan: "thing-plan.md" },
@@ -541,7 +593,7 @@ group("plan guards, end to end through the script");
     ["no-why", planOf([prOf()], { why: "too short" })],
     ["bad-pr-title", planOf([prOf({ title: "Feat(a): uppercase" })])],
     ["unsafe-pr-title", planOf([prOf({ title: "feat(a): `backticks`" })])],
-    ["positional-label", planOf([prOf({ title: "feat(a): phase 2 of it" })])],
+    ["positional-label", planOf([prOf({ title: "feat(wp-2): of it" })])],
     ["bad-branch-name", planOf([prOf({ branch: "nope" })])],
     ["no-acceptance-criteria", planOf([prOf({ acceptance: [] })])],
     ["unknown-dependency", planOf([prOf({ depends: ["feat/ghost"] })])],
@@ -711,7 +763,7 @@ group("prompt contracts — the merging finish seat");
   const localMerge = await simulate({
     plan: planOf(prs),
     replies: {
-      "feat/a:ci": { exitCode: 2, status: "NO_BUDGET", failing: [], detail: "none", invocations: 1 },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none", invocations: 1 },
       "feat/a:local-ci": { status: "GREEN", checks: ["gate: PASS"], notRun: [], preexisting: [], commented: true, detail: "all ran" },
     },
     argsIn: { plan: "p.md" },
@@ -720,6 +772,227 @@ group("prompt contracts — the merging finish seat");
   ok("a locally-verified merge MUST read the comment first", /READ the verification comment/.test(lm), lm.slice(0, 200));
   ok("  …and the written record wins over the workflow's belief", /the\s+comment, being the written record on the PR, wins/.test(lm));
   ok("  …and it did merge, since nothing was skipped", localMerge.result.merged.length === 1);
+}
+
+
+// ── 14. the review's own findings, encoded ───────────────────────────────────
+group("every scheduled PR is accounted for, however it fails");
+{
+  // A PR whose optional `decisions` field is absent — which the parse schema
+  // permits — used to throw inside `guardrails()`, be swallowed by `parallel()`,
+  // and vanish from merged/open/stopped while the report said "Nothing to do."
+  // Only the fields the schema requires plus the two `echoProblems` insists on:
+  // no decisions, no owns, no triggers, no depends, no needsDocker.
+  const bare = {
+    title: "feat(a): the bare thing", branch: "feat/a", acceptance: [AC],
+    why: "because the coach cannot see it", delivers: "the thing",
+    prExists: false, merged: false,
+  };
+  const sim = await simulate({ plan: planOf([bare], { prCount: 1 }), argsIn: { plan: "p.md" } });
+  const acc = accountsForEvery(sim, ["feat/a"]);
+  ok("a PR with only its required fields is still built and reported", acc.ok, JSON.stringify({ acc, result: sim.result }));
+  ok("  …and it reached the review", sim.labels.includes("feat/a:review"), sim.labels.join(","));
+  ok(
+    "  …with an empty decisions list rendered as '(none recorded)'",
+    /\(none recorded\)/.test(promptFor(sim, "feat/a:implement")),
+  );
+  ok(
+    "  …and an absent needsDocker treated as Docker-bound (run alone)",
+    /Group 1\/1 — concurrent: \(none\); serial \(need Docker\): feat\/a/.test(sim.log),
+    sim.log.split("\n")[2],
+  );
+
+  // The same invariant on the paths that stop.
+  for (const [name, replies] of [
+    ["a dead setup seat", { "feat/a:setup": null }],
+    ["a red gate", { "feat/a:gate": { gateExit: 1, gateTail: "x", committed: false, sha: "", detail: "red" },
+                     "feat/a:gate-retry1": { gateExit: 1, gateTail: "x", committed: false, sha: "", detail: "red" },
+                     "feat/a:gate-retry2": { gateExit: 1, gateTail: "x", committed: false, sha: "", detail: "red" } }],
+    ["a dead push seat", { "feat/a:pr": null }],
+  ]) {
+    const s2 = await simulate({ plan: planOf([prOf()]), replies, argsIn: { plan: "p.md" } });
+    ok(`${name} still yields exactly one reported entry`, accountsForEvery(s2, ["feat/a"]).ok, JSON.stringify(s2.result));
+  }
+}
+
+group("a gate that commits without a SHA is refused");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:gate": { gateExit: 0, gateTail: "GATE OK", committed: true, sha: "", detail: "committed" } },
+    argsIn: { plan: "p.md" },
+  });
+  ok("stopped as commit-sha-missing", sim.result.stopped[0].reason === "commit-sha-missing", JSON.stringify(sim.result.stopped));
+  ok("no review ran against a commit nobody can name", !sim.labels.some((l) => l.includes(":review")));
+  ok("no PR was opened", !sim.labels.some((l) => l.endsWith(":pr")));
+}
+
+group("an APPROVED verdict that contradicts its own criteria is not an approval");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "feat/a:review": {
+        status: "APPROVED", rightThingBuilt: "yes, mostly",
+        criteria: [{ ac: "AC-1", verdict: "NOT_FULFILLED", evidence: "no test exists", edgeCasesCovered: "none" }],
+        gaps: "AC-1 is not met", issues: [{ ac: "AC-1", area: "test_x.py" }],
+      },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("stopped as review-self-contradictory", sim.result.stopped[0].reason === "review-self-contradictory", JSON.stringify(sim.result.stopped));
+  ok("nothing was pushed", !sim.labels.some((l) => l.endsWith(":pr")));
+  ok("the criterion is named in the recovery line", /AC-1/.test(sim.result.stopped[0].recovery));
+  ok("and the per-criterion verdicts reach the report", (sim.result.stopped[0].criteria || []).length === 1);
+  ok("rightThingBuilt reaches the report too", sim.result.stopped[0].rightThingBuilt === "yes, mostly");
+}
+
+group("a rejection that names no criterion still tells the fixer what to do");
+{
+  const bare = {
+    status: "REJECTED", rightThingBuilt: "cannot tell", criteria: [], issues: [],
+    gaps: "", processNotes: "the plan snapshot at /repo/.claude/plan-snapshots/x.md is unreadable",
+  };
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:review": bare, "feat/a:review1": bare, "feat/a:review2": bare },
+    argsIn: { plan: "p.md" },
+  });
+  const fix = promptFor(sim, "feat/a:fix1");
+  ok("the fix prompt does not hand over an empty list", !/Fix ONLY these[\s\S]{0,40}\n\n/.test(fix), fix.slice(0, 400));
+  ok("  …it passes on what the review actually said", /unreadable/.test(fix));
+  ok("  …and the re-review is FULL, not targeted at nothing", /^Review the pull request/m.test(promptFor(sim, "feat/a:review1")));
+  ok("still bounded and still opens no PR", sim.result.stopped.length === 1 && !sim.labels.some((l) => l.endsWith(":pr")));
+}
+
+group("a prerequisite the setup seat cannot find on main stops that PR");
+{
+  const prs = [prOf({ branch: "feat/a" }), prOf({ branch: "feat/b", title: "feat(b): the b thing", depends: ["feat/a"] })];
+  const sim = await simulate({
+    plan: planOf(prs),
+    replies: {
+      // Reports ok, but its list does not contain the prerequisite's title.
+      "feat/b:setup": { ok: true, headBranch: "feat/b", dirty: [], prerequisitesOnMain: [], detail: "could not see it" },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  const b = sim.result.stopped.find((x) => x.branch === "feat/b");
+  ok("feat/b stops as prerequisite-not-on-main", b && b.reason === "prerequisite-not-on-main", JSON.stringify(sim.result.stopped));
+  ok("  …and nothing was implemented for it", !sim.labels.includes("feat/b:implement"));
+  ok(
+    "the setup prompt asks for the prerequisite's TITLE, since squash puts that on main",
+    promptFor(sim, "feat/b:setup").includes(`"${prs[0].title}"   (branch \`feat/a\`)`) &&
+      /squash-only, so the merge commit's\s+subject IS the pull request's title/.test(promptFor(sim, "feat/b:setup")),
+    promptFor(sim, "feat/b:setup").slice(-700),
+  );
+}
+
+group("a merge that was attempted and failed is not reported as an ordinary open PR");
+{
+  // No next group: the prerequisite's dependent already has a PR, so the old code
+  // had no barrier to halt at and the report read "Review and squash-merge".
+  const prs = [
+    prOf({ branch: "feat/a" }),
+    prOf({ branch: "feat/b", title: "feat(b): the b thing", depends: ["feat/a"], prExists: true, prNumber: 77 }),
+  ];
+  const sim = await simulate({
+    plan: planOf(prs),
+    replies: { "feat/a:merge-and-cleanup": { merged: false, detail: "a required check is failing" } },
+    argsIn: { plan: "p.md" },
+  });
+  const a = sim.result.open.find((x) => x.branch === "feat/a");
+  ok("the PR is flagged mergeFailed", a && a.mergeFailed === true, JSON.stringify(sim.result.open));
+  ok("  …with the reason", a && /required check is failing/.test(a.mergeDetail));
+  ok("  …and nextAction says to merge it by hand", /Merge #\d+ by hand/.test(sim.result.nextAction), sim.result.nextAction);
+  ok("  …and it is logged", /did NOT merge/.test(sim.log));
+}
+
+group("a worktree the finish seat kept is visible");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:cleanup": { merged: false, worktreeRemoved: false, detail: "git refused: the tree is dirty" } },
+    argsIn: { plan: "p.md" },
+  });
+  ok("worktreeKept reaches the report", sim.result.open[0].worktreeKept === true, JSON.stringify(sim.result.open));
+  ok("and it is logged with the reason", /was NOT removed — git refused/.test(sim.log));
+}
+
+group("a local verification whose checks contradict notRun does not auto-merge");
+{
+  const prs = [prOf({ branch: "feat/a" }), prOf({ branch: "feat/b", title: "feat(b): the b thing", depends: ["feat/a"] })];
+  const sim = await simulate({
+    plan: planOf(prs),
+    replies: {
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
+      "feat/a:local-ci": {
+        status: "GREEN", checks: ["gate: PASS — ok", "smoke: NOT_RUN — no password"],
+        notRun: [], preexisting: [], commented: true, detail: "claimed green",
+      },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("the contradiction is caught", /reports smoke as NOT_RUN\/FAIL/.test(sim.log), sim.log);
+  ok("ciMode is local-partial, not local", sim.result.open[0].ciMode === "local-partial");
+  ok("it did NOT merge", sim.result.merged.length === 0);
+  ok("and the halt names the reason", /group 2 needs/.test(String(sim.result.halted)));
+}
+
+group("the no-CI path keeps its loop counts");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "feat/a:gate": { gateExit: 1, gateTail: "boom", committed: false, sha: "", detail: "red" },
+      "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none registered", invocations: 1 },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  const o = sim.result.open[0];
+  ok("gateLoops survives the local-CI detour", o && o.gateLoops === 1, JSON.stringify(o));
+  ok("reviewLoops and ciLoops are numbers, not undefined", o && o.reviewLoops === 0 && o.ciLoops === 0, JSON.stringify(o));
+}
+
+group("re-entry onto a branch that already has a PR does not try to create one");
+{
+  const sim = await simulate({
+    plan: planOf([prOf({ prExists: true, prNumber: 42 })]),
+    argsIn: { plan: "p.md", onlyBranch: "feat/a" },
+  });
+  const push = promptFor(sim, "feat/a:pr");
+  ok("the push seat is told the PR already exists", /ALREADY has pull request #42/.test(push), push.slice(0, 400));
+  ok("  …and is told NOT to run gh pr create", /do NOT\n   run `gh pr create`/.test(push) || /do NOT.*gh pr create/s.test(push));
+  ok("the run says it is building onto it", /already has a pull request; building onto it/.test(sim.log));
+}
+
+group("a plan path that is not a path is refused before anything runs");
+{
+  for (const bad of ["build the thing", "verify", "../../etc/passwd.md; rm -rf /", "plan.txt"]) {
+    const sim = await simulate({ plan: planOf([prOf()]), argsIn: bad });
+    ok(`refuses ${JSON.stringify(bad)}`, sim.result.error === "bad-plan-path" || sim.result.note === "verify-blocked", JSON.stringify(sim.result));
+    if (sim.result.error === "bad-plan-path") ok(`  …with no seat spawned`, sim.labels.length === 0);
+  }
+  // A plan whose filename merely contains the word must still be buildable.
+  const sim = await simulate({ plan: planOf([prOf()]), argsIn: "implement verify-zones-plan.md" });
+  ok("a plan named verify-*.md is built, not mistaken for a verification", sim.result.open.length === 1, JSON.stringify(sim.result));
+}
+
+group("the parse seat's exit codes are distinguished");
+{
+  const missing = await simulate({ plan: { ok: false, exitCode: 4, stderr: "Plan not found: /x/typo.md" }, argsIn: { plan: "typo.md" } });
+  ok("exit 4 is plan-not-found, not a network failure", missing.result.error === "plan-not-found", JSON.stringify(missing.result));
+  const remote = await simulate({ plan: { ok: false, exitCode: 3, stderr: "gh pr list failed" }, argsIn: { plan: "p.md" } });
+  ok("exit 3 stays parse-refused", remote.result.error === "parse-refused");
+}
+
+group("two PRs with one title are refused");
+{
+  const sim = await simulate({
+    plan: planOf([prOf({ branch: "feat/a", title: "feat(x): the same thing" }), prOf({ branch: "feat/b", title: "feat(x): the same thing" })]),
+    argsIn: { plan: "p.md" },
+  });
+  ok("refused as duplicate-title", sim.result.error === "duplicate-title", JSON.stringify(sim.result));
+  ok("before building anything", !sim.labels.some((l) => l.includes(":implement")));
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

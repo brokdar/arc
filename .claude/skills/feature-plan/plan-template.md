@@ -48,8 +48,10 @@ not test names. These are what the feature acceptance criteria at the bottom are
 
 ## Open questions
 
-<Anything whose answer changes the work materially, marked **(confirm)**. Resolved with the operator
-BEFORE any PR is built — `implement-plan` refuses to start while one remains. Delete if none.>
+<Anything whose answer changes the work materially. Mark each one with the confirm marker — two
+asterisks, the word confirm in parentheses, two asterisks — and resolve it with the operator BEFORE
+any PR is built: `implement-plan` refuses to start while one remains, so do not leave this
+placeholder in place. Delete the section if there are none.>
 
 ---
 
@@ -100,7 +102,17 @@ a new file names the existing code that was checked and why extending it does no
 > **Needs Docker**: no
 > **Triggers**: `just api-sync`
 
-<...>
+**Why this PR**: <as above — every marked block repeats for every PR, and the parser refuses a PR
+that is missing one.>
+
+**Delivers**: <the shippable capability>
+
+**Reuses**: <the existing code this extends, by path>
+
+**Acceptance**
+
+- [ ] **AC-4** <a specific observable claim> — *unit*, `backend/tests/unit/test_wellness_api.py`
+      - Edge: <the boundary this criterion's tests must also cover>
 
 ---
 
@@ -157,8 +169,9 @@ from it — do not number groups by hand, because a hand-written number and a `D
 eventually disagree and the number wins silently. A dependency means "needs that PR **merged**".
 
 **One migration per concurrent group.** Two branches cut from the same head both writing
-`alembic/versions/` produce two Alembic heads and a broken chain. The executor verifies this and
-refuses.
+`alembic/versions/` produce two Alembic heads and a broken chain. The executor verifies this **from
+`> **Owns**:`** — it has no other way to know — so a PR that writes a revision must list it there, by
+path. An unlisted migration makes that guard a no-op.
 
 **`Needs Docker:` marks what must run alone.** `test-int`, `smoke` and `up` bind fixed host ports and
 `test-int` reuses one compose project name across every checkout. Set it for any PR touching
