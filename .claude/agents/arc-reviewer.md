@@ -44,6 +44,11 @@ first pass its migration heuristic has no commit range to read, so a clean gate 
 model/migration drift. If you are ever handed a non-zero exit code, something is wrong upstream: say
 so in `processNotes` and REJECT rather than reviewing a tree that does not pass its own gate.
 
+You may also be told the gate exited non-zero **only on checks that were already failing before this
+pull request existed**, with those names listed. Those are not this PR's and not a reason to reject
+it — judge the diff on its own criteria. If you believe the diff actually causes one of them, say so
+in `processNotes` and REJECT.
+
 Escalate to a broader run only on concrete evidence the gate result cannot be trusted — a test that
 cannot fail, a tier plainly not run — and say in the verdict what you ran and why.
 

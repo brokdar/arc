@@ -104,11 +104,13 @@ const DEFAULTS = {
   finish: { merged: false, worktreeRemoved: true, detail: "cleaned up" },
   merge: { merged: true, mergeSha: "merge5ha", worktreeRemoved: true, detail: "merged and cleaned" },
   localCi: { status: "GREEN", checks: ["gate: PASS"], notRun: [], preexisting: [], commented: true, detail: "ok" },
+  baseline: { exitCode: 0, failing: [], tail: "GATE OK", detail: "green before we start" },
 };
 
 // Which default a label falls back to. Order matters: longest match first.
 const ROUTES = [
   ["parse-plan", "parse"],
+  ["gate-baseline", "baseline"],
   [":setup", "setup"],
   [":implement", "implement"],
   // Before the broader `:gate` / `:ci` needles: `feat/a:gate-fix1` and
@@ -879,6 +881,18 @@ group("a prerequisite the setup seat cannot find on main stops that PR");
   const b = sim.result.stopped.find((x) => x.branch === "feat/b");
   ok("feat/b stops as prerequisite-not-on-main", b && b.reason === "prerequisite-not-on-main", JSON.stringify(sim.result.stopped));
   ok("  …and nothing was implemented for it", !sim.labels.includes("feat/b:implement"));
+  // Either shape is accepted from the seat: the prompt asks for titles, but a
+  // seat that answers with branch names must not hard-stop every dependent PR.
+  const byBranchName = await simulate({
+    plan: planOf(prs),
+    replies: { "feat/b:setup": { ok: true, headBranch: "feat/b", dirty: [], prerequisitesOnMain: ["feat/a"], detail: "found the branch" } },
+    argsIn: { plan: "p.md" },
+  });
+  ok(
+    "a seat that reports the BRANCH instead of the title is still accepted",
+    !byBranchName.result.stopped.some((x) => x.reason === "prerequisite-not-on-main"),
+    JSON.stringify(byBranchName.result.stopped),
+  );
   ok(
     "the setup prompt asks for the prerequisite's TITLE, since squash puts that on main",
     promptFor(sim, "feat/b:setup").includes(`"${prs[0].title}"   (branch \`feat/a\`)`) &&
@@ -993,6 +1007,87 @@ group("two PRs with one title are refused");
   });
   ok("refused as duplicate-title", sim.result.error === "duplicate-title", JSON.stringify(sim.result));
   ok("before building anything", !sim.labels.some((l) => l.includes(":implement")));
+}
+
+
+group("a gate that was already red must not be charged to every pull request");
+{
+  const RED_BASELINE = {
+    exitCode: 1,
+    failing: ["tests/unit/test_wellness_api.py::test_the_weekly_fold_carries_its_n_too"],
+    tail: "2 failed, 1795 passed",
+    detail: "already red",
+  };
+  const sameFailure = {
+    gateExit: 1, gateTail: "2 failed", committed: true, sha: "c0mm1t", files: ["a.py"],
+    preexistingOnly: true,
+    failing: ["tests/unit/test_wellness_api.py::test_the_weekly_fold_carries_its_n_too"],
+    detail: "red, but not mine",
+  };
+
+  // Green baseline is the normal case and changes nothing.
+  const green = await simulate({ plan: planOf([prOf()]), argsIn: { plan: "p.md" } });
+  ok("a green baseline is measured once, before any PR", green.labels[1] === "gate-baseline", green.labels.slice(0, 3).join(","));
+  ok("  …and says so", /Gate baseline: green/.test(green.log));
+  ok("  …and the run proceeds normally", green.result.open.length === 1);
+
+  // The breaking case: the repository's gate is red for reasons no PR caused.
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "gate-baseline": RED_BASELINE, "feat/a:gate": sameFailure },
+    argsIn: { plan: "p.md" },
+  });
+  ok("the PR is built and opened anyway", sim.result.open.length === 1, JSON.stringify(sim.result));
+  ok("  …with no fix agent sent after someone else's breakage", !sim.labels.some((l) => l.includes("gate-fix")));
+  ok("  …the failures are named in the report", (sim.result.open[0].gatePreexisting || []).length === 1, JSON.stringify(sim.result.open[0]));
+  ok("  …the operator is warned up front", /ALREADY RED on this checkout/i.test(sim.log), sim.log.slice(0, 400));
+  ok("  …and it is logged as not attributed", /already failing before this PR/.test(sim.log));
+  const gp = promptFor(sim, "feat/a:gate");
+  ok("the gate seat is told what was already failing", /ALREADY RED BEFORE THIS PR EXISTED/.test(gp) && gp.includes("test_the_weekly_fold"));
+  const rp = promptFor(sim, "feat/a:review");
+  ok("the reviewer is told not to reject for them", /NOT a\s+reason to reject/.test(rp), rp.slice(0, 900));
+
+  // A NEW failure on top of a red baseline is still this PR's.
+  const novel = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "gate-baseline": RED_BASELINE,
+      "feat/a:gate": { ...sameFailure, failing: ["tests/unit/test_mine.py::test_i_broke_it"] },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("a failure absent from the baseline is refused", novel.result.stopped[0].reason === "gate-red-claimed-preexisting", JSON.stringify(novel.result.stopped));
+  ok("  …naming what was not in the baseline", /test_i_broke_it/.test(novel.result.stopped[0].recovery));
+  ok("  …and nothing was pushed", !novel.labels.some((l) => l.endsWith(":pr")));
+
+  // The same claim with no red baseline to point at.
+  const unsupported = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:gate": sameFailure },
+    argsIn: { plan: "p.md" },
+  });
+  ok("claiming pre-existing against a GREEN baseline is refused", unsupported.result.stopped[0].reason === "gate-red-claimed-preexisting", JSON.stringify(unsupported.result.stopped));
+
+  // A red gate the seat does NOT claim is pre-existing still runs the fix loop.
+  const mine = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "gate-baseline": RED_BASELINE,
+      "feat/a:gate": { gateExit: 1, gateTail: "boom", committed: false, sha: "", failing: ["x"], detail: "mine" },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("an unclaimed red gate still gets a fix agent", mine.labels.includes("feat/a:gate-fix1"));
+
+  // And the operator can turn the whole thing off.
+  const skipped = await simulate({ plan: planOf([prOf()]), argsIn: { plan: "p.md", skipGateBaseline: true } });
+  ok("skipGateBaseline skips the measurement", !skipped.labels.includes("gate-baseline"), skipped.labels.join(","));
+  ok("  …and the run still works", skipped.result.open.length === 1);
+
+  // A dead baseline seat must not stop the run.
+  const dead = await simulate({ plan: planOf([prOf()]), replies: { "gate-baseline": null }, argsIn: { plan: "p.md" } });
+  ok("a dead baseline seat degrades to no baseline", dead.result.open.length === 1, JSON.stringify(dead.result));
+  ok("  …and says so", /could not be measured/.test(dead.log));
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

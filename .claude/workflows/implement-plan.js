@@ -180,6 +180,17 @@ const GATE_SCHEMA = {
   required: ["gateExit", "committed", "sha", "detail"],
   properties: {
     gateExit: { type: "number" },
+    // TRUE when the gate failed ONLY on checks that were already failing before
+    // this PR existed. Without this the gate — a hard gate, by design — made any
+    // pre-existing breakage in the repository fatal to every pull request in the
+    // plan: each one would burn two opus fix agents trying to repair something it
+    // did not cause, then hard-stop with no PR. Discovered on 17 Aug 2026, when
+    // two date-dependent wellness tests failed on a Monday and would have taken
+    // the whole run down with them.
+    preexistingOnly: { type: "boolean" },
+    // The failing check or test names, so "only the ones that were already
+    // failing" is a comparison rather than an impression.
+    failing: { type: "array", items: { type: "string" } },
     // The last ~25 lines of `just gate` output. Carried to the reviewer as
     // evidence, and to a fix agent as the failure.
     gateTail: { type: "string" },
@@ -316,6 +327,19 @@ const LOCAL_CI_SCHEMA = {
 // `merged: true`, and the workflow still halted and printed "Merged: none",
 // because the flag was assigned through an object handed back out of
 // `parallel()` and that assignment was not visible to the caller.
+// What `just gate` says about this checkout BEFORE the run touches anything.
+const BASELINE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["exitCode", "failing", "detail"],
+  properties: {
+    exitCode: { type: "number" },
+    failing: { type: "array", items: { type: "string" } },
+    tail: { type: "string" },
+    detail: { type: "string" },
+  },
+};
+
 const FINISH_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -604,10 +628,12 @@ NON-NEGOTIABLE:
 - This PR is marked "needs Docker": ALSO run \`just test-int\` and it must be green. The Docker
   tiers bind fixed host ports and one shared compose project name across every checkout, so take
   the lock around them:
-    \`bash scripts/docker-lock.sh acquire ${p.branch}\`   → exit 3 means another run holds it; wait
-    and retry, or report it rather than running anyway
+    \`bash scripts/docker-lock.sh acquire ${p.branch}\`
     \`… just test-int …\`
-    \`bash scripts/docker-lock.sh release ${p.branch}\``
+    \`bash scripts/docker-lock.sh release ${p.branch}\`   → on EVERY exit path, including failure
+  Exit 3 is BUSY, and it prints who holds it. A DIFFERENT label means another run is working: wait,
+  retry a few times, and report it rather than running anyway. YOUR OWN label means a seat died
+  holding it — release it and retry once.`
       : `
 - Do NOT run \`just test-int\`, \`just smoke\`, \`just up\` or \`just infra\`. They bind fixed host ports
   shared with every other worktree, and this PR is not marked as needing them.`
@@ -813,15 +839,50 @@ ${whyBlock(parsed, p)}${handoffBlock(handoff)}${guardrails(parsed, p)}${HANDOFF_
 // reviewer's diff real: the implementer is forbidden to commit, so
 // `git diff origin/main...HEAD` was empty for every reviewer until now, and all
 // seven of them had to improvise their way to the working tree.
-function gatePrompt(p, subject) {
+function baselinePrompt() {
+  return `Measure the repository's gate BEFORE this run builds anything. One command, no judgement.
+
+  \`just gate > /tmp/gate-baseline.log 2>&1; echo "EXIT=$?"\`
+
+Run it in the MAIN checkout — this is the one seat allowed to, and it is safe: the gate does not
+reformat sources. No worktree exists yet, and nothing else is running.
+
+Report the exit code, and if it is non-zero, list in \`failing\` the NAME of every check or test that
+failed — a pytest node id (\`tests/unit/test_x.py::test_y\`), a vitest file, a ruff rule, the recipe
+that exited. Names, not prose: a later step compares each pull request's own gate failures against
+this list to tell "you broke it" from "it was already broken". Put the last ~20 meaningful lines in
+\`tail\`.
+
+Do not fix anything. Do not commit. Do not touch any file.`;
+}
+
+function gatePrompt(p, subject, baseline) {
   const wt = wtPath(p);
-  return `Run the gate on "${p.title}" and, only if it passes, commit the work. Two steps, no judgement.
+  const known = baseline && baseline.exitCode !== 0 && (baseline.failing || []).length
+    ? `
+
+⚠️ THE GATE WAS ALREADY RED BEFORE THIS PR EXISTED. Measured on this checkout at the start of the run
+(exit ${baseline.exitCode}), these were failing:
+${baseline.failing.map((f) => `  · ${f}`).join("\n")}
+
+So if the gate fails HERE on exactly those and nothing else, this pull request did not cause it: set
+\`preexistingOnly: true\`, list what failed in \`failing\`, and COMMIT anyway — the work is sound and
+the repository's problem is not this PR's to fix. If ANYTHING ELSE fails, that is this PR's: set
+\`preexistingOnly: false\` and do not commit.`
+    : "";
+  return `${known ? known.trim() + "\n\n" : ""}Run the gate on "${p.title}" and, only if it passes, commit the work. Two steps, no judgement.`
+    + gateBody(p, wt, subject);
+}
+
+function gateBody(p, wt, subject) {
+  return `
 
 1. \`cd ${wt} && just gate > /tmp/gate-${p.branch.replace(/\//g, "-")}.log 2>&1; echo "EXIT=$?"\`
-   Read the LAST ~40 lines of that log, not the whole thing. Report the exit code in \`gateExit\` and
-   the last ~25 meaningful lines in \`gateTail\` — including the failing assertion or error if it
-   failed. If it is non-zero, STOP: report \`committed: false\` and do not stage anything. Do not fix
-   it, do not re-run it hoping for a different answer, do not investigate further.
+   Read the LAST ~40 lines of that log, not the whole thing. Report the exit code in \`gateExit\`, the
+   last ~25 meaningful lines in \`gateTail\`, and the NAME of every failing check or test in
+   \`failing\`. If it is non-zero and the failures are not the pre-existing ones named above, STOP:
+   report \`committed: false\` and stage nothing. Do not fix it, do not re-run it hoping for a
+   different answer, do not investigate further.
 
 2. Only on exit 0: commit, staging explicitly by path.
    - \`git -C ${wt} status --porcelain -uall\`, then \`git -C ${wt} add -- <path> …\` for every path
@@ -850,7 +911,14 @@ function reviewPrompt(parsed, p, mode, ctx, gate, sinceSha) {
   const wt = wtPath(p);
   const evidence = `
 GATE EVIDENCE — observed, not claimed. \`just gate\` was run by a separate seat and exited
-${gate.gateExit} (0 = pass). Its tiers are listed in the \`gate\` recipe's comment in the \`justfile\`
+${gate.gateExit} (0 = pass).${
+    gate.gateExit !== 0 && gate.preexistingOnly
+      ? ` It failed ONLY on checks that were already failing on this checkout before
+this pull request existed — ${(gate.failing || []).join(", ")} — so they are NOT this PR's and NOT a
+reason to reject it. Judge the diff on its own criteria. If you believe one of them IS caused by this
+diff, say so in \`processNotes\` and REJECT.`
+      : ""
+  } Its tiers are listed in the \`gate\` recipe's comment in the \`justfile\`
 (lint, types, both unit suites, the production build, api-contract drift); the Docker tiers and the
 commit-time hooks are NOT in it, and on a first pass the migration heuristic has no commit range to
 read, so it says nothing:
@@ -986,10 +1054,11 @@ Verify the PR LOCALLY against every check CI would have run, then record it on t
 
 ⚠️ TAKE THE DOCKER LOCK FIRST, and release it when you are done:
   \`bash scripts/docker-lock.sh acquire local-ci-${p.branch}\`
-Exit 3 means another run holds it — these tiers bind fixed host ports and one shared compose project
-name, and on 16 Aug 2026 two runs overlapped for an hour, each believing it was alone. If it is
-BUSY, wait and retry a few times; if it stays busy, record every Docker tier as NOT_RUN with
-"docker lock held by <holder>" and skip to the comment. Release with
+Exit 3 is BUSY — these tiers bind fixed host ports and one shared compose project name, and on
+16 Aug 2026 two runs overlapped for an hour, each believing it was alone. It prints who holds it: a
+DIFFERENT label means another run is working, so wait, retry a few times, and if it stays busy record
+every Docker tier as NOT_RUN with "docker lock held by <holder>" and skip to the comment. YOUR OWN
+label means a seat died holding it — release it and retry once. Release with
 \`bash scripts/docker-lock.sh release local-ci-${p.branch}\` on EVERY exit path.
 
 PRE-FLIGHT the Docker tiers before spending time on them: \`timeout 60 docker pull alpine:3\`. If the
@@ -1281,8 +1350,9 @@ that reached the API but not MCP, a decision that landed in two places with two 
 
 Run the suites you need. \`just test-int\` and \`just smoke\` bind fixed host ports shared with every
 worktree, so take the lock around them and release it on every exit path:
-  \`bash scripts/docker-lock.sh acquire verify-feature\` (exit 3 = another run holds it; wait, retry,
-  or record the tier as not run) … \`bash scripts/docker-lock.sh release verify-feature\`
+  \`bash scripts/docker-lock.sh acquire verify-feature\` (exit 3 = BUSY, and it names the holder: wait
+  and retry for another label, release-and-retry-once for your own, or record the tier as not run)
+  … \`bash scripts/docker-lock.sh release verify-feature\` on every exit path
 
 Plan snapshot: ${parsed.planSnapshot}. Redirect long runs to a log and read the tail.
 
@@ -1377,6 +1447,32 @@ log(
       .join("\n"),
 );
 
+// ── The gate's baseline, measured once ───────────────────────────────────────
+// The gate is a HARD gate: a red one stops a pull request with nothing pushed.
+// That is right when the PR caused it and catastrophic when it did not — every
+// PR in the plan would burn two opus fix agents on someone else's breakage and
+// then hard-stop. So the run measures the gate before it builds anything, and a
+// per-PR failure is compared against that list. Green baseline: nothing changes.
+let baseline = null;
+if (A.skipGateBaseline !== true) {
+  phase("Parse");
+  baseline = await agent(baselinePrompt(), { label: "gate-baseline", phase: "Parse", schema: BASELINE_SCHEMA, ...CHEAP });
+  if (baseline == null) {
+    log("The gate baseline could not be measured; proceeding without it — a red gate will be treated as this PR's.");
+  } else if (baseline.exitCode !== 0) {
+    log(
+      `⚠️ \`just gate\` is ALREADY RED on this checkout (exit ${baseline.exitCode}) before anything is ` +
+        `built:\n` +
+        (baseline.failing || []).map((f) => `  · ${f}`).join("\n") +
+        `\nThese are not attributed to any pull request: a PR whose gate fails on exactly these still ` +
+        `commits and is reviewed. Anything else it breaks is its own. Fix them when you can — CI runs ` +
+        `them too.`,
+    );
+  } else {
+    log("Gate baseline: green. Any red gate from here belongs to the PR that produced it.");
+  }
+}
+
 // ── The per-PR pipeline ──────────────────────────────────────────────────────
 // implement → GATE+commit → independent review (bounded fix loop) → push+PR →
 // CI green → finish (merge if the DAG waits on it, then clean up).
@@ -1426,9 +1522,13 @@ async function buildPr(p) {
   // it has to be READ, or the schema is decoration and the only evidence a merge
   // happened is the seat that claimed to perform it. Titles, not branches:
   // squash-merge puts the PR TITLE on main.
-  const absent = (p.depends || []).filter(
-    (d) => !(setup.prerequisitesOnMain || []).some((seen) => seen.includes(byBranch.get(d)?.title || d)),
-  );
+  // Either shape counts. The prompt asks for TITLES (squash-merge puts the title
+  // on main), but a seat that answers with branch names must not hard-stop every
+  // dependent pull request over a formatting difference.
+  const absent = (p.depends || []).filter((d) => {
+    const title = (byBranch.get(d) || {}).title || d;
+    return !(setup.prerequisitesOnMain || []).some((seen) => seen.includes(title) || seen.includes(d));
+  });
   if (setup.reused) {
     log(`${p.branch}: reusing the existing worktree at ${wtPath(p)} (it was clean).`);
   }
@@ -1463,11 +1563,28 @@ as a clean run.
   // a human's problem, and nothing is pushed.
   let gate = null;
   let gateLoops = 0;
+  let gatePreexisting = null;
   for (;;) {
     const tag = gateLoops === 0 ? "gate" : `gate-retry${gateLoops}`;
-    gate = await agent(gatePrompt(p, p.title), cheap(tag, GATE_SCHEMA));
+    gate = await agent(gatePrompt(p, p.title, baseline), cheap(tag, GATE_SCHEMA));
     if (gate == null) return fail("gate-agent-died", { recovery: `Run \`cd ${wtPath(p)} && just gate\` by hand to see where it stands. The work is uncommitted.` });
     if (gate.gateExit === 0 && gate.committed && gate.sha) break;
+    // Red, but only on what was already red — and the seat committed anyway.
+    // Verified here rather than trusted: every name it reports must appear in the
+    // baseline, so a seat that waves through a new failure is caught.
+    if (gate.gateExit !== 0 && gate.preexistingOnly && gate.committed && gate.sha) {
+      const known = new Set(baseline ? baseline.failing || [] : []);
+      const novel = (gate.failing || []).filter((f) => ![...known].some((k) => k.includes(f) || f.includes(k)));
+      if (!baseline || baseline.exitCode === 0 || novel.length) {
+        return fail("gate-red-claimed-preexisting", {
+          gate,
+          recovery: `The gate seat committed despite exit ${gate.gateExit}, claiming the failures pre-date this PR — but ${novel.length ? `these are not in the baseline: ${novel.join(", ")}` : "there is no red baseline to compare against"}. Nothing was pushed. Check \`cd ${wtPath(p)} && just gate\` by hand.`,
+        });
+      }
+      log(`${p.branch}: gate red on ${gate.failing.join(", ")} — already failing before this PR, so not attributed to it.`);
+      gatePreexisting = gate.failing;
+      break;
+    }
     // Committed but no SHA is the same class of failure as not committing: two
     // later steps interpolate that SHA into a git command, and `undefined` there
     // gives the scoped re-review no diff at all.
@@ -1644,7 +1761,7 @@ as a clean run.
     log(`${p.branch}: CI never registered a run — deferring local verification.`);
     return {
       branch: p.branch, title: p.title, ok: false, merged: false, reason: "needs-local-ci",
-      pr, verdict, ci, gate, pr_obj: p,
+      pr, verdict, ci, gate, pr_obj: p, gatePreexisting,
       // Carried through localCiVerify → finish, which reports them. Omitted, the
       // report for every no-CI PR silently lost its loop counts.
       reviewLoops: loops, ciLoops, gateLoops,
@@ -1659,7 +1776,7 @@ as a clean run.
     return r;
   }
   log(`✅ ${p.branch}: PR #${pr.number} green.`);
-  return await finish(p, pr, verdict, { reviewLoops: loops, ciLoops, gateLoops, ciMode: "github" });
+  return await finish(p, pr, verdict, { reviewLoops: loops, ciLoops, gateLoops, gatePreexisting, ciMode: "github" });
 }
 
 // Merge if the DAG is waiting on this PR, then remove the worktree. `merged` is
@@ -1787,7 +1904,8 @@ async function localCiVerify(r) {
     log(`   ${p.branch}: ${res.preexisting.join(", ")} fail identically on main — not attributed to this PR.`);
   }
   const done = await finish(p, r.pr, r.verdict, {
-    reviewLoops: r.reviewLoops, ciLoops: r.ciLoops, gateLoops: r.gateLoops, ciMode: mode,
+    reviewLoops: r.reviewLoops, ciLoops: r.ciLoops, gateLoops: r.gateLoops,
+    gatePreexisting: r.gatePreexisting, ciMode: mode,
   });
   return { ...done, localCi: res, notRun: skipped };
 }
@@ -1892,6 +2010,9 @@ return {
     preexisting: r.localCi && r.localCi.preexisting && r.localCi.preexisting.length ? r.localCi.preexisting : undefined,
     // A PR the workflow tried and failed to merge must be distinguishable from a
     // leaf it never meant to merge.
+    // Checks that were failing before this PR and still are: shipped knowingly,
+    // named so the operator can see what the gate did not cover.
+    gatePreexisting: r.gatePreexisting || undefined,
     mergeFailed: r.mergeFailed || undefined,
     mergeDetail: r.mergeFailed ? r.mergeDetail : undefined,
     worktreeKept: r.worktreeRemoved === false ? true : undefined,

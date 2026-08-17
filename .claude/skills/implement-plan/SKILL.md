@@ -53,6 +53,8 @@ agents — so each of these is a tested script that a cheap seat runs and report
      Requires every PR merged.
    - `autoMerge: false` — never merge anything, even a prerequisite. The DAG then stops after the
      first group and waits for you.
+   - `skipGateBaseline: true` — do not measure the gate before building. Only when you already know
+     it is green and want the ~4 minutes back.
 4. **Check the tree.** `git status` in the main checkout and `git worktree list`. Each PR lives in
    `.claude/worktrees/<branch with its slash flattened to a dash>` — branch `feat/x` is in
    `.claude/worktrees/feat-x`. A hard-stopped earlier run leaves work there, so read the previous
@@ -81,6 +83,25 @@ Workflow({
 It runs in the background; `/workflows` shows live progress. The first line logged is
 `Launch: raw=… parsed=… plan=…`, followed by the derived groups — for anything narrower than the
 whole plan, a quick non-blocking `TaskOutput` a few seconds in confirms the scope.
+
+## The gate's baseline
+
+Before it builds anything, the run measures `just gate` once on this checkout. That exists because
+the gate is a **hard** gate: red means the pull request stops with nothing pushed, which is right
+when the PR caused it and catastrophic when it did not — every PR in the plan would spend two opus
+fix agents on someone else's breakage and then hard-stop.
+
+- **Green** — nothing changes, and any red gate from then on belongs to the PR that produced it.
+- **Red** — the failing names are logged and carried into every gate seat. A PR whose gate fails on
+  exactly those still commits, is reviewed, and is opened; the reviewer is told those failures are
+  not its to answer for, and `gatePreexisting` names them in the report. Anything a PR breaks
+  *beyond* that list is still its own, and still stops it.
+
+A seat that claims "pre-existing" for a failure the baseline did not have is refused
+(`gate-red-claimed-preexisting`) — the claim is checked against the measurement, not taken.
+
+Fix the baseline when you can. It is measured on the checkout you launch from, while the worktrees
+are cut from `origin/main`, so the two can differ; the log says which state it measured.
 
 ## What merges itself, and what waits for you
 
