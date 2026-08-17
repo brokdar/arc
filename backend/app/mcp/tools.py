@@ -430,12 +430,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           direction. Read the denominator literally: it counts **only the
           markers whose baseline is mature enough to have a band**, so a
           morning with five markers recorded and one baseline still forming
-          says `2 of 4`, not `2 of 5` — a marker arc cannot yet say anything
-          about is left out rather than counted as though it were inside its
-          band. `joint_state` names the HRV x resting-HR quadrant when both of
-          those are mature: a **label**, with no verdict attached and no
-          ranking against the other quadrants. The series and the baselines
-          behind all of it are `get_wellness_trend`.
+          says `2 of 4`, not `2 of 5` — a marker whose baseline cannot yet say
+          anything about it is left out rather than counted as though it were
+          inside its band. `joint_state` names the HRV x resting-HR quadrant
+          when both of those are mature: a **label**, with no verdict attached
+          and no ranking against the other quadrants. The series and the
+          baselines behind all of it are `get_wellness_trend`.
 
           Two flags decide how to read any of it. `not_actionable` on a day
           names the confounders the athlete declared that void that morning's
