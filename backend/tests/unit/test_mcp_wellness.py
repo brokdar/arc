@@ -816,8 +816,11 @@ async def test_the_coaching_context_carries_the_readiness_projection(
 
 
 async def test_the_weekly_fold_still_carries_its_n(session_factory: Any) -> None:
-    # AC-39's edge on the surface the weekly fold actually has.
-    monday = TODAY - dt.timedelta(days=TODAY.weekday())
+    # AC-39's edge on the surface the weekly fold actually has. Anchored to
+    # last week's Monday, not this week's: the backfill guard rejects a
+    # future day, and "this week's Monday + 2" is still ahead of today on a
+    # Monday or a Tuesday. A completed week is always safe to seed.
+    monday = TODAY - dt.timedelta(days=TODAY.weekday() + 7)
     await seed(
         [
             {
