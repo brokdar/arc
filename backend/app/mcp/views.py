@@ -71,7 +71,7 @@ from app.persistence.wellness_prompt import WellnessPromptRow
 from app.persistence.workouts import WorkoutRow
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary, measured_channels
-from app.services.plan import PlanWeek, WeekSession
+from app.services.plan import CompletedSession, PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
 from app.services.wellness import (
     DayResult,
@@ -207,12 +207,46 @@ def week_session(card: WeekSession) -> dict[str, Any]:
     }
 
 
+def week_completed_session(entry: CompletedSession) -> dict[str, Any]:
+    """One recorded session on the week, in `session_summary`'s vocabulary.
+
+    The same field names, so a ride reads the same way here as it does in
+    `list_sessions` and the agent never has to learn a second spelling of a
+    session. Fewer of them: this is a line in a week, and everything a session
+    read adds — the start time, the context, the RPE — is one
+    `get_session_detail` away by the `id` this carries.
+
+    ``discipline`` is the one value that can differ from the same session's row
+    in `list_sessions`, and deliberately: it is the **planning** discipline the
+    week totals this recording under, so a sport nothing is ever planned as (a
+    walk, a swim) is null here where the session list says `other`. A week is
+    organised by what can be planned; the session list is not.
+    """
+    return {
+        "id": str(entry.id),
+        "local_date": entry.date.isoformat(),
+        "discipline": None if entry.discipline is None else entry.discipline.value,
+        "duration_s": entry.duration_s,
+        "training_load": entry.load,
+        "match_status": entry.match_status.value,
+    }
+
+
 def plan_week(week: PlanWeek) -> dict[str, Any]:
     """One Monday-to-Sunday plan week, flattened.
 
     The day grid is dropped and the sessions are listed with their dates: an
     empty Wednesday is a fact the reader can see from the dates, and seven
     nested objects to say it is six of them saying nothing.
+
+    `unplanned_sessions` is the other half of the account (#49): every
+    recording in the window that no card here references, with its id. A
+    matched ride is **never** in both — the card carries it as
+    `matched_session_id`, and a session listed twice is a week that reads as
+    busier than it was. Between the two, every session
+    `completed_session_count` counts is named somewhere, so "2.8 hours
+    happened" is never an answer the agent has to go and join
+    `list_sessions` to understand.
 
     **The week's agent notes are not in here.** A view renders one domain
     object, and a `PlanWeek` is the plan; the notes are a second read from a
@@ -232,6 +266,9 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
         "completed_duration_s": week.completed_duration_s,
         "completed_load": week.completed_load,
         "sessions": [week_session(card) for day in week.days for card in day.sessions],
+        "unplanned_sessions": [
+            week_completed_session(entry) for entry in week.unplanned_sessions
+        ],
         "by_discipline": [
             {
                 "discipline": part.discipline.value,

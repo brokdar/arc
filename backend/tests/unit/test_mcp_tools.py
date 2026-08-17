@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 from fastmcp.exceptions import ToolError
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -2983,3 +2983,290 @@ async def test_the_detail_tool_documents_the_two_temperatures(
     assert missing == [], f"the docstring must name every channel it returns: {missing}"
     assert "`metrics.average_temp_c`" in description
     assert "`session.temperature_c`" in description
+
+
+# --- the rides nothing was planned for (#49) ---------------------------------------
+
+#: The Monday of the week the golden files were recorded in. Read here rather
+#: than :data:`MONDAY` whenever an entry has to carry a real training load: a
+#: typed-in session has an artefact with no load in it, so a week of only those
+#: could not tell a wired-up `training_load` from a hard-coded null.
+GOLDEN_MONDAY = dt.date(2026, 5, 4)
+
+
+async def link(client: AsyncClient, session_id: str, planned_id: str) -> None:
+    """Match a recording to a card by hand, the way the athlete does."""
+    response = await client.post(
+        "/api/v1/matches",
+        json={"session_id": session_id, "planned_session_id": planned_id},
+    )
+    assert response.status_code == 201, response.text
+
+
+async def resolve_unplanned(client: AsyncClient, session_id: str) -> None:
+    """Declare that a recording answers to nothing on the calendar."""
+    response = await client.post(f"/api/v1/sessions/{session_id}/unplanned")
+    assert response.status_code == 200, response.text
+
+
+async def week_payload(monday: dt.date = MONDAY) -> dict[str, Any]:
+    """The `get_plan_week` week block for one Monday."""
+    return (await call(READER, "get_plan_week", {"start": monday.isoformat()}))["week"]
+
+
+async def recorded_in(monday: dt.date) -> list[dict[str, Any]]:
+    """Every session `list_sessions` returns for that seven-day window."""
+    data = await call(
+        READER,
+        "list_sessions",
+        {
+            "start": monday.isoformat(),
+            "end": (monday + dt.timedelta(days=6)).isoformat(),
+        },
+    )
+    return list(data["items"])
+
+
+async def test_the_week_names_the_rides_nothing_was_planned_for(
+    data_root: Path, client: AsyncClient
+) -> None:
+    """#49: two rides, 2.8 hours, and their ids — not "something happened"."""
+    await append_ftp(client)
+    ridden = await ingest(client, "outdoor_ride.fit")
+    logged = await record(client, start_time="2026-05-06T17:00:00Z")
+
+    week = await week_payload(GOLDEN_MONDAY)
+
+    assert week["session_count"] == 0
+    assert week["sessions"] == []
+    assert week["completed_session_count"] == 2
+    listed = await recorded_in(GOLDEN_MONDAY)
+    assert (
+        {entry["id"] for entry in week["unplanned_sessions"]}
+        == {row["id"] for row in listed}
+        == {ridden, logged}
+    )
+    # Every field, read the way `list_sessions` reads it — the same ride must
+    # not be two different rides in the week and in the log.
+    rows = {row["id"]: row for row in listed}
+    for entry in week["unplanned_sessions"]:
+        assert set(entry) == {
+            "id",
+            "local_date",
+            "discipline",
+            "duration_s",
+            "training_load",
+            "match_status",
+        }
+        row = rows[entry["id"]]
+        for field in ("local_date", "discipline", "duration_s", "match_status"):
+            assert entry[field] == row[field], field
+        assert entry["training_load"] == row["training_load"]
+    entries = {entry["id"]: entry for entry in week["unplanned_sessions"]}
+    assert entries[ridden]["local_date"] == "2026-05-04"
+    assert entries[ridden]["discipline"] == "cycling"
+    assert entries[ridden]["duration_s"] > 0
+    assert entries[ridden]["training_load"] > 0
+    # Nothing was planned, so matching resolved both on the spot.
+    assert entries[ridden]["match_status"] == "unplanned"
+    # A typed-in session has an artefact with nothing to price it from.
+    assert entries[logged]["local_date"] == "2026-05-06"
+    assert entries[logged]["training_load"] is None
+
+
+async def test_a_week_with_nothing_recorded_lists_nothing(
+    session_factory: Any,
+) -> None:
+    # `[]` — never absent, never null: "nothing was ridden" is an answer, and
+    # a missing key would send the agent back to `list_sessions` to find out.
+    week = await week_payload()
+
+    assert week["unplanned_sessions"] == []
+    assert week["completed_session_count"] == 0
+
+
+async def test_a_ride_a_card_in_this_week_claims_is_not_repeated(
+    client: AsyncClient,
+) -> None:
+    # The card's `matched_session_id` is the handle for planned work; listing
+    # it again would make one ride read as two. Matching runs on the recording
+    # itself, so this is the state the athlete reaches by planning a session
+    # and then doing it — no hand-linking required.
+    await append_ftp(client)
+    await plan(client)
+    session_id = await record(client)
+
+    week = await week_payload()
+
+    assert week["unplanned_sessions"] == []
+    assert week["completed_session_count"] == 1
+    [card] = week["sessions"]
+    assert card["matched_session_id"] == session_id
+
+
+async def test_a_ride_a_card_has_only_proposed_is_not_listed_yet(
+    client: AsyncClient,
+) -> None:
+    """The case a status filter gets wrong in the other direction.
+
+    A proposal is a question: the ride's own status is still `unmatched`, and
+    a card in this week already carries it. Listing it would put one ride on
+    the calendar twice while the athlete is still deciding.
+    """
+    await append_ftp(client)
+    await plan(client)
+    session_id = await record(client, duration_s=2_400)
+
+    week = await week_payload()
+
+    [row] = await recorded_in(MONDAY)
+    assert row["match_status"] == "unmatched"
+    assert week["sessions"][0]["matched_session_id"] == session_id
+    assert week["unplanned_sessions"] == []
+
+
+async def test_a_ride_the_athlete_resolved_as_unplanned_says_so(
+    client: AsyncClient,
+) -> None:
+    # Answering the proposal above with "nothing was planned for this" drops
+    # the link, so the card stops claiming the ride and the week names it.
+    await append_ftp(client)
+    await plan(client)
+    session_id = await record(client, duration_s=2_400)
+
+    await resolve_unplanned(client, session_id)
+
+    week = await week_payload()
+    assert week["sessions"][0]["matched_session_id"] is None
+    [entry] = week["unplanned_sessions"]
+    assert entry["id"] == session_id
+    assert entry["match_status"] == "unplanned"
+
+
+async def test_a_ride_matched_to_last_weeks_card_is_listed_as_matched(
+    client: AsyncClient,
+) -> None:
+    # It is in this week and no card in this week claims it, so it is listed —
+    # and `match_status` is how the agent tells it from a ride nothing was
+    # ever planned for.
+    await append_ftp(client)
+    last_week = await plan(client, date=(MONDAY - dt.timedelta(days=7)).isoformat())
+    session_id = await record(client)
+    await link(client, session_id, last_week["id"])
+
+    week = await week_payload()
+
+    [entry] = week["unplanned_sessions"]
+    assert entry["id"] == session_id
+    assert entry["match_status"] == "matched"
+    # And the previous week, which owns the card, does not invent an entry for
+    # a session dated outside its own window.
+    previous = await week_payload(MONDAY - dt.timedelta(days=7))
+    assert previous["unplanned_sessions"] == []
+    assert previous["sessions"][0]["matched_session_id"] == session_id
+
+
+async def test_a_recording_with_no_artefact_is_listed_with_a_null_load(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The state `_metrics_for` documents: the session committed and the metric
+    # write behind it did not. It still happened, and the week still names it.
+    session_id = await record(client)
+    await db_session.execute(
+        delete(SessionMetricsRow).where(
+            SessionMetricsRow.session_id == uuid.UUID(session_id)
+        )
+    )
+    await db_session.commit()
+
+    week = await week_payload()
+
+    [entry] = week["unplanned_sessions"]
+    assert entry["id"] == session_id
+    assert entry["training_load"] is None
+
+
+async def test_every_counted_recording_is_on_a_card_or_in_the_list(
+    client: AsyncClient,
+) -> None:
+    """AC-7: the two halves account for the count, as a set and not a sum.
+
+    Two counts that add up would agree while naming the wrong rides.
+    """
+    await append_ftp(client)
+    await plan(client)
+    matched = await record(client)
+    loose = await record(
+        client, start_time=f"{(MONDAY + dt.timedelta(days=1)).isoformat()}T17:00:00Z"
+    )
+
+    week = await week_payload()
+
+    counted = {row["id"] for row in await recorded_in(MONDAY)}
+    assert counted == {matched, loose}
+    assert week["completed_session_count"] == len(counted)
+    claimed = {
+        card["matched_session_id"]
+        for card in week["sessions"]
+        if card["matched_session_id"] is not None
+    }
+    listed = {entry["id"] for entry in week["unplanned_sessions"]}
+    assert listed | claimed == counted
+    assert listed & claimed == set()
+
+
+async def test_a_cross_week_match_keeps_the_account_whole(
+    client: AsyncClient,
+) -> None:
+    # The card that claims it is in the previous week, so nothing in this one
+    # does — and the identity holds because the ride is in the list.
+    await append_ftp(client)
+    last_week = await plan(client, date=(MONDAY - dt.timedelta(days=7)).isoformat())
+    session_id = await record(client)
+    await link(client, session_id, last_week["id"])
+
+    week = await week_payload()
+
+    counted = {row["id"] for row in await recorded_in(MONDAY)}
+    claimed = {
+        card["matched_session_id"]
+        for card in week["sessions"]
+        if card["matched_session_id"] is not None
+    }
+    listed = {entry["id"] for entry in week["unplanned_sessions"]}
+    assert claimed == set()
+    assert listed | claimed == counted == {session_id}
+
+
+async def test_a_truncated_week_still_counts_the_rides_it_could_not_list(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cap bounds what one read loads; it must not make the week claim
+    # fewer rides happened than did.
+    monkeypatch.setattr("app.services.plan.MAX_WEEK_COMPLETED", 1)
+    first = await record(client)
+    second = await record(
+        client, start_time=f"{(MONDAY + dt.timedelta(days=1)).isoformat()}T17:00:00Z"
+    )
+
+    week = await week_payload()
+
+    assert week["completed_session_count"] == 2
+    listed = {entry["id"] for entry in week["unplanned_sessions"]}
+    assert len(listed) == 1
+    assert listed <= {first, second}
+
+
+async def test_the_opener_names_the_weeks_unplanned_rides(client: AsyncClient) -> None:
+    # The week block of `get_coaching_context` renders through the same view,
+    # so the call every coaching session opens with names the ride nothing was
+    # planned for — no second tool call, no date join (#49).
+    monday = this_monday()
+    session_id = await record(client, start_time=f"{monday.isoformat()}T17:00:00Z")
+
+    data = await call(READER, "get_coaching_context")
+
+    [entry] = data["week"]["unplanned_sessions"]
+    assert entry["id"] == session_id
+    assert entry["local_date"] == monday.isoformat()
+    assert entry["duration_s"] == 3_600
