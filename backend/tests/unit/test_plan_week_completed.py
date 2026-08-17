@@ -375,3 +375,32 @@ async def test_two_recordings_on_one_day_split_by_what_the_card_claims(
     assert claimed(week) == {uuid.UUID(first)}
     assert [entry.id for entry in week.unplanned_sessions] == [uuid.UUID(second)]
     assert week.completed_session_count == 2
+
+
+async def test_a_truncated_completed_week_still_counts_what_it_could_not_load(
+    data_root: Path,
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`MAX_WEEK_COMPLETED` works exactly like `MAX_WEEK_SESSIONS`: the cap
+    bounds what one read loads, and what it left behind is still counted —
+    counted as *uncounted* against the load and polarization pairs, because
+    an unread row can contribute neither a load nor a band. It is also, for
+    the same reason, absent from `unplanned_sessions`: a row the query never
+    fetched has no id to list.
+    """
+    monkeypatch.setattr("app.services.plan.MAX_WEEK_COMPLETED", 1)
+    await anchors(client)
+    await ingest(client, "ride.fit", "outdoor_ride.fit")  # 2026-05-04
+    await ingest(client, "trainer.fit", "indoor_trainer.fit")  # 2026-05-06, loads later
+
+    week = await projection(session_factory)
+
+    # Newest first: the cap keeps the trainer ride and drops the outdoor one.
+    assert week.completed_session_count == 2
+    assert week.completed_load_sessions_counted == 1
+    assert week.completed_load_sessions_uncounted == 1
+    assert week.completed_polarization_sessions_counted == 1
+    assert week.completed_polarization_sessions_uncounted == 1
+    assert len(week.unplanned_sessions) == 1
