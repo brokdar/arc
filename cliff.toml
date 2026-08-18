@@ -61,7 +61,7 @@ footer = ""
 trim = true
 postprocessors = [
   # A squashed commit body is the PR description, which starts with the PR
-  # template's `## What` / `## Checklist`. Indenting those two spaces does NOT
+  # template's `## Why` / `## Root cause`. Indenting those two spaces does NOT
   # stop CommonMark rendering them as real H2s — they would become siblings of
   # `## [Unreleased]` and wreck the document. Demote any heading that appears
   # inside an (indented) body to bold. Real headings sit at column 0 and are

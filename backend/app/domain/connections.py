@@ -49,6 +49,44 @@ class ConnectionStatus(StrEnum):
     ERROR = "error"
 
 
+#: The audit action a feed writes for each file it turned into a session.
+#:
+#: In the domain rather than beside the code that writes it (`app.ingest.feeds`)
+#: because it is read from `app.services.connections`, which the layer contract
+#: forbids from importing `app.ingest` — and a string duplicated across that
+#: boundary is one that eventually stops matching, silently, leaving the coach
+#: a delivery count of zero on a feed that is working perfectly.
+FEED_DELIVERED_ACTION = "feed.delivered"
+
+
+class FeedDeliveryState(StrEnum):
+    """How a watched folder is doing, in one word the coach can branch on.
+
+    The vocabulary exists because the numbers alone are ambiguous in exactly
+    the case that matters: `last_delivery_at: null` and `deliveries_7d: 0` read
+    identically for a folder that was connected an hour ago and for one whose
+    credential died last Tuesday, and the second is a week of missing rides.
+
+    * ``paused`` — the athlete switched this feed off. Silence is intended.
+    * ``failing`` — the last poll left an error on the row. Silence is a fault.
+    * ``never_delivered`` — nothing has ever arrived through it. **Never
+      reported as ``0`` deliveries and never as an error**: a folder that has
+      not delivered yet is a fact about setup, and both of the other spellings
+      would send a coach looking for a break that is not there.
+    * ``delivering`` — arc has heard from Dropbox and nothing is wrong. Whether
+      any *rides* arrived is `deliveries_7d`, which is the training question;
+      this is the plumbing question.
+
+    Order matters where two apply: an athlete's own pause outranks everything,
+    then a recorded fault, then the absence of a first delivery.
+    """
+
+    PAUSED = "paused"
+    FAILING = "failing"
+    NEVER_DELIVERED = "never_delivered"
+    DELIVERING = "delivering"
+
+
 def normalise_remote_path(path: str) -> str:
     """Reduce a remote folder path to the one spelling arc stores.
 

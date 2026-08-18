@@ -69,6 +69,7 @@ from app.persistence.scoring import (
 from app.persistence.wellness import WellnessDayRow
 from app.persistence.wellness_prompt import WellnessPromptRow
 from app.persistence.workouts import WorkoutRow
+from app.services.connections import FeedStatus, IngestStatus
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary, measured_channels
 from app.services.plan import CompletedSession, PlanWeek, WeekSession
@@ -1277,4 +1278,35 @@ def wellness_prompt(row: WellnessPromptRow | None) -> Any:
         "status": row.status.value,
         "expires_at": row.expires_at.isoformat(),
         "resolved_at": None if row.resolved_at is None else row.resolved_at.isoformat(),
+    }
+
+
+def ingest_status(status: IngestStatus) -> dict[str, Any]:
+    """Whether arc's supply of activity files is working, and through what.
+
+    `local_inbox_only` is the shape that keeps the answer honest when there is
+    nothing connected: an empty `feeds` list on its own reads like every feed
+    broke, and the two configurations need different conclusions from a coach
+    looking at a thin week.
+    """
+    return {
+        "feeds": [_feed_status(feed) for feed in status.feeds],
+        "local_inbox_only": status.local_inbox_only,
+    }
+
+
+def _feed_status(feed: FeedStatus) -> dict[str, Any]:
+    """One watched folder: where it points, and what has come through it."""
+    return {
+        "feed_id": str(feed.feed_id),
+        "folder": feed.folder or "/",
+        "enabled": feed.enabled,
+        "state": feed.state.value,
+        "last_delivery_at": (
+            feed.last_delivery_at.isoformat() if feed.last_delivery_at else None
+        ),
+        "deliveries_7d": feed.deliveries,
+        "last_error": feed.last_error,
+        "connection_status": feed.connection_status.value,
+        "account_label": feed.account_label,
     }

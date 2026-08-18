@@ -195,11 +195,17 @@ class FeedRow(Base):
     """One folder arc watches on a connection, and everything the poll needs.
 
     The four polling columns — ``cursor``, ``cursor_attempts``,
-    ``last_delivery_at``, ``last_error`` — are written by **the next PR**
-    (`feat/dropbox-delivery`, `app/ingest/feeds.py`), and are inert until it
-    lands. They are here now on purpose: adding one column per PR would put two
-    migrations into one concurrent group, and the delivery PR is the one that
-    must not also be a schema change. Do not delete them as unused.
+    ``last_delivery_at``, ``last_error`` — are written by `app.ingest.feeds`,
+    which owns the rules they encode: the cursor moves only once a whole batch
+    is resolved, the attempt counter is consecutive and resets on any success,
+    and ``last_delivery_at`` records hearing from Dropbox at all rather than a
+    ride arriving. Read them there before changing anything here.
+
+    There is deliberately **no delivery counter**. "How many rides has this
+    folder brought in this week" is answered by counting the audit trail
+    (`app.domain.connections.FEED_DELIVERED_ACTION`), which already records
+    every delivery against the feed it belonged to; a column beside it would be
+    a second answer that can drift from the first.
     """
 
     __tablename__ = "feeds"

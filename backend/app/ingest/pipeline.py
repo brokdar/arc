@@ -69,6 +69,7 @@ from app.core.logging import get_logger
 from app.domain.activity import (
     ClassificationSource,
     IngestOutcome,
+    IngestSource,
     QuarantineReason,
     QuarantineStatus,
     RecordingKind,
@@ -158,6 +159,27 @@ def _located_in(path: Path) -> Sequence[Path]:
     needs them.
     """
     return (path.parent.resolve() / path.name).parents
+
+
+@dataclass(frozen=True, slots=True)
+class FileOrigin:
+    """Where a file came from, when it did not simply appear on this machine.
+
+    Threaded through to the recording's ``source`` / ``external_id`` columns,
+    which is the only place the answer survives: the *file* on disk is
+    identical however it arrived, so a ride pulled from Dropbox and the same
+    ride dropped in `data/inbox/` are byte-for-byte the same original. Without
+    this, "is my Dropbox feed actually delivering?" has no answer that is not a
+    guess from timestamps.
+
+    ``None`` at the call site — the upload endpoint, the local sweep — is not
+    a missing value. It is the statement that the file arrived here directly;
+    see `app.domain.activity.IngestSource`.
+    """
+
+    source: IngestSource
+    #: The provider's own id for the file, stable across a rename and a move.
+    external_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +332,7 @@ class IngestPipeline:
         *,
         actor: Actor,
         filename: str | None = None,
+        origin: FileOrigin | None = None,
         reingest: bool = False,
         waive_implausible: bool = False,
         quarantine_on_failure: bool = True,
@@ -326,6 +349,9 @@ class IngestPipeline:
                 upload, `Actor.system` for the watched folder.
             filename: The name to log, when ``path`` is not it (an upload is
                 written into the inbox under a sanitised name).
+            origin: The connector this file came in over, when one did. Left
+                unset the recording says nothing about its transport, which is
+                what a local drop or an upload means.
             reingest: Set for B-4's *reject* of a suspected duplicate, where
                 the athlete has ruled that the file is **not** one. It waives
                 both duplicate checks the decision overrules — the file-level
@@ -357,6 +383,7 @@ class IngestPipeline:
                 source,
                 name=name,
                 actor=actor,
+                origin=origin,
                 reingest=reingest,
                 waive_implausible=waive_implausible,
                 located=located,
@@ -383,6 +410,7 @@ class IngestPipeline:
         *,
         name: str,
         actor: Actor,
+        origin: FileOrigin | None,
         reingest: bool,
         waive_implausible: bool,
         located: _Located,
@@ -448,6 +476,7 @@ class IngestPipeline:
                         file_hash=file_hash,
                         extension=extension,
                         original=placement.path,
+                        origin=origin,
                         actor=actor,
                     )
                 except ConflictError:
@@ -819,6 +848,7 @@ class IngestPipeline:
         file_hash: str,
         extension: str,
         original: Path,
+        origin: FileOrigin | None,
         actor: Actor,
     ) -> uuid.UUID:
         """Create the session, the recording, the parquet frame and the repairs.
@@ -855,6 +885,7 @@ class IngestPipeline:
                 file_hash=file_hash,
                 extension=extension,
                 original=original,
+                origin=origin,
                 channels=channels,
             )
         )
@@ -881,6 +912,7 @@ class IngestPipeline:
                 "local_date": session_row.local_date.isoformat(),
                 "recording_time_s": resampled.recording_time_s,
                 "original_path": str(original),
+                "source": origin.source.value if origin is not None else None,
             },
         )
         return session_row.id
@@ -1168,6 +1200,7 @@ def _recording_row(
     file_hash: str,
     extension: str,
     original: Path,
+    origin: FileOrigin | None,
     channels: frozenset[StreamChannel],
 ) -> RecordingRow:
     """The recording row for one ingested activity, A4.3 and A4.4 included."""
@@ -1190,6 +1223,8 @@ def _recording_row(
         hr_source=activity.hr_source,
         hr_source_rule=activity.hr_source_rule,
         channels=sorted(channel.value for channel in channels),
+        source=origin.source.value if origin is not None else None,
+        external_id=origin.external_id if origin is not None else None,
     )
 
 

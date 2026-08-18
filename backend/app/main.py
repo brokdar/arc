@@ -38,6 +38,7 @@ from app.core.config import get_settings
 from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.scheduler import create_scheduler
+from app.ingest.feeds import register_feed_poll_job
 from app.ingest.inbox import register_inbox_job
 from app.ingest.scoring import install_stream_loader
 from app.services.matching import register_missed_sessions_job
@@ -72,6 +73,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # `create_scheduler`, which owns no jobs of its own: each work package
     # adds the job it needs.
     register_inbox_job(app.state.scheduler)
+    # The Dropbox feeds. A second ingest job beside the watched folder rather
+    # than an extension of it: the local sweep must keep working when the
+    # connector cannot (`app.ingest.feeds`).
+    register_feed_poll_job(app.state.scheduler)
     # The missed-session sweep (WP-6.7). Hourly, and idempotent, so it needs no
     # agreement with the athlete's midnight beyond `MATCHING__TIMEZONE`.
     register_missed_sessions_job(app.state.scheduler)

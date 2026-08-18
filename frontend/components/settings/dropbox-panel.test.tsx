@@ -170,6 +170,100 @@ describe("with a connected account", () => {
   });
 });
 
+describe("what each folder has delivered", () => {
+  it("labels the stamp as when arc last checked, not when a ride landed", async () => {
+    seedDropboxConnection({
+      feeds: [
+        dropboxFeed({
+          remote_path: "/apps/wahoofitness",
+          cursor: "cursor-1",
+          last_delivery_at: "2026-08-16T06:12:00Z",
+        }),
+      ],
+    });
+    renderPanel();
+
+    const surface = await panel();
+    const row = within(surface).getByTestId("dropbox-feed");
+    expect(within(row).getByText("/apps/wahoofitness")).toBeInTheDocument();
+    const delivery = within(row).getByTestId("dropbox-feed-delivery");
+    // A timestamp is a numeral: convention 5.
+    expect(delivery).toHaveClass("font-mono");
+    // 06:12 UTC is 20:12 the same day for the `Pacific/Kiritimati` athlete the
+    // fake backend serves. On the athlete's clock, not the server's: this row
+    // is read against *now* to judge whether the feed is alive, and a stamp
+    // fourteen hours out makes a poll from ten minutes ago look like a dead
+    // feed. That the two differ at all is what the suite's zones are for — the
+    // browser runs at UTC-11, so a component reading either wrong clock lands
+    // on neither of these strings.
+    expect(delivery).toHaveTextContent("16.08 20:12");
+    // The field moves on every completed poll, empty folder included, so an
+    // unlabelled stamp read as "a ride arrived then" — which made a rest week
+    // and a broken feed look alike, the one thing this row must separate.
+    expect(within(row).getByText(/last checked/i)).toBeInTheDocument();
+  });
+
+  it("says a folder has never been reached rather than showing a blank", async () => {
+    seedDropboxConnection({
+      feeds: [dropboxFeed({ last_delivery_at: null })],
+    });
+    renderPanel();
+
+    const surface = await panel();
+    // Not an em dash in a slot: "arc has not got through to this folder yet"
+    // is the fact the athlete is looking for when a week is empty.
+    expect(within(surface).getByText(/not checked yet/i)).toBeInTheDocument();
+  });
+
+  it("renders a feed's own error beside its folder", async () => {
+    seedDropboxConnection({
+      feeds: [
+        dropboxFeed({
+          remote_path: "/apps/wahoofitness",
+          last_error: "ride.fit could not be downloaded: Dropbox answered 503",
+        }),
+      ],
+    });
+    renderPanel();
+
+    const surface = await panel();
+    const row = within(surface).getByTestId("dropbox-feed");
+    expect(within(row).getByText("/apps/wahoofitness")).toBeInTheDocument();
+    expect(
+      within(row).getByText(/could not be downloaded/i),
+    ).toBeInTheDocument();
+  });
+
+  it("distinguishes a paused folder from one that is merely quiet", async () => {
+    seedDropboxConnection({
+      feeds: [
+        dropboxFeed({
+          id: "0199b000-0000-7000-8000-00000000f0a1",
+          remote_path: "/apps/silent",
+          enabled: true,
+          last_delivery_at: null,
+        }),
+        dropboxFeed({
+          id: "0199b000-0000-7000-8000-00000000f0a2",
+          remote_path: "/apps/switched-off",
+          enabled: false,
+          last_delivery_at: null,
+        }),
+      ],
+    });
+    renderPanel();
+
+    const surface = await panel();
+    const [quiet, paused] = within(surface).getAllByTestId("dropbox-feed");
+    // Both are silent; only one of them is silent on purpose, and the athlete
+    // has to be able to tell which without reading the buttons.
+    expect(quiet).toHaveAttribute("data-enabled", "true");
+    expect(paused).toHaveAttribute("data-enabled", "false");
+    expect(within(paused).getByText(/paused/i)).toBeInTheDocument();
+    expect(within(quiet).queryByText(/paused/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("the folder picker", () => {
   it("lists the folders arc can watch and starts watching the chosen one", async () => {
     const user = userEvent.setup();

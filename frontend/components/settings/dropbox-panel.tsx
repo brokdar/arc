@@ -328,7 +328,25 @@ function Feeds({ connection }: { readonly connection: Connection }) {
   );
 }
 
+/**
+ * One watched folder: where it points, what it last delivered, what broke.
+ *
+ * The delivery line is the reason this row is more than a path and two
+ * buttons. A folder that has stopped collecting looks exactly like a folder
+ * with nothing to collect — the athlete's only other evidence is a calendar
+ * that is missing rides, which is noticed weeks late and blamed on arc losing
+ * them. `data-enabled` carries the pause into the DOM rather than leaving it
+ * to the button labels: "paused" and "quiet" are the two states this panel
+ * exists to keep apart, and a reader scanning the list should not have to
+ * read a button to tell which one they are looking at.
+ */
 function FeedRow({ feed }: { readonly feed: Feed }) {
+  // The athlete reads "last checked" against *now* to judge whether the feed
+  // is alive, so it is a moment on their clock, not the server's. In UTC a
+  // poll from ten minutes ago looks fourteen hours stale to an athlete at
+  // UTC+14 — and telling a broken feed from a quiet one is the whole job of
+  // this row, which is the judgement a stamp wrong by the offset breaks.
+  const timezone = useAthleteTimezone();
   const queryClient = useQueryClient();
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: connectionsKey });
@@ -341,33 +359,63 @@ function FeedRow({ feed }: { readonly feed: Feed }) {
   const params = { path: { feed_id: feed.id } };
 
   return (
-    <li className="flex flex-wrap items-center gap-2">
-      <span className="mr-auto font-mono text-ink-secondary text-sm">
-        {feed.remote_path === "" ? "/ (the whole Dropbox)" : feed.remote_path}
-      </span>
-      {feed.enabled ? null : (
-        <span className="text-ink-faint text-xs">paused</span>
-      )}
-      <Button
-        type="button"
-        size="xs"
-        variant="secondary"
-        disabled={update.isPending}
-        onClick={() =>
-          update.mutate({ params, body: { enabled: !feed.enabled } })
-        }
-      >
-        {feed.enabled ? "Pause" : "Resume"}
-      </Button>
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        disabled={remove.isPending}
-        onClick={() => remove.mutate({ params })}
-      >
-        Remove
-      </Button>
+    <li
+      data-testid="dropbox-feed"
+      data-enabled={feed.enabled}
+      className={`flex flex-col gap-1 ${feed.enabled ? "" : "opacity-60"}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-auto font-mono text-ink-secondary text-sm">
+          {feed.remote_path === "" ? "/ (the whole Dropbox)" : feed.remote_path}
+        </span>
+        {feed.enabled ? null : (
+          <span className="text-ink-faint text-xs">paused</span>
+        )}
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          disabled={update.isPending}
+          onClick={() =>
+            update.mutate({ params, body: { enabled: !feed.enabled } })
+          }
+        >
+          {feed.enabled ? "Pause" : "Resume"}
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={remove.isPending}
+          onClick={() => remove.mutate({ params })}
+        >
+          Remove
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
+        {feed.last_delivery_at === null ? (
+          // Not an em dash in a slot: "nothing has come through yet" is a
+          // fact about setup, and it is what the athlete came here to read.
+          <span className="text-ink-faint">not checked yet</span>
+        ) : (
+          // "Checked", not "delivered": the stamp moves on every poll arc
+          // completes, including one that found an empty folder, because the
+          // field means "arc heard from Dropbox at all" (see `FeedRead`). A
+          // bare timestamp here read as "a ride arrived then", so a fresh
+          // stamp on a rest week looked like a delivery and a broken feed
+          // could not be told from a quiet one — the exact confusion the two
+          // states on this row exist to keep apart.
+          <span className="text-ink-faint">
+            last checked{" "}
+            <span data-testid="dropbox-feed-delivery" className="font-mono">
+              {formatAthleteStamp(feed.last_delivery_at, timezone)}
+            </span>
+          </span>
+        )}
+        {feed.last_error === null ? null : (
+          <span className="text-destructive">{feed.last_error}</span>
+        )}
+      </div>
     </li>
   );
 }

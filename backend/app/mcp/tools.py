@@ -55,9 +55,8 @@ Holding, exchanging and revoking the athlete's Dropbox OAuth credential is not
 a coaching capability; it is the operator's setup ritual, done once, at a
 screen, with a code pasted from another site. An agent with a
 ``connect_dropbox`` tool would be an agent that can move where the athlete's
-training files come from. What the agent *does* get, in the PR that makes the
-feed deliver, is the read half: whether the pipeline is alive, so it can tell
-a quiet week from a broken one.
+training files come from. What the agent *does* get is the read half —
+:func:`get_ingest_status` — so it can tell a quiet week from a broken one.
 """
 
 import datetime as dt
@@ -110,6 +109,7 @@ from app.persistence.db import session_scope
 from app.services.activity import LoggedSetInput, SessionService
 from app.services.agent_notes import AgentNoteService
 from app.services.anchors import AnchorService
+from app.services.connections import ConnectionService
 from app.services.exercises import ExerciseService
 from app.services.guardrails import current_profile, remaining_write_budget
 from app.services.history import HistoryService
@@ -1480,6 +1480,47 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 )
                 return {
                     "wellness": views.wellness_weeks(summary),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_ingest_status() -> dict[str, Any]:
+        """Read whether activity files are still reaching arc, and through what.
+
+        **Read this before concluding anything from a quiet week.** Every
+        other read here answers "what did the athlete do"; a session that
+        never arrived is indistinguishable from a session that never happened,
+        and this is the only way to tell them apart. A week with no rides and a
+        `failing` feed is a broken pipe, not a rest week, and a plan revised on
+        the second reading would be wrong in the direction that costs fitness.
+
+        Per watched folder: the `folder` itself, `last_delivery_at` (when arc
+        last successfully heard from the provider at all — not when a ride last
+        arrived), `deliveries_7d` (files that became sessions in the last seven
+        days), `last_error`, and the `connection_status` of the credential
+        behind it. `state` folds those into one word: `paused` (switched off on
+        purpose), `failing` (the last poll left an error), `never_delivered`
+        (nothing has ever come through — a fact about setup, not a fault), or
+        `delivering`.
+
+        `local_inbox_only: true` with an empty `feeds` list means no cloud
+        account is connected at all. That is a **supported configuration**, not
+        a failure: files are dropped into arc's watched folder on the server.
+        There is nothing to report and nothing to worry about.
+
+        You cannot connect, repair or re-authorise anything from here — that is
+        the athlete's own setup ritual, at a screen, with a code pasted from
+        another site. What you can do is *say* that it is broken, which is the
+        thing nobody notices until a month of rides is missing.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                status = await ConnectionService.from_session(session).ingest_status()
+                return {
+                    **views.ingest_status(status),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
 
