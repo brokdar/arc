@@ -104,15 +104,33 @@ def red_flag(profile: AthleteProfile) -> dict[str, Any]:
     }
 
 
-def athlete(profile: AthleteProfile, *, today: dt.date) -> dict[str, Any]:
-    """The athlete profile the agent plans against."""
+def athlete(
+    profile: AthleteProfile, *, today: dt.date, timezone: str
+) -> dict[str, Any]:
+    """The athlete profile the agent plans against.
+
+    ``today`` and ``timezone`` are the same clock, passed in rather than read
+    here: this is a projection, and a view that asked the process what day it
+    was would be the fourth such answer in one payload (issue #62). The zone is
+    on the profile because every bare date the surface returns is a day on it,
+    and the agent cannot tell that from the payload otherwise.
+    """
     return {
         "name": profile.name,
         "sex": profile.sex.value,
         "date_of_birth": (
             None if profile.date_of_birth is None else profile.date_of_birth.isoformat()
         ),
+        #: On the athlete's own clock, from `timezone` — a birthday arrives
+        #: when it arrives for them, not when it arrives in Greenwich.
         "age": profile.age_on(today),
+        #: The athlete's home timezone (`MATCHING__TIMEZONE`): the clock every
+        #: `date`, `local_date`, `effective_date` and `plan_week` on this
+        #: surface is on, and the one to render any `*_at` instant in.
+        "timezone": timezone,
+        #: Today on that clock. What "this week" and "yesterday" mean in
+        #: anything the athlete says.
+        "today": today.isoformat(),
         "height_cm": profile.height_cm,
         #: Per-discipline experience and equipment, as the athlete filled it in.
         "capabilities": dict(profile.capabilities),

@@ -3,12 +3,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
-
 import { ProposalInbox } from "@/components/coach/proposal-inbox";
 import { SidebarNav } from "@/components/shell/sidebar-nav";
 import { $api } from "@/lib/api/client";
+import { AthleteClock } from "@/lib/clock";
 import type { Proposal } from "@/lib/proposals";
 import {
+  ATHLETE_TIMEZONE,
   PROPOSAL_IDS,
   plannedSessionFixture,
   proposalById,
@@ -45,8 +46,10 @@ function renderInbox(beside?: React.ReactNode) {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ProposalInbox />
-      {beside}
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <ProposalInbox />
+        {beside}
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }

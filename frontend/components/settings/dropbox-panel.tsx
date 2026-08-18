@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
-import { formatUtcStamp } from "@/lib/format";
+import { useAthleteTimezone } from "@/lib/clock";
+import { formatAthleteStamp } from "@/lib/format";
 
 type Schemas = components["schemas"];
 type Connection = Schemas["ConnectionRead"];
@@ -285,6 +286,7 @@ function BrokenConnection({ connection }: { readonly connection: Connection }) {
 
 /** The account label and when it was connected. */
 function AccountLine({ connection }: { readonly connection: Connection }) {
+  const timezone = useAthleteTimezone();
   return (
     <div className="flex flex-wrap items-baseline gap-x-2.5">
       <span className="text-ink text-sm">
@@ -294,7 +296,7 @@ function AccountLine({ connection }: { readonly connection: Connection }) {
         data-testid="dropbox-connected-at"
         className="font-mono text-ink-faint text-xs"
       >
-        {formatUtcStamp(connection.created_at)}
+        {formatAthleteStamp(connection.created_at, timezone)}
       </span>
     </div>
   );
@@ -339,6 +341,12 @@ function Feeds({ connection }: { readonly connection: Connection }) {
  * read a button to tell which one they are looking at.
  */
 function FeedRow({ feed }: { readonly feed: Feed }) {
+  // The athlete reads "last checked" against *now* to judge whether the feed
+  // is alive, so it is a moment on their clock, not the server's. In UTC a
+  // poll from ten minutes ago looks fourteen hours stale to an athlete at
+  // UTC+14 — and telling a broken feed from a quiet one is the whole job of
+  // this row, which is the judgement a stamp wrong by the offset breaks.
+  const timezone = useAthleteTimezone();
   const queryClient = useQueryClient();
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: connectionsKey });
@@ -400,7 +408,7 @@ function FeedRow({ feed }: { readonly feed: Feed }) {
           <span className="text-ink-faint">
             last checked{" "}
             <span data-testid="dropbox-feed-delivery" className="font-mono">
-              {formatUtcStamp(feed.last_delivery_at)}
+              {formatAthleteStamp(feed.last_delivery_at, timezone)}
             </span>
           </span>
         )}

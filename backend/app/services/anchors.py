@@ -12,6 +12,7 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.anchors import (
@@ -23,7 +24,6 @@ from app.domain.anchors import (
     AnchorUnit,
     AnchorVersion,
     Provenance,
-    anchor_as_of,
     anchor_effective_on,
 )
 from app.domain.prediction import PinnedAnchor
@@ -91,51 +91,52 @@ class AnchorService:
         rows = await self._repository.get_many(anchor_version_ids)
         return {row.id: row for row in rows}
 
-    async def current(
-        self, anchor_type: AnchorType, *, moment: dt.datetime | None = None
-    ) -> AnchorVersionRow:
-        """Return the version of ``anchor_type`` in force at ``moment`` (now).
+    async def current(self, anchor_type: AnchorType) -> AnchorVersionRow:
+        """Return the version of ``anchor_type`` in force today.
 
-        The choice is made by a domain rule over the whole history rather than
-        by an ``ORDER BY ... LIMIT 1``: future-dated and back-dated versions
-        both exist, and the rule for which one counts is a domain rule that
-        scoring and metrics will reuse.
+        The choice is made by `app.domain.anchors.anchor_effective_on` over the
+        whole history rather than by an ``ORDER BY ... LIMIT 1``: future-dated
+        and back-dated versions both exist, and the rule for which one counts
+        is a domain rule that scoring and metrics reuse. The day is the
+        athlete's own (`app.core.clock.athlete_today`, from
+        `MATCHING__TIMEZONE`), never the UTC one — an `effective_date` is a
+        local calendar date (issue #62).
 
-        **Which rule depends on whether the caller named an instant.** A named
-        ``moment`` is a historical question — "what was knowable then" — so it
-        goes through `anchor_as_of`, whose ``created_at <= moment`` half is
-        what keeps a stored score reproducible after a back-dated append. The
-        default, "now", is not a historical question, and that same half is
-        actively harmful there: `datetime.now(UTC)` is *not monotonic* — an
-        NTP correction, a resumed VM or a virtualised host clock steps it back
-        by milliseconds — so a version this application wrote moments ago can
-        carry a ``created_at`` later than the "now" of the very next request,
-        and the athlete is told to append the FTP they just appended. "Now"
-        therefore asks `anchor_effective_on` over today: which version does the
-        history *as it stands* assign to today. The only rows that clause could
-        ever have excluded here are ones stamped in the future, which no honest
-        clock produces; future *effective* dates are still excluded, by the
-        half both functions share.
+        **`anchor_effective_on` and not `anchor_as_of`, deliberately.** The
+        second one additionally requires ``created_at <= moment``, which is
+        what makes *reproducing a past read* honest — a value entered today
+        cannot become what last week's score was looking at. Asked about
+        **now**, that clause can only ever exclude a row that does not exist
+        yet, so it looks free. It is not: `created_at` is stamped from
+        `dt.datetime.now`, which reads `CLOCK_REALTIME` and is **not
+        monotonic**. An NTP correction, a resumed VM or a virtualised host
+        clock steps it backwards by milliseconds — this WSL2 container by
+        ~180 ms every ~30 s — and a version written moments ago then carries a
+        stamp later than the "now" of the very next request, so the athlete is
+        told to "append an FTP first" about the FTP they just appended.
+        `current` asks "which measurement does the history assign to today",
+        and that question has no instant in it. Future *effective* dates are
+        still excluded, by the half both functions share.
+
+        **And therefore no ``moment`` parameter.** Naming an instant would put
+        the reproducibility question back in the one place that must not ask
+        it; no caller in `app/` ever passed one. Reproducing a past read is
+        `anchor_as_of`, called by whoever is replaying it (#66, issue #62).
 
         Raises:
             NotFoundError: When no version of that type is in force.
         """
-        at = moment or dt.datetime.now(dt.UTC)
+        day = athlete_today()
         rows = await self._repository.history(anchor_type)
         # Paired rather than keyed by the domain value: two versions can be
         # equal in every field the domain models and still be distinct rows.
         pairs = [(row.to_domain(), row) for row in rows]
         with domain_rules():
-            versions = (version for version, _ in pairs)
-            in_force = (
-                anchor_as_of(versions, moment)
-                if moment is not None
-                else anchor_effective_on(versions, at.astimezone(dt.UTC).date())
-            )
+            in_force = anchor_effective_on((version for version, _ in pairs), day)
         if in_force is None:
             raise NotFoundError(
-                f"No {anchor_type.value} anchor is in force at "
-                f"{at.isoformat()}; append one first"
+                f"No {anchor_type.value} anchor is in force on "
+                f"{day.isoformat()}; append one first"
             )
         return next(row for version, row in pairs if version is in_force)
 
@@ -182,6 +183,19 @@ class AnchorService:
                 "critical-power model (WP-5) and cannot be appended yet"
             )
         created_at = dt.datetime.now(dt.UTC)
+        # The athlete's calendar day, not the UTC one: an FTP appended at 08:00
+        # on the 20th in Auckland is effective from the 20th, and dating it the
+        # 19th would put it in force a day early for every score that reads it
+        # (issue #62).
+        #
+        # Read *outside* `domain_rules()` on purpose. An unresolvable
+        # `MATCHING__TIMEZONE` is a broken deployment, not a broken request:
+        # translated to a 422 it would tell a caller whose payload was perfectly
+        # good that their input was invalid, and hide the operator's typo behind
+        # a client error. Every other read of this clock — `PlanService.week`,
+        # `AnchorService.current`, the MCP tools — lets it surface as a 500, and
+        # this was the one place that did not.
+        day = athlete_today(created_at)
         with domain_rules():
             return AnchorVersion(
                 anchor_type=anchor_type,
@@ -189,7 +203,7 @@ class AnchorService:
                 unit=unit or ANCHOR_UNITS[anchor_type],
                 provenance=provenance,
                 protocol=protocol,
-                effective_date=effective_date or created_at.date(),
+                effective_date=effective_date or day,
                 ci_low=ci_low,
                 ci_high=ci_high,
                 created_at=created_at,
@@ -220,8 +234,8 @@ class AnchorService:
             provenance: How the value was arrived at. `tested` additionally
                 requires ``protocol``.
             source: Whether the athlete or the agent is appending.
-            effective_date: The date the value applies from; today when
-                omitted.
+            effective_date: The date the value applies from; omitted, the
+                athlete's own today (`MATCHING__TIMEZONE`).
             unit: The anchor type's own unit when omitted — supplying a
                 different one is an error, not a conversion request.
             protocol: How the value was measured.

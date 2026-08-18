@@ -79,10 +79,42 @@ describe("isoWeekNumber", () => {
 });
 
 describe("todayIsoDate", () => {
-  it("reads the local calendar date, not the UTC one", () => {
-    // 23:30 local on the 15th is the 15th, whatever UTC thinks.
-    const localLateEvening = new Date(2026, 7, 15, 23, 30);
-    expect(todayIsoDate(localLateEvening)).toBe("2026-08-15");
+  // 2026-08-15 12:00 UTC. Late evening in Kiritimati (UTC+14, already the
+  // 16th), still the morning of the 15th in Midway (UTC-11) — one instant,
+  // two calendar days, which is the whole of what this function decides.
+  const NOON_UTC = new Date("2026-08-15T12:00:00Z");
+
+  it("reads the given zone's calendar date, not the browser's", () => {
+    expect(todayIsoDate("Pacific/Kiritimati", NOON_UTC)).toBe("2026-08-16");
+    expect(todayIsoDate("Pacific/Midway", NOON_UTC)).toBe("2026-08-15");
+  });
+
+  it("resolves a region name through the zone database, not as an offset", () => {
+    // Europe/Berlin is +02:00 in July and +01:00 in January, and 23:30 UTC on
+    // 31 December is the 1st there either way only if the offset is applied at
+    // all. Read as a fixed +02:00 the winter answer would be an hour out — the
+    // hour that decides the day.
+    const newYearsEve = new Date("2026-12-31T23:30:00Z");
+    expect(todayIsoDate("Europe/Berlin", newYearsEve)).toBe("2027-01-01");
+    const midsummerNight = new Date("2026-06-30T22:30:00Z");
+    expect(todayIsoDate("Europe/Berlin", midsummerNight)).toBe("2026-07-01");
+    // Same clock time in winter is *not* yet the next day, because the offset
+    // is an hour smaller.
+    const winterNight = new Date("2026-12-30T22:30:00Z");
+    expect(todayIsoDate("Europe/Berlin", winterNight)).toBe("2026-12-30");
+  });
+
+  it("takes the three forms the backend can serve", () => {
+    expect(todayIsoDate("UTC", NOON_UTC)).toBe("2026-08-15");
+    expect(todayIsoDate("UTC+14:00", NOON_UTC)).toBe("2026-08-16");
+    expect(todayIsoDate("UTC-11:00", NOON_UTC)).toBe("2026-08-15");
+  });
+
+  it("falls back to the browser rather than rendering no date at all", () => {
+    // The backend refuses to serve a zone this cannot resolve, so reaching
+    // here is the shape of a bug — and a page with no date is worse than one
+    // an hour out. The runner is pinned to Pacific/Midway.
+    expect(todayIsoDate("Not/AZone", NOON_UTC)).toBe("2026-08-15");
   });
 });
 

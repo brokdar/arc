@@ -8,6 +8,27 @@ import { WELLNESS_TREND } from "./generated-wellness-trend";
 type Schemas = components["schemas"];
 
 /**
+ * The athlete's timezone, as this fake backend serves it from `GET /clock`.
+ *
+ * `Pacific/Kiritimati` is UTC+14 all year and the runner's own clock is pinned
+ * to `Pacific/Midway`, UTC-11 all year (`vitest.config.mts`). Twenty-five
+ * hours apart with no DST on either side, so the athlete's calendar date and
+ * the browser's are **never** the same day — whenever the suite runs.
+ *
+ * That is the point. Before issue #62 the frontend computed "today" from the
+ * browser and every test that keyed off it passed because the fixture and the
+ * component shared the same wrong clock; they could not detect the bug by
+ * construction. With the two pinned apart, a component that reads the
+ * browser's clock disagrees with this fixture on every single run.
+ */
+export const ATHLETE_TIMEZONE = "Pacific/Kiritimati";
+
+/** Today on the athlete's clock — what `GET /clock` and every fixture use. */
+export function athleteToday(now: Date = new Date()): string {
+  return todayIsoDate(ATHLETE_TIMEZONE, now);
+}
+
+/**
  * A realistic week — realistic in the strict sense that **the real API could
  * have produced every byte of it**.
  *
@@ -873,7 +894,7 @@ export function plannedSessionFixture(
     (SEEDS[1] as (typeof SEEDS)[number]);
   return {
     id: seed.session.id,
-    date: addDays(mondayOf(todayIsoDate()), seed.dayOffset),
+    date: addDays(mondayOf(athleteToday()), seed.dayOffset),
     discipline: seed.session.discipline,
     status: seed.session.status,
     intent_versions: seed.session.intent_version,
@@ -1230,7 +1251,7 @@ export function currentAnchor(
   anchorType: Schemas["AnchorType"],
   now: Date = new Date(),
 ): Schemas["AnchorVersionRead"] | undefined {
-  const today = todayIsoDate(now);
+  const today = athleteToday(now);
   const instant = now.toISOString();
   const inForce = anchors().filter(
     (version) =>
@@ -1293,7 +1314,7 @@ export function appendAnchorVersion(
     provenance: body.provenance,
     protocol: body.protocol ?? null,
     // Today when omitted — the service's own default.
-    effective_date: body.effective_date ?? todayIsoDate(createdAt),
+    effective_date: body.effective_date ?? athleteToday(createdAt),
     ci_low: body.ci_low ?? null,
     ci_high: body.ci_high ?? null,
     // The athlete is the only writer with an HTTP session; the agent writes
@@ -3297,7 +3318,7 @@ function requestOf(
 
 function seedProposals(): Schemas["ProposalRead"][] {
   const pendingDiff = pendingChanges();
-  const soon = `${addDays(todayIsoDate(), 3)}T12:00:00Z`;
+  const soon = `${addDays(athleteToday(), 3)}T12:00:00Z`;
   return [
     {
       id: PROPOSAL_IDS.pending,
@@ -3411,7 +3432,7 @@ function seedNotes(): Schemas["AgentNoteRead"][] {
       id: NOTE_IDS.weekEvaluation,
       kind: "evaluation",
       session_id: null,
-      plan_week: mondayOf(todayIsoDate()),
+      plan_week: mondayOf(athleteToday()),
       text:
         "Three of four sessions landed and the one that did not was the easiest. " +
         "The week did what it was for.",
@@ -3865,7 +3886,7 @@ export function patchWellnessDay(
     // it: a day is recalled when it describes something more than two days
     // before it was entered.
     subjective_recalled:
-      (Date.parse(`${todayIsoDate()}T00:00:00Z`) -
+      (Date.parse(`${athleteToday()}T00:00:00Z`) -
         Date.parse(`${localDate}T00:00:00Z`)) /
         86_400_000 >
       2,

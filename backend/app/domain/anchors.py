@@ -235,39 +235,39 @@ def sorted_history(versions: Iterable[AnchorVersion]) -> list[AnchorVersion]:
     return sorted(versions, key=_ordering_key)
 
 
-def current_anchor(versions: Iterable[AnchorVersion]) -> AnchorVersion | None:
-    """Return the version in force now, or ``None`` when the history is empty.
-
-    A version whose ``effective_date`` is in the future is not yet in force —
-    back-dating and forward-dating are both legal, and only the past counts.
-
-    Deliberately :func:`anchor_effective_on` over today rather than
-    :func:`anchor_as_of` at this instant: the ``created_at <= moment`` half is
-    a reproducibility guard for *historical* questions, and against "now" it
-    only ever excludes a row stamped in the future — which a wall clock that
-    steps backwards (NTP, a resumed VM) produces out of a perfectly ordinary
-    append. See ``AnchorService.current``, which answers the same question over
-    stored rows and must agree with this.
-    """
-    return anchor_effective_on(versions, dt.datetime.now(dt.UTC).date())
-
-
 def anchor_as_of(
-    versions: Iterable[AnchorVersion], moment: dt.datetime
+    versions: Iterable[AnchorVersion], moment: dt.datetime, day: dt.date
 ) -> AnchorVersion | None:
-    """Return the version in force at ``moment``.
+    """Return the version in force at ``moment``, on the athlete's ``day``.
 
-    "In force" means: effective on or before that day, and appended on or
-    before that instant. The second half is what makes this reproducible —
-    a value entered today cannot retroactively become what a score computed
-    last week was looking at, however it is back-dated.
+    "In force" means: effective on or before ``day``, and appended on or
+    before ``moment``. The second half is what makes this reproducible — a
+    value entered today cannot retroactively become what a score computed last
+    week was looking at, however it is back-dated.
+
+    **The two arguments are not redundant** and the day cannot be derived from
+    the instant here. ``effective_date`` is an athlete-local calendar date;
+    ``moment`` is an instant. This function used to read the day off the
+    instant in UTC, which put an anchor effective "from the 20th" out of force
+    for the first twelve hours of an Auckland athlete's 20th and in force two
+    hours early for a Honolulu one (issue #62). Which calendar the athlete
+    lives in is ambient state, and this layer deliberately has none — so the
+    caller passes it (`app.core.clock.athlete_today`), the same way
+    :func:`anchor_effective_on` already takes its day.
+
+    **Nothing calls this yet, and that is not an oversight.** "Which version is
+    in force *now*" is :func:`anchor_effective_on` — see
+    `app.services.anchors.AnchorService.current` for why asking it with
+    ``moment=now`` is actively wrong. This function is the rule for
+    *reproducing* a read that already happened: what a stored score or verdict
+    was looking at when it was computed. It is kept and tested for the caller
+    that replays one, not for a current one.
 
     Raises:
         ValueError: When ``moment`` is naive.
     """
     if moment.tzinfo is None:
         raise ValueError("moment must be timezone-aware UTC")
-    day = moment.astimezone(dt.UTC).date()
     in_force = [
         version
         for version in versions

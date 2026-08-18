@@ -2,11 +2,15 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { WeekGrid } from "@/components/calendar/week-grid";
-import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { addDays, mondayOf } from "@/lib/dates";
 import { COMPLETION_TONES } from "@/lib/scoring";
-import { planWeekFixture, SESSION_IDS } from "@/tests/mocks/fixtures";
+import {
+  athleteToday,
+  planWeekFixture,
+  SESSION_IDS,
+} from "@/tests/mocks/fixtures";
 
-const START = mondayOf(todayIsoDate());
+const START = mondayOf(athleteToday());
 
 /**
  * The grid on its own, with no network in front of it.

@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.validation import PostgresJsonObject, PostgresText
+from app.core.clock import athlete_today
 from app.domain.athlete import (
     MAX_HEIGHT_CM,
     MAX_RED_FLAG_NOTE_CHARS,
@@ -87,6 +88,13 @@ class AthleteUpdate(BaseModel):
         # Checked here rather than in the domain: "is this in the future"
         # needs a clock, and `app.domain` stays free of ambient state. The
         # lower bound (EARLIEST_BIRTH_YEAR) is a domain rule and lives there.
-        if value is not None and value > dt.datetime.now(dt.UTC).date():
+        #
+        # The clock is the athlete's own (`app.core.clock`), not UTC. The
+        # difference only ever decides one edge case — somebody born today,
+        # typing it in on the far side of a date line — but a schema spelling
+        # "today" its own way is how a process ends up with four of them
+        # (issue #62), and the one that matters is a schema layer that can
+        # reach the shared answer without reaching into a service.
+        if value is not None and value > athlete_today():
             raise ValueError("date_of_birth cannot be in the future")
         return value

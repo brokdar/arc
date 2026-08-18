@@ -7,8 +7,9 @@ import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
+import { useAthleteTimezone } from "@/lib/clock";
 import { addDays, weekdayLabel } from "@/lib/dates";
-import { formatUtcStamp } from "@/lib/format";
+import { formatAthleteStamp } from "@/lib/format";
 import {
   confounderLabel,
   MARKER_FIELDS,
@@ -62,10 +63,15 @@ export function WellnessCard({
     (series.data?.items ?? []).map((item) => [item.local_date, item]),
   );
   const day = days.get(today) ?? null;
-  // Only a prompt about *this* card's day speaks for it. The read answers on
-  // the athlete's clock (`MATCHING__TIMEZONE`) and this component is given the
-  // browser's; where the two disagree over a midnight, a prompt about
+  // Only a prompt about *this* card's day speaks for it — a prompt about
   // yesterday must not be rendered as a question about this morning.
+  //
+  // This check used to be a *defence against two clocks*: the read answered on
+  // the athlete's (`MATCHING__TIMEZONE`) and the card was given the browser's,
+  // so over a midnight it hid the standing prompt and the athlete silently
+  // lost the day's question with nothing on screen to say why. Both are now
+  // the athlete's clock (`lib/clock.tsx`), so the two agree and this is what
+  // it reads as: the ordinary guard on a day that genuinely has no prompt.
   const standing = prompt.data?.local_date === today ? prompt.data : null;
 
   return (
@@ -171,6 +177,13 @@ function RecordedDay({ day }: { readonly day: WellnessDay }) {
  * again is wrong in a way this card can prevent.
  */
 function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
+  // The one actionable deadline in the application, so it is rendered on the
+  // athlete's own clock rather than in raw UTC. `formatUtcStamp` is right for
+  // an ingest log — the log records what the server did, and its column is
+  // headed with the zone — and wrong here: this is a time the athlete has to
+  // act before, on a card otherwise entirely about their local morning
+  // (issue #62, finding 8).
+  const timezone = useAthleteTimezone();
   return (
     <div className="flex flex-col items-start gap-2">
       <p className="text-ink-muted text-sm">
@@ -179,8 +192,10 @@ function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
       </p>
       <p className="text-ink-faint text-xs">
         Open until{" "}
-        <span className="font-mono">{formatUtcStamp(expiresAt)}</span>; after
-        that the day closes unanswered and is not asked again.
+        <span className="font-mono">
+          {formatAthleteStamp(expiresAt, timezone)}
+        </span>
+        ; after that the day closes unanswered and is not asked again.
       </p>
       <Button
         size="sm"

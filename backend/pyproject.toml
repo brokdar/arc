@@ -91,6 +91,16 @@ select = [
     "PT",     # flake8-pytest-style
     "ASYNC",  # flake8-async
     "PERF",   # perflint
+    # The clock rules (issue #62). `dt.date.today()` and a naive
+    # `datetime.now()` read whatever `/etc/localtime` the container has, which
+    # is a third answer to "what day is it" beside UTC and the athlete's own
+    # `MATCHING__TIMEZONE` — and no deployment file here sets `TZ`, so it was
+    # silently equal to UTC and one environment variable from being a real bug.
+    # Every instant this application stores is aware UTC and every calendar
+    # date it derives comes from `app.core.clock`; this rule set is what stops
+    # a fourth from being written. The `noqa: DTZ001`s in `tests/` predate it
+    # and mark the deliberately-naive values a refusal is asserted against.
+    "DTZ",    # flake8-datetimez
 ]
 ignore = [
     "E501",  # line length handled by the formatter

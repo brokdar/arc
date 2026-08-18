@@ -18,6 +18,7 @@ import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
 import { $api } from "@/lib/api/client";
+import { useAthleteTimezone } from "@/lib/clock";
 import { describeCriterion } from "@/lib/criteria";
 import { mondayOf, todayIsoDate, weekdayLabel } from "@/lib/dates";
 import { formatDayMonthYear, formatDurationHm, formatSets } from "@/lib/format";
@@ -55,9 +56,13 @@ import { describeSets, ZONE_COLORS } from "@/lib/workout-profile";
  * provenance line under the profile says whose FTP that was.
  */
 export function TodayView() {
-  // Read once on mount: re-deriving "today" mid-render would let a page left
-  // open overnight disagree with itself.
-  const [today] = useState(todayIsoDate);
+  // The athlete's own clock (`/clock`), not the browser's — a page titled
+  // "Today" that showed a different day from the one the backend raised the
+  // wellness prompt for is exactly what issue #62 was about. Read once on
+  // mount: re-deriving it mid-render would let a page left open overnight
+  // disagree with itself.
+  const timezone = useAthleteTimezone();
+  const [today] = useState(() => todayIsoDate(timezone));
   const [start] = useState(() => mondayOf(today));
   const [planning, setPlanning] = useState(false);
 

@@ -2,11 +2,11 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { WeekRail } from "@/components/calendar/week-rail";
-import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { mondayOf } from "@/lib/dates";
 import type { PlanWeek } from "@/lib/plan-week";
-import { planWeekFixture } from "@/tests/mocks/fixtures";
+import { athleteToday, planWeekFixture } from "@/tests/mocks/fixtures";
 
-const WEEK = planWeekFixture(mondayOf(todayIsoDate()));
+const WEEK = planWeekFixture(mondayOf(athleteToday()));
 
 function rail() {
   return screen.getByRole("complementary", { name: "Week totals" });

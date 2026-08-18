@@ -13,7 +13,8 @@ import {
 } from "@/lib/agent-notes";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
-import { formatUtcStamp } from "@/lib/format";
+import { useAthleteTimezone } from "@/lib/clock";
+import { formatAthleteStamp } from "@/lib/format";
 import { actorLabel } from "@/lib/proposals";
 import { cn } from "@/lib/utils";
 
@@ -109,6 +110,9 @@ function CoachNotes({
  * way to weigh it later is to know which one wrote it and when.
  */
 function NoteCard({ note }: { note: AgentNote }) {
+  // When the coach wrote it, and when the athlete rated it, on the athlete's
+  // clock — these sit beside a plan week that is already on it.
+  const timezone = useAthleteTimezone();
   const queryClient = useQueryClient();
   const dispute = $api.useMutation(
     "post",
@@ -146,7 +150,7 @@ function NoteCard({ note }: { note: AgentNote }) {
           {actorLabel(note.created_by)}
         </span>
         <span className="ml-auto font-mono text-2xs text-ink-faint">
-          {formatUtcStamp(note.created_at)}
+          {formatAthleteStamp(note.created_at, timezone)}
         </span>
       </div>
 
@@ -180,7 +184,9 @@ function NoteCard({ note }: { note: AgentNote }) {
           {note.dispute === null
             ? "Was this useful?"
             : `You rated this ${note.dispute === "up" ? "useful" : "wrong"}${
-                note.disputed_at ? ` · ${formatUtcStamp(note.disputed_at)}` : ""
+                note.disputed_at
+                  ? ` · ${formatAthleteStamp(note.disputed_at, timezone)}`
+                  : ""
               } — tap again to take it back.`}
         </span>
         <RatingButton

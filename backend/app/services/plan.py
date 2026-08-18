@@ -37,6 +37,7 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.domain.activity import SessionMatchStatus, as_planned_discipline
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
@@ -385,15 +386,16 @@ class PlanService:
 
         ``start`` is taken literally — a Wednesday start gives the seven days
         from Wednesday — so a client can page the calendar by a day if it
-        wants to. Omitted, it defaults to the Monday of the current week,
-        computed in **UTC** (:func:`_today`). That is right for the
-        browser client, which always sends an explicit `start=` derived from
-        the athlete's own clock; a WP-8 MCP caller that passes nothing gets
-        the UTC Monday, which is the wrong week for a few hours either side of
-        midnight in a distant timezone. The athlete-local answer arrives when
-        WP-4 gives the athlete a timezone — there is nothing to be local *to*
-        until then, and guessing from the server's clock would be a second
-        wrong answer rather than a better one.
+        wants to. Omitted, it defaults to the Monday of the week the athlete is
+        currently in, on the athlete's own clock
+        (`app.core.clock.athlete_today`, i.e. `MATCHING__TIMEZONE`).
+
+        That default used to be the **UTC** Monday, which handed a caller that
+        named no week the previous week's plan for a few hours either side of
+        midnight in a distant timezone — and `get_coaching_context`, the one
+        call every coaching session begins with, is such a caller. It then put
+        that week beside a wellness series read on the athlete's clock, in one
+        object, with nothing saying they disagreed (issue #62).
 
         Predicted load is computed here, on read, from each intent's frozen
         prescription and the anchor versions it pinned — never stored, exactly
@@ -420,7 +422,7 @@ class PlanService:
                 this ever fires in anger the remedy is the stored document,
                 not a per-card ``try``.
         """
-        first = start if start is not None else week_start(_today())
+        first = start if start is not None else week_start(athlete_today())
         dates = week_dates(first)
         rows, total = await self._sessions.list(
             start=first, end=dates[-1], limit=MAX_WEEK_SESSIONS
@@ -630,17 +632,6 @@ def _day(
         completed_load=sum(loads) if loads else None,
         completion_state=worst_state(states),
     )
-
-
-def _today() -> dt.date:
-    """The current date, in UTC.
-
-    The athlete's own timezone is not modelled until WP-4 puts one on each
-    recorded session, so UTC is the calendar the whole application already
-    agrees on. Isolated here so that work package has one line to
-    change.
-    """
-    return dt.datetime.now(dt.UTC).date()
 
 
 def _card(

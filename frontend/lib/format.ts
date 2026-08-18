@@ -108,20 +108,11 @@ export function localStamp(
     const minutes = fixed[1] === "-" ? -magnitude : magnitude;
     return utcStamp(new Date(instant.getTime() + minutes * 60_000));
   }
-  let parts: Intl.DateTimeFormatPart[];
-  try {
-    parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(instant);
-  } catch {
+  const formatter = zoneFormatter(timezone);
+  if (formatter === null) {
     return null;
   }
+  const parts = formatter.formatToParts(instant);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? "";
   const [year, month, day, hour, minute] = [
@@ -137,6 +128,44 @@ export function localStamp(
   return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
 }
 
+/**
+ * `Intl.DateTimeFormat` for one zone, built once.
+ *
+ * Constructing a formatter costs roughly eighteen times what using one does
+ * (~20 µs against ~1 µs), and this module is called **per row**: every session
+ * in a list, every stamp on a card, every re-render of a page that shows a
+ * date. Building one each time made the zone database a per-cell cost.
+ *
+ * The options never vary — the locale is pinned and the hour cycle forced, so
+ * that `Intl` acts as a timezone database rather than a formatter — so the
+ * zone name is the whole cache key. An unresolvable zone memoises as `null`,
+ * so a bad value costs one throw rather than one per render.
+ */
+const FORMATTERS = new Map<string, Intl.DateTimeFormat | null>();
+
+function zoneFormatter(timezone: string): Intl.DateTimeFormat | null {
+  const cached = FORMATTERS.get(timezone);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let formatter: Intl.DateTimeFormat | null;
+  try {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+  } catch {
+    formatter = null;
+  }
+  FORMATTERS.set(timezone, formatter);
+  return formatter;
+}
+
 /** The UTC calendar date and clock reading of a `Date`. */
 function utcStamp(instant: Date): LocalStamp {
   const iso = instant.toISOString();
@@ -144,11 +173,39 @@ function utcStamp(instant: Date): LocalStamp {
 }
 
 /**
+ * An instant on the athlete's own clock: `07.08 14:32`.
+ *
+ * For a moment the athlete has to *act* on — a deadline, an expiry. The
+ * counterpart of `formatUtcStamp`, which is for a moment the *server* acted
+ * at: that one is left in UTC because its column is headed with the zone, and
+ * a deadline shown in a zone the athlete does not live in is a deadline they
+ * will miss (issue #62, finding 8).
+ *
+ * `timezone` is the athlete's, from `useAthleteTimezone()`. Renders an em dash
+ * rather than a plausible wrong time when the instant or the zone will not
+ * resolve, for the reason `localStamp` returns null.
+ */
+export function formatAthleteStamp(
+  isoInstant: string,
+  timezone: string,
+): string {
+  const stamp = localStamp(isoInstant, timezone);
+  return stamp === null
+    ? EM_DASH
+    : `${formatDayMonth(stamp.date)} ${stamp.time}`;
+}
+
+/**
  * A UTC instant as the ingest log prints it: `07.08 14:32`.
  *
  * Deliberately not converted to anywhere: the log records what the *server*
  * did, and its column is headed with the zone rather than each row carrying
- * one. Sessions get `localStamp`, because a ride happened somewhere.
+ * one. Sessions get `localStamp`, because a ride happened somewhere, and a
+ * deadline the athlete must act on gets `formatAthleteStamp`.
+ *
+ * **Every caller must print the zone beside it.** A bare UTC timestamp on a
+ * screen otherwise about the athlete's local day is read as local, and is
+ * wrong by the offset with nothing saying so.
  */
 export function formatUtcStamp(isoInstant: string): string {
   const instant = new Date(isoInstant);
@@ -157,6 +214,26 @@ export function formatUtcStamp(isoInstant: string): string {
   }
   const { date, time } = utcStamp(instant);
   return `${formatDayMonth(date)} ${time}`;
+}
+
+/**
+ * A UTC instant with its year: `07.08.2026 14:32`.
+ *
+ * `formatUtcStamp` for a stamp that stands on its own rather than in a column
+ * of rows the eye reads as recent. A stored artefact can be arbitrarily old —
+ * a metric computed last season renders identically to one computed this
+ * morning without the year, which is the opposite of what a provenance line
+ * is for.
+ *
+ * **Print the zone beside it**, for `formatUtcStamp`'s reason.
+ */
+export function formatUtcStampYear(isoInstant: string): string {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) {
+    return EM_DASH;
+  }
+  const { date, time } = utcStamp(instant);
+  return `${formatDayMonthYear(date)} ${time}`;
 }
 
 /**

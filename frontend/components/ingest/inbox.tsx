@@ -345,8 +345,12 @@ function QuarantineCard({ record }: { record: QuarantineRecord }) {
         </span>
         <span className="ml-auto flex items-center gap-2">
           <StatusPill status={record.status} />
+          {/* The event table below heads its column `At · UTC`; a card has
+              no column to head, so the zone rides on the stamp. Bare, an
+              08:00 quarantine reads as 18:00 the previous day for an athlete
+              at UTC+14 (`formatUtcStamp`). */}
           <span className="font-mono text-2xs text-ink-faint">
-            {formatUtcStamp(record.created_at)}
+            {formatUtcStamp(record.created_at)} UTC
           </span>
         </span>
       </div>
@@ -364,7 +368,7 @@ function QuarantineCard({ record }: { record: QuarantineRecord }) {
           <span>sport {record.file_sport_index}</span>
         ) : null}
         {record.resolved_at ? (
-          <span>resolved {formatUtcStamp(record.resolved_at)}</span>
+          <span>resolved {formatUtcStamp(record.resolved_at)} UTC</span>
         ) : null}
         {record.suspected_session_id ? (
           <Link

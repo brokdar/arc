@@ -11,7 +11,7 @@ when the suite happens to run is a sweep nobody can assert about.
 """
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
@@ -19,6 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.wellness import WellnessPromptStatus, WellnessSource
@@ -29,7 +30,11 @@ from app.services.wellness import (
     run_wellness_prompt_sweep,
 )
 
-TODAY = dt.date.today()
+#: Today on the athlete's clock — the same one `WellnessService.local_today`
+#: reads, because that is the day these tests are about. Not `dt.date.today()`,
+#: which is the *container's* clock and a third answer to the question
+#: (issue #62); the DTZ rules now refuse it.
+TODAY = athlete_today()
 YESTERDAY = TODAY - dt.timedelta(days=1)
 
 #: A fixed moment to raise prompts at, so every deadline in this module is
@@ -298,6 +303,66 @@ async def test_the_sweep_raises_nothing_before_the_days_prompt_hour(
     await run_wellness_prompt_sweep()
 
     assert await stored(db_session) == []
+
+
+async def test_the_prompt_hour_is_local_and_survives_a_dst_change(
+    session_factory: Any,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    athlete_zone: Callable[[str], None],
+) -> None:
+    """19:00 for the athlete, whatever that is in UTC this month.
+
+    Europe/Berlin springs forward at 01:00 UTC on 2026-03-29. The *same* UTC
+    hour — 17:00 — is 18:00 local on the 28th and 19:00 local on the 29th, so
+    a prompt that is not yet due before the change is due after it, from an
+    instant that moved by exactly one day. The comparison at
+    `WELLNESS__PROMPT_HOUR_LOCAL` is where a DST jump would skip or double an
+    hour, and there was no test crossing one (issue #62).
+    """
+    monkeypatch.setenv("WELLNESS__PROMPT_HOUR_LOCAL", "19")
+    athlete_zone("Europe/Berlin")
+    wellness = service(db_session)
+
+    before = await wellness.raise_due_prompt(
+        actor=Actor.system(), now=dt.datetime(2026, 3, 28, 17, 0, tzinfo=dt.UTC)
+    )
+    after = await wellness.raise_due_prompt(
+        actor=Actor.system(), now=dt.datetime(2026, 3, 29, 17, 0, tzinfo=dt.UTC)
+    )
+
+    assert before is None, "18:00 local on the 28th — the evening has not arrived"
+    assert after is not None
+    assert after.local_date == dt.date(2026, 3, 29)
+
+
+async def test_the_prompt_hour_survives_a_fall_back_too(
+    session_factory: Any,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    athlete_zone: Callable[[str], None],
+) -> None:
+    """And in the other direction, so neither sign of the jump is assumed.
+
+    Berlin falls back at 01:00 UTC on 2026-10-25: 17:00 UTC is 19:00 local on
+    the 24th and only 18:00 local on the 25th. The day that *was* being asked
+    about at this hour stops being — which is right, and is the case a fixed
+    offset gets wrong.
+    """
+    monkeypatch.setenv("WELLNESS__PROMPT_HOUR_LOCAL", "19")
+    athlete_zone("Europe/Berlin")
+    wellness = service(db_session)
+
+    before = await wellness.raise_due_prompt(
+        actor=Actor.system(), now=dt.datetime(2026, 10, 24, 17, 0, tzinfo=dt.UTC)
+    )
+    after = await wellness.raise_due_prompt(
+        actor=Actor.system(), now=dt.datetime(2026, 10, 25, 17, 0, tzinfo=dt.UTC)
+    )
+
+    assert before is not None
+    assert before.local_date == dt.date(2026, 10, 24)
+    assert after is None, "18:00 local on the 25th — an hour early again"
 
 
 # --- AC-58: backfill writes days, and asks no questions ---------------------------

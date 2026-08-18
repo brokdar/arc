@@ -3,15 +3,17 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
-
 import {
   SessionCoachNotes,
   WeekCoachNotes,
 } from "@/components/coach/coach-notes";
 import { SessionDetail } from "@/components/sessions/session-detail";
-import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { AthleteClock } from "@/lib/clock";
+import { mondayOf } from "@/lib/dates";
 import {
   ACTIVITY_IDS,
+  ATHLETE_TIMEZONE,
+  athleteToday,
   COACH_MODEL,
   NOTE_IDS,
   noteList,
@@ -36,7 +38,9 @@ function renderWith(node: React.ReactElement) {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>{node}</AthleteClock>
+    </QueryClientProvider>,
   );
 }
 
@@ -59,7 +63,11 @@ describe("a coach note", () => {
     // written by a model that has since been replaced is still on the session.
     expect(within(card).getByText(COACH_MODEL)).toBeInTheDocument();
     expect(within(card).getByText("coach")).toBeInTheDocument();
-    expect(within(card).getByText("07.08 06:30")).toBeInTheDocument();
+    // On the *athlete's* clock, not in UTC: `AGENT_NOW` is 06:30Z and the
+    // fixture puts the athlete at UTC+14, so the note reads 20:30 on their
+    // own 7 August. Rendered in UTC this said 06:30 with nothing naming the
+    // zone, on a page whose every other date is athlete-local (issue #62).
+    expect(within(card).getByText("07.08 20:30")).toBeInTheDocument();
   });
 
   it("tells an evaluation from an annotation", async () => {
@@ -203,7 +211,7 @@ describe("the dispute toggle", () => {
 
 describe("where notes are read", () => {
   it("puts a week's notes on the week", async () => {
-    renderWith(<WeekCoachNotes week={mondayOf(todayIsoDate())} />);
+    renderWith(<WeekCoachNotes week={mondayOf(athleteToday())} />);
 
     expect(
       await screen.findByText(/The week did what it was for/),

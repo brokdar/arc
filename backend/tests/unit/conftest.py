@@ -5,7 +5,7 @@ Postgres belongs in tests/integration.
 """
 
 import base64
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,30 @@ def _auth_env(password_hash: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[N
     monkeypatch.setenv("AUTH__SESSION__SECRET_KEY", "unit-test-secret")
     get_settings.cache_clear()
     yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def athlete_zone(
+    monkeypatch: pytest.MonkeyPatch, _auth_env: None
+) -> Iterator[Callable[[str], None]]:
+    """Put the athlete somewhere other than Greenwich, for one test.
+
+    `MATCHING__TIMEZONE` defaults to ``UTC``, so a test that does not ask for a
+    zone cannot tell the athlete's clock from the UTC one — which is how four
+    disagreeing clocks lived in this codebase without a red test (issue #62).
+    Anything asserting *which* clock answered has to move the athlete off UTC,
+    and this is how.
+
+    Depends on `_auth_env` so it runs after that fixture's cache clear; clears
+    again on the way out so the zone cannot leak into the next test.
+    """
+
+    def put(timezone: str) -> None:
+        monkeypatch.setenv("MATCHING__TIMEZONE", timezone)
+        get_settings.cache_clear()
+
+    yield put
     get_settings.cache_clear()
 
 

@@ -8,13 +8,14 @@ does not exist.
 
 import datetime as dt
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.core.exceptions import ValidationError
 from app.domain.actor import Actor
 from app.domain.anchors import AnchorSource, AnchorType, Provenance
@@ -48,7 +49,7 @@ async def test_append_returns_the_stored_version(client: AsyncClient) -> None:
     # Defaults the API fills in: the anchor type's own unit, today, `fresh`,
     # and `athlete` — the agent writes through MCP (WP-8), not this endpoint.
     assert version["unit"] == "W"
-    assert version["effective_date"] == dt.datetime.now(dt.UTC).date().isoformat()
+    assert version["effective_date"] == athlete_today().isoformat()
     assert version["staleness_state"] == "fresh"
     assert version["source"] == "athlete"
 
@@ -190,36 +191,110 @@ async def test_current_resolves_the_version_in_force(client: AsyncClient) -> Non
     assert response.json()["id"] == in_force["id"]
 
 
-async def test_a_backward_clock_step_does_not_hide_the_version_just_appended(
+async def test_the_default_effective_date_is_the_athletes_day_not_the_utc_one(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """An FTP appended at 08:00 on the 20th in Auckland applies from the 20th.
+
+    Two extreme zones rather than one, because that is what makes this
+    deterministic: at any instant, ``UTC+14:00`` is on a later calendar date
+    than Greenwich or ``UTC-11:00`` is on an earlier one — never neither. So
+    one of these two appends is guaranteed to be a day the UTC clock would not
+    have chosen, whenever the suite happens to run.
+
+    Before issue #62 the default was `created_at.date()` with `created_at` in
+    UTC, which back-dated every Auckland morning's append by a day and put it
+    in force for a day of training it was not measured on.
+    """
+    utc_today = dt.datetime.now(dt.UTC).date()
+    dated: list[dt.date] = []
+
+    for zone in ("UTC+14:00", "UTC-11:00"):
+        athlete_zone(zone)
+        version = await append(client)
+        assert version["effective_date"] == athlete_today().isoformat()
+        dated.append(dt.date.fromisoformat(version["effective_date"]))
+
+    assert any(day != utc_today for day in dated), (
+        "neither zone disagreed with UTC, which cannot happen: "
+        f"{dated} against {utc_today}"
+    )
+
+
+async def test_effectivity_is_resolved_on_the_athletes_day(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The same history, the same instant, two athletes, two answers.
+
+    ``UTC+14:00`` and ``UTC-11:00`` are twenty-five hours apart, so whenever
+    this runs the eastern athlete's calendar date is strictly later than the
+    western one's. A version effective from the *eastern* date is therefore in
+    force for them and still in the future for the westerner — which is the
+    whole of what `effective_date` means, and precisely what reading the day
+    off the UTC instant destroyed: an anchor effective "from the 20th" was out
+    of force for the first hours of an Auckland 20th and in force two hours
+    early for a Honolulu athlete's 19th (issue #62, finding 7).
+    """
+    athlete_zone("UTC+14:00")
+    east = athlete_today()
+    athlete_zone("UTC-11:00")
+    west = athlete_today()
+    assert east > west, "the two zones are 25 hours apart and cannot share a date"
+
+    await append(client, value=240, effective_date="2020-01-01")
+    from_the_eastern_day = await append(
+        client, value=299, effective_date=east.isoformat()
+    )
+
+    async def in_force() -> dict[str, Any]:
+        response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    # Still on ``UTC-11:00``: the eastern day has not arrived here.
+    assert (await in_force())["value"] == 240
+
+    athlete_zone("UTC+14:00")
+    assert (await in_force())["id"] == from_the_eastern_day["id"]
+
+
+async def test_a_version_stamped_in_the_future_is_still_in_force(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """The version in force now cannot depend on the wall clock moving forwards.
+    """`current` reads `effective_date`, and must not read `created_at`.
 
-    `datetime.now(UTC)` is not monotonic: an NTP correction, a resumed VM or a
-    virtualised host clock steps it backwards by milliseconds, and this suite
-    caught one doing exactly that. When the step lands between an append and
-    the next read, the stored `created_at` is *after* the read's "now", and a
-    filter on `created_at <= now` drops the only version there is — the athlete
-    is told to append the FTP they have just appended, and every prescription
-    priced as a percentage of it is refused with a 422.
+    This is the shape a **non-monotonic clock** produces, and it is not
+    hypothetical: `created_at` is stamped from `dt.datetime.now`, which reads
+    `CLOCK_REALTIME`. An NTP correction, a resumed VM or a virtualised host
+    clock steps it backwards by milliseconds — this WSL2 container by roughly
+    180 ms every 30 s — and a version appended a moment ago then carries a
+    stamp in the future of the very next read.
 
-    The row is moved rather than the clock because the effect is the same and
-    the state is the one a stepped-back clock leaves behind: a history whose
-    newest entry is stamped in the future.
+    This is also #66's regression test, which fixed the same rule on `main`
+    while this branch was open and reproduced it the same way: by moving the
+    row rather than the clock, because the state a stepped-back clock leaves
+    behind is simply a history whose newest entry is stamped ahead of now, and
+    writing that row directly is deterministic where waiting for a step is
+    not.
+
+    `current` used to go through `anchor_as_of`, which additionally requires
+    `created_at <= now`. Under that rule this version is invisible, and the
+    athlete is told to "append an FTP first" about the FTP they just appended
+    — which is what made planning a session, pinning an anchor and computing
+    zones fail at random in the suite and, more rarely, in a real deployment.
     """
-    version = await append(client, value=250)
-    ahead = dt.datetime.now(dt.UTC) + dt.timedelta(milliseconds=100)
-    await db_session.execute(
-        update(AnchorVersionRow)
-        .where(AnchorVersionRow.id == uuid.UUID(version["id"]))
-        .values(created_at=ahead)
-    )
+    appended = await append(client, value=282)
+    # Reach past the service to do what a backwards clock does to it: the same
+    # row, with a stamp the next read's `now()` has not reached yet.
+    row = await db_session.get(AnchorVersionRow, uuid.UUID(appended["id"]))
+    assert row is not None
+    row.created_at = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
     await db_session.commit()
 
     response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
 
     assert response.status_code == 200, response.text
-    assert response.json()["id"] == version["id"]
+    assert response.json()["id"] == appended["id"]
 
 
 async def test_current_without_any_version_returns_404(client: AsyncClient) -> None:

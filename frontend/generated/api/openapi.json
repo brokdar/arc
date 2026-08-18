@@ -1457,6 +1457,25 @@
         "title": "ClassificationSource",
         "type": "string"
       },
+      "ClockRead": {
+        "additionalProperties": false,
+        "description": "Which clock every calendar date in this API is on.\n\nDeployment configuration, not profile data \u2014 which is why it is its own\nresource and not a field on `AthleteRead`: there is nothing here the\nathlete can PATCH, and `MATCHING__TIMEZONE` is set once by whoever runs the\ninstance.",
+        "properties": {
+          "timezone": {
+            "examples": ["Europe/Berlin"],
+            "title": "Timezone",
+            "type": "string"
+          },
+          "today": {
+            "format": "date",
+            "title": "Today",
+            "type": "string"
+          }
+        },
+        "required": ["timezone", "today"],
+        "title": "ClockRead",
+        "type": "object"
+      },
       "CompletionState": {
         "description": "What the calendar's week strip colours one day, or one card, by.\n\nThe build plan's list (WP-7.5) plus one member it does not name and the\ncalendar cannot do without: :attr:`COMPLETED`. A session is matched and\nrecorded some seconds before it is scored, and every session spends the\ngap between ingest and its first score in a state that is neither\n``planned`` nor any verdict. Rendering it as ``completed-as_intended``\nwould be the machine declaring a verdict nobody computed.",
         "enum": [
@@ -2854,8 +2873,7 @@
             "title": "Temperature C"
           },
           "timezone": {
-            "default": "UTC",
-            "description": "IANA name, fixed offset (UTC+02:00), or UTC.",
+            "description": "IANA name, fixed offset (UTC+02:00), or UTC. Omit for the athlete's own configured timezone.",
             "maxLength": 64,
             "pattern": "^[^\\x00]*$",
             "title": "Timezone",
@@ -10565,6 +10583,41 @@
         },
         "summary": "Read Session",
         "tags": ["auth"]
+      }
+    },
+    "/api/v1/clock": {
+      "get": {
+        "description": "The athlete's timezone, and today's date on it.\n\nBoth from one read of the clock, so they cannot disagree with each other\nacross a midnight between two calls.",
+        "operationId": "clock-get_clock",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClockRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Clock",
+        "tags": ["clock"]
       }
     },
     "/api/v1/connections": {

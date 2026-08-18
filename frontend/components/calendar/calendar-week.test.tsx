@@ -9,12 +9,14 @@ import {
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import { CalendarWeek } from "@/components/calendar/calendar-week";
 import { SESSION_DRAG_TYPE } from "@/components/calendar/session-card";
-import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { AthleteClock } from "@/lib/clock";
+import { addDays, mondayOf } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
 import {
+  ATHLETE_TIMEZONE,
+  athleteToday,
   plannedSessionFixture,
   planWeekFixture,
   SESSION_IDS,
@@ -81,7 +83,7 @@ vi.mock("next/navigation", async () => {
   };
 });
 
-const start = mondayOf(todayIsoDate());
+const start = mondayOf(athleteToday());
 
 /** Where the address bar is, in the form the app writes it. */
 function addressBar(): string {
@@ -97,7 +99,9 @@ function renderCalendar() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <CalendarWeek />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <CalendarWeek />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }
@@ -1239,7 +1243,7 @@ describe("CalendarWeek", () => {
       screen.getByRole("button", { name: "Plan a session" }),
     );
 
-    expect(await screen.findByLabelText("Date")).toHaveValue(todayIsoDate());
+    expect(await screen.findByLabelText("Date")).toHaveValue(athleteToday());
   });
 
   /**

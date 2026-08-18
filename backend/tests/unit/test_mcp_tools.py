@@ -25,7 +25,7 @@ import inspect
 import json
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import dropbox as dropbox_connector
+from app.core.clock import athlete_today
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
@@ -258,11 +259,11 @@ async def annotate_week(monday: dt.date, text: str, **overrides: Any) -> Any:
 def this_monday() -> dt.date:
     """The Monday `get_coaching_context` will resolve the current week to.
 
-    Computed in UTC, the way `app.services.plan` does it — the opener passes
-    no `start`, so the week it reads is a fact about the clock and not about
-    :data:`MONDAY`.
+    On the athlete's clock (`app.core.clock`), the way `app.services.plan` does
+    it — the opener passes no `start`, so the week it reads is a fact about
+    that clock and not about :data:`MONDAY`.
     """
-    return week_start(dt.datetime.now(dt.UTC).date())
+    return week_start(athlete_today())
 
 
 # --- the shape of the surface ------------------------------------------------------
@@ -916,14 +917,77 @@ async def test_the_context_week_is_get_plan_weeks_answer(client: AsyncClient) ->
     # Same service, same view, same instant: the opener and the drill-down
     # tool may never tell the agent two different weeks.
     await append_ftp(client)
-    today = dt.date.today()
-    await plan(client, date=(today - dt.timedelta(days=today.weekday())).isoformat())
+    await plan(client, date=this_monday().isoformat())
 
     standalone = await call(READER, "get_plan_week")
     data = await call(READER, "get_coaching_context")
 
     assert data["week"]["session_count"] == 1
     assert data["week"] == standalone["week"]
+
+
+async def test_the_context_is_built_from_one_clock(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    athlete_zone: Callable[[str], None],
+) -> None:
+    """One payload, one answer to "what day is it" (issue #62, finding 1).
+
+    This object used to be assembled from three clocks: the plan week from the
+    **UTC** Monday, the wellness series from the athlete's own today, and the
+    age from whatever `/etc/localtime` the container had. For an athlete in
+    Auckland at 11:00 on a Monday morning — 23:00 UTC on Sunday — the coaching
+    agent was handed *last* week's plan beside *this* week's readings, in one
+    object, with nothing in it saying they disagreed.
+
+    The clock is stubbed to a fixed Monday because the three only *visibly*
+    part company across a midnight, and a test that waits for one runs green
+    six days in seven. What is asserted is that every dated block in the answer
+    names the same day.
+
+    That Monday is one in the **past** (`MONDAY`, the date this module plans
+    everything on). Stubbed to the current week's, the week half of this
+    assertion proves nothing: the old code read a clock this test does not
+    patch, that clock also says this week, and a payload built from three
+    clocks passes. Dated backwards, only the stub can produce the answer.
+    """
+    athlete_zone("Pacific/Auckland")
+    monday = MONDAY
+    monkeypatch.setattr("app.mcp.tools.athlete_today", lambda: monday, raising=True)
+    await append_ftp(client)
+    await plan(client, date=monday.isoformat())
+    await call(
+        COACH,
+        "record_wellness_days",
+        {"days": [{"date": monday.isoformat(), "sleep_quality": 4}]},
+    )
+
+    data = await call(READER, "get_coaching_context")
+
+    assert data["week"]["start"] == monday.isoformat()
+    assert data["week"]["session_count"] == 1
+    assert data["athlete"]["today"] == monday.isoformat()
+    assert data["athlete"]["timezone"] == "Pacific/Auckland"
+    assert data["wellness"]["today"]["local_date"] == monday.isoformat()
+    # The seven-day window ends on that same day, not on a UTC one.
+    assert data["wellness"]["recent"][-1]["local_date"] == monday.isoformat()
+
+
+async def test_the_athlete_block_names_the_clock_its_dates_are_on(
+    session_factory: Any, athlete_zone: Callable[[str], None]
+) -> None:
+    """`get_athlete` says which zone, so the agent need not guess.
+
+    Every bare date this surface returns is a day on it, and nothing in a
+    payload of ISO date strings distinguishes an athlete-local day from a UTC
+    one. Naming the zone is what makes the rest of the contract checkable.
+    """
+    athlete_zone("America/Denver")
+
+    data = await call(READER, "get_athlete")
+
+    assert data["athlete"]["timezone"] == "America/Denver"
+    assert data["athlete"]["today"] == athlete_today().isoformat()
 
 
 async def test_the_context_budget_is_the_caps_standing(session_factory: Any) -> None:
@@ -956,14 +1020,14 @@ async def test_the_context_carries_the_standing_wellness_prompt(
     agent has to fetch separately is a standing question it will not fetch.
     """
     await WellnessService.from_session(db_session).raise_prompt(
-        dt.date.today(), actor=Actor.system()
+        athlete_today(), actor=Actor.system()
     )
     await db_session.commit()
 
     prompt = (await call(READER, "get_coaching_context"))["wellness"]["prompt"]
 
     assert prompt["status"] == "pending"
-    assert prompt["local_date"] == dt.date.today().isoformat()
+    assert prompt["local_date"] == athlete_today().isoformat()
     assert prompt["expires_at"]
 
 
@@ -971,7 +1035,7 @@ async def test_the_context_says_the_day_closed_unanswered(
     session_factory: Any, db_session: AsyncSession
 ) -> None:
     service = WellnessService.from_session(db_session)
-    await service.raise_prompt(dt.date.today(), actor=Actor.system())
+    await service.raise_prompt(athlete_today(), actor=Actor.system())
     await service.expire_prompts(
         actor=Actor.system(), now=dt.datetime.now(dt.UTC) + dt.timedelta(days=30)
     )
@@ -1890,6 +1954,37 @@ async def test_record_manual_session_lands_a_strength_session_with_its_sets(
     assert [row["id"] for row in listed["items"]] == [session["id"]]
     detail = await call(READER, "get_session_detail", {"session_id": session["id"]})
     assert detail["metrics"] is not None
+
+
+async def test_an_omitted_timezone_means_the_athletes_own_not_utc(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The agent need not say where the athlete lives; the deployment knows.
+
+    Pinned on this surface as well as on the API's (`test_sessions_api.py`)
+    because the default is declared twice — once in this tool's signature and
+    once in `SessionCreate` — and `create_manual` only sees whichever value
+    reached it. A regression to ``"UTC"`` in one of the two would leave the
+    other's test green.
+
+    22:30 UTC on 11 May is already the 12th in Auckland. Filed on the wrong
+    calendar day, the session then fails to match the planned session on the
+    right one (issue #62, finding 4).
+    """
+    athlete_zone("Pacific/Auckland")
+
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": "2026-05-11T22:30:00+00:00",
+            "duration_s": 3_600,
+        },
+    )
+
+    session = data["session"]
+    assert session["timezone"] == "Pacific/Auckland"
+    assert session["local_date"] == "2026-05-12"
 
 
 async def test_a_manual_session_dry_run_writes_nothing(

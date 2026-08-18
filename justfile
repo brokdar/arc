@@ -87,6 +87,12 @@ typecheck:
 	cd frontend && bun run type-check
 
 # Run unit tests (backend + frontend)
+#
+# The backend suite pins a non-UTC `TZ` in `backend/tests/conftest.py`, not
+# here: CI and the pre-push hook invoke `pytest` directly, so a pin in this
+# recipe would be missing from the two runs that gate a merge (issue #62). The
+# frontend pins its two the same way, in `vitest.config.mts` and
+# `playwright.config.ts`.
 test:
 	cd backend && uv run pytest -n auto
 	cd frontend && bun run test

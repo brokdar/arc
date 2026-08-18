@@ -15,6 +15,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.domain.actor import Actor
 from app.domain.wellness import (
     BOUNDS,
@@ -33,7 +34,11 @@ INPUTS = "/api/v1/wellness/inputs"
 WEIGHT = "/api/v1/wellness/weight"
 PROMPT = "/api/v1/wellness/prompt"
 
-TODAY = dt.date.today()
+#: Today on the athlete's clock — the same one `WellnessService.local_today`
+#: reads, because that is the day these tests are about. Not `dt.date.today()`,
+#: which is the *container's* clock and a third answer to the question
+#: (issue #62); the DTZ rules now refuse it.
+TODAY = athlete_today()
 YESTERDAY = TODAY - dt.timedelta(days=1)
 
 #: One value per writable field, all of them legal together. The field sweep

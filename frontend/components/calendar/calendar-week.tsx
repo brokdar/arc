@@ -18,6 +18,7 @@ import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+import { useAthleteTimezone } from "@/lib/clock";
 import {
   addDays,
   isIsoDate,
@@ -60,10 +61,12 @@ const WEEK_QUERY_PREFIX = ["get", "/api/v1/plan/week"] as const;
  * deleted is worse than one that could not be deleted at all.
  */
 export function CalendarWeek() {
-  // Read once, on mount. `todayIsoDate()` is the *browser's* today, and
-  // re-reading it mid-render would let a page left open overnight disagree
-  // with itself.
-  const [today] = useState(todayIsoDate);
+  // The athlete's own clock (`MATCHING__TIMEZONE`, served by `/clock`), not
+  // the browser's — which is what decided this until issue #62. Read once, on
+  // mount: re-reading it mid-render would let a page left open overnight
+  // disagree with itself.
+  const timezone = useAthleteTimezone();
+  const [today] = useState(() => todayIsoDate(timezone));
   const pathname = usePathname();
   const searchParams = useSearchParams();
 

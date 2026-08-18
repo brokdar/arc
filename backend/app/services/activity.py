@@ -27,6 +27,7 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_timezone
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.core.logging import get_logger
 from app.domain.activity import (
@@ -359,7 +360,7 @@ class SessionService:
         *,
         actor: Actor,
         start_time: dt.datetime,
-        timezone: str,
+        timezone: str | None = None,
         duration_s: int,
         discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
         rpe: float | None = None,
@@ -378,6 +379,16 @@ class SessionService:
         the write cap, because checking before acting must be the cheap
         option.
 
+        ``timezone`` omitted means the athlete's own configured zone
+        (`app.core.clock.athlete_timezone`), resolved **here** so both adapters
+        get the same answer. It used to default to ``"UTC"`` in each of them,
+        which is the right value to *store* when a device file did not say
+        where it was recorded — a manual entry is not that case. The
+        deployment knows where the athlete lives, and reading `local_date` off
+        Greenwich for a session they typed in themselves put it on the wrong
+        day, which then failed to match the planned session on the right one
+        (issue #62).
+
         Raises:
             ValidationError: When the timezone is unresolvable, the duration,
                 RPE or temperature is out of range, or a set is malformed.
@@ -387,6 +398,7 @@ class SessionService:
         """
         if not dry_run:
             await check_write_cap(self._session, actor)
+        timezone = timezone or athlete_timezone()
         with domain_rules():
             parse_timezone(timezone)
             local_date = session_date(start_time, timezone)

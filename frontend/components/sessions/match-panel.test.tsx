@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
-
 import { SessionDetail } from "@/components/sessions/session-detail";
+import { AthleteClock } from "@/lib/clock";
 import {
   ACTIVITY_IDS,
+  ATHLETE_TIMEZONE,
   ingestState,
   PLANNED_IDS,
   seedMergeCandidate,
@@ -42,7 +43,9 @@ function renderDetail(sessionId: string) {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <SessionDetail sessionId={sessionId} />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <SessionDetail sessionId={sessionId} />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }

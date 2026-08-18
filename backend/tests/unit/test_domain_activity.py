@@ -268,8 +268,10 @@ def test_a_naive_start_is_refused() -> None:
 
 @given(
     start=st.datetimes(
-        min_value=dt.datetime(2000, 1, 1),
-        max_value=dt.datetime(2100, 1, 1),
+        # Naive by hypothesis' contract: `st.datetimes` takes naive bounds and
+        # attaches `timezones=` itself, so the values it draws are aware UTC.
+        min_value=dt.datetime(2000, 1, 1),  # noqa: DTZ001
+        max_value=dt.datetime(2100, 1, 1),  # noqa: DTZ001
         timezones=st.just(dt.UTC),
     ),
     minutes=st.integers(min_value=-12 * 60, max_value=14 * 60).filter(

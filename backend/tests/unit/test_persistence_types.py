@@ -82,7 +82,7 @@ async def test_offset_datetimes_are_normalized_to_utc(
 async def test_naive_datetimes_are_rejected_not_guessed_at(
     engine: AsyncEngine, probe: sa.Table
 ) -> None:
-    naive = dt.datetime(2026, 6, 1, 12, 0)  # the point of the test
+    naive = dt.datetime(2026, 6, 1, 12, 0)  # noqa: DTZ001 — the point of the test
 
     with pytest.raises(StatementError, match="naive datetime"):
         async with engine.begin() as conn:

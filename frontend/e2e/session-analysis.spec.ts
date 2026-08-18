@@ -113,6 +113,20 @@ async function mockApi(page: Page, { computed }: { computed: boolean }) {
   await page.route("**/api/v1/auth/session", (route) =>
     route.fulfill({ json: { authenticated: true } }),
   );
+  // The athlete's one clock. `Pacific/Kiritimati` is UTC+14 all year and the
+  // browser is pinned to `Pacific/Midway`, UTC-11 (`playwright.config.ts`):
+  // twenty-five hours apart, so a page reading the browser's clock instead
+  // would never agree with what this fake serves (issue #62).
+  await page.route("**/api/v1/clock", (route) =>
+    route.fulfill({
+      json: {
+        timezone: "Pacific/Kiritimati",
+        today: new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Pacific/Kiritimati",
+        }).format(new Date()),
+      },
+    }),
+  );
   await page.route(`**/api/v1/sessions/${SESSION_ID}/streams`, (route) =>
     route.fulfill({ json: STREAMS }),
   );

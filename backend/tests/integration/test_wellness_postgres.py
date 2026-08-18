@@ -14,6 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.core.clock import athlete_today
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.persistence.db import session_scope
@@ -22,7 +23,11 @@ from app.services.wellness import WellnessService
 DAYS = "/api/v1/wellness/days"
 BACKFILL = "/api/v1/wellness/backfill"
 
-TODAY = dt.date.today()
+#: Today on the athlete's clock — the same one `WellnessService.local_today`
+#: reads, because that is the day these tests are about. Not `dt.date.today()`,
+#: which is the *container's* clock and a third answer to the question
+#: (issue #62); the DTZ rules now refuse it.
+TODAY = athlete_today()
 
 
 async def raw(sql: str) -> list[tuple[object, ...]]:

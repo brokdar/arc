@@ -9,6 +9,8 @@
  * quietly shifting a session onto the day before.
  */
 
+import { localStamp } from "@/lib/format";
+
 const DAY_MS = 86_400_000;
 
 /** Weekday labels, Monday-first — the order the calendar grid renders in. */
@@ -49,8 +51,32 @@ export function isIsoDate(value: string | null | undefined): value is string {
   return toIsoDate(parseIsoDate(value)) === value;
 }
 
-/** The athlete's *local* today, as an ISO date. */
-export function todayIsoDate(now: Date = new Date()): string {
+/**
+ * The athlete's *local* today, as an ISO date.
+ *
+ * `timeZone` is the athlete's own — `MATCHING__TIMEZONE`, served by
+ * `GET /clock` and held by the `ClockProvider`. Ask for it with
+ * `useAthleteToday()` rather than calling this directly; the argument exists
+ * so this stays a pure function the tests can drive.
+ *
+ * It used to take no zone at all and read the **browser's**, while its
+ * docstring said "the athlete's local today". Those are two different clocks
+ * the moment the athlete travels or the laptop is set wrong, and this function
+ * decided which week the calendar opened on, which day the page named "Today"
+ * showed, and — through two form defaults — which `local_date` a wellness
+ * reading and which `effective_date` an appended FTP were filed under
+ * (issue #62, finding 3).
+ *
+ * Falls back to the browser's calendar date only when the zone cannot be
+ * resolved at all, which the backend refuses to store: that is the shape of a
+ * bug, and a page with no date at all is worse than one an hour out.
+ */
+export function todayIsoDate(timeZone: string, now: Date = new Date()): string {
+  return localStamp(now.toISOString(), timeZone)?.date ?? browserToday(now);
+}
+
+/** The browser's own calendar date. The fallback, and never the answer. */
+function browserToday(now: Date): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");

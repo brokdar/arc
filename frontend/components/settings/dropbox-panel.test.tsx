@@ -3,9 +3,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-
 import { DropboxPanel } from "@/components/settings/dropbox-panel";
+import { AthleteClock } from "@/lib/clock";
 import {
+  ATHLETE_TIMEZONE,
   DROPBOX_CODE,
   dropboxFeed,
   seedDropboxConnection,
@@ -19,7 +20,9 @@ function renderPanel() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <DropboxPanel />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <DropboxPanel />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }
@@ -186,7 +189,14 @@ describe("what each folder has delivered", () => {
     const delivery = within(row).getByTestId("dropbox-feed-delivery");
     // A timestamp is a numeral: convention 5.
     expect(delivery).toHaveClass("font-mono");
-    expect(delivery).toHaveTextContent("16.08 06:12");
+    // 06:12 UTC is 20:12 the same day for the `Pacific/Kiritimati` athlete the
+    // fake backend serves. On the athlete's clock, not the server's: this row
+    // is read against *now* to judge whether the feed is alive, and a stamp
+    // fourteen hours out makes a poll from ten minutes ago look like a dead
+    // feed. That the two differ at all is what the suite's zones are for — the
+    // browser runs at UTC-11, so a component reading either wrong clock lands
+    // on neither of these strings.
+    expect(delivery).toHaveTextContent("16.08 20:12");
     // The field moves on every completed poll, empty folder included, so an
     // unlabelled stamp read as "a ride arrived then" — which made a rest week
     // and a broken feed look alike, the one thing this row must separate.
