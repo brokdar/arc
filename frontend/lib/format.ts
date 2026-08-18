@@ -108,20 +108,11 @@ export function localStamp(
     const minutes = fixed[1] === "-" ? -magnitude : magnitude;
     return utcStamp(new Date(instant.getTime() + minutes * 60_000));
   }
-  let parts: Intl.DateTimeFormatPart[];
-  try {
-    parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(instant);
-  } catch {
+  const formatter = zoneFormatter(timezone);
+  if (formatter === null) {
     return null;
   }
+  const parts = formatter.formatToParts(instant);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? "";
   const [year, month, day, hour, minute] = [
@@ -135,6 +126,44 @@ export function localStamp(
     return null;
   }
   return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
+}
+
+/**
+ * `Intl.DateTimeFormat` for one zone, built once.
+ *
+ * Constructing a formatter costs roughly eighteen times what using one does
+ * (~20 µs against ~1 µs), and this module is called **per row**: every session
+ * in a list, every stamp on a card, every re-render of a page that shows a
+ * date. Building one each time made the zone database a per-cell cost.
+ *
+ * The options never vary — the locale is pinned and the hour cycle forced, so
+ * that `Intl` acts as a timezone database rather than a formatter — so the
+ * zone name is the whole cache key. An unresolvable zone memoises as `null`,
+ * so a bad value costs one throw rather than one per render.
+ */
+const FORMATTERS = new Map<string, Intl.DateTimeFormat | null>();
+
+function zoneFormatter(timezone: string): Intl.DateTimeFormat | null {
+  const cached = FORMATTERS.get(timezone);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let formatter: Intl.DateTimeFormat | null;
+  try {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+  } catch {
+    formatter = null;
+  }
+  FORMATTERS.set(timezone, formatter);
+  return formatter;
 }
 
 /** The UTC calendar date and clock reading of a `Date`. */

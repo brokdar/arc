@@ -1,10 +1,30 @@
 import "@testing-library/jest-dom/vitest";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
+import { configure } from "@testing-library/dom";
 import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { resetMockState } from "./tests/mocks/fixtures";
 import { server } from "./tests/mocks/server";
+
+/**
+ * How long a `findBy*` waits before deciding the element never arrived.
+ *
+ * Testing Library's default is one second, which is tuned for a developer's
+ * laptop. A shared CI runner is an order of magnitude slower under contention
+ * — a suite whose `environment` phase costs 50 s across 46 files has spent
+ * most of that queueing — and a component that renders its first row in 90 ms
+ * here has been observed taking longer than a second there. That is a false
+ * failure: the element does appear, and the assertion was right.
+ *
+ * Raising the budget does not weaken anything. `findBy*` polls until the
+ * element exists, so a query that is genuinely wrong still fails, with the
+ * same message and the same DOM dump — just five seconds later instead of
+ * one. `testTimeout` in `vitest.config.mts` is set well above this so the
+ * Testing Library error, which names the query and prints the DOM, is the one
+ * that surfaces rather than a bare test timeout.
+ */
+configure({ asyncUtilTimeout: 5_000 });
 
 /**
  * Multipart uploads need the *runtime's* `File`, `Blob` and `FormData`, not

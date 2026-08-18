@@ -16,6 +16,11 @@ export default defineConfig({
     // the fixture and the component shared one wrong clock — they could not
     // detect issue #62 by construction. Now they cannot miss it.
     env: { TZ: "Pacific/Midway" },
+    // Comfortably above the 5 s `asyncUtilTimeout` set in `vitest.setup.ts`,
+    // so a slow render surfaces as Testing Library's "unable to find" error —
+    // which names the query and prints the DOM — rather than a bare timeout
+    // that says only that the test ran too long.
+    testTimeout: 20_000,
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
     include: ["**/*.test.{ts,tsx}"],
