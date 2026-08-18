@@ -473,6 +473,50 @@ async def test_one_activity_file_is_enough_to_be_a_candidate(
     ]
 
 
+async def test_the_folder_holding_more_rides_outranks_the_one_holding_fewer(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = {
+        # Listed smallest-first, and the smaller folder also holds the newer
+        # file: neither the order Dropbox answered in nor the tie-break can
+        # produce the expected ranking on its own, so only a descending count
+        # as the *primary* key puts `/archive` first.
+        "": [folder_entry("Inbox", "/inbox"), folder_entry("Archive", "/archive")],
+        "/inbox": [
+            file_entry(
+                "ride.fit", "/inbox/ride.fit", client_modified="2026-08-16T10:00:00Z"
+            )
+        ],
+        "/archive": [
+            file_entry(
+                f"2024-03-0{day}.fit",
+                f"/archive/2024-03-0{day}.fit",
+                client_modified=f"2024-03-0{day}T10:00:00Z",
+            )
+            for day in (1, 2, 3)
+        ],
+    }
+
+    response = await discover(client, connection)
+
+    # Where the rides *are* is the question. A folder with three of them is the
+    # answer even when a folder with one was written to more recently — the
+    # head unit's folder is the one that has been filling up.
+    assert discovery_of(response) == [
+        {
+            "path": "/archive",
+            "activity_files": 3,
+            "newest_at": "2024-03-03T10:00:00Z",
+        },
+        {
+            "path": "/inbox",
+            "activity_files": 1,
+            "newest_at": "2026-08-16T10:00:00Z",
+        },
+    ]
+
+
 async def test_folders_holding_as_much_are_ordered_by_the_newest_file(
     client: httpx.AsyncClient, fake: FakeDropbox
 ) -> None:

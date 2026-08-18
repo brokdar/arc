@@ -441,11 +441,28 @@ describe("the folders arc found by itself", () => {
     const diagnosis = await within(picker).findByTestId(
       "dropbox-access-type-suspect",
     );
-    // Worded as something the athlete can go and check: no Dropbox API reports
-    // an app's access type, so arc is inferring and has to say so.
     expect(diagnosis).toHaveTextContent(/App folder/);
     expect(diagnosis).toHaveTextContent(/cannot change/);
     expect(diagnosis).toHaveTextContent(/register a new app/);
+    // Worded as a condition the athlete can go and check, not as a statement
+    // about their account: no Dropbox API reports an app's access type, so
+    // arc is inferring from what it cannot see and has to say so. Asserted
+    // verbatim — the three substrings above survive a rewrite into "your app
+    // is App folder type", which is the sentence this diagnosis must not be.
+    expect(diagnosis).toHaveTextContent(
+      "That is what a Dropbox app registered with App folder access looks like from here",
+    );
+    expect(diagnosis).toHaveTextContent(
+      "If that is what happened, the fix is to delete that app at dropbox.com/developers/apps and register a new app with “Full Dropbox” access",
+    );
+    // And the other branch of the condition is on screen too: an athlete whose
+    // Dropbox is simply empty is told that nothing is wrong.
+    expect(diagnosis).toHaveTextContent(
+      "If your Dropbox really is empty, nothing is wrong here",
+    );
+    expect(diagnosis.textContent).not.toMatch(
+      /your (Dropbox )?app (is|was)\b|you registered\b|is registered with\b/i,
+    );
     // An empty tree is what this replaces: it looked like a Dropbox with
     // nothing in it, which is the one thing it was not.
     expect(
