@@ -181,6 +181,17 @@ repos:
         language: script
         pass_filenames: false
         always_run: true
+      # The check above decides whether a whole PR is allowed through, and it
+      # got the "uncommitted but already regenerated" case wrong for as long as
+      # it asked git instead of comparing content — failing `just gate` on trees
+      # that were in sync. Its cases stub the generator, so they cost
+      # milliseconds and run whenever it or they change.
+      - id: api-schema-sync-test
+        name: api-schema-sync-test
+        entry: ./scripts/check-api-schema-sync.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/check-api-schema-sync(\.test)?\.sh$
 
   # ============================================================================
   # Frontend (TypeScript/React)
