@@ -5,7 +5,7 @@ import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 import { DropboxPanel } from "@/components/settings/dropbox-panel";
 import { AthleteClock } from "@/lib/clock";
-import { formatUtcStamp } from "@/lib/format";
+import { formatAthleteStamp } from "@/lib/format";
 import {
   ATHLETE_TIMEZONE,
   createDropboxFeed,
@@ -314,11 +314,19 @@ describe("the folder picker", () => {
 });
 
 describe("the folders arc found by itself", () => {
-  /** The stamp the panel should show, derived from the files the mock holds. */
-  const NEWEST_WAHOO_STAMP = formatUtcStamp(
+  /**
+   * The stamp the panel should show, derived from the files the mock holds.
+   *
+   * On the athlete's clock, not UTC: this stamp says how recently the folder
+   * collected anything, and it is read against the athlete's own "now" to
+   * decide whether to watch it. Deriving it rather than typing it in keeps the
+   * assertion honest if the fixture's files change.
+   */
+  const NEWEST_WAHOO_STAMP = formatAthleteStamp(
     WAHOO_ACTIVITY_FILES.map((file) => file.client_modified)
       .toSorted()
       .at(-1) as string,
+    ATHLETE_TIMEZONE,
   );
 
   async function openPicker(): Promise<HTMLElement> {

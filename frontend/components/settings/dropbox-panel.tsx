@@ -544,6 +544,11 @@ function Candidates({
   readonly busy: boolean;
   readonly onWatch: (path: string) => void;
 }) {
+  // The athlete's clock, not the server's, for the reason `Feeds` gives: this
+  // stamp is read against *now* to judge whether a folder is still collecting,
+  // and a UTC stamp fourteen hours out makes a fresh folder look stale.
+  const timezone = useAthleteTimezone();
+
   if (candidates.length === 0) {
     return null;
   }
@@ -567,7 +572,7 @@ function Candidates({
                 <>
                   , newest{" "}
                   <span className="font-mono">
-                    {formatUtcStamp(candidate.newest_at)}
+                    {formatAthleteStamp(candidate.newest_at, timezone)}
                   </span>
                 </>
               )}
