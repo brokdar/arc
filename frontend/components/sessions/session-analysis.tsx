@@ -12,7 +12,7 @@ import type { PlannedBand } from "@/components/sessions/stream-charts";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
-import { formatDurationClock, formatUtcStamp } from "@/lib/format";
+import { formatDurationClock, formatUtcStampYear } from "@/lib/format";
 import {
   type DetectedInterval,
   pinOf,
@@ -391,14 +391,16 @@ function Provenance({
   // rule the ingest log follows. What this line must not be is a fourth
   // spelling of a timestamp: it used to slice an ISO string by hand, in a
   // format used nowhere else in the app and with no zone label at all
-  // (issue #62, finding 9).
+  // (issue #62, finding 9). With the year, unlike the log's columns: metrics
+  // are recomputed rarely, so this one can be seasons old, and `07.08` alone
+  // does not say which August.
   return (
     <section className="flex flex-col gap-2.5">
       <SectionLabel level={2}>How these were computed</SectionLabel>
       <Panel className="flex flex-col gap-2.5 px-5 py-4">
         <p className="text-ink-muted text-sm">
           Version {metrics.version}, computed{" "}
-          {formatUtcStamp(metrics.computed_at)} UTC
+          {formatUtcStampYear(metrics.computed_at)} UTC
           {metrics.recompute_reason ? ` — ${metrics.recompute_reason}` : ""}.
         </p>
         <div className="flex flex-wrap gap-1.5">

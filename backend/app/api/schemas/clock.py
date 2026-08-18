@@ -22,7 +22,15 @@ class ClockRead(BaseModel):
     #: zone-database keys `Intl` cannot take, so a client can pass this
     #: straight to `Intl.DateTimeFormat` as a `timeZone`.
     timezone: str = Field(examples=["Europe/Berlin"])
-    #: Today on that clock, at the moment of the read. The server's own answer,
-    #: so a client with a skewed system clock still opens on the right day; a
-    #: client that stays open across midnight re-derives it from `timezone`.
+    #: Today on that clock, at the moment of the read.
+    #:
+    #: **The frontend does not use this, and that is the right call.** It
+    #: derives its day from `timezone` and the browser's instant, because a
+    #: session left open across a midnight has to change day without a refetch
+    #: and a served date cannot. What is served here is the deployment's own
+    #: answer, for reading the clock rather than deriving from it: a `curl`
+    #: after changing `MATCHING__TIMEZONE`, and a client with no zone database
+    #: to resolve `timezone` with. It is not a skew check — nothing compares it
+    #: against the caller's clock, and a browser whose system date is a day out
+    #: still opens on the wrong day.
     today: dt.date

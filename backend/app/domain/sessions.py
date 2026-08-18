@@ -14,8 +14,8 @@ against version n has to stay explicable.
 **Anchors are pinned, not looked up.** The intent stores which anchor *version*
 each percentage target derives from, chosen when the intent was written. A new
 FTP appended tomorrow does not silently reinterpret what was prescribed today
-(`app.domain.anchors.anchor_as_of` is the rule for "which version", and the
-pin is what freezes the answer).
+(`app.domain.anchors.anchor_effective_on` is the rule for "which version" on a
+given day, and the pin is what freezes the answer).
 
 The edit rules themselves — when a new version is `edited_post_hoc`, when
 anchors are re-pinned — live in `app.services.planned_sessions`, because

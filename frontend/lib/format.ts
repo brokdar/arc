@@ -217,6 +217,26 @@ export function formatUtcStamp(isoInstant: string): string {
 }
 
 /**
+ * A UTC instant with its year: `07.08.2026 14:32`.
+ *
+ * `formatUtcStamp` for a stamp that stands on its own rather than in a column
+ * of rows the eye reads as recent. A stored artefact can be arbitrarily old —
+ * a metric computed last season renders identically to one computed this
+ * morning without the year, which is the opposite of what a provenance line
+ * is for.
+ *
+ * **Print the zone beside it**, for `formatUtcStamp`'s reason.
+ */
+export function formatUtcStampYear(isoInstant: string): string {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) {
+    return EM_DASH;
+  }
+  const { date, time } = utcStamp(instant);
+  return `${formatDayMonthYear(date)} ${time}`;
+}
+
+/**
  * Seconds as the headline says them: `3h10`, `45min`, `30s`.
  *
  * Prose, not a clock reading — `formatDurationHm` renders `3:10` for a column

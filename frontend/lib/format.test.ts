@@ -10,6 +10,7 @@ import {
   formatPercent,
   formatSets,
   formatUtcStamp,
+  formatUtcStampYear,
   localStamp,
   parseDurationInput,
   parseNumberInput,
@@ -167,5 +168,30 @@ describe("formatUtcStamp", () => {
 
   it("holds the slot when there is no instant to print", () => {
     expect(formatUtcStamp("")).toBe("—");
+  });
+});
+
+describe("formatUtcStampYear", () => {
+  it("keeps the year, so two Augusts are not the same stamp", () => {
+    // A session's metrics are computed once and recomputed rarely: the
+    // provenance line that carries this can be seasons old, and without the
+    // year last season's artefact renders identically to this morning's.
+    expect(formatUtcStampYear("2026-08-07T14:32:09Z")).toBe("07.08.2026 14:32");
+    expect(formatUtcStampYear("2025-08-07T14:32:09Z")).toBe("07.08.2025 14:32");
+    expect(formatUtcStampYear("2026-08-07T14:32:09Z")).not.toBe(
+      formatUtcStampYear("2025-08-07T14:32:09Z"),
+    );
+  });
+
+  it("does not move the instant anywhere either", () => {
+    // Same wall reading as the un-yeared one: this is a second rendering of
+    // UTC, not a second clock.
+    expect(formatUtcStampYear("2026-08-07T14:32:09Z")).toContain(
+      formatUtcStamp("2026-08-07T14:32:09Z").split(" ")[1],
+    );
+  });
+
+  it("holds the slot when there is no instant to print", () => {
+    expect(formatUtcStampYear("")).toBe("—");
   });
 });

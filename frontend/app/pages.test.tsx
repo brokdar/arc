@@ -45,6 +45,18 @@ vi.mock("next/link", () => ({
  * adds the clock every signed-in page names a day on — `AppLayout` puts both
  * above them in production, so a page rendered without them here would be
  * proving something the application never does.
+ *
+ * **Every signed-in page uses `Guarded`, not only the ones that read the
+ * clock today.** `useAthleteTimezone` throws outside a `ClockProvider`, and a
+ * component deep in the tree — a note card, a proposal card — reaches it only
+ * once its data arrives. A page rendered bare therefore passes for as long as
+ * `findBy*` resolves on the first synchronous render and `cleanup()` unmounts
+ * before the fetch lands: the assertion is green, the mount it claims to prove
+ * never completed, and vitest reports the throw as an unhandled error beside a
+ * passing test. Wrapping by need would make each of these smoke tests depend
+ * on which components its page happens to import this month. Only the login
+ * page renders bare, because that is how it renders in the application: it is
+ * outside `AppLayout`, and there is no athlete to have a clock yet.
  */
 function Guarded({ children }: { children: React.ReactNode }) {
   return (
@@ -102,9 +114,9 @@ describe("route shells", () => {
 
   it("mounts the workout library", async () => {
     render(
-      <Providers>
+      <Guarded>
         <WorkoutsPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(await screen.findByLabelText("Search")).toBeInTheDocument();
@@ -112,9 +124,9 @@ describe("route shells", () => {
 
   it("routes /workouts/new at the creator, and an id at the editor", async () => {
     render(
-      <Providers>
+      <Guarded>
         {await WorkoutPage({ params: Promise.resolve({ id: "new" }) })}
-      </Providers>,
+      </Guarded>,
     );
 
     expect(await screen.findByText("New workout")).toBeInTheDocument();
@@ -125,9 +137,9 @@ describe("route shells", () => {
 
   it("mounts the inbox", async () => {
     render(
-      <Providers>
+      <Guarded>
         <InboxPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(
@@ -137,9 +149,9 @@ describe("route shells", () => {
 
   it("mounts the session log", async () => {
     render(
-      <Providers>
+      <Guarded>
         <SessionsPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(
@@ -149,13 +161,13 @@ describe("route shells", () => {
 
   it("routes a session id at its detail page", async () => {
     render(
-      <Providers>
+      <Guarded>
         {
           await SessionPage({
             params: Promise.resolve({ id: ACTIVITY_IDS.outdoorRide }),
           })
         }
-      </Providers>,
+      </Guarded>,
     );
 
     expect(
@@ -165,9 +177,9 @@ describe("route shells", () => {
 
   it("mounts the proposal inbox", async () => {
     render(
-      <Providers>
+      <Guarded>
         <ProposalsPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(

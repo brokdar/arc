@@ -180,6 +180,15 @@ class AnchorService:
         # on the 20th in Auckland is effective from the 20th, and dating it the
         # 19th would put it in force a day early for every score that reads it
         # (issue #62).
+        #
+        # Read *outside* `domain_rules()` on purpose. An unresolvable
+        # `MATCHING__TIMEZONE` is a broken deployment, not a broken request:
+        # translated to a 422 it would tell a caller whose payload was perfectly
+        # good that their input was invalid, and hide the operator's typo behind
+        # a client error. Every other read of this clock — `PlanService.week`,
+        # `AnchorService.current`, the MCP tools — lets it surface as a 500, and
+        # this was the one place that did not.
+        day = athlete_today(created_at)
         with domain_rules():
             return AnchorVersion(
                 anchor_type=anchor_type,
@@ -187,7 +196,7 @@ class AnchorService:
                 unit=unit or ANCHOR_UNITS[anchor_type],
                 provenance=provenance,
                 protocol=protocol,
-                effective_date=effective_date or athlete_today(created_at),
+                effective_date=effective_date or day,
                 ci_low=ci_low,
                 ci_high=ci_high,
                 created_at=created_at,

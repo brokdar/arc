@@ -88,16 +88,13 @@ typecheck:
 
 # Run unit tests (backend + frontend)
 #
-# `TZ` is pinned, and deliberately not UTC. Nothing in this application may
-# read the *container's* clock — every instant it stores is aware UTC and every
-# calendar date it derives comes from `app.core.clock` (`MATCHING__TIMEZONE`).
-# Ruff's DTZ rules refuse the ways of doing that on purpose; this catches a
-# library that does it behind our back, which no lint can see. Unpinned, the
-# container sits in UTC and a third clock is indistinguishable from the right
-# one (issue #62). The frontend pins its two in `vitest.config.mts` and
+# The backend suite pins a non-UTC `TZ` in `backend/tests/conftest.py`, not
+# here: CI and the pre-push hook invoke `pytest` directly, so a pin in this
+# recipe would be missing from the two runs that gate a merge (issue #62). The
+# frontend pins its two the same way, in `vitest.config.mts` and
 # `playwright.config.ts`.
 test:
-	cd backend && TZ=Pacific/Kiritimati uv run pytest -n auto
+	cd backend && uv run pytest -n auto
 	cd frontend && bun run test
 
 # Run backend integration tests against a real database

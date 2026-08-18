@@ -61,10 +61,15 @@ const APPEND_ONLY_COPY =
  * The four anchors in force, in fixed slots.
  *
  * One query per anchor rather than a fold over the history: "in force" is a
- * domain rule — effective on or before today, appended on or before now,
- * latest of those (`app.domain.anchors.anchor_as_of`) — and a client that
- * re-derived it would be a second implementation free to disagree with the
- * one every resolved watt on every other screen came from.
+ * domain rule — effective on or before today on the athlete's clock, latest of
+ * those (`app.domain.anchors.anchor_effective_on`) — and a client that
+ * re-derived it would be a second implementation free to disagree with the one
+ * every resolved watt on every other screen came from.
+ *
+ * There is deliberately no "appended on or before now" clause. That belongs to
+ * `anchor_as_of`, which reproduces a read that already happened; asked about
+ * *now* it can only exclude a row that does not exist yet, and it made the
+ * answer depend on a wall clock that is not monotonic.
  *
  * A missing anchor keeps its slot and says what it costs (UI conventions 3
  * and 4): the grid a returning eye reads by position does not reflow because
@@ -478,7 +483,8 @@ export function AnchorForm({
             </span>
             .{" "}
             {/* A version dated ahead of today is stored but not in force
-                (`anchor_as_of`), so the card above still shows the old value.
+                (`anchor_effective_on`), so the card above still shows the old
+                value.
                 Said here, because a success message beside a panel that did
                 not change is otherwise read as a failed save. */}
             {appended.effective_date > today
@@ -609,8 +615,8 @@ export function AnchorHistory() {
                     {/* The history sorts by effective date, so a version
                         dated ahead of today sits at the top of the table
                         while a *different* version is the one in force
-                        (`anchor_as_of`). Unmarked, the first row reads as
-                        the current value and contradicts the card above. */}
+                        (`anchor_effective_on`). Unmarked, the first row reads
+                        as the current value and contradicts the card above. */}
                     {version.effective_date > today ? (
                       <span
                         title="Stored, but dated ahead of today: the version before it is still the one in force."

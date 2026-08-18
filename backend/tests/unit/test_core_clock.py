@@ -10,11 +10,15 @@ a test that does not is a test that cannot tell a correct clock from a wrong
 one — which is exactly how the other three survived a green suite.
 """
 
+import ast
 import datetime as dt
 from collections.abc import Callable
+from pathlib import Path
+from typing import TypeGuard
 
 import pytest
 
+import app
 from app.core.clock import athlete_now, athlete_timezone, athlete_today
 
 #: Tuesday 23:00 UTC — already Wednesday in Auckland (+12/+13), still Tuesday
@@ -159,3 +163,102 @@ def test_today_and_now_agree_with_each_other(
     moment = athlete_now()
     assert moment.tzinfo is not None
     assert athlete_today(moment.astimezone(dt.UTC)) == moment.date()
+
+
+# --- The spelling Ruff's DTZ rules cannot see --------------------------------
+
+
+#: `.now(...)` / `.utcnow()` / `.fromtimestamp(...)` followed by `.date()`:
+#: a calendar day read off whatever instant the process is at, in whatever zone
+#: that call happened to produce.
+_AMBIENT_PRODUCERS = frozenset({"now", "utcnow", "fromtimestamp"})
+
+
+def _is_utc_literal(node: ast.expr) -> bool:
+    """`dt.UTC`, `UTC`, `dt.timezone.utc`, `timezone.utc` — Greenwich, named."""
+    if isinstance(node, ast.Name):
+        return node.id == "UTC"
+    return isinstance(node, ast.Attribute) and node.attr in {"UTC", "utc"}
+
+
+def _derives_a_date_from_an_instant(node: ast.AST) -> TypeGuard[ast.Call]:
+    """Is ``node`` a calendar date read off an instant, on nobody's clock?
+
+    Two shapes, and deliberately not a third. ``<instant>.now(...).date()``
+    reads the ambient moment; ``<instant>.astimezone(UTC).date()`` names a
+    calendar, but names Greenwich's, which is not where the athlete lives.
+    ``<instant>.astimezone(parse_timezone(tz)).date()`` is neither — it is the
+    correct pattern, used by `session_date` and `entry_lag_days` to answer
+    "which day was this, *there*", and it must stay allowed.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    outer = node.func
+    if not isinstance(outer, ast.Attribute) or outer.attr != "date":
+        return False
+    inner = outer.value
+    if not isinstance(inner, ast.Call) or not isinstance(inner.func, ast.Attribute):
+        return False
+    if inner.func.attr in _AMBIENT_PRODUCERS:
+        return True
+    return (
+        inner.func.attr == "astimezone"
+        and len(inner.args) == 1
+        and _is_utc_literal(inner.args[0])
+    )
+
+
+def test_no_module_derives_a_calendar_date_from_an_instant() -> None:
+    """`dt.datetime.now(dt.UTC).date()` is a clock, and it is the wrong one.
+
+    Ruff's DTZ rules were switched on with this fix and they close half the
+    door: `DTZ011` refuses `dt.date.today()` and `DTZ005` a naive
+    `datetime.now()`. Neither has anything to say about
+    `dt.datetime.now(dt.UTC).date()` — DTZ011's own help text *recommends* it —
+    and that was the spelling of four of the findings in issue #62: the plan
+    week's default, an anchor's `effective_date`, `anchor_as_of`'s day, and the
+    date-of-birth check. All four were tz-aware, all four answered "what day is
+    it in Greenwich", and every one of them passed `ruff check`.
+
+    So it is pinned here instead. A calendar date is not an instant: which
+    calendar the athlete lives in is `MATCHING__TIMEZONE`, and the one function
+    that reads it is `app.core.clock.athlete_today`. If a new call site
+    genuinely needs a UTC date — the *instant's* day, for something that is
+    about Greenwich — give it a name and add it to the allowance below, so the
+    choice is made once and visibly rather than by reflex.
+    """
+    package = Path(app.__file__).parent
+    offenders = [
+        f"{path.relative_to(package.parent)}:{node.lineno}"
+        for path in sorted(package.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if _derives_a_date_from_an_instant(node)
+    ]
+
+    assert offenders == [], (
+        "these derive a calendar date from an instant instead of from "
+        f"`app.core.clock.athlete_today()`: {', '.join(offenders)}"
+    )
+
+
+def test_the_guard_above_recognises_the_shape_it_is_looking_for() -> None:
+    """The check is a green assertion over a clean tree; prove it can go red.
+
+    A structural test that passes because it matches nothing is the same shape
+    as the gap it replaces.
+    """
+
+    def shape(source: str) -> bool:
+        statement = ast.parse(source).body[0]
+        assert isinstance(statement, ast.Expr)
+        return _derives_a_date_from_an_instant(statement.value)
+
+    # The four spellings issue #62 actually found, none of which Ruff flags.
+    assert shape("dt.datetime.now(dt.UTC).date()")
+    assert shape("dt.datetime.now(tz=dt.UTC).date()")
+    assert shape("moment.astimezone(dt.UTC).date()")
+    assert shape("created_at.astimezone(timezone.utc).date()")
+
+    # And the two that are right: a named zone, or the clock itself.
+    assert not shape("start_utc.astimezone(parse_timezone(tz)).date()")
+    assert not shape("athlete_now(moment).date()")

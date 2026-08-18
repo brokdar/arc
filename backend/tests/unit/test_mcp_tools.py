@@ -935,9 +935,15 @@ async def test_the_context_is_built_from_one_clock(
     part company across a midnight, and a test that waits for one runs green
     six days in seven. What is asserted is that every dated block in the answer
     names the same day.
+
+    That Monday is one in the **past** (`MONDAY`, the date this module plans
+    everything on). Stubbed to the current week's, the week half of this
+    assertion proves nothing: the old code read a clock this test does not
+    patch, that clock also says this week, and a payload built from three
+    clocks passes. Dated backwards, only the stub can produce the answer.
     """
     athlete_zone("Pacific/Auckland")
-    monday = dt.date(2026, 8, 17)
+    monday = MONDAY
     monkeypatch.setattr("app.mcp.tools.athlete_today", lambda: monday, raising=True)
     await append_ftp(client)
     await plan(client, date=monday.isoformat())
@@ -1939,6 +1945,37 @@ async def test_record_manual_session_lands_a_strength_session_with_its_sets(
     assert [row["id"] for row in listed["items"]] == [session["id"]]
     detail = await call(READER, "get_session_detail", {"session_id": session["id"]})
     assert detail["metrics"] is not None
+
+
+async def test_an_omitted_timezone_means_the_athletes_own_not_utc(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The agent need not say where the athlete lives; the deployment knows.
+
+    Pinned on this surface as well as on the API's (`test_sessions_api.py`)
+    because the default is declared twice — once in this tool's signature and
+    once in `SessionCreate` — and `create_manual` only sees whichever value
+    reached it. A regression to ``"UTC"`` in one of the two would leave the
+    other's test green.
+
+    22:30 UTC on 11 May is already the 12th in Auckland. Filed on the wrong
+    calendar day, the session then fails to match the planned session on the
+    right one (issue #62, finding 4).
+    """
+    athlete_zone("Pacific/Auckland")
+
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": "2026-05-11T22:30:00+00:00",
+            "duration_s": 3_600,
+        },
+    )
+
+    session = data["session"]
+    assert session["timezone"] == "Pacific/Auckland"
+    assert session["local_date"] == "2026-05-12"
 
 
 async def test_a_manual_session_dry_run_writes_nothing(

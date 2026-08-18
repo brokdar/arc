@@ -219,8 +219,15 @@ async def test_the_default_window_never_comes_from_the_utc_clock(
     caller that named no week — `get_coaching_context`, the call every coaching
     session opens with — got the *previous* week's plan for the first hours of
     an Auckland Monday.
+
+    The stubbed Monday is deliberately one **in the past**. A stub set to the
+    current week's Monday is indistinguishable from the bug: the old code read
+    a clock this test does not patch, that clock also says this week, and the
+    assertion passes on a regression. Dated backwards, no clock the code could
+    read instead can produce this answer — and unlike a stub near today, that
+    stays true as the calendar moves.
     """
-    auckland_monday = dt.date(2026, 8, 17)
+    auckland_monday = dt.date(2026, 3, 2)
     monkeypatch.setattr(
         "app.services.plan.athlete_today", lambda: auckland_monday, raising=True
     )
@@ -228,9 +235,7 @@ async def test_the_default_window_never_comes_from_the_utc_clock(
     payload = await week(client)
 
     assert payload["start"] == auckland_monday.isoformat()
-    # The UTC instant behind that local Monday is still Sunday the 16th, whose
-    # week begins a full seven days earlier.
-    assert payload["start"] != dt.date(2026, 8, 10).isoformat()
+    assert payload["end"] == (auckland_monday + dt.timedelta(days=6)).isoformat()
 
 
 async def test_a_session_lands_on_its_own_day(client: AsyncClient) -> None:
