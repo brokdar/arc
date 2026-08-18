@@ -30,9 +30,9 @@ contract. Take them as facts:
 
 | | |
 | --- | --- |
-| Local gate per PR | `just check` — ruff · pyrefly · import-linter · backend+frontend unit tests · production build · api-contract drift |
+| Local gate per PR | `just gate` — ruff · pyrefly · import-linter · backend+frontend unit tests · production build · api-contract drift · the migration heuristic |
 | Needs Docker (runs alone) | `just test-int` (the only place `alembic check` runs) · `just smoke` · `just up` |
-| CI adds beyond `just check` | integration on real Postgres · Playwright e2e · fullstack smoke · schemathesis · `pr-title` |
+| CI adds beyond `just gate` | integration on real Postgres · Playwright e2e · fullstack smoke · schemathesis · `pr-title` |
 | Build steps an edit triggers | backend schema → `just api-sync` · domain metrics/scoring/matching → the matching `*-fixture` recipe · model change → an Alembic migration in the same PR · new setting → `app/core/config.py` **and** `.env.example` |
 | Never touched by a PR | `CHANGELOG.md` — hand-curated once the feature lands |
 

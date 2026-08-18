@@ -996,7 +996,9 @@ function pushPrompt(parsed, p, gate) {
      ${p.title}
    Write the body to a file and pass \`--body-file\`; it is full of backticks and brackets:
      \`gh pr create --base main --title "${p.title}" --body-file <path>\`
-   Fill in \`.github/pull_request_template.md\` and tick only what you actually verified.`
+   Follow \`.github/pull_request_template.md\`: pick ONE of Why/What-changed (feature) or Root
+   cause/The fix/Impact (bug fix) and delete the other. No checklist — \`just gate\` and CI are
+   the evidence, not a hand-ticked list.`
    }
    THE BODY BECOMES THE COMMIT BODY ON MAIN, so lead with WHY this change exists — the problem it
    solves, not a list of files. Write for a reader outside the branch: one line per paragraph, NO
