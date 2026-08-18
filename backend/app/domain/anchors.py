@@ -255,6 +255,14 @@ def anchor_as_of(
     caller passes it (`app.core.clock.athlete_today`), the same way
     :func:`anchor_effective_on` already takes its day.
 
+    **Nothing calls this yet, and that is not an oversight.** "Which version is
+    in force *now*" is :func:`anchor_effective_on` — see
+    `app.services.anchors.AnchorService.current` for why asking it with
+    ``moment=now`` is actively wrong. This function is the rule for
+    *reproducing* a read that already happened: what a stored score or verdict
+    was looking at when it was computed. It is kept and tested for the caller
+    that replays one, not for a current one.
+
     Raises:
         ValueError: When ``moment`` is naive.
     """

@@ -24,7 +24,7 @@ from app.domain.anchors import (
     AnchorUnit,
     AnchorVersion,
     Provenance,
-    anchor_as_of,
+    anchor_effective_on,
 )
 from app.domain.prediction import PinnedAnchor
 from app.persistence.anchors import AnchorRepository, AnchorVersionRow
@@ -91,39 +91,45 @@ class AnchorService:
         rows = await self._repository.get_many(anchor_version_ids)
         return {row.id: row for row in rows}
 
-    async def current(
-        self, anchor_type: AnchorType, *, moment: dt.datetime | None = None
-    ) -> AnchorVersionRow:
-        """Return the version of ``anchor_type`` in force at ``moment`` (now).
+    async def current(self, anchor_type: AnchorType) -> AnchorVersionRow:
+        """Return the version of ``anchor_type`` in force today.
 
-        The choice is made by `app.domain.anchors.anchor_as_of` over the whole
-        history rather than by an ``ORDER BY ... LIMIT 1``: future-dated and
-        back-dated versions both exist, and the rule for which one counts is a
-        domain rule that scoring and metrics will reuse.
+        The choice is made by `app.domain.anchors.anchor_effective_on` over the
+        whole history rather than by an ``ORDER BY ... LIMIT 1``: future-dated
+        and back-dated versions both exist, and the rule for which one counts
+        is a domain rule that scoring and metrics reuse. The day is the
+        athlete's own (`app.core.clock.athlete_today`, from
+        `MATCHING__TIMEZONE`), never the UTC one — an `effective_date` is a
+        local calendar date (issue #62).
 
-        Two clocks reach that rule and they are different kinds of thing: the
-        *instant* decides what had been appended by then, and the athlete's own
-        *calendar day* (`app.core.clock.athlete_today`, from
-        `MATCHING__TIMEZONE`) decides which ``effective_date`` has arrived. The
-        day is derived from ``moment`` on the athlete's clock, never in UTC —
-        see :func:`app.domain.anchors.anchor_as_of`.
+        **`anchor_effective_on` and not `anchor_as_of`, deliberately.** The
+        second one additionally requires ``created_at <= moment``, which is
+        what makes *reproducing a past read* honest — a value entered today
+        cannot become what last week's score was looking at. Asked about
+        **now**, that clause can only ever exclude a row that does not exist
+        yet, so it looks free. It is not: `created_at` is stamped from
+        `dt.datetime.now`, which reads `CLOCK_REALTIME` and is **not
+        monotonic**. A host that steps its clock backwards — WSL2 does, by
+        ~180 ms every ~30 s — gives an anchor appended a moment ago a stamp in
+        the future of the read that follows it, and the athlete is told to
+        "append an FTP first" about the FTP they just appended. `current` asks
+        "which measurement does the history assign to today", and that question
+        has no instant in it.
 
         Raises:
             NotFoundError: When no version of that type is in force.
         """
-        at = moment or dt.datetime.now(dt.UTC)
+        day = athlete_today()
         rows = await self._repository.history(anchor_type)
         # Paired rather than keyed by the domain value: two versions can be
         # equal in every field the domain models and still be distinct rows.
         pairs = [(row.to_domain(), row) for row in rows]
         with domain_rules():
-            in_force = anchor_as_of(
-                (version for version, _ in pairs), at, athlete_today(at)
-            )
+            in_force = anchor_effective_on((version for version, _ in pairs), day)
         if in_force is None:
             raise NotFoundError(
-                f"No {anchor_type.value} anchor is in force at "
-                f"{at.isoformat()}; append one first"
+                f"No {anchor_type.value} anchor is in force on "
+                f"{day.isoformat()}; append one first"
             )
         return next(row for version, row in pairs if version is in_force)
 

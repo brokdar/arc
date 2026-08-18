@@ -19,6 +19,7 @@ from app.core.clock import athlete_today
 from app.core.exceptions import ValidationError
 from app.domain.actor import Actor
 from app.domain.anchors import AnchorSource, AnchorType, Provenance
+from app.persistence.anchors import AnchorVersionRow
 from app.services.anchors import AnchorService
 
 ANCHORS = "/api/v1/anchors"
@@ -255,6 +256,37 @@ async def test_effectivity_is_resolved_on_the_athletes_day(
 
     athlete_zone("UTC+14:00")
     assert (await in_force())["id"] == from_the_eastern_day["id"]
+
+
+async def test_a_version_stamped_in_the_future_is_still_in_force(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """`current` reads `effective_date`, and must not read `created_at`.
+
+    This is the shape a **non-monotonic clock** produces, and it is not
+    hypothetical: `created_at` is stamped from `dt.datetime.now`, which reads
+    `CLOCK_REALTIME`, and a host that steps that clock backwards — WSL2 does,
+    by roughly 180 ms every 30 s — gives a version appended a moment ago a
+    stamp in the future of the very next read.
+
+    `current` used to go through `anchor_as_of`, which additionally requires
+    `created_at <= now`. Under that rule this version is invisible, and the
+    athlete is told to "append an FTP first" about the FTP they just appended
+    — which is what made planning a session, pinning an anchor and computing
+    zones fail at random in the suite and, more rarely, in a real deployment.
+    """
+    appended = await append(client, value=282)
+    # Reach past the service to do what a backwards clock does to it: the same
+    # row, with a stamp the next read's `now()` has not reached yet.
+    row = await db_session.get(AnchorVersionRow, uuid.UUID(appended["id"]))
+    assert row is not None
+    row.created_at = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+    await db_session.commit()
+
+    response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == appended["id"]
 
 
 async def test_current_without_any_version_returns_404(client: AsyncClient) -> None:
