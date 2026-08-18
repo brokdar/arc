@@ -2,11 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import { WellnessView } from "@/components/wellness/wellness-view";
-import { addDays, todayIsoDate, weekdayLabel } from "@/lib/dates";
+import { AthleteClock } from "@/lib/clock";
+import { addDays, weekdayLabel } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
-import { seedWellnessDay, wellnessDay } from "@/tests/mocks/fixtures";
+import {
+  ATHLETE_TIMEZONE,
+  athleteToday,
+  seedWellnessDay,
+  wellnessDay,
+} from "@/tests/mocks/fixtures";
 import { WELLNESS_TREND } from "@/tests/mocks/generated-wellness-trend";
 
 /**
@@ -52,7 +57,7 @@ vi.mock("next/navigation", async () => {
   };
 });
 
-const today = todayIsoDate();
+const today = athleteToday();
 
 function renderWellness() {
   const queryClient = new QueryClient({
@@ -60,7 +65,9 @@ function renderWellness() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <WellnessView />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <WellnessView />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }

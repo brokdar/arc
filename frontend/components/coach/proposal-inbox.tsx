@@ -20,7 +20,8 @@ import {
   isConflict,
   loadFailureMessage,
 } from "@/lib/api-errors";
-import { formatUtcStamp } from "@/lib/format";
+import { useAthleteTimezone } from "@/lib/clock";
+import { formatAthleteStamp } from "@/lib/format";
 import {
   MATCH_QUERY_PREFIX,
   MATCHES_QUERY_PREFIX,
@@ -194,6 +195,10 @@ function EmptyInbox({ status }: { status: ProposalStatus | "" }) {
  * know which half is which.
  */
 function ProposalCard({ proposal }: { proposal: Proposal }) {
+  // Both stamps below are on the athlete's clock: the expiry is a deadline
+  // they act before, and a filing time beside it in another zone would read as
+  // the same one (issue #62, finding 8).
+  const timezone = useAthleteTimezone();
   const reasonId = useId();
   const queryClient = useQueryClient();
   const [rejecting, setRejecting] = useState(false);
@@ -278,13 +283,13 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
           {actorLabel(proposal.created_by)}
         </span>
         <span className="font-mono text-2xs text-ink-faint">
-          {formatUtcStamp(proposal.created_at)}
+          {formatAthleteStamp(proposal.created_at, timezone)}
         </span>
         <span className="ml-auto font-mono text-2xs text-ink-faint">
           {/* The expiry is shown on every proposal, not only the pending ones:
               on a lapsed one it is the reason it lapsed. */}
           {expiryLabel(proposal.expires_at)} ·{" "}
-          {formatUtcStamp(proposal.expires_at)}
+          {formatAthleteStamp(proposal.expires_at, timezone)}
         </span>
       </div>
 

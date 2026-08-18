@@ -259,6 +259,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/clock": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Clock
+     * @description The athlete's timezone, and today's date on it.
+     *
+     *     Both from one read of the clock, so they cannot disagree with each other
+     *     across a midnight between two calls.
+     */
+    get: operations["clock-get_clock"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/connections": {
     parameters: {
       query?: never;
@@ -2467,6 +2490,27 @@ export interface components {
      */
     ClassificationSource: "sport_field" | "heuristic" | "manual";
     /**
+     * ClockRead
+     * @description Which clock every calendar date in this API is on.
+     *
+     *     Deployment configuration, not profile data — which is why it is its own
+     *     resource and not a field on `AthleteRead`: there is nothing here the
+     *     athlete can PATCH, and `MATCHING__TIMEZONE` is set once by whoever runs the
+     *     instance.
+     */
+    ClockRead: {
+      /**
+       * Timezone
+       * @example Europe/Berlin
+       */
+      timezone: string;
+      /**
+       * Today
+       * Format: date
+       */
+      today: string;
+    };
+    /**
      * CompletionState
      * @description What the calendar's week strip colours one day, or one card, by.
      *
@@ -3240,10 +3284,9 @@ export interface components {
       temperature_c?: number | null;
       /**
        * Timezone
-       * @description IANA name, fixed offset (UTC+02:00), or UTC.
-       * @default UTC
+       * @description IANA name, fixed offset (UTC+02:00), or UTC. Omit for the athlete's own configured timezone.
        */
-      timezone: string;
+      timezone?: string;
     };
     /**
      * MarkerStandingRead
@@ -6974,6 +7017,35 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["app__api__schemas__auth__SessionStatus"];
+        };
+      };
+    };
+  };
+  "clock-get_clock": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ClockRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };

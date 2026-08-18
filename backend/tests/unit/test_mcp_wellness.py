@@ -16,6 +16,7 @@ from fastmcp.exceptions import ToolError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.domain.actor import Actor
 from app.domain.wellness import MAX_BACKFILL_DAYS, Confounder
 from app.persistence.audit import AuditLogEntry
@@ -27,7 +28,11 @@ _KEY = "a1b2c3d4" * 4
 COACH = f"coach:write:{_KEY}"
 READER = f"reader:read:{_KEY[::-1]}"
 
-TODAY = dt.date.today()
+#: Today on the athlete's clock — the same one `WellnessService.local_today`
+#: reads, because that is the day these tests are about. Not `dt.date.today()`,
+#: which is the *container's* clock and a third answer to the question
+#: (issue #62); the DTZ rules now refuse it.
+TODAY = athlete_today()
 
 
 async def call(entry: str, tool: str, arguments: dict[str, Any] | None = None) -> Any:

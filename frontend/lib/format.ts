@@ -144,11 +144,39 @@ function utcStamp(instant: Date): LocalStamp {
 }
 
 /**
+ * An instant on the athlete's own clock: `07.08 14:32`.
+ *
+ * For a moment the athlete has to *act* on — a deadline, an expiry. The
+ * counterpart of `formatUtcStamp`, which is for a moment the *server* acted
+ * at: that one is left in UTC because its column is headed with the zone, and
+ * a deadline shown in a zone the athlete does not live in is a deadline they
+ * will miss (issue #62, finding 8).
+ *
+ * `timezone` is the athlete's, from `useAthleteTimezone()`. Renders an em dash
+ * rather than a plausible wrong time when the instant or the zone will not
+ * resolve, for the reason `localStamp` returns null.
+ */
+export function formatAthleteStamp(
+  isoInstant: string,
+  timezone: string,
+): string {
+  const stamp = localStamp(isoInstant, timezone);
+  return stamp === null
+    ? EM_DASH
+    : `${formatDayMonth(stamp.date)} ${stamp.time}`;
+}
+
+/**
  * A UTC instant as the ingest log prints it: `07.08 14:32`.
  *
  * Deliberately not converted to anywhere: the log records what the *server*
  * did, and its column is headed with the zone rather than each row carrying
- * one. Sessions get `localStamp`, because a ride happened somewhere.
+ * one. Sessions get `localStamp`, because a ride happened somewhere, and a
+ * deadline the athlete must act on gets `formatAthleteStamp`.
+ *
+ * **Every caller must print the zone beside it.** A bare UTC timestamp on a
+ * screen otherwise about the athlete's local day is read as local, and is
+ * wrong by the offset with nothing saying so.
  */
 export function formatUtcStamp(isoInstant: string): string {
   const instant = new Date(isoInstant);

@@ -1,15 +1,17 @@
 import { createOpenApiHttp } from "openapi-msw";
 
 import type { components, paths } from "@/generated/api/schema";
-import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { mondayOf } from "@/lib/dates";
 import {
   AGENT_NOW,
+  ATHLETE_TIMEZONE,
   alignmentRead,
   anchorHistory,
   answerWellnessPrompt,
   appendAnchorVersion,
   applyLinkStatuses,
   athleteRecord,
+  athleteToday,
   completeDropbox,
   connectionsState,
   contentHash,
@@ -89,6 +91,15 @@ export const handlers = [
     response(200).json({ authenticated: true }),
   ),
   http.post("/api/v1/auth/login", ({ response }) => response(204).empty()),
+  // The one clock. Every date any handler below serves is a day on it, and
+  // the runner's own zone is pinned 25 hours away so a component that reads
+  // the browser's instead disagrees on every run (see `ATHLETE_TIMEZONE`).
+  http.get("/api/v1/clock", ({ response }) =>
+    response(200).json({
+      timezone: ATHLETE_TIMEZONE,
+      today: athleteToday(),
+    }),
+  ),
   // The profile is *stateful*: the red flag is set from the UI and read back
   // by the shell's banner, so a PATCH that answered with a canned profile
   // would let a form that sends the wrong body still light the banner up.
@@ -104,7 +115,7 @@ export const handlers = [
 
   // The week the calendar asks for, built around whatever `start` it sends.
   http.get("/api/v1/plan/week", ({ query, response }) => {
-    const start = query.get("start") ?? mondayOf(todayIsoDate());
+    const start = query.get("start") ?? mondayOf(athleteToday());
     return response(200).json(planWeekFixture(start));
   }),
   http.get(
@@ -1293,10 +1304,10 @@ export const handlers = [
   http.get("/api/v1/wellness/prompt", ({ response }) =>
     // 200 with a null body when nobody has been asked: absence is an answer
     // here, and the card has to tell it from an unanswered question.
-    response(200).json(wellnessPrompt(todayIsoDate())),
+    response(200).json(wellnessPrompt(athleteToday())),
   ),
   http.post("/api/v1/wellness/prompt", async ({ request, response }) => {
-    const result = answerWellnessPrompt(todayIsoDate(), await request.json());
+    const result = answerWellnessPrompt(athleteToday(), await request.json());
     if ("answer" in result) {
       return response(200).json(result.answer);
     }

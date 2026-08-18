@@ -18,7 +18,6 @@ from app.domain.anchors import (
     Provenance,
     StalenessState,
     anchor_as_of,
-    current_anchor,
     history_by_type,
     sorted_history,
 )
@@ -117,21 +116,46 @@ def test_the_newest_effective_version_is_current() -> None:
     older = ftp(240, effective=MARCH)
     newer = ftp(260, effective=MARCH + 7 * DAY)
 
-    assert current_anchor([older, newer]) is newer
+    assert anchor_as_of([older, newer], NOW, NOW.date()) is newer
 
 
 def test_a_future_dated_version_is_not_yet_in_force() -> None:
     today = ftp(250, effective=NOW.date())
     planned = ftp(270, effective=NOW.date() + 30 * DAY)
 
-    assert anchor_as_of([today, planned], NOW) is today
+    assert anchor_as_of([today, planned], NOW, NOW.date()) is today
+
+
+def test_the_day_decides_effectivity_and_the_instant_decides_knowability() -> None:
+    """The two arguments are not interchangeable, and this is where it shows.
+
+    Same instant, two athletes. `effective_date` is a calendar date on the
+    *athlete's* clock, so the version effective "from the 20th" is in force for
+    the Auckland athlete whose 20th has begun and not for the Honolulu one
+    whose 19th has not ended. Reading the day off the instant in UTC — which is
+    what this function used to do — gave both of them Greenwich's answer
+    (issue #62, finding 7).
+    """
+    # 2026-08-19 12:00 UTC: 2026-08-20 in Auckland, still 2026-08-19 in Honolulu.
+    moment = dt.datetime(2026, 8, 19, 12, 0, tzinfo=dt.UTC)
+    before = ftp(250, effective=dt.date(2026, 8, 1), created=moment - 30 * DAY)
+    from_the_20th = ftp(280, effective=dt.date(2026, 8, 20), created=moment - DAY)
+    history = [before, from_the_20th]
+
+    assert anchor_as_of(history, moment, dt.date(2026, 8, 20)) is from_the_20th
+    assert anchor_as_of(history, moment, dt.date(2026, 8, 19)) is before
+    # ...and the instant still decides what had been appended by then, whatever
+    # day it is: nothing created after the moment counts.
+    assert anchor_as_of(history, moment - 2 * DAY, dt.date(2026, 8, 20)) is before
 
 
 def test_a_correction_appended_later_wins_on_the_same_effective_date() -> None:
     original = ftp(250, effective=MARCH, created=NOW)
     correction = ftp(255, effective=MARCH, created=NOW + dt.timedelta(hours=1))
 
-    in_force = anchor_as_of([original, correction], NOW + dt.timedelta(hours=2))
+    in_force = anchor_as_of(
+        [original, correction], NOW + dt.timedelta(hours=2), NOW.date()
+    )
 
     assert in_force is correction
 
@@ -142,21 +166,20 @@ def test_a_back_dated_version_does_not_rewrite_the_past() -> None:
     original = ftp(250, effective=MARCH, created=NOW - 10 * DAY)
     back_dated = ftp(230, effective=MARCH, created=NOW)
 
-    at_the_time = anchor_as_of([original, back_dated], NOW - 5 * DAY)
-    now = anchor_as_of([original, back_dated], NOW)
+    at_the_time = anchor_as_of([original, back_dated], NOW - 5 * DAY, NOW.date())
+    now = anchor_as_of([original, back_dated], NOW, NOW.date())
 
     assert at_the_time is original
     assert now is back_dated
 
 
 def test_no_history_means_nothing_is_in_force() -> None:
-    assert current_anchor([]) is None
-    assert anchor_as_of([], NOW) is None
+    assert anchor_as_of([], NOW, NOW.date()) is None
 
 
 def test_as_of_rejects_a_naive_moment() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
-        anchor_as_of([ftp()], dt.datetime(2026, 3, 15, 12, 0))  # noqa: DTZ001
+        anchor_as_of([ftp()], dt.datetime(2026, 3, 15, 12, 0), MARCH)  # noqa: DTZ001
 
 
 def test_history_sorts_oldest_first_regardless_of_input_order() -> None:

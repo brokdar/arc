@@ -3,13 +3,15 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
-
 import { SettingsView } from "@/components/settings/settings-view";
-import { addDays, todayIsoDate } from "@/lib/dates";
+import { AthleteClock } from "@/lib/clock";
+import { addDays } from "@/lib/dates";
 import {
+  ATHLETE_TIMEZONE,
   anchorHistory,
   appendAnchorVersion,
   athleteRecord,
+  athleteToday,
 } from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
@@ -22,7 +24,9 @@ function renderSettings() {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <SettingsView />
+        <AthleteClock timezone={ATHLETE_TIMEZONE}>
+          <SettingsView />
+        </AthleteClock>
       </QueryClientProvider>,
     ),
   };
@@ -269,7 +273,7 @@ describe("appending a version", () => {
 
     // A back-date is a one-off. Left where the correction put it, the next
     // value — a test ridden today — would be dated to June as well.
-    expect(screen.getByLabelText(/Effective from/)).toHaveValue(todayIsoDate());
+    expect(screen.getByLabelText(/Effective from/)).toHaveValue(athleteToday());
   });
 
   it("says a future-dated version is not in force yet, in both places it shows", async () => {
@@ -281,7 +285,7 @@ describe("appending a version", () => {
       value: "280",
       provenance: "estimated",
       protocol: "",
-      effectiveDate: addDays(todayIsoDate(), 30),
+      effectiveDate: addDays(athleteToday(), 30),
     });
     await submitAppend(user);
 

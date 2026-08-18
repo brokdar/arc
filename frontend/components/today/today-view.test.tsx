@@ -3,14 +3,18 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
-
 import { TodayView } from "@/components/today/today-view";
+import { AthleteClock } from "@/lib/clock";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { formatAthleteStamp, formatUtcStamp } from "@/lib/format";
 import {
+  ATHLETE_TIMEZONE,
+  athleteToday,
   planWeekFixture,
   SESSION_IDS,
   seedWellnessDay,
   seedWellnessPrompt,
+  wellnessPrompt,
 } from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
@@ -27,7 +31,7 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-const today = todayIsoDate();
+const today = athleteToday();
 const start = mondayOf(today);
 
 function renderToday() {
@@ -36,7 +40,9 @@ function renderToday() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <TodayView />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <TodayView />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }
@@ -367,6 +373,47 @@ describe("TodayView wellness card", () => {
     expect(
       screen.getByRole("link", { name: "Record this morning" }),
     ).toHaveAttribute("href", "/wellness");
+  });
+
+  it("asks about the athlete's day, not the browser's", async () => {
+    // The regression this whole change is about (issue #62, finding 3).
+    //
+    // The runner's clock is pinned to `Pacific/Midway` and the athlete to
+    // `Pacific/Kiritimati` — twenty-five hours apart, so the two are *never*
+    // on the same calendar day. A prompt standing for the browser's day is a
+    // prompt for a day the athlete is not in, and the card must not offer it;
+    // the card used to be handed the browser's day, and where the two
+    // disagreed over a midnight it hid the real standing prompt instead —
+    // the athlete silently lost the day's question with nothing on screen.
+    const browsersDay = todayIsoDate("Pacific/Midway");
+    expect(browsersDay).not.toBe(today);
+    seedWellnessPrompt(browsersDay, "pending");
+
+    renderToday();
+
+    await screen.findByRole("heading", { level: 1 });
+    expect(
+      screen.queryByText(/asked about this morning and has not/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the deadline on the athlete's clock, not in raw UTC", async () => {
+    // The one actionable deadline in the application. `seedWellnessPrompt`
+    // dates the expiry 36 hours out, the window the service uses.
+    seedWellnessPrompt(today, "pending");
+
+    renderToday();
+
+    const openUntil = await screen.findByText(/^Open until/);
+    const expiresAt = wellnessPrompt(today)?.expires_at ?? "";
+    expect(openUntil).toHaveTextContent(
+      formatAthleteStamp(expiresAt, ATHLETE_TIMEZONE),
+    );
+    // And that is genuinely a different reading from the UTC one, so this
+    // assertion cannot be satisfied by leaving the old behaviour in place.
+    expect(formatAthleteStamp(expiresAt, ATHLETE_TIMEZONE)).not.toBe(
+      formatUtcStamp(expiresAt),
+    );
   });
 
   it("says the day closed unanswered, and offers the backfill path", async () => {

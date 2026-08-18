@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
-import { formatUtcStamp } from "@/lib/format";
+import { useAthleteTimezone } from "@/lib/clock";
+import { formatAthleteStamp } from "@/lib/format";
 
 type Schemas = components["schemas"];
 type Connection = Schemas["ConnectionRead"];
@@ -285,6 +286,7 @@ function BrokenConnection({ connection }: { readonly connection: Connection }) {
 
 /** The account label and when it was connected. */
 function AccountLine({ connection }: { readonly connection: Connection }) {
+  const timezone = useAthleteTimezone();
   return (
     <div className="flex flex-wrap items-baseline gap-x-2.5">
       <span className="text-ink text-sm">
@@ -294,7 +296,7 @@ function AccountLine({ connection }: { readonly connection: Connection }) {
         data-testid="dropbox-connected-at"
         className="font-mono text-ink-faint text-xs"
       >
-        {formatUtcStamp(connection.created_at)}
+        {formatAthleteStamp(connection.created_at, timezone)}
       </span>
     </div>
   );

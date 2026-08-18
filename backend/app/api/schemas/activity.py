@@ -317,9 +317,19 @@ class ManualSessionCreate(BaseModel):
     #: as local time on whichever machine happened to receive it.
     start_time: AwareDatetime = Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)
     #: The athlete-local timezone at the time, which fixes the session's date.
-    timezone: TimezoneName = Field(
-        default="UTC",
-        description="IANA name, fixed offset (UTC+02:00), or UTC.",
+    #: Omitted, the service fills in the athlete's configured zone
+    #: (`MATCHING__TIMEZONE`) — it used to default to ``"UTC"`` here, which
+    #: silently mis-derived `local_date` by a day for every athlete who does
+    #: not live in Greenwich (issue #62). `None` is not in the published
+    #: schema (`SkipJsonSchema`): "omit it" is the contract, not "send null".
+    #: The bound rides on the string branch for the reason `SessionUpdate`
+    #: spells out above.
+    timezone: TimezoneName | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "IANA name, fixed offset (UTC+02:00), or UTC. Omit for the "
+            "athlete's own configured timezone."
+        ),
     )
     duration_s: int = Field(ge=MIN_MANUAL_DURATION_S, le=MAX_MANUAL_DURATION_S)
     discipline: SessionDiscipline = SessionDiscipline.STRENGTH

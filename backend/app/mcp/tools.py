@@ -28,6 +28,26 @@ seconds, cycling load is TSS-equivalent, strength volume is kilograms, and
 power is watts. Every read carries ``red_flag``; every write takes
 ``dry_run``.
 
+**Which clock a value is on.** Two kinds of time cross this surface and they
+are not interchangeable:
+
+* an **instant** — any field spelled ``*_at`` (``created_at``, ``expires_at``,
+  ``computed_at``) plus ``start_time`` — is returned as an ISO datetime in
+  **aware UTC**, offset included. Render it in the athlete's zone before
+  showing it to them; a deadline quoted in UTC is a deadline they will miss.
+* a **calendar date** — ``date``, ``local_date``, ``effective_date``,
+  ``plan_week``, ``start``, ``end``, ``as_of`` — is a day on the **athlete's
+  own clock** (``MATCHING__TIMEZONE``, `app.core.clock`), never the UTC day and
+  never this container's. There is one athlete and therefore one local clock:
+  the plan week you get when you name none, the day a wellness prompt is
+  raised for, the day an anchor becomes effective on and the athlete's age are
+  all that clock's answers. Ask for the zone by name with `get_athlete`.
+
+Both halves used to be true only by accident: a caller that named no week got
+the **UTC** Monday while the wellness beside it was read on the athlete's
+clock, so `get_coaching_context` could hand back last week's plan next to this
+week's readings with nothing saying so (issue #62).
+
 **Connecting a cloud account has no tool here, and will not get one.** The
 standing parity rule is about *capability* — anything the athlete can ask arc
 to reason about, the agent can too — not about every endpoint having a twin.
@@ -49,6 +69,7 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from app.core.clock import athlete_timezone, athlete_today
 from app.core.exceptions import (
     AppError,
     ConflictError,
@@ -70,6 +91,7 @@ from app.domain.anchors import (
     Provenance,
 )
 from app.domain.athlete import Discipline
+from app.domain.plan import week_start
 from app.domain.proposals import ProposalStatus, changes_from_json
 from app.domain.strength import ExerciseCategory
 from app.domain.templates import sorted_templates
@@ -477,7 +499,17 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         anchors[anchor_type.value] = None
                     else:
                         anchors[anchor_type.value] = views.anchor(row)
-                week = await PlanService.from_session(session).week()
+                # One clock for the whole payload. Read once, here, and passed
+                # to everything below that needs a day: this object used to be
+                # built from three (the UTC Monday for the week, the athlete's
+                # today for the wellness, the container's for the age), so at
+                # 11:00 on a Monday in Auckland it carried *last* week's plan
+                # beside *this* week's readings with nothing saying they
+                # disagreed (issue #62).
+                today = athlete_today()
+                week = await PlanService.from_session(session).week(
+                    start=week_start(today)
+                )
                 pending, _ = await ProposalService.from_session(session).list(
                     status=ProposalStatus.PENDING, limit=MAX_LIMIT
                 )
@@ -488,7 +520,6 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     session
                 ).current_for_sessions(row.id for row in recent)
                 wellness_service = WellnessService.from_session(session)
-                today = wellness_service.local_today()
                 # The last seven days including today, half-open like every
                 # other range here. Read as one page rather than day by day:
                 # this is the one call every session begins with.
@@ -502,7 +533,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     None,
                 )
                 return {
-                    "athlete": views.athlete(profile, today=dt.date.today()),
+                    "athlete": views.athlete(
+                        profile, today=today, timezone=athlete_timezone()
+                    ),
                     "red_flag": views.red_flag(profile),
                     "wellness": {
                         "today": (
@@ -587,6 +620,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         `propose_plan_change`). It is on every read from this server, so there
         is never a call where you did not know.
 
+        `athlete.timezone` is the athlete's home zone and `athlete.today` is
+        the date there right now — the clock every bare date on this surface is
+        on, and the one to convert a `*_at` instant into before quoting it.
+
         Requires a `read` key.
         """
         require_scope(Scope.READ)
@@ -594,7 +631,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             async with session_scope() as session:
                 profile = await current_profile(session)
                 return {
-                    "athlete": views.athlete(profile, today=dt.date.today()),
+                    "athlete": views.athlete(
+                        profile,
+                        today=athlete_today(),
+                        timezone=athlete_timezone(),
+                    ),
                     "red_flag": views.red_flag(profile),
                 }
 
@@ -1868,7 +1909,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
     async def record_manual_session(
         start_time: str,
         duration_s: int,
-        timezone: str = "UTC",
+        timezone: str | None = None,
         discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
         rpe: float | None = None,
         temperature_c: float | None = None,
@@ -1921,7 +1962,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 offset** (e.g. `2026-08-12T17:30:00+02:00`).
             duration_s: Wall-clock length in seconds, 60 s to 24 h.
             timezone: The athlete-local timezone (IANA name, `UTC+02:00`, or
-                `UTC`) — it fixes which day the session belongs to.
+                `UTC`) — it fixes which day the session belongs to. **Omit it
+                unless the athlete says they were somewhere else**: omitted, it
+                is their configured home zone, which is the right answer for a
+                session they reported in chat. It used to default to `UTC`
+                silently, which filed the session a day out for anyone who does
+                not live in Greenwich and then failed to match it against the
+                planned session on the correct day.
             discipline: `strength` (the default — that is what has no device
                 file), `cycling` or `other`.
             rpe: The athlete's reported session RPE, 0-10.

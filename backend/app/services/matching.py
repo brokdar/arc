@@ -48,6 +48,7 @@ from typing import Any, Self
 from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -55,7 +56,6 @@ from app.domain.activity import (
     SessionDiscipline,
     SessionMatchStatus,
     as_planned_discipline,
-    parse_timezone,
     session_date,
 )
 from app.domain.actor import Actor
@@ -1130,20 +1130,7 @@ def _payload(
     }
 
 
-# --- the athlete's clock, and the sweep that reads it -------------------------
-
-
-def athlete_today(now: dt.datetime | None = None) -> dt.date:
-    """Today's date in the athlete's own timezone (``MATCHING__TIMEZONE``).
-
-    Raises:
-        ValueError: When the configured timezone cannot be resolved. Loud
-            rather than defaulted: a sweep that silently fell back to UTC would
-            mark sessions missed up to a day early for anybody east of it.
-    """
-    zone = get_settings().matching.timezone
-    parse_timezone(zone)  # refuses an unusable value before it reaches a date
-    return session_date(now or dt.datetime.now(dt.UTC), zone)
+# --- the sweep that reads the athlete's clock ---------------------------------
 
 
 async def run_missed_sweep() -> None:

@@ -42,6 +42,20 @@ interface IngestEvent {
   session_id: string | null;
 }
 
+/**
+ * The athlete's timezone as this fake API serves it, and today on it.
+ *
+ * `Pacific/Kiritimati` is UTC+14 all year, and the browser is pinned to
+ * `Pacific/Midway`, UTC-11 all year (`playwright.config.ts`). Twenty-five
+ * hours apart, so the athlete's calendar date and the browser's are never the
+ * same day — which is what makes these specs able to notice a page that reads
+ * the wrong clock (issue #62).
+ */
+const TIMEZONE = "Pacific/Kiritimati";
+const ISO_TODAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIMEZONE,
+}).format(new Date());
+
 /** Install the fake API. Returns the state so a test can assert against it. */
 async function mockApi(page: Page) {
   const state = {
@@ -126,6 +140,12 @@ async function mockApi(page: Page) {
 
     if (path.endsWith("/auth/session")) {
       return route.fulfill(json({ authenticated: true }));
+    }
+    if (path.endsWith("/clock")) {
+      // The athlete's one clock. The browser's is pinned twenty-five hours
+      // away (`playwright.config.ts`), so a page that computed "today" from
+      // it would disagree with everything this fake serves (issue #62).
+      return route.fulfill(json({ timezone: TIMEZONE, today: ISO_TODAY }));
     }
     if (path.endsWith("/athlete")) {
       return route.fulfill(

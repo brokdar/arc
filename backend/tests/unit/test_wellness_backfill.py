@@ -12,6 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.domain.wellness import MAX_BACKFILL_DAYS
 from app.persistence.audit import AuditLogEntry
 from app.persistence.wellness import WellnessDayRow
@@ -19,7 +20,11 @@ from app.persistence.wellness import WellnessDayRow
 BACKFILL = "/api/v1/wellness/backfill"
 DAYS = "/api/v1/wellness/days"
 
-TODAY = dt.date.today()
+#: Today on the athlete's clock — the same one `WellnessService.local_today`
+#: reads, because that is the day these tests are about. Not `dt.date.today()`,
+#: which is the *container's* clock and a third answer to the question
+#: (issue #62); the DTZ rules now refuse it.
+TODAY = athlete_today()
 
 
 def history(count: int, *, first: int = 60) -> list[dict[str, Any]]:

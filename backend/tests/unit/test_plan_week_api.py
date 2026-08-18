@@ -10,12 +10,14 @@ sheet, which fetches the session itself.
 
 import datetime as dt
 import json
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
 
 from app.api.schemas.plan import PlanWeekRead
+from app.core.clock import athlete_today
 
 WEEK = "/api/v1/plan/week"
 SESSIONS = "/api/v1/planned-sessions"
@@ -180,16 +182,55 @@ async def test_the_start_is_taken_literally_not_snapped_to_a_monday(
     assert payload["end"] == (wednesday + dt.timedelta(days=6)).isoformat()
 
 
-async def test_the_default_window_is_the_monday_of_the_current_week(
-    client: AsyncClient,
+async def test_the_default_window_is_the_monday_of_the_athletes_current_week(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
 ) -> None:
-    today = dt.datetime.now(dt.UTC).date()
+    """The athlete's Monday, not Greenwich's.
+
+    The athlete is put in Auckland so the two can differ at all — at ``UTC``,
+    the setting's default, this assertion cannot tell the fixed clock from the
+    broken one. The deterministic half of the regression is the test below;
+    this one is the contract stated where a reader of the week endpoint will
+    look for it.
+    """
+    athlete_zone("Pacific/Auckland")
+    today = athlete_today()
     monday = today - dt.timedelta(days=today.weekday())
 
     payload = await week(client)
 
     assert payload["start"] == monday.isoformat()
     assert payload["end"] == (monday + dt.timedelta(days=6)).isoformat()
+
+
+async def test_the_default_window_never_comes_from_the_utc_clock(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sunday 23:00 in Auckland is Sunday 11:00 UTC — but Monday is Monday.
+
+    The clock is stubbed rather than configured because the disagreement this
+    pins is only *visible* on two of seven days: a zone offset moves the date,
+    and the date only moves the week across a Sunday/Monday boundary. Left to
+    the real calendar, the regression would be caught on Sundays and Mondays
+    and pass silently the rest of the week — so the boundary is put where the
+    test can stand on it.
+
+    Before issue #62 this defaulted to `dt.datetime.now(dt.UTC).date()`, and a
+    caller that named no week — `get_coaching_context`, the call every coaching
+    session opens with — got the *previous* week's plan for the first hours of
+    an Auckland Monday.
+    """
+    auckland_monday = dt.date(2026, 8, 17)
+    monkeypatch.setattr(
+        "app.services.plan.athlete_today", lambda: auckland_monday, raising=True
+    )
+
+    payload = await week(client)
+
+    assert payload["start"] == auckland_monday.isoformat()
+    # The UTC instant behind that local Monday is still Sunday the 16th, whose
+    # week begins a full seven days earlier.
+    assert payload["start"] != dt.date(2026, 8, 10).isoformat()
 
 
 async def test_a_session_lands_on_its_own_day(client: AsyncClient) -> None:

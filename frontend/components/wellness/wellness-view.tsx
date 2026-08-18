@@ -14,6 +14,7 @@ import {
 } from "@/components/wellness/wellness-trajectories";
 import { $api } from "@/lib/api/client";
 import { loadFailureMessage } from "@/lib/api-errors";
+import { useAthleteTimezone } from "@/lib/clock";
 import { addDays, isIsoDate, todayIsoDate } from "@/lib/dates";
 import { formatDayMonth } from "@/lib/format";
 
@@ -39,7 +40,9 @@ const HISTORY_DAYS = 28;
 export function WellnessView() {
   const router = useRouter();
   const params = useSearchParams();
-  const [today] = useState(todayIsoDate);
+  // The athlete's clock, read once on mount — see `lib/clock.tsx`.
+  const timezone = useAthleteTimezone();
+  const [today] = useState(() => todayIsoDate(timezone));
   const requested = params.get("date");
   // A pasted `?date=` is checked before it is used: `2026-02-31` parses and
   // rolls over, and a range built from a rolled-over date silently asks about

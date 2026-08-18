@@ -43,6 +43,7 @@ from typing import Any, Self
 from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_now, athlete_timezone, athlete_today
 from app.core.config import get_settings
 from app.core.exceptions import (
     ConflictError,
@@ -51,7 +52,6 @@ from app.core.exceptions import (
     domain_rules,
 )
 from app.core.logging import get_logger
-from app.domain.activity import parse_timezone
 from app.domain.actor import Actor
 from app.domain.plan import week_start
 from app.domain.wellness import (
@@ -281,15 +281,16 @@ class WellnessService:
 
     @staticmethod
     def local_today() -> dt.date:
-        """Today on the athlete's own clock.
+        """Today on the athlete's own clock (`app.core.clock.athlete_today`).
 
-        From `MATCHING__TIMEZONE` — the same clock the missed-session sweep
-        runs on. There is one athlete and therefore one local clock;
-        introducing a second source of "what day is it" is how the plan and the
-        wellness series come to disagree about Tuesday.
+        From `MATCHING__TIMEZONE` — the same clock the missed-session sweep,
+        the plan week and the anchor histories run on. There is one athlete and
+        therefore one local clock; introducing a second source of "what day is
+        it" is how the plan and the wellness series come to disagree about
+        Tuesday. Kept as a method on the service because that is how the MCP
+        tools and this class's own reads reach it.
         """
-        zone = parse_timezone(get_settings().matching.timezone)
-        return dt.datetime.now(dt.UTC).astimezone(zone).date()
+        return athlete_today()
 
     async def get(self, local_date: dt.date) -> WellnessDayRow:
         """Return the day recorded for ``local_date``.
@@ -393,8 +394,7 @@ class WellnessService:
         ones are — see `app.domain.wellness.is_late_entry` for the asymmetry
         and why it is what makes backfill worth building.
         """
-        zone = get_settings().matching.timezone
-        return is_late_entry(row.local_date, row.created_at, zone)
+        return is_late_entry(row.local_date, row.created_at, athlete_timezone())
 
     async def trend(
         self, *, start: dt.date, end: dt.date, metrics: Sequence[str] | None = None
@@ -914,8 +914,7 @@ class WellnessService:
         :meth:`local_today` and the missed-session sweep read.
         """
         moment = now or dt.datetime.now(dt.UTC)
-        zone = parse_timezone(get_settings().matching.timezone)
-        local = moment.astimezone(zone)
+        local = athlete_now(moment)
         if local.hour < get_settings().wellness.prompt_hour_local:
             return None
         return await self.raise_prompt(local.date(), actor=actor, now=moment)

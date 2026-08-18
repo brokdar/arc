@@ -7,6 +7,7 @@ projection stopped agreeing with the thing it projects.
 """
 
 import datetime as dt
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -379,6 +380,47 @@ async def test_a_manual_session_is_stored_with_its_sets(
     assert catalogue["exercise_name"] == "Back Squat"
     assert free_text["exercise_id"] is None
     assert free_text["exercise_name"] == "Copenhagen plank"
+
+
+async def test_an_omitted_timezone_means_the_athletes_own_not_utc(
+    data_root: Path, client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The deployment knows where the athlete lives; the payload need not say.
+
+    22:30 UTC on 11 May is already the 12th in Auckland. Omitted, `timezone`
+    used to default to ``"UTC"`` in the schema, which filed a session the
+    athlete typed in on the wrong calendar day and then failed to match it
+    against the planned session on the right one (issue #62, finding 4).
+    ``"UTC"`` remains the right value to *store* for a device file that did
+    not say where it was recorded — a session entered by hand is not that.
+    """
+    athlete_zone("Pacific/Auckland")
+    payload = a_manual_session(start_time="2026-05-11T22:30:00+00:00")
+    del payload["timezone"]
+
+    response = await client.post(MANUAL, json=payload)
+
+    assert response.status_code == 201, response.text
+    session = response.json()
+    assert session["timezone"] == "Pacific/Auckland"
+    assert session["local_date"] == "2026-05-12"
+
+
+async def test_a_stated_timezone_still_wins_over_the_configured_one(
+    data_root: Path, client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The athlete was travelling, and said so. Same instant, their word."""
+    athlete_zone("Pacific/Auckland")
+
+    response = await client.post(
+        MANUAL,
+        json=a_manual_session(
+            start_time="2026-05-11T22:30:00+00:00", timezone="America/Denver"
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["local_date"] == "2026-05-11"
 
 
 async def test_a_manual_session_can_state_the_temperature_it_was_performed_at(

@@ -26,6 +26,16 @@ export default defineConfig({
   reporter: isCI ? [["blob"], ["github"]] : [["html", { open: "never" }]],
   use: {
     baseURL: fullstack ? "http://localhost" : "http://localhost:3000",
+    // The *browser's* zone, pinned deliberately away from the athlete's.
+    //
+    // `Pacific/Midway` is UTC-11 all year. The UI-only fake API serves the
+    // athlete's zone from `/clock` and every spec's fixtures are built on it,
+    // so a component that computed "today" from the browser instead would
+    // disagree on every run. Unpinned, the browser ran in the runner's zone
+    // and the two silently agreed (issue #62). In fullstack mode the real
+    // backend serves `MATCHING__TIMEZONE`, and the same pin keeps the browser
+    // from being the thing that happens to match it.
+    timezoneId: "Pacific/Midway",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "off",

@@ -570,6 +570,16 @@ def wellness_day_date(sleep_end: dt.datetime, tz: str) -> dt.date:
     yesterday's row, and nothing would notice. The rule is stated at both ends
     and each names the other for exactly that reason.
 
+    **Nothing in the application calls this yet, and that is not an oversight.**
+    Every `local_date` written today comes from the athlete or from
+    `app.core.clock.athlete_today` — arc records what a person types in, and a
+    person entering "this morning" has already applied the wake-day rule
+    themselves. This function is the rule an *overnight device feed* needs, and
+    the day the first one lands (a sleep row with a `sleep_end` instant and no
+    date on it) it must not be re-derived from `app.domain.activity.session_date`
+    by reflex. It is kept, tested and named from both ends for that call site,
+    not for a current one (issue #62, finding 11).
+
     Args:
         sleep_end: When the sleep ended, aware (any zone).
         tz: The athlete's timezone; see

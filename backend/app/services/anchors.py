@@ -12,6 +12,7 @@ from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import athlete_today
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.domain.actor import Actor
 from app.domain.anchors import (
@@ -100,6 +101,13 @@ class AnchorService:
         back-dated versions both exist, and the rule for which one counts is a
         domain rule that scoring and metrics will reuse.
 
+        Two clocks reach that rule and they are different kinds of thing: the
+        *instant* decides what had been appended by then, and the athlete's own
+        *calendar day* (`app.core.clock.athlete_today`, from
+        `MATCHING__TIMEZONE`) decides which ``effective_date`` has arrived. The
+        day is derived from ``moment`` on the athlete's clock, never in UTC —
+        see :func:`app.domain.anchors.anchor_as_of`.
+
         Raises:
             NotFoundError: When no version of that type is in force.
         """
@@ -109,7 +117,9 @@ class AnchorService:
         # equal in every field the domain models and still be distinct rows.
         pairs = [(row.to_domain(), row) for row in rows]
         with domain_rules():
-            in_force = anchor_as_of((version for version, _ in pairs), at)
+            in_force = anchor_as_of(
+                (version for version, _ in pairs), at, athlete_today(at)
+            )
         if in_force is None:
             raise NotFoundError(
                 f"No {anchor_type.value} anchor is in force at "
@@ -160,6 +170,10 @@ class AnchorService:
                 "critical-power model (WP-5) and cannot be appended yet"
             )
         created_at = dt.datetime.now(dt.UTC)
+        # The athlete's calendar day, not the UTC one: an FTP appended at 08:00
+        # on the 20th in Auckland is effective from the 20th, and dating it the
+        # 19th would put it in force a day early for every score that reads it
+        # (issue #62).
         with domain_rules():
             return AnchorVersion(
                 anchor_type=anchor_type,
@@ -167,7 +181,7 @@ class AnchorService:
                 unit=unit or ANCHOR_UNITS[anchor_type],
                 provenance=provenance,
                 protocol=protocol,
-                effective_date=effective_date or created_at.date(),
+                effective_date=effective_date or athlete_today(created_at),
                 ci_low=ci_low,
                 ci_high=ci_high,
                 created_at=created_at,
@@ -198,8 +212,8 @@ class AnchorService:
             provenance: How the value was arrived at. `tested` additionally
                 requires ``protocol``.
             source: Whether the athlete or the agent is appending.
-            effective_date: The date the value applies from; today when
-                omitted.
+            effective_date: The date the value applies from; omitted, the
+                athlete's own today (`MATCHING__TIMEZONE`).
             unit: The anchor type's own unit when omitted — supplying a
                 different one is an error, not a conversion request.
             protocol: How the value was measured.

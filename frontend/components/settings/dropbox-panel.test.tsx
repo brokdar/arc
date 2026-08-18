@@ -3,9 +3,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-
 import { DropboxPanel } from "@/components/settings/dropbox-panel";
+import { AthleteClock } from "@/lib/clock";
 import {
+  ATHLETE_TIMEZONE,
   DROPBOX_CODE,
   dropboxFeed,
   seedDropboxConnection,
@@ -19,7 +20,9 @@ function renderPanel() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <DropboxPanel />
+      <AthleteClock timezone={ATHLETE_TIMEZONE}>
+        <DropboxPanel />
+      </AthleteClock>
     </QueryClientProvider>,
   );
 }

@@ -16,6 +16,7 @@ from app.api.routes.agent_notes import router as agent_notes_router
 from app.api.routes.anchors import router as anchors_router
 from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.clock import router as clock_router
 from app.api.routes.connections import feeds_router
 from app.api.routes.connections import router as connections_router
 from app.api.routes.exercises import router as exercises_router
@@ -158,6 +159,7 @@ def create_app() -> FastAPI:
         responses=unauthorized,
     )
     api.include_router(athlete_router)
+    api.include_router(clock_router)
     api.include_router(anchors_router)
     api.include_router(wellness_router)
     api.include_router(zones_router)

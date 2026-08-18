@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/native-select";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
-import { todayIsoDate, weekdayLabel } from "@/lib/dates";
+import { useAthleteToday } from "@/lib/clock";
+import { weekdayLabel } from "@/lib/dates";
 import { formatDayMonthYear } from "@/lib/format";
 import {
   anchorLabel,
@@ -69,6 +70,10 @@ export function WellnessForm({
   readonly lastHrv: HrvDescriptors | null;
   readonly className?: string;
 }) {
+  // The athlete's today, not the browser's: this decides only the heading,
+  // but "This morning" over yesterday's row is the same wrong day the rest of
+  // issue #62 was about, and the athlete would believe it.
+  const today = useAthleteToday();
   // Keyed by date in the parent, so switching days remounts and reseeds rather
   // than reconciling — a form that kept yesterday's numbers while showing
   // today's date is the one bug this page cannot afford.
@@ -77,7 +82,7 @@ export function WellnessForm({
       <div className="flex flex-col gap-4 px-5 py-4">
         <div className="flex items-baseline justify-between gap-3">
           <SectionLabel level={2}>
-            {date === todayIsoDate() ? "This morning" : "That morning"}
+            {date === today ? "This morning" : "That morning"}
           </SectionLabel>
           <span className="font-mono text-ink-faint text-xs">
             {weekdayLabel(date)} {formatDayMonthYear(date)}

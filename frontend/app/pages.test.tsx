@@ -15,6 +15,7 @@ import WorkoutsPage from "@/app/(app)/workouts/page";
 import LoginPage from "@/app/login/page";
 import Home from "@/app/page";
 import { Providers } from "@/app/providers";
+import { ClockProvider } from "@/lib/clock";
 import { ACTIVITY_IDS } from "@/tests/mocks/fixtures";
 
 vi.mock("next/navigation", () => ({
@@ -40,8 +41,19 @@ vi.mock("next/link", () => ({
  * Render smoke tests for the route shells. They are server components, but
  * synchronous and prop-free, so they render here like any other function
  * component — enough to catch a page that no longer mounts its content.
- * `Providers` supplies the QueryClient the guarded pages need.
+ * `Providers` supplies the QueryClient the guarded pages need, and `Guarded`
+ * adds the clock every signed-in page names a day on — `AppLayout` puts both
+ * above them in production, so a page rendered without them here would be
+ * proving something the application never does.
  */
+function Guarded({ children }: { children: React.ReactNode }) {
+  return (
+    <Providers>
+      <ClockProvider>{children}</ClockProvider>
+    </Providers>
+  );
+}
+
 describe("route shells", () => {
   it("renders the login page", () => {
     render(
@@ -78,9 +90,9 @@ describe("route shells", () => {
 
   it("mounts the today page", async () => {
     render(
-      <Providers>
+      <Guarded>
         <TodayPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(
@@ -165,9 +177,9 @@ describe("route shells", () => {
 
   it("mounts the settings page", async () => {
     render(
-      <Providers>
+      <Guarded>
         <SettingsPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(
@@ -177,9 +189,9 @@ describe("route shells", () => {
 
   it("mounts the calendar page", async () => {
     render(
-      <Providers>
+      <Guarded>
         <CalendarPage />
-      </Providers>,
+      </Guarded>,
     );
 
     expect(

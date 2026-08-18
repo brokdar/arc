@@ -1008,13 +1008,18 @@ async def test_the_sweep_reads_the_athletes_own_timezone(
 ) -> None:
     """`MATCHING__TIMEZONE`, not the server's clock.
 
+    The clock itself now lives in `app.core.clock` and is pinned in detail by
+    tests/unit/test_core_clock.py, DST boundaries included. This case stays
+    here because it is about the *sweep*: the rule it reads is "no link by the
+    end of day+1", and which day that is has to be the athlete's.
+
     The instant below is Tuesday 23:00 UTC — which is already Wednesday in
     Auckland (UTC+12) and still Tuesday afternoon in New York (UTC-4). The same
     plan therefore runs out of grace in one zone and not in the other, from one
     moment, which is why the zone is a setting rather than the server's clock.
     """
+    from app.core.clock import athlete_today
     from app.core.config import get_settings
-    from app.services.matching import athlete_today
 
     moment = dt.datetime(2026, 8, 11, 23, 0, tzinfo=dt.UTC)
 
