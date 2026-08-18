@@ -125,6 +125,45 @@ check: lint typecheck test build api-check
 # `check` plus the integration suite (needs Docker for Postgres)
 check-all: check test-int
 
+# The single pre-review gate, for a human or an agent: one command, one exit
+# code, one success marker to grep for.
+#
+# WHAT IT RUNS: everything in `check` — ruff check · ruff format --check ·
+# import-linter · biome · pyrefly · tsgo · backend unit tests · frontend unit
+# tests · the production frontend build · api-contract drift — plus the
+# migration heuristic. This is the list the workflow's prompts point at rather
+# than restate, so it cannot drift from the recipe.
+#
+# WHAT IT DOES NOT RUN, so nobody reads it as "everything": `zizmor` and
+# `exec-bits` (pre-push hooks outside `check`), the file hygiene hooks
+# (end-of-file, trailing-whitespace, check-yaml/toml/json), and the repo's own
+# tooling suites (`workflow-guards-test`, `implement-plan-sim-test`,
+# `parse-plan-test`, `ci-status-test`, `docker-lock-test`, migration-required's
+# own cases) — which run at commit time, scoped to the files they cover. So a
+# green gate can still be followed by a hook that refuses the commit.
+#
+# The migration heuristic reads a COMMIT RANGE, so it is silent until the branch
+# has a commit: on the first pass — the gate before the first commit — it exits 0
+# without looking at anything.
+#
+# WHY IT EXISTS SEPARATELY. `implement-plan` used to tell each developer agent
+# "the gate is `just check`, it must end GREEN" and then tell the reviewer "`just
+# check` is already GREEN, do not re-run it". Neither statement was ever
+# observed: on PR #54 (16 Aug 2026) the implementer ran `just lint`, `just test`
+# and `just test-int` piecemeal and never ran the gate at all, and the reviewer
+# was told it had passed. Now one cheap seat runs THIS, and its exit code is
+# evidence the reviewer reads rather than a claim it is asked to trust.
+#
+# It does not reformat sources (`ruff format --check`, never `--write`), so it is
+# safe on an uncommitted tree. It is NOT read-only: `api-check` regenerates
+# `frontend/generated/api/` and then diffs it — that regeneration IS the drift
+# check — and `build` writes `frontend/.next/`.
+
+# The single pre-review gate: `check` plus the migration heuristic
+gate: check
+	@bash scripts/check-migration-required.sh
+	@echo "GATE OK"
+
 # --- Database ----------------------------------------------------------------
 
 # POSTGRES__HOST=localhost for the same reason as the dev-* recipes above: the

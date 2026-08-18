@@ -142,9 +142,10 @@ rather than regenerating the committed types from an unpinned compiler.
   is not required; `Feat(WP-1): Add Thing.` passes), while
   `.github/workflows/pr-title.yml` additionally enforces lowercase-start and
   no-trailing-period on the title — the text that becomes the changelog entry.
-  The eleven-type list is duplicated in `.pre-commit-config.yaml`, `cliff.toml`
-  and `pr-title.yml`; change all three together. See the `commit` and
-  `commit-push-pr` skills.
+  The eleven-type list is duplicated in `.pre-commit-config.yaml`, `cliff.toml`,
+  `pr-title.yml` and `TITLE_TYPES` in `.claude/workflows/implement-plan.js`
+  (which refuses a plan whose PR titles would fail that check); change all four
+  together. See the `commit` and `commit-push-pr` skills.
 - **Changelog**: `CHANGELOG.md` is hand-curated Keep a Changelog, and no tool
   writes to it. `just changelog` (git-cliff, `cliff.toml`) prints a *draft* from
   conventional commits with bodies included; edit it down and merge the entries

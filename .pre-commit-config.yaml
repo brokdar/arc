@@ -82,6 +82,93 @@ repos:
         language: system
         files: ^backend/
         stages: [pre-push]
+      # `alembic check` runs in exactly one place — the Postgres integration
+      # suite — so model/migration drift is discovered in the most expensive
+      # tier there is, and the fix costs a second run of it. This needs no
+      # database: it refuses a push whose diff moves DDL without shipping a
+      # revision. Heuristic by design; `alembic check` is still the authority.
+      - id: migration-required
+        name: migration-required
+        entry: ./scripts/check-migration-required.sh
+        language: script
+        pass_filenames: false
+        files: ^backend/app/persistence/.*\.py$
+        stages: [pre-push]
+      # The check above is a heuristic over diff text, so it rots silently when
+      # the model idiom shifts. Its cases run whenever it or its helpers change.
+      - id: migration-required-test
+        name: migration-required-test
+        entry: ./scripts/check-migration-required.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/(check-migration-required(\.test)?|git-push-range)\.sh$
+      # The implement-plan workflow's guards each refuse an entire run, so they
+      # only execute when a plan is defective — which in a working repo is almost
+      # never. That is why review, not use, found that one guard was missing
+      # outright and another refused titles CI accepts. These cases are pure and
+      # cost milliseconds; the alternative is discovering the next one in flight.
+      - id: workflow-guards-test
+        name: workflow-guards-test
+        entry: node scripts/workflow-guards.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/workflows/implement-plan\.js|scripts/workflow-guards\.test\.mjs)$
+      # The guards above are pure functions; every bug that actually cost a run
+      # lived in the ORCHESTRATION between seats, which no test could reach
+      # without spawning a dozen agents against a real remote. This simulates
+      # whole runs against the real script with stubbed agents — seat order, loop
+      # bounds, what merges, what halts, and what each prompt says — in
+      # milliseconds. Its `parallel` deep-clones results on purpose, so nothing
+      # can quietly depend on mutation surviving that boundary again.
+      - id: implement-plan-sim-test
+        name: implement-plan-sim-test
+        entry: node scripts/implement-plan.sim.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/workflows/implement-plan\.js|scripts/implement-plan\.sim\.test\.mjs)$
+      # The three scripts that replaced an agent's judgement inside that workflow.
+      # Each one now decides something a model used to derive: what the plan says,
+      # whether CI ran, and who owns the Docker ports. A regression in any of them
+      # is silent at the only moment it matters — mid-run, with PRs in flight — so
+      # their cases run on every edit. They are pure or hermetic and cost under a
+      # second together.
+      - id: parse-plan-test
+        name: parse-plan-test
+        entry: node scripts/parse-plan.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^scripts/parse-plan(\.test)?\.mjs$
+      - id: ci-status-test
+        name: ci-status-test
+        entry: node scripts/ci-status.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^scripts/ci-status(\.test)?\.mjs$
+      - id: docker-lock-test
+        name: docker-lock-test
+        entry: ./scripts/docker-lock.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/docker-lock(\.test)?\.sh$
+      # This checkout has core.fileMode=false, so git ignores the +x bit: a hook
+      # script added without `git update-index --chmod=+x` is committed 100644,
+      # `git status` shows nothing, and it exits 126 for everyone else.
+      # `git-push-range.sh` was in exactly that state, which meant the
+      # migration-drift guard exited "Permission denied" on every push and its own
+      # 11-case suite failed 11/11 — silently, because a guard that cannot run
+      # still lets the push through. Invoked with `bash` on purpose: a check for
+      # missing executable bits must not need one.
+      # pre-push, not pre-commit: this reads the INDEX, and during a commit prek
+      # has swapped in a temporary one holding only the staged subset — every
+      # other tracked script then reads as untracked and a staged mode change
+      # reads as unset. At push time the index is the real one.
+      - id: exec-bits
+        name: exec-bits
+        entry: bash scripts/check-exec-bits.sh
+        language: system
+        pass_filenames: false
+        files: ^(\.pre-commit-config\.yaml|scripts/.*)$
+        stages: [pre-push]
 
   # ============================================================================
   # API contract synchronization
@@ -119,4 +206,37 @@ repos:
         pass_filenames: false
         language: system
         files: ^frontend/(app|components|lib|tests)/.*\.(tsx?|jsx?)$
+        stages: [pre-push]
+      # The production build was the one `just check` gate no hook ran, so a
+      # build-only failure — the class `tsgo --noEmit` cannot see — was first
+      # discovered in `frontend-checks.yml`, and the fix cost a second run of
+      # it. Same trigger as that workflow's `paths:` filter, so green here and
+      # green there are the same statement.
+      # The path gate is `run-if-changed`, not `files:` — prek widens its own
+      # file set to the whole tree whenever the branch has no remote counterpart
+      # (its first push, and every retry after a failed one), which would make
+      # every new branch pay a production build it did not earn.
+      - id: frontend-build
+        name: frontend-build
+        entry: ./scripts/run-if-changed.sh ^frontend/ -- bash -c 'cd frontend && bun run build'
+        pass_filenames: false
+        language: script
+        always_run: true
+        stages: [pre-push]
+
+  # ============================================================================
+  # Workflow security
+  # ============================================================================
+  # Mirrors zizmor.yml. Workflow files change rarely, so this almost never runs
+  # — but when it does, a lint discovered in CI costs a whole run to learn
+  # something `uvx` answers in seconds. Needs network for the first `uvx` fetch;
+  # if you are offline, SKIP=zizmor and let CI have it.
+  - repo: local
+    hooks:
+      - id: zizmor
+        name: zizmor
+        entry: ./scripts/run-if-changed.sh '^\.github/workflows/.*\.ya?ml$' -- uvx zizmor .github/workflows/
+        pass_filenames: false
+        language: script
+        always_run: true
         stages: [pre-push]

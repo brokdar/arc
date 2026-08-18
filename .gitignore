@@ -69,6 +69,18 @@ schemathesis-report/
 .claude/worktrees/
 **/agent-memory/
 
+# Feature plans (`feature-plan` writes `<slug>-plan.md` here, `implement-plan`
+# reads it). Scaffolding by construction: every decision in one names the
+# docstring or test it lands in, so the plan itself must never be committed —
+# a tracked copy is a second source of truth that drifts from the code.
+/*-plan.md
+# The run-local copy `parse-plan.mjs` takes of the plan it was given, so the
+# whole run survives the working copy being edited or deleted mid-flight — which
+# happened, five minutes into one, on 16 Aug 2026.
+.claude/plan-snapshots/
+# Mutual exclusion for the Docker-bound tiers, shared across worktrees.
+.claude/docker.lock/
+
 # Local docs stay untracked (see PR #6), with named exceptions that are
 # shared instruments rather than working notes. `docs/*` instead of `docs/`
 # because git will not re-include a file inside an ignored directory.
