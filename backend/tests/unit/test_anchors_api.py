@@ -265,9 +265,17 @@ async def test_a_version_stamped_in_the_future_is_still_in_force(
 
     This is the shape a **non-monotonic clock** produces, and it is not
     hypothetical: `created_at` is stamped from `dt.datetime.now`, which reads
-    `CLOCK_REALTIME`, and a host that steps that clock backwards — WSL2 does,
-    by roughly 180 ms every 30 s — gives a version appended a moment ago a
+    `CLOCK_REALTIME`. An NTP correction, a resumed VM or a virtualised host
+    clock steps it backwards by milliseconds — this WSL2 container by roughly
+    180 ms every 30 s — and a version appended a moment ago then carries a
     stamp in the future of the very next read.
+
+    This is also #66's regression test, which fixed the same rule on `main`
+    while this branch was open and reproduced it the same way: by moving the
+    row rather than the clock, because the state a stepped-back clock leaves
+    behind is simply a history whose newest entry is stamped ahead of now, and
+    writing that row directly is deterministic where waiting for a step is
+    not.
 
     `current` used to go through `anchor_as_of`, which additionally requires
     `created_at <= now`. Under that rule this version is invisible, and the

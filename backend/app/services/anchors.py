@@ -109,12 +109,19 @@ class AnchorService:
         **now**, that clause can only ever exclude a row that does not exist
         yet, so it looks free. It is not: `created_at` is stamped from
         `dt.datetime.now`, which reads `CLOCK_REALTIME` and is **not
-        monotonic**. A host that steps its clock backwards — WSL2 does, by
-        ~180 ms every ~30 s — gives an anchor appended a moment ago a stamp in
-        the future of the read that follows it, and the athlete is told to
-        "append an FTP first" about the FTP they just appended. `current` asks
-        "which measurement does the history assign to today", and that question
-        has no instant in it.
+        monotonic**. An NTP correction, a resumed VM or a virtualised host
+        clock steps it backwards by milliseconds — this WSL2 container by
+        ~180 ms every ~30 s — and a version written moments ago then carries a
+        stamp later than the "now" of the very next request, so the athlete is
+        told to "append an FTP first" about the FTP they just appended.
+        `current` asks "which measurement does the history assign to today",
+        and that question has no instant in it. Future *effective* dates are
+        still excluded, by the half both functions share.
+
+        **And therefore no ``moment`` parameter.** Naming an instant would put
+        the reproducibility question back in the one place that must not ask
+        it; no caller in `app/` ever passed one. Reproducing a past read is
+        `anchor_as_of`, called by whoever is replaying it (#66, issue #62).
 
         Raises:
             NotFoundError: When no version of that type is in force.
