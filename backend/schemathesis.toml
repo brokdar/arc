@@ -234,21 +234,33 @@ include-name = "POST /api/v1/wellness/prompt"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
-# The Dropbox connect surface refuses three things a JSON schema cannot state,
+# The Dropbox connect surface refuses four things a JSON schema cannot state,
 # each pinned by a unit test (`test_connections_api.py`):
 #
-#   * starting a connection needs `DROPBOX__APP_KEY`, and without it the answer
-#     names the setting rather than handing back a link with a blank
-#     `client_id` that fails on Dropbox's own error page minutes later;
+#   * starting a connection needs an app key, in the panel or in
+#     `DROPBOX__APP_KEY`, and without one the answer carries the registration
+#     steps rather than handing back a link with a blank `client_id` that fails
+#     on Dropbox's own error page minutes later;
+#   * an app key that is nothing but whitespace passes `min_length` and is
+#     still not a key, so it is refused by the service as a sentence;
 #   * a pasted code is only redeemable against the PKCE flow it was minted for,
 #     within fifteen minutes, and only if Dropbox granted offline access — none
 #     of which is a property of the request body;
 #   * browsing folders on a connection whose stored credential will not decrypt
 #     is refused naming `SECRETS__ENCRYPTION_KEY`.
 #
-# No outbound request is reachable from a fuzz run: with no app key configured
-# `authorize` never writes a flow, so `complete` refuses locally, and with no
-# connection row `folders` is a 404 before any client is built.
+# One outbound request became reachable when the app key moved into the
+# database: a fuzz run can PUT a key, start a flow and then offer `complete` a
+# code, which is a token exchange against api.dropboxapi.com with a code
+# Dropbox has never issued. Both answers — Dropbox refusing the code, and the
+# host being unreachable from CI — are the 422 this operation already
+# documents, so the run is unaffected either way. `folders` still reaches
+# nothing: with no connection row it is a 404 before any client is built.
+
+[[operations]]
+include-name = "PUT /api/v1/connections/dropbox/app"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
 [[operations]]
 include-name = "POST /api/v1/connections/dropbox/authorize"

@@ -20,6 +20,13 @@ type Connection = Schemas["ConnectionRead"];
 type Feed = Schemas["FeedRead"];
 
 const connectionsKey = $api.queryOptions("get", "/api/v1/connections").queryKey;
+const setupKey = $api.queryOptions(
+  "get",
+  "/api/v1/connections/dropbox/setup",
+).queryKey;
+
+/** Where the athlete registers the app arc connects through. */
+const DROPBOX_CONSOLE = "https://www.dropbox.com/developers/apps";
 
 /**
  * What each Dropbox scope lets arc do, in words the athlete is deciding with.
@@ -90,6 +97,13 @@ export function DropboxPanel({ className }: { readonly className?: string }) {
 /**
  * The two-step connect ritual: render the link, take the pasted code.
  *
+ * Preceded by a third step that used to happen in a text editor: arc has to
+ * hold the athlete's own Dropbox **app key** before it can produce a link at
+ * all, and `GET /connections/dropbox/setup` is what says whether it does.
+ * Until it settles nothing is offered — a connect button rendered ahead of
+ * that answer is one that either does nothing or fails on Dropbox's error
+ * page with a blank `client_id`.
+ *
  * The pasted code is **kept** when the exchange is refused. A 43-character
  * string copied off another site is exactly the thing a form must not throw
  * away on an error — and "already used" usually means the athlete needs a new
@@ -105,6 +119,7 @@ function ConnectFlow({
   const base = useId();
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
+  const setup = $api.useQuery("get", "/api/v1/connections/dropbox/setup");
   const start = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/authorize",
@@ -125,9 +140,34 @@ function ConnectFlow({
     ...apiErrorMessages(complete.error),
   ];
 
+  if (setup.isPending) {
+    return (
+      <div className="flex flex-col items-start gap-2.5">
+        <p className="max-w-[62ch] text-ink-muted text-sm">{intro}</p>
+        <p className="text-ink-muted text-sm">Checking arc's Dropbox app…</p>
+      </div>
+    );
+  }
+
+  if (!setup.data) {
+    return (
+      <div className="flex flex-col items-start gap-2.5">
+        <p className="max-w-[62ch] text-ink-muted text-sm">{intro}</p>
+        <p role="alert" className="text-destructive text-sm">
+          {loadFailureMessage(setup.error, "the Dropbox app key")}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-start gap-2.5">
       <p className="max-w-[62ch] text-ink-muted text-sm">{intro}</p>
+      {setup.data.app_key_set ? (
+        <AppKeyInForce source={setup.data.source} />
+      ) : (
+        <AppRegistration />
+      )}
       {start.data ? (
         <form
           className="flex w-full flex-col items-start gap-2.5"
@@ -175,13 +215,144 @@ function ConnectFlow({
       ) : (
         <Button
           type="button"
-          disabled={start.isPending}
+          // Disabled rather than absent while arc has no app key: the button
+          // is the thing the athlete came here for, and hiding it would leave
+          // the checklist looking like the whole feature.
+          disabled={start.isPending || !setup.data.app_key_set}
           onClick={() => start.mutate({})}
         >
           {start.isPending ? "Starting…" : startLabel}
         </Button>
       )}
       <Problems problems={problems} />
+    </div>
+  );
+}
+
+/**
+ * The Dropbox app registration, as steps, with the field that ends it.
+ *
+ * arc cannot register the app for the athlete and never will be able to: a
+ * new Dropbox app is in development status and links only its own developer's
+ * account, so a key shipped inside arc would work for exactly one person, and
+ * promoting it to production would make that person the OAuth custodian of
+ * every self-hoster's Dropbox. What arc *can* do is carry the instructions to
+ * the place the decision is made, which is here and not `.env.example`.
+ *
+ * The access type is called out because it is the one choice Dropbox will not
+ * let anyone change afterwards, and getting it wrong fails **silently**: an
+ * App-folder app connects perfectly and then sees nothing in
+ * `/Apps/WahooFitness`, because that folder belongs to Wahoo's app.
+ */
+function AppRegistration() {
+  const base = useId();
+  const queryClient = useQueryClient();
+  const [appKey, setAppKey] = useState("");
+  const save = $api.useMutation("put", "/api/v1/connections/dropbox/app", {
+    onSuccess: () => {
+      setAppKey("");
+      queryClient.invalidateQueries({ queryKey: setupKey });
+    },
+  });
+
+  return (
+    <div className="flex w-full flex-col items-start gap-2.5">
+      <SectionLabel>Register arc as a Dropbox app</SectionLabel>
+      <ol className="flex max-w-[62ch] list-decimal flex-col gap-1 pl-4 text-ink-muted text-sm">
+        <li>
+          Open{" "}
+          <a
+            className="text-accent underline underline-offset-2"
+            href={DROPBOX_CONSOLE}
+            target="_blank"
+            rel="noreferrer"
+          >
+            dropbox.com/developers/apps
+          </a>{" "}
+          and choose "Create app", then "Scoped access".
+        </li>
+        <li>
+          Pick the access type <strong>Full Dropbox</strong>. Dropbox cannot
+          change this afterwards, and an "App folder" app can never read
+          /Apps/WahooFitness — that folder belongs to Wahoo's app, not to arc's.
+          Getting it wrong means deleting the app and registering another.
+        </li>
+        <li>
+          On the Permissions tab tick account_info.read, files.metadata.read and
+          files.content.read, then Submit.
+        </li>
+        <li>
+          Copy the App key from the Settings tab and paste it below. There is no
+          app secret to copy: arc connects with PKCE.
+        </li>
+      </ol>
+      <form
+        className="flex w-full flex-col items-start gap-2.5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.reset();
+          save.mutate({ body: { app_key: appKey } });
+        }}
+      >
+        <Field
+          label="Dropbox app key"
+          htmlFor={`${base}-app-key`}
+          className="w-full max-w-[42ch]"
+        >
+          <Input
+            id={`${base}-app-key`}
+            className="font-mono"
+            value={appKey}
+            autoComplete="off"
+            onChange={(event) => setAppKey(event.target.value)}
+          />
+        </Field>
+        <Button type="submit" disabled={save.isPending || appKey.trim() === ""}>
+          {save.isPending ? "Saving…" : "Save app key"}
+        </Button>
+      </form>
+      <Problems problems={apiErrorMessages(save.error)} />
+    </div>
+  );
+}
+
+/**
+ * Which app key arc is connecting with, and whether the panel can undo it.
+ *
+ * Named rather than reduced to "an app key is set", because the two sources
+ * are fixed in different places: a stored key is removed from here, while
+ * `DROPBOX__APP_KEY` needs an edit and a restart. A remove control offered
+ * against an environment key would appear to do nothing.
+ */
+function AppKeyInForce({
+  source,
+}: {
+  readonly source: Schemas["AppKeySource"] | null;
+}) {
+  const queryClient = useQueryClient();
+  const clear = $api.useMutation("delete", "/api/v1/connections/dropbox/app", {
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: setupKey }),
+  });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2.5">
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        {source === "stored"
+          ? "arc is using the Dropbox app key saved here."
+          : "arc is using the app key from DROPBOX__APP_KEY."}
+      </p>
+      {source === "stored" ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          disabled={clear.isPending}
+          onClick={() => clear.mutate({})}
+        >
+          Use a different app
+        </Button>
+      ) : null}
+      <Problems problems={apiErrorMessages(clear.error)} />
     </div>
   );
 }

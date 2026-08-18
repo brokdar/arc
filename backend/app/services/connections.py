@@ -39,6 +39,7 @@ from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.connections import (
     FEED_DELIVERED_ACTION,
+    AppKeySource,
     ConnectionProvider,
     ConnectionStatus,
     FeedDeliveryState,
@@ -47,6 +48,7 @@ from app.domain.connections import (
 from app.persistence.audit import AuditRepository
 from app.persistence.connections import (
     KEY_SETTING,
+    MAX_APP_KEY_LENGTH,
     ConnectionRepository,
     ConnectionRow,
     CredentialDecryptionError,
@@ -114,6 +116,29 @@ class IngestStatus:
     #: a coaching agent with a failure would teach it that a perfectly healthy
     #: single-user install is broken.
     local_inbox_only: bool
+
+
+#: What the athlete is told to register, named in every refusal that needs it.
+#:
+#: The access type is in the sentence because it is the one choice Dropbox
+#: will not let anybody change afterwards, and the failure it causes is silent:
+#: an App-folder app connects perfectly and then cannot see `/Apps/WahooFitness`,
+#: which belongs to *Wahoo's* app folder.
+REGISTER_APP_REMEDY = (
+    "Register an app at https://www.dropbox.com/developers/apps — "
+    "Scoped access, access type Full Dropbox — and paste its app key into "
+    "Settings, in the Dropbox panel."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DropboxSetup:
+    """Whether arc can start a Dropbox connection at all, and on whose key."""
+
+    app_key_set: bool
+    #: ``None`` exactly when no key is configured anywhere. See
+    #: `app.domain.connections.AppKeySource`.
+    source: AppKeySource | None
 
 
 class AuthorizationStart:
@@ -231,6 +256,116 @@ class ConnectionService:
             row.status = ConnectionStatus.ERROR
             row.last_error = str(exc)
 
+    # --- the app the athlete registered --------------------------------------
+
+    async def app_key(self, provider: ConnectionProvider) -> str | None:
+        """The app key arc connects with, or None if it has none.
+
+        **A stored key wins over the environment.** The alternative readings
+        were "the environment wins" and "refuse when the two disagree", and
+        both fail the same athlete: the app key is the one value a
+        self-hoster gets wrong on the first attempt — an App-folder app, a key
+        from the wrong app, a truncated paste — and if `DROPBOX__APP_KEY`
+        outranked the panel then fixing it would mean a text editor and a
+        restart, which is the ritual this feature exists to delete. The
+        environment keeps its job as a config-as-code *seed*; the panel is
+        where the value is corrected, and it reports which source is in force
+        (:meth:`dropbox_setup`) so the two can never disagree silently.
+
+        Read on every call rather than cached: the panel writes a key and the
+        very next authorize must carry it, in the same process.
+        """
+        stored = await self._repository.provider_app(provider)
+        if stored is not None:
+            return stored.app_key
+        # `.strip()`: `DROPBOX__APP_KEY=` in a .env is a *set* variable holding
+        # nothing, and so is a line with a stray space after the `=`.
+        seeded = get_settings().dropbox.app_key.get_secret_value().strip()
+        return seeded or None
+
+    async def dropbox_setup(self) -> DropboxSetup:
+        """Whether Dropbox can be connected, and on whose app key.
+
+        Its own read rather than a field on the connection list because the
+        list is *empty* before any of this happens — the panel would have
+        nowhere to read it from at the only moment it needs it.
+        """
+        stored = await self._repository.provider_app(ConnectionProvider.DROPBOX)
+        if stored is not None:
+            return DropboxSetup(app_key_set=True, source=AppKeySource.STORED)
+        if get_settings().dropbox.app_key.get_secret_value().strip():
+            return DropboxSetup(app_key_set=True, source=AppKeySource.ENVIRONMENT)
+        return DropboxSetup(app_key_set=False, source=None)
+
+    async def set_dropbox_app_key(self, *, app_key: str, actor: Actor) -> DropboxSetup:
+        """Store the app key from the athlete's own Dropbox app registration.
+
+        Raises:
+            ValidationError: When the key is blank or longer than
+                `MAX_APP_KEY_LENGTH`.
+            ConflictError: When a Dropbox connection already exists. The
+                stored credential was granted *to a particular app*, and
+                changing the key underneath it would leave arc refreshing a
+                token against a client id that never issued it — a failure
+                that surfaces hours later as a connection that stopped
+                working. Disconnecting first is the remedy, and it is named.
+        """
+        await check_write_cap(self._session, actor)
+        key = app_key.strip()
+        if not key:
+            raise ValidationError(
+                f"That is not a Dropbox app key. {REGISTER_APP_REMEDY}"
+            )
+        if len(key) > MAX_APP_KEY_LENGTH:
+            raise ValidationError(
+                f"A Dropbox app key is short — at most {MAX_APP_KEY_LENGTH} "
+                "characters. Paste the App key, not the app secret or the URL "
+                "of the console page."
+            )
+        existing = await self._repository.by_provider(ConnectionProvider.DROPBOX)
+        if existing is not None:
+            raise ConflictError(
+                "A Dropbox account is already connected with the current app "
+                f"key ({existing.account_label or 'unnamed'}). Disconnect it "
+                "before changing the app arc connects through."
+            )
+        await self._repository.replace_provider_app(
+            ConnectionProvider.DROPBOX, app_key=key
+        )
+        await self._audit.record(
+            actor=actor,
+            action="connection.app_key_set",
+            entity_type=CONNECTION_ENTITY,
+            # The key is a public OAuth client id, so it is safe in an audit
+            # row — but it is still not what the row is *for*: what happened
+            # is that the app arc connects through changed.
+            entity_id=None,
+            payload={"provider": ConnectionProvider.DROPBOX.value},
+        )
+        await commit(self._session)
+        return await self.dropbox_setup()
+
+    async def clear_dropbox_app_key(self, *, actor: Actor) -> None:
+        """Forget the stored app key, falling back to `DROPBOX__APP_KEY`.
+
+        Idempotent: with nothing stored the desired state already holds, so
+        this succeeds rather than reporting a 404 for a button that did
+        exactly what it promised.
+        """
+        await check_write_cap(self._session, actor)
+        stored = await self._repository.provider_app(ConnectionProvider.DROPBOX)
+        if stored is None:
+            return
+        await self._repository.delete_provider_app(stored)
+        await self._audit.record(
+            actor=actor,
+            action="connection.app_key_cleared",
+            entity_type=CONNECTION_ENTITY,
+            entity_id=None,
+            payload={"provider": ConnectionProvider.DROPBOX.value},
+        )
+        await commit(self._session)
+
     # --- the connect ritual --------------------------------------------------
 
     async def start_dropbox_authorization(self, *, actor: Actor) -> AuthorizationStart:
@@ -241,18 +376,18 @@ class ConnectionService:
         the athlete is useless to anyone who does not also hold it.
 
         Raises:
-            ValidationError: When `DROPBOX__APP_KEY` is not configured — a
-                blank `client_id` would produce a link that fails on Dropbox's
-                own error page, several minutes later, with nothing naming the
-                setting that is missing.
+            ValidationError: When no app key is configured in either source —
+                a blank `client_id` would produce a link that fails on
+                Dropbox's own error page, several minutes later, naming
+                nothing the athlete can act on. The panel reads
+                :meth:`dropbox_setup` and never offers the control that gets
+                here; this is the guard for everything that is not the panel.
         """
         await check_write_cap(self._session, actor)
-        app_key = get_settings().dropbox.app_key.get_secret_value()
+        app_key = await self.app_key(ConnectionProvider.DROPBOX)
         if not app_key:
             raise ValidationError(
-                "DROPBOX__APP_KEY is not set. Register an app at "
-                "https://www.dropbox.com/developers/apps (type: Full Dropbox) "
-                "and put its app key in DROPBOX__APP_KEY."
+                f"arc has no Dropbox app key yet. {REGISTER_APP_REMEDY}"
             )
         verifier = new_code_verifier()
         now = dt.datetime.now(dt.UTC)
@@ -295,7 +430,7 @@ class ConnectionService:
             )
 
         pending = await self._pending_authorization()
-        app_key = get_settings().dropbox.app_key.get_secret_value()
+        app_key = await self.app_key(ConnectionProvider.DROPBOX) or ""
         # `.strip()`: the code is copied off a web page into a form field, and
         # a trailing newline is what a paste normally carries. Refusing it
         # would be arc failing at the one manual step it asked for.
@@ -394,7 +529,8 @@ class ConnectionService:
         row = await self.get(connection_id)
         feed_count = len(row.feeds)
         try:
-            await self._client_for(row).revoke()
+            client = await self._client_for(row)
+            await client.revoke()
         except Exception as exc:  # noqa: BLE001 — the local delete must happen
             # Every failure, not a named few: a network error, a dead
             # credential and a key that no longer decrypts all mean the same
@@ -444,7 +580,8 @@ class ConnectionService:
         if row.status is ConnectionStatus.ERROR:
             raise ValidationError(row.last_error or f"{KEY_SETTING} is not usable")
         try:
-            return await self._client_for(row).list_folders(path)
+            client = await self._client_for(row)
+            return await client.list_folders(path)
         except DropboxPathNotFoundError as exc:
             raise NotFoundError(f"Dropbox has no folder at {exc.path or '/'}") from exc
         except DropboxAuthError as exc:
@@ -459,11 +596,18 @@ class ConnectionService:
         except DropboxError as exc:
             raise ValidationError(f"Dropbox could not be reached: {exc}") from exc
 
-    def _client_for(self, row: ConnectionRow) -> DropboxClient:
+    async def _client_for(self, row: ConnectionRow) -> DropboxClient:
+        """A client for one connection, on the app key that connection uses.
+
+        Async because the key may be stored (:meth:`app_key`) rather than in
+        the environment — and a refresh attempted with the *other* app's key
+        is refused by Dropbox with an error about the credential, not about
+        the configuration that actually moved.
+        """
         return DropboxClient(
             self._session,
             row,
-            app_key=get_settings().dropbox.app_key.get_secret_value(),
+            app_key=await self.app_key(row.provider) or "",
         )
 
     # --- feeds ---------------------------------------------------------------

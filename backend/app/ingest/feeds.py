@@ -77,6 +77,7 @@ from app.persistence.ingest_log import (
     MAX_FILENAME_LENGTH,
     IngestEventRepository,
 )
+from app.services.connections import ConnectionService
 
 logger = get_logger(__name__)
 
@@ -272,10 +273,17 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
         connection = await repository.get(feed.connection_id)
         if connection is None:  # pragma: no cover — cascade removes the feed
             return
+        # The app key comes from `ConnectionService`, not from settings: the
+        # athlete may have pasted it into the panel rather than into `.env`,
+        # and a poll that refreshed with a blank client id would report a dead
+        # credential for a connection that is perfectly healthy.
         client = DropboxClient(
             session,
             connection,
-            app_key=get_settings().dropbox.app_key.get_secret_value(),
+            app_key=await ConnectionService.from_session(session).app_key(
+                connection.provider
+            )
+            or "",
         )
         try:
             changes = await _list_changes(client, feed)

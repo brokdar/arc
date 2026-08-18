@@ -574,6 +574,12 @@
         "title": "AnomalyKind",
         "type": "string"
       },
+      "AppKeySource": {
+        "description": "Where the app key arc is connecting with came from.\n\nReported rather than inferred, because the two sources are fixed in\ndifferent places and the panel has to say which one it is looking at:\n``stored`` is undone by a click in Settings, ``environment`` needs an edit\nto `.env` and a restart. A panel that showed only \"an app key is set\"\nwould offer a remove button that appears to do nothing on a deployment\nthat seeds `DROPBOX__APP_KEY` as config-as-code.",
+        "enum": ["stored", "environment"],
+        "title": "AppKeySource",
+        "type": "string"
+      },
       "AthleteRead": {
         "description": "The athlete profile as returned by the API.\n\nEvery field is nullable: the profile is bootstrapped empty on first access\nand filled in from the UI.",
         "properties": {
@@ -1742,6 +1748,20 @@
         "title": "DisputeRating",
         "type": "string"
       },
+      "DropboxAppKeySubmit": {
+        "description": "The app key from the athlete's own Dropbox app registration.\n\nNot a secret: a Dropbox app key is a public OAuth client id, which is why\nit is stored in the clear (see `ProviderAppRow`) and may be echoed back as\na source rather than a value.",
+        "properties": {
+          "app_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "App Key",
+            "type": "string"
+          }
+        },
+        "required": ["app_key"],
+        "title": "DropboxAppKeySubmit",
+        "type": "object"
+      },
       "DropboxAuthorizationRead": {
         "description": "The link the athlete opens, and the deadline on the code they bring back.",
         "properties": {
@@ -1771,6 +1791,28 @@
         },
         "required": ["code"],
         "title": "DropboxCodeSubmit",
+        "type": "object"
+      },
+      "DropboxSetupRead": {
+        "description": "Whether Dropbox can be connected yet, and on whose app key.\n\nNullable `source` is load-bearing rather than an omission: `null` is a\nstate the panel renders \u2014 the registration checklist \u2014 and not the absence\nof an answer.",
+        "properties": {
+          "app_key_set": {
+            "title": "App Key Set",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppKeySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["app_key_set", "source"],
+        "title": "DropboxSetupRead",
         "type": "object"
       },
       "DurationFloorSchema": {
@@ -10655,6 +10697,107 @@
         "tags": ["connections"]
       }
     },
+    "/api/v1/connections/dropbox/app": {
+      "delete": {
+        "description": "Forget the stored app key and fall back to `DROPBOX__APP_KEY`.\n\n204 whether or not anything was stored: the desired state \u2014 arc holds no\napp key of its own \u2014 is what the athlete asked for, and it is true either\nway.",
+        "operationId": "connections-clear_dropbox_app_key",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Clear Dropbox App Key",
+        "tags": ["connections"]
+      },
+      "put": {
+        "description": "Store the app key of the Dropbox app the athlete registered.\n\nTakes effect immediately, in this process: the next authorize call reads\nit back from the database rather than from a `Settings` object frozen at\nboot, which is what makes connecting possible without a restart.\n\nPUT rather than POST because the resource is singular and the write is\nidempotent \u2014 arc holds one Dropbox app, and setting it twice leaves the\nsame one row.",
+        "operationId": "connections-set_dropbox_app_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropboxAppKeySubmit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropboxSetupRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Set Dropbox App Key",
+        "tags": ["connections"]
+      }
+    },
     "/api/v1/connections/dropbox/authorize": {
       "post": {
         "description": "Begin connecting Dropbox: get the link the athlete opens.\n\nThe link carries a PKCE challenge and **no redirect URI** \u2014 Dropbox shows\nthe athlete a code, which they paste into `POST /connections/dropbox/complete`.\nThat is what lets arc connect a cloud account from behind a home router\nwithout registering a redirect or being reachable from the internet.",
@@ -10772,6 +10915,41 @@
           }
         ],
         "summary": "Complete Dropbox Authorization",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/dropbox/setup": {
+      "get": {
+        "description": "Whether Dropbox can be connected yet, and on whose app key.\n\n**Its own endpoint rather than a field on `GET /connections`.** The\nconnection list is empty at exactly the moment this answer is needed \u2014 the\nathlete has registered nothing and connected nothing \u2014 so folding\n`app_key_set` into it would leave the panel with nowhere to read it from,\nand the first sign of a missing app key would be a 422 from\n`POST /dropbox/authorize` after a click that should never have been\noffered.",
+        "operationId": "connections-read_dropbox_setup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropboxSetupRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Read Dropbox Setup",
         "tags": ["connections"]
       }
     },

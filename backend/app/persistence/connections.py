@@ -1,7 +1,9 @@
 """Cloud connections, the folders arc watches, and the PKCE flows in progress.
 
-Three tables, one aggregate:
+Four tables, one aggregate:
 
+* ``provider_apps`` — the OAuth app the athlete registered, which has to exist
+  before a connection can be made at all;
 * ``connections`` — one row per provider arc holds a credential for, with the
   credential itself sealed in :class:`EncryptedCredentials`;
 * ``feeds`` — one row per folder arc watches on a connection, carrying its
@@ -56,6 +58,16 @@ MAX_ERROR_LENGTH = 1_000
 
 #: Longest PKCE verifier RFC 7636 allows.
 MAX_VERIFIER_LENGTH = 128
+
+#: Longest OAuth `state` arc mints. Inert until the redirect flow uses it.
+MAX_STATE_LENGTH = 128
+
+#: Longest redirect URI arc will store. Inert until the redirect flow uses it.
+MAX_REDIRECT_URI_LENGTH = 500
+
+#: Longest app key accepted. A Dropbox app key is 15 characters; the headroom
+#: is for the next provider, not for a paste of something that is not a key.
+MAX_APP_KEY_LENGTH = 128
 
 #: Named in every message this module raises, so the operator is never left
 #: guessing between a rotated key and a corrupted column.
@@ -255,17 +267,102 @@ class OAuthAuthorizationRow(Base):
         enum_column(ConnectionProvider), index=True
     )
     code_verifier: Mapped[str] = mapped_column(String(MAX_VERIFIER_LENGTH))
+    #: The OAuth `state` this flow was minted with, and the redirect URI it
+    #: was minted for. **Both are unwritten today**: nothing sets them, and
+    #: `authorize_url` sends neither. They ship here so the redirect PR that
+    #: follows adds behaviour and no migration — the same trick `feeds` used
+    #: for its four polling columns in `0015`. Nullable is what makes that
+    #: safe: a paste flow, which is every flow until then, stores no state and
+    #: no redirect URI, and an upgrade leaves a flow already in progress
+    #: redeemable rather than half-filled.
+    state: Mapped[str | None] = mapped_column(String(MAX_STATE_LENGTH))
+    redirect_uri: Mapped[str | None] = mapped_column(String(MAX_REDIRECT_URI_LENGTH))
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
     expires_at: Mapped[dt.datetime] = mapped_column(UtcDateTime)
 
 
+class ProviderAppRow(Base):
+    """The OAuth app the athlete registered, as pasted into the panel.
+
+    One row per provider, and it exists *before* any connection does — which
+    is the whole reason it is a table rather than a column on `ConnectionRow`.
+    The app key is what the connect flow needs in order to produce a link at
+    all, so a nullable column on a row that does not yet exist could not hold
+    it.
+
+    **The key is stored in plaintext**, beside a `connections.credentials`
+    column that is Fernet-sealed, and the asymmetry is deliberate. A Dropbox
+    app key is a *public* OAuth client id: PKCE is what protects this flow,
+    there is no app secret, and the key travels in a query string to
+    dropbox.com in every athlete's browser. Sealing it would buy no secrecy
+    and would cost the one thing that matters here — an instance whose
+    `SECRETS__ENCRYPTION_KEY` was lost would lose the ability to *re-connect*
+    as well as the ability to read the old credential, i.e. the single remedy
+    for the failure that key loss causes.
+    """
+
+    __tablename__ = "provider_apps"
+    __table_args__ = (
+        # One app per provider, held by the database: a second key for Dropbox
+        # would leave arc guessing which app a stored credential belongs to.
+        UniqueConstraint("provider", name="uq_provider_apps_provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    provider: Mapped[ConnectionProvider] = mapped_column(
+        enum_column(ConnectionProvider)
+    )
+    app_key: Mapped[str] = mapped_column(String(MAX_APP_KEY_LENGTH))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        UtcDateTime, server_default=func.now()
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        UtcDateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ConnectionRepository:
-    """SQLAlchemy repository for connections, feeds and pending authorizations."""
+    """SQLAlchemy repository for apps, connections, feeds and authorizations."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    # --- registered apps -----------------------------------------------------
+
+    async def provider_app(self, provider: ConnectionProvider) -> ProviderAppRow | None:
+        """The app the athlete registered for a provider, or None."""
+        result = await self._session.execute(
+            select(ProviderAppRow).where(ProviderAppRow.provider == provider)
+        )
+        return result.scalars().first()
+
+    async def replace_provider_app(
+        self, provider: ConnectionProvider, *, app_key: str
+    ) -> ProviderAppRow:
+        """Store the app key for a provider, replacing any earlier one.
+
+        Written as an update-or-insert on the existing row rather than a
+        delete-and-add, so `created_at` keeps saying when the athlete first
+        set arc up while `updated_at` moves — the shape
+        :meth:`replace_authorization` uses for a value that supersedes rather
+        than accumulates.
+        """
+        row = await self.provider_app(provider)
+        if row is None:
+            row = ProviderAppRow(provider=provider, app_key=app_key)
+            self._session.add(row)
+        else:
+            row.app_key = app_key
+        await flush(self._session)
+        await self._session.refresh(row)
+        return row
+
+    async def delete_provider_app(self, row: ProviderAppRow) -> None:
+        """Forget a registered app, leaving whatever the environment says."""
+        await self._session.delete(row)
+        await flush(self._session)
 
     # --- connections ---------------------------------------------------------
 

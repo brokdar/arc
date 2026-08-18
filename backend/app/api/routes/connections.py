@@ -21,8 +21,10 @@ from app.api.deps import ActorDep
 from app.api.schemas.connections import (
     ConnectionList,
     ConnectionRead,
+    DropboxAppKeySubmit,
     DropboxAuthorizationRead,
     DropboxCodeSubmit,
+    DropboxSetupRead,
     FeedCreate,
     FeedRead,
     FeedUpdate,
@@ -86,6 +88,51 @@ async def list_connections(service: ServiceDep) -> ConnectionList:
     return ConnectionList(
         items=[ConnectionRead.model_validate(row) for row in await service.list()]
     )
+
+
+@router.get("/dropbox/setup")
+async def read_dropbox_setup(service: ServiceDep) -> DropboxSetupRead:
+    """Whether Dropbox can be connected yet, and on whose app key.
+
+    **Its own endpoint rather than a field on `GET /connections`.** The
+    connection list is empty at exactly the moment this answer is needed — the
+    athlete has registered nothing and connected nothing — so folding
+    `app_key_set` into it would leave the panel with nowhere to read it from,
+    and the first sign of a missing app key would be a 422 from
+    `POST /dropbox/authorize` after a click that should never have been
+    offered.
+    """
+    setup = await service.dropbox_setup()
+    return DropboxSetupRead(app_key_set=setup.app_key_set, source=setup.source)
+
+
+@router.put("/dropbox/app", responses=BAD_BODY | INVALID | CONFLICT)
+async def set_dropbox_app_key(
+    service: ServiceDep, actor: ActorDep, submitted: DropboxAppKeySubmit
+) -> DropboxSetupRead:
+    """Store the app key of the Dropbox app the athlete registered.
+
+    Takes effect immediately, in this process: the next authorize call reads
+    it back from the database rather than from a `Settings` object frozen at
+    boot, which is what makes connecting possible without a restart.
+
+    PUT rather than POST because the resource is singular and the write is
+    idempotent — arc holds one Dropbox app, and setting it twice leaves the
+    same one row.
+    """
+    setup = await service.set_dropbox_app_key(app_key=submitted.app_key, actor=actor)
+    return DropboxSetupRead(app_key_set=setup.app_key_set, source=setup.source)
+
+
+@router.delete("/dropbox/app", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_dropbox_app_key(service: ServiceDep, actor: ActorDep) -> None:
+    """Forget the stored app key and fall back to `DROPBOX__APP_KEY`.
+
+    204 whether or not anything was stored: the desired state — arc holds no
+    app key of its own — is what the athlete asked for, and it is true either
+    way.
+    """
+    await service.clear_dropbox_app_key(actor=actor)
 
 
 @router.post("/dropbox/authorize", responses=INVALID)

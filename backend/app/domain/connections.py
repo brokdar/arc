@@ -59,6 +59,21 @@ class ConnectionStatus(StrEnum):
 FEED_DELIVERED_ACTION = "feed.delivered"
 
 
+class AppKeySource(StrEnum):
+    """Where the app key arc is connecting with came from.
+
+    Reported rather than inferred, because the two sources are fixed in
+    different places and the panel has to say which one it is looking at:
+    ``stored`` is undone by a click in Settings, ``environment`` needs an edit
+    to `.env` and a restart. A panel that showed only "an app key is set"
+    would offer a remove button that appears to do nothing on a deployment
+    that seeds `DROPBOX__APP_KEY` as config-as-code.
+    """
+
+    STORED = "stored"
+    ENVIRONMENT = "environment"
+
+
 class FeedDeliveryState(StrEnum):
     """How a watched folder is doing, in one word the coach can branch on.
 

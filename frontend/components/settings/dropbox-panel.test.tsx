@@ -7,9 +7,12 @@ import { DropboxPanel } from "@/components/settings/dropbox-panel";
 import { AthleteClock } from "@/lib/clock";
 import {
   ATHLETE_TIMEZONE,
+  connectionsState,
   DROPBOX_CODE,
   dropboxFeed,
+  MAX_APP_KEY_LENGTH,
   seedDropboxConnection,
+  seedNoDropboxApp,
 } from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
@@ -38,6 +41,85 @@ async function panel(): Promise<HTMLElement> {
   await screen.findByText("Ada Lovelace (ada@example.com)");
   return screen.getByTestId("dropbox-panel");
 }
+
+describe("before arc has a Dropbox app key", () => {
+  it("renders the registration checklist and cannot be asked to connect", async () => {
+    seedNoDropboxApp();
+    renderPanel();
+
+    // The steps arc cannot perform for the athlete, where the decision is
+    // made — not a 422 arriving after a click that should not have been
+    // offered, and not a paragraph in a file nobody opened.
+    const create = await screen.findByRole("link", {
+      name: /developers\/apps/i,
+    });
+    expect(create).toHaveAttribute(
+      "href",
+      "https://www.dropbox.com/developers/apps",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Connect Dropbox" }),
+    ).toBeDisabled();
+  });
+
+  it("names Full Dropbox and that it cannot be changed, in one step", async () => {
+    seedNoDropboxApp();
+    renderPanel();
+
+    const steps = await screen.findAllByRole("listitem");
+    const accessType = steps.filter((step) =>
+      step.textContent?.includes("Full Dropbox"),
+    );
+    expect(accessType).toHaveLength(1);
+    // The irreversible choice, in the same breath as the fact that it is
+    // irreversible: an App-folder app connects perfectly and then reads
+    // nothing, and the only remedy is registering another app.
+    expect(accessType[0]).toHaveTextContent(/cannot/i);
+  });
+
+  it("saves the pasted app key and then offers to connect", async () => {
+    const user = userEvent.setup();
+    seedNoDropboxApp();
+    renderPanel();
+
+    await user.type(
+      await screen.findByLabelText(/Dropbox app key/i),
+      "abc123def456",
+    );
+    await user.click(screen.getByRole("button", { name: "Save app key" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Connect Dropbox" }),
+      ).toBeEnabled(),
+    );
+    // The key the form was told, not a canned reply: the panel is useless if
+    // it posts anything else.
+    expect(connectionsState().storedAppKey).toBe("abc123def456");
+    expect(screen.queryByText(/Full Dropbox/)).not.toBeInTheDocument();
+  });
+
+  it("shows the server's refusal of a key it will not take", async () => {
+    const user = userEvent.setup();
+    seedNoDropboxApp();
+    renderPanel();
+
+    // Longer than MAX_APP_KEY_LENGTH: a paste of the console page's URL, or
+    // of the wrong field entirely. The form cannot judge it — the server
+    // does, and what it says has to reach the athlete.
+    await user.click(await screen.findByLabelText(/Dropbox app key/i));
+    await user.paste("k".repeat(MAX_APP_KEY_LENGTH + 1));
+    await user.click(screen.getByRole("button", { name: "Save app key" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /at most 128 characters/i,
+    );
+    expect(connectionsState().storedAppKey).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Connect Dropbox" }),
+    ).toBeDisabled();
+  });
+});
 
 describe("with nothing connected", () => {
   it("offers to connect and says in one sentence what that will do", async () => {

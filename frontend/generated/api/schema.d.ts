@@ -302,6 +302,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/connections/dropbox/app": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Set Dropbox App Key
+     * @description Store the app key of the Dropbox app the athlete registered.
+     *
+     *     Takes effect immediately, in this process: the next authorize call reads
+     *     it back from the database rather than from a `Settings` object frozen at
+     *     boot, which is what makes connecting possible without a restart.
+     *
+     *     PUT rather than POST because the resource is singular and the write is
+     *     idempotent — arc holds one Dropbox app, and setting it twice leaves the
+     *     same one row.
+     */
+    put: operations["connections-set_dropbox_app_key"];
+    post?: never;
+    /**
+     * Clear Dropbox App Key
+     * @description Forget the stored app key and fall back to `DROPBOX__APP_KEY`.
+     *
+     *     204 whether or not anything was stored: the desired state — arc holds no
+     *     app key of its own — is what the athlete asked for, and it is true either
+     *     way.
+     */
+    delete: operations["connections-clear_dropbox_app_key"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/connections/dropbox/authorize": {
     parameters: {
       query?: never;
@@ -341,6 +377,34 @@ export interface paths {
      * @description Finish connecting Dropbox with the code the athlete pasted back.
      */
     post: operations["connections-complete_dropbox_authorization"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/connections/dropbox/setup": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Dropbox Setup
+     * @description Whether Dropbox can be connected yet, and on whose app key.
+     *
+     *     **Its own endpoint rather than a field on `GET /connections`.** The
+     *     connection list is empty at exactly the moment this answer is needed — the
+     *     athlete has registered nothing and connected nothing — so folding
+     *     `app_key_set` into it would leave the panel with nowhere to read it from,
+     *     and the first sign of a missing app key would be a 422 from
+     *     `POST /dropbox/authorize` after a click that should never have been
+     *     offered.
+     */
+    get: operations["connections-read_dropbox_setup"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -2138,6 +2202,19 @@ export interface components {
       | "dropped"
       | "resampled_only";
     /**
+     * AppKeySource
+     * @description Where the app key arc is connecting with came from.
+     *
+     *     Reported rather than inferred, because the two sources are fixed in
+     *     different places and the panel has to say which one it is looking at:
+     *     ``stored`` is undone by a click in Settings, ``environment`` needs an edit
+     *     to `.env` and a restart. A panel that showed only "an app key is set"
+     *     would offer a remove button that appears to do nothing on a deployment
+     *     that seeds `DROPBOX__APP_KEY` as config-as-code.
+     * @enum {string}
+     */
+    AppKeySource: "stored" | "environment";
+    /**
      * AthleteRead
      * @description The athlete profile as returned by the API.
      *
@@ -2722,6 +2799,18 @@ export interface components {
      */
     DisputeRating: "up" | "down";
     /**
+     * DropboxAppKeySubmit
+     * @description The app key from the athlete's own Dropbox app registration.
+     *
+     *     Not a secret: a Dropbox app key is a public OAuth client id, which is why
+     *     it is stored in the clear (see `ProviderAppRow`) and may be echoed back as
+     *     a source rather than a value.
+     */
+    DropboxAppKeySubmit: {
+      /** App Key */
+      app_key: string;
+    };
+    /**
      * DropboxAuthorizationRead
      * @description The link the athlete opens, and the deadline on the code they bring back.
      */
@@ -2741,6 +2830,19 @@ export interface components {
     DropboxCodeSubmit: {
       /** Code */
       code: string;
+    };
+    /**
+     * DropboxSetupRead
+     * @description Whether Dropbox can be connected yet, and on whose app key.
+     *
+     *     Nullable `source` is load-bearing rather than an omission: `null` is a
+     *     state the panel renders — the registration checklist — and not the absence
+     *     of an answer.
+     */
+    DropboxSetupRead: {
+      /** App Key Set */
+      app_key_set: boolean;
+      source: components["schemas"]["AppKeySource"] | null;
     };
     /**
      * DurationFloorSchema
@@ -7079,6 +7181,93 @@ export interface operations {
       };
     };
   };
+  "connections-set_dropbox_app_key": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DropboxAppKeySubmit"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DropboxSetupRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The setup is incomplete, or Dropbox refused the code */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "connections-clear_dropbox_app_key": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
   "connections-start_dropbox_authorization": {
     parameters: {
       query?: never;
@@ -7173,6 +7362,35 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "connections-read_dropbox_setup": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DropboxSetupRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };

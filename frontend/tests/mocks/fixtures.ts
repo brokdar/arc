@@ -4152,10 +4152,17 @@ export const DROPBOX_READ_SCOPES = [
   "files.metadata.read",
 ];
 
+/** `MAX_APP_KEY_LENGTH` in `app/persistence/connections.py`. */
+export const MAX_APP_KEY_LENGTH = 128;
+
 interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
   authorizationStarted: boolean;
+  /** The app key pasted into the panel, as `provider_apps` holds it. */
+  storedAppKey: string | null;
+  /** `DROPBOX__APP_KEY`, the config-as-code seed the store overrides. */
+  envAppKey: string | null;
   /** Remote path → the folders directly under it. */
   folders: Map<string, Folder[]>;
   minted: number;
@@ -4165,6 +4172,11 @@ function seedConnectionsState(): ConnectionsMockState {
   return {
     connections: [],
     authorizationStarted: false,
+    // The seeded instance is one whose operator set `DROPBOX__APP_KEY` — the
+    // configuration every existing panel test was written against. A test
+    // about the registration checklist clears it with `seedNoDropboxApp`.
+    storedAppKey: null,
+    envAppKey: "test-app-key",
     folders: new Map<string, Folder[]>([
       [
         "",
@@ -4193,6 +4205,86 @@ export function connectionsState(): ConnectionsMockState {
 /** Put the connections mock back to its seed. Wired into `resetMockState`. */
 export function resetConnectionsState(): void {
   connections = seedConnectionsState();
+}
+
+/**
+ * Leave the instance with no Dropbox app key in either source.
+ *
+ * A fresh self-hosted install: nothing in `.env`, nothing pasted in yet. This
+ * is the only state in which the panel offers the registration checklist.
+ */
+export function seedNoDropboxApp(): void {
+  const state = connectionsState();
+  state.storedAppKey = null;
+  state.envAppKey = null;
+}
+
+/** The setup read, resolved exactly as `ConnectionService.dropbox_setup` is. */
+export function dropboxSetup(): Schemas["DropboxSetupRead"] {
+  const state = connectionsState();
+  if (state.storedAppKey !== null) {
+    return { app_key_set: true, source: "stored" };
+  }
+  if ((state.envAppKey ?? "").trim() !== "") {
+    return { app_key_set: true, source: "environment" };
+  }
+  return { app_key_set: false, source: null };
+}
+
+/** The app key arc would connect with, or null — a stored key wins. */
+export function dropboxAppKey(): string | null {
+  const state = connectionsState();
+  return state.storedAppKey ?? (state.envAppKey?.trim() || null);
+}
+
+/**
+ * Store an app key the way the API does, or say why not.
+ *
+ * Both 422 shapes are here because the API produces both: an over-long key is
+ * refused by the *schema* (`Field(max_length=...)`, FastAPI's list of
+ * per-field errors), while a key that is nothing but whitespace passes the
+ * schema and is refused by the service as a sentence.
+ */
+export function setDropboxAppKey(appKey: string):
+  | { setup: Schemas["DropboxSetupRead"] }
+  // 409 is an `ErrorDetail` (a sentence); 422 is the two-shaped
+  // `ValidationErrorDetail`, which is why only it widens.
+  | { status: 409; detail: string }
+  | { status: 422; detail: string | unknown[] } {
+  const state = connectionsState();
+  const key = appKey.trim();
+  if (appKey.length > MAX_APP_KEY_LENGTH) {
+    return {
+      status: 422,
+      detail: [
+        {
+          type: "string_too_long",
+          loc: ["body", "app_key"],
+          msg: `String should have at most ${MAX_APP_KEY_LENGTH} characters`,
+        },
+      ],
+    };
+  }
+  if (key === "") {
+    return {
+      status: 422,
+      detail:
+        "That is not a Dropbox app key. Register an app at " +
+        "https://www.dropbox.com/developers/apps — Scoped access, access " +
+        "type Full Dropbox — and paste its app key into Settings, in the " +
+        "Dropbox panel.",
+    };
+  }
+  if (state.connections.length > 0) {
+    return {
+      status: 409,
+      detail:
+        "A Dropbox account is already connected with the current app key. " +
+        "Disconnect it before changing the app arc connects through.",
+    };
+  }
+  state.storedAppKey = key;
+  return { setup: dropboxSetup() };
 }
 
 /**
