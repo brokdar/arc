@@ -27,6 +27,7 @@ TOKEN_PATH = "/oauth2/token"
 ACCOUNT_PATH = "/2/users/get_current_account"
 LIST_FOLDER_PATH = "/2/files/list_folder"
 LIST_FOLDER_CONTINUE_PATH = "/2/files/list_folder/continue"
+DOWNLOAD_PATH = "/2/files/download"
 REVOKE_PATH = "/2/auth/token/revoke"
 
 
@@ -53,16 +54,28 @@ def folder_entry(name: str, path_lower: str) -> dict[str, Any]:
     }
 
 
-def file_entry(name: str, path_lower: str) -> dict[str, Any]:
+def file_entry(
+    name: str,
+    path_lower: str,
+    *,
+    size: int = 1024,
+    entry_id: str | None = None,
+    rev: str = "0123456789abcdef",
+) -> dict[str, Any]:
     """A `file` entry as `list_folder` returns it."""
     return {
         ".tag": "file",
         "name": name,
         "path_lower": path_lower,
-        "id": f"id:{name}",
-        "size": 1024,
-        "rev": "0123456789abcdef",
+        "id": entry_id or f"id:{name}",
+        "size": size,
+        "rev": rev,
     }
+
+
+def deleted_entry(name: str, path_lower: str) -> dict[str, Any]:
+    """A `deleted` entry, which is what a change list says about a removal."""
+    return {".tag": "deleted", "name": name, "path_lower": path_lower}
 
 
 @dataclass
@@ -89,6 +102,26 @@ class FakeDropbox:
     # --- the folder listing -------------------------------------------------
     #: One dict per page, in the order `list_folder` / `…/continue` serve them.
     pages: list[dict[str, Any]] | None = None
+    #: Listing answers keyed by the cursor arc presented — ``None`` for the
+    #: opening `list_folder` call.
+    #:
+    #: The feed poll's whole contract is about *which* cursor is presented next
+    #: (a replayed batch presents the same one, a give-up presents the one
+    #: after), and the call-counting :attr:`pages` list cannot express that: it
+    #: walks forward on every call however the poll rewound. Non-destructive on
+    #: purpose — presenting one cursor twice serves the same page twice, which
+    #: is exactly what a replay is — and an **unknown** cursor is answered with
+    #: Dropbox's `reset`, which is also what Dropbox does.
+    by_cursor: dict[str | None, dict[str, Any]] | None = None
+    #: Responses that pre-empt an opening `list_folder`, keyed by its `path`.
+    #: One feed failing while another succeeds is only expressible per path.
+    list_failures: dict[str, httpx.Response] = field(default_factory=dict)
+
+    # --- the file contents ---------------------------------------------------
+    #: Bytes served by `/2/files/download`, keyed by the entry's Dropbox id.
+    files: dict[str, bytes] = field(default_factory=dict)
+    #: Responses that pre-empt a download, keyed by the entry's Dropbox id.
+    download_failures: dict[str, httpx.Response] = field(default_factory=dict)
     #: Status + body overrides, keyed by path, consumed one call at a time.
     scripted: dict[str, list[httpx.Response]] = field(default_factory=dict)
     #: Raised instead of answering, keyed by path — a network failure.
@@ -136,6 +169,7 @@ class FakeDropbox:
             ACCOUNT_PATH: self._account,
             LIST_FOLDER_PATH: self._list_folder,
             LIST_FOLDER_CONTINUE_PATH: self._list_folder,
+            DOWNLOAD_PATH: self._download,
             REVOKE_PATH: self._revoke,
         }.get(path)
         if handler is None:
@@ -181,7 +215,21 @@ class FakeDropbox:
             },
         )
 
-    def _list_folder(self, _call: Call) -> httpx.Response:
+    def _list_folder(self, call: Call) -> httpx.Response:
+        if call.path == LIST_FOLDER_PATH:
+            wanted = str((call.body or {}).get("path", ""))
+            if (failure := self.list_failures.get(wanted)) is not None:
+                return failure
+        if self.by_cursor is not None:
+            presented = (
+                str((call.body or {}).get("cursor"))
+                if call.path == LIST_FOLDER_CONTINUE_PATH
+                else None
+            )
+            answer = self.by_cursor.get(presented)
+            if answer is None:
+                return reset_cursor()
+            return httpx.Response(200, json=answer)
         pages = self.pages if self.pages is not None else [_DEFAULT_PAGE]
         index = min(
             len(self.calls_to(LIST_FOLDER_CONTINUE_PATH))
@@ -190,6 +238,18 @@ class FakeDropbox:
             len(pages) - 1,
         )
         return httpx.Response(200, json=pages[index])
+
+    def _download(self, call: Call) -> httpx.Response:
+        # The content endpoint carries its argument in a header and answers
+        # with raw bytes; nothing about it is JSON except the failures.
+        argument = json.loads(call.headers.get("Dropbox-API-Arg") or "{}")
+        wanted = str(argument.get("path", ""))
+        if (failure := self.download_failures.get(wanted)) is not None:
+            return failure
+        content = self.files.get(wanted)
+        if content is None:
+            return path_not_found(wanted)
+        return httpx.Response(200, content=content)
 
     def _revoke(self, _call: Call) -> httpx.Response:
         return httpx.Response(200, json={})
@@ -234,6 +294,22 @@ def expired_access_token() -> httpx.Response:
             "error": {".tag": "expired_access_token"},
         },
     )
+
+
+def reset_cursor() -> httpx.Response:
+    """Dropbox's 409 for a cursor it will no longer continue from."""
+    return httpx.Response(
+        409,
+        json={
+            "error_summary": "reset/...",
+            "error": {".tag": "reset"},
+        },
+    )
+
+
+def server_error() -> httpx.Response:
+    """Dropbox having a bad day: a 503 arc did not cause and cannot fix."""
+    return httpx.Response(503, text="service unavailable")
 
 
 def path_not_found(path: str) -> httpx.Response:

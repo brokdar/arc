@@ -44,11 +44,17 @@ class FeedRead(BaseModel):
     #: Normalised: lower-cased, no trailing slash. `""` is the Dropbox root.
     remote_path: str
     enabled: bool
-    #: Dropbox's listing cursor. Null until the first poll — which the next
-    #: release adds; nothing writes these four fields yet.
+    #: Dropbox's listing cursor. Null until the first poll.
     cursor: str | None
+    #: Consecutive failed attempts on the current cursor; back to zero after
+    #: any resolved batch.
     cursor_attempts: int
+    #: When arc last heard from Dropbox for this feed **at all** — not when a
+    #: ride last arrived. A stale value is a broken pipe; a fresh one with no
+    #: new sessions is a rest week, and the panel must not confuse the two.
     last_delivery_at: dt.datetime | None
+    #: What the last poll could not do, in the athlete's words. Cleared by the
+    #: next poll that succeeds.
     last_error: str | None
     created_at: dt.datetime
 

@@ -177,6 +177,31 @@ class IngestOutcome(StrEnum):
     ERROR = "error"
 
 
+class IngestSource(StrEnum):
+    """How a file reached arc. The stored vocabulary of ``recordings.source``.
+
+    **The transport, not the device.** The tempting alternative was a per-feed
+    device label — ``wahoo`` for the folder the ELEMNT companion writes to,
+    ``apple_workout`` for HealthFit's — and it is wrong for a reason that does
+    not improve with care: *a folder cannot tell you what wrote the file*. The
+    athlete points arc at `/Apps/WahooFitness`, then drops a Zwift export in it,
+    or renames the folder, or their partner's watch syncs to the same account.
+    A guess stored as fact is worse than an honest ``dropbox``, because
+    everything downstream would read it as provenance. The device is
+    recoverable later from the FIT's own ``file_id`` message, which is the file
+    saying what wrote it rather than arc inferring it from a path.
+
+    ``None`` — every row written before this enum existed, and every row the
+    upload endpoint and the local `data/inbox/` sweep still write — means
+    "arrived on this machine". Back-filling it would be a migration inventing a
+    distinction nothing reads: what the column exists to answer is "did this
+    ride come in over a connector, and which one", and locally-dropped files
+    are the absence of that, not a third transport.
+    """
+
+    DROPBOX = "dropbox"
+
+
 # --- discipline classification (work order A-5) -------------------------------
 
 #: Raw sport strings that name a discipline outright. **Keys are matched

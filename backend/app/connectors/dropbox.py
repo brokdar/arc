@@ -20,6 +20,7 @@ import asyncio
 import base64
 import datetime as dt
 import hashlib
+import json
 import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -41,6 +42,10 @@ AUTHORIZE_ENDPOINT: Final = "https://www.dropbox.com/oauth2/authorize"
 #: this is the URL a secret would be exchanged AT, and it is public.)
 TOKEN_ENDPOINT: Final = "https://api.dropboxapi.com/oauth2/token"  # noqa: S105
 API_BASE: Final = "https://api.dropboxapi.com"
+#: File *contents* come from a different host than the RPC endpoints, and
+#: Dropbox is strict about it: `/2/files/download` on `api.dropboxapi.com` is a
+#: 400. The argument travels in a header there, and the body is the file.
+CONTENT_BASE: Final = "https://content.dropboxapi.com"
 
 #: The scopes arc asks for when the athlete connects an account.
 #:
@@ -103,6 +108,17 @@ class DropboxPathNotFoundError(DropboxUpstreamError):
         self.path = path
 
 
+class DropboxCursorResetError(DropboxUpstreamError):
+    """The stored listing cursor is too old, and Dropbox wants a fresh listing.
+
+    Its own class rather than a generic upstream failure because the remedy is
+    entirely local and entirely automatic: forget the cursor and list the
+    folder from scratch. Treated as a failure it would count against the
+    give-up budget in `app.ingest.feeds` and eventually skip a batch, over a
+    condition that is arc's to fix without anybody being told.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class TokenGrant:
     """What Dropbox's token endpoint hands back."""
@@ -129,6 +145,41 @@ class DropboxFolder:
 
     path_lower: str
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class DropboxFile:
+    """One *file* entry in a listing, as much of it as arc has a use for.
+
+    ``size`` is here because it is what lets a 2 GB file be refused before it
+    is pulled over the network (`app.ingest.feeds._should_take`), and ``rev``
+    because it is how Dropbox says "the same file, edited" — arc does not key
+    anything on it, but it belongs in the log line that explains a second
+    session appearing for a file the athlete believes they only have one of.
+    """
+
+    #: Dropbox's stable id (``id:aBcD...``), which survives a rename and a
+    #: move. Stored on the recording as its ``external_id``.
+    id: str
+    name: str
+    path_lower: str
+    size: int
+    rev: str
+
+
+@dataclass(frozen=True, slots=True)
+class DropboxChanges:
+    """One page of `list_folder`: what changed, and where to resume.
+
+    ``cursor`` is the position **after** these entries. It is not stored until
+    every entry in the page has been resolved — see
+    `app.ingest.feeds._poll_feed`, which owns that rule and the reason for it.
+    """
+
+    entries: tuple[DropboxFile, ...]
+    cursor: str
+    #: Whether Dropbox has more to say from ``cursor`` immediately.
+    has_more: bool
 
 
 # --- the transport seam ------------------------------------------------------
@@ -370,6 +421,114 @@ class DropboxClient:
                 "/2/files/list_folder/continue", {"cursor": body["cursor"]}, path=path
             )
 
+    async def changes(self, *, path: str, cursor: str | None) -> DropboxChanges:
+        """One page of what has changed in ``path`` since ``cursor``.
+
+        With no cursor this opens a listing of the folder (`list_folder`);
+        with one it continues from it (`list_folder/continue`). Either way it
+        returns **one page** and the cursor that follows it — following
+        ``has_more`` here would tie the size of a transaction to how far behind
+        the feed had fallen, and the caller's batch rule (`app.ingest.feeds`)
+        is stated per page.
+
+        ``recursive`` is false: a feed watches *a folder*, and a recursive
+        watch on `/Apps/WahooFitness` would silently take on every subfolder
+        the athlete later files rides into — including ones they moved a ride
+        out of the way into.
+
+        Non-file entries (``folder``, ``deleted``) are dropped here rather than
+        by the caller: they are Dropbox's vocabulary for "this listing is a
+        change list", and nothing above this layer should have to know it.
+
+        Raises:
+            DropboxCursorResetError: When Dropbox will not continue from this
+                cursor and wants a fresh listing.
+            DropboxPathNotFoundError: When the folder is gone.
+            DropboxAuthError / DropboxRateLimitedError / DropboxUpstreamError:
+                As :meth:`_call` classifies them.
+        """
+        body = (
+            await self._call(
+                "/2/files/list_folder",
+                {"path": path, "recursive": False, "include_deleted": False},
+                path=path,
+            )
+            if cursor is None
+            else await self._call(
+                "/2/files/list_folder/continue", {"cursor": cursor}, path=path
+            )
+        )
+        return DropboxChanges(
+            entries=tuple(
+                DropboxFile(
+                    id=str(entry.get("id") or ""),
+                    name=str(entry.get("name") or ""),
+                    path_lower=str(entry.get("path_lower") or ""),
+                    size=int(entry.get("size") or 0),
+                    rev=str(entry.get("rev") or ""),
+                )
+                for entry in body.get("entries", [])
+                if entry.get(".tag") == "file"
+            ),
+            cursor=str(body.get("cursor") or ""),
+            has_more=bool(body.get("has_more")),
+        )
+
+    async def download(self, file_id: str) -> bytes:
+        """The bytes of one file, fetched by its Dropbox **id**.
+
+        By id and not by path, deliberately: between the listing and this call
+        the athlete may have renamed or moved the file, and a path-keyed
+        download would then 409 on a file that is right there. The id is
+        stable across both, and it is what the recording stores as its
+        ``external_id``.
+
+        Raises:
+            DropboxPathNotFoundError: When the id no longer resolves — the
+                file was deleted between the listing and this call.
+            DropboxAuthError / DropboxRateLimitedError / DropboxUpstreamError:
+                As :meth:`_content_failure` classifies them.
+        """
+        token = await self._access_token()
+        async with _client() as http:
+            response = await http.post(
+                f"{CONTENT_BASE}/2/files/download",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    # The argument goes in a header, and the response body is
+                    # the file: this endpoint has no JSON request at all.
+                    "Dropbox-API-Arg": json.dumps({"path": file_id}),
+                },
+            )
+        if response.status_code == 200:
+            return response.content
+        raise self._content_failure(response, file_id)
+
+    def _content_failure(self, response: httpx.Response, file_id: str) -> DropboxError:
+        """Classify a failed download.
+
+        No refresh-and-retry, unlike :meth:`_call`: a download is issued from
+        inside a batch the caller will replay in full on any failure, so a 401
+        here costs one replayed page and the refresh happens on the next
+        listing. Retrying inside the download would double the bytes moved for
+        a case the batch rule already covers.
+        """
+        if response.status_code == 429:
+            return DropboxRateLimitedError(
+                "Dropbox is rate-limiting arc", retry_after=_retry_after(response)
+            )
+        if response.status_code == 401:
+            return DropboxAuthError("Dropbox rejected arc's access token")
+        # `Dropbox-API-Result` carries the metadata JSON on a 200; on a
+        # failure the content endpoint answers exactly like an RPC one, with
+        # the tagged-error JSON in the body.
+        summary = str(_json_or_empty(response).get("error_summary", ""))
+        if response.status_code == 409 and "not_found" in summary:
+            return DropboxPathNotFoundError(file_id)
+        return DropboxUpstreamError(
+            f"Dropbox answered {response.status_code} downloading {file_id}"
+        )
+
     async def revoke(self) -> None:
         """Ask Dropbox to invalidate the credential arc is holding."""
         await self._call("/2/auth/token/revoke", None)
@@ -480,6 +639,12 @@ class DropboxClient:
             return await self._call(endpoint, payload, path=path, retried=True)
         if response.status_code == 409:
             summary = str(_json_or_empty(response).get("error_summary", ""))
+            # `reset` before `not_found`: it is the one 409 with a local
+            # remedy, and the caller must not confuse it with a missing folder.
+            if summary.startswith("reset"):
+                raise DropboxCursorResetError(
+                    "Dropbox will not continue from this listing cursor"
+                )
             if "not_found" in summary:
                 raise DropboxPathNotFoundError(path)
             raise DropboxUpstreamError(f"Dropbox refused the request: {summary}")
