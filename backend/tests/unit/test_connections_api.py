@@ -432,6 +432,29 @@ async def test_an_invalid_grant_is_a_422_and_writes_no_row(
     assert await count_of(db_session, ConnectionRow) == 0
 
 
+async def test_a_token_exchange_that_never_reaches_dropbox_is_a_422(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A dead network during `complete` is the answer `complete` promises.
+
+    Not a 500. Every other failure of this call is a sentence the athlete can
+    act on, and "arc could not reach Dropbox — try again" is one too; a stack
+    trace is not. It is asserted here rather than left to the connector's own
+    suite because this is the status code the caller sees, and because the
+    fuzz job can now reach this exchange for real: with the app key writable
+    over the API, a generated `PUT` + `authorize` + `complete` is a token
+    request to a host CI may not be able to resolve.
+    """
+    await client.post(AUTHORIZE)
+    fake.raises[TOKEN_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
 async def test_a_second_connection_is_a_409_naming_disconnect(
     client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
 ) -> None:

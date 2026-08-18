@@ -252,10 +252,14 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 # One outbound request became reachable when the app key moved into the
 # database: a fuzz run can PUT a key, start a flow and then offer `complete` a
 # code, which is a token exchange against api.dropboxapi.com with a code
-# Dropbox has never issued. Both answers — Dropbox refusing the code, and the
-# host being unreachable from CI — are the 422 this operation already
-# documents, so the run is unaffected either way. `folders` still reaches
-# nothing: with no connection row it is a 404 before any client is built.
+# Dropbox has never issued. Both answers are the 422 this operation already
+# documents — Dropbox refusing the code, and the host not being reachable from
+# the runner at all, which reaches `complete` as a `DropboxUpstreamError`
+# because `connectors/dropbox.py` wraps its transport for exactly this reason
+# (pinned by `test_a_token_exchange_that_never_reaches_dropbox_is_a_422`; it
+# was a 500, and a 500 is a `server_error` failure here). `folders` still
+# reaches nothing: with no connection row it is a 404 before any client is
+# built.
 
 [[operations]]
 include-name = "PUT /api/v1/connections/dropbox/app"
