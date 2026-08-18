@@ -12,11 +12,13 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ValidationError
 from app.domain.actor import Actor
 from app.domain.anchors import AnchorSource, AnchorType, Provenance
+from app.persistence.anchors import AnchorVersionRow
 from app.services.anchors import AnchorService
 
 ANCHORS = "/api/v1/anchors"
@@ -186,6 +188,38 @@ async def test_current_resolves_the_version_in_force(client: AsyncClient) -> Non
 
     assert response.status_code == 200
     assert response.json()["id"] == in_force["id"]
+
+
+async def test_a_backward_clock_step_does_not_hide_the_version_just_appended(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The version in force now cannot depend on the wall clock moving forwards.
+
+    `datetime.now(UTC)` is not monotonic: an NTP correction, a resumed VM or a
+    virtualised host clock steps it backwards by milliseconds, and this suite
+    caught one doing exactly that. When the step lands between an append and
+    the next read, the stored `created_at` is *after* the read's "now", and a
+    filter on `created_at <= now` drops the only version there is — the athlete
+    is told to append the FTP they have just appended, and every prescription
+    priced as a percentage of it is refused with a 422.
+
+    The row is moved rather than the clock because the effect is the same and
+    the state is the one a stepped-back clock leaves behind: a history whose
+    newest entry is stamped in the future.
+    """
+    version = await append(client, value=250)
+    ahead = dt.datetime.now(dt.UTC) + dt.timedelta(milliseconds=100)
+    await db_session.execute(
+        update(AnchorVersionRow)
+        .where(AnchorVersionRow.id == uuid.UUID(version["id"]))
+        .values(created_at=ahead)
+    )
+    await db_session.commit()
+
+    response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == version["id"]
 
 
 async def test_current_without_any_version_returns_404(client: AsyncClient) -> None:

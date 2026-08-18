@@ -24,6 +24,7 @@ from app.domain.anchors import (
     AnchorVersion,
     Provenance,
     anchor_as_of,
+    anchor_effective_on,
 )
 from app.domain.prediction import PinnedAnchor
 from app.persistence.anchors import AnchorRepository, AnchorVersionRow
@@ -95,10 +96,26 @@ class AnchorService:
     ) -> AnchorVersionRow:
         """Return the version of ``anchor_type`` in force at ``moment`` (now).
 
-        The choice is made by `app.domain.anchors.anchor_as_of` over the whole
-        history rather than by an ``ORDER BY ... LIMIT 1``: future-dated and
-        back-dated versions both exist, and the rule for which one counts is a
-        domain rule that scoring and metrics will reuse.
+        The choice is made by a domain rule over the whole history rather than
+        by an ``ORDER BY ... LIMIT 1``: future-dated and back-dated versions
+        both exist, and the rule for which one counts is a domain rule that
+        scoring and metrics will reuse.
+
+        **Which rule depends on whether the caller named an instant.** A named
+        ``moment`` is a historical question — "what was knowable then" — so it
+        goes through `anchor_as_of`, whose ``created_at <= moment`` half is
+        what keeps a stored score reproducible after a back-dated append. The
+        default, "now", is not a historical question, and that same half is
+        actively harmful there: `datetime.now(UTC)` is *not monotonic* — an
+        NTP correction, a resumed VM or a virtualised host clock steps it back
+        by milliseconds — so a version this application wrote moments ago can
+        carry a ``created_at`` later than the "now" of the very next request,
+        and the athlete is told to append the FTP they just appended. "Now"
+        therefore asks `anchor_effective_on` over today: which version does the
+        history *as it stands* assign to today. The only rows that clause could
+        ever have excluded here are ones stamped in the future, which no honest
+        clock produces; future *effective* dates are still excluded, by the
+        half both functions share.
 
         Raises:
             NotFoundError: When no version of that type is in force.
@@ -109,7 +126,12 @@ class AnchorService:
         # equal in every field the domain models and still be distinct rows.
         pairs = [(row.to_domain(), row) for row in rows]
         with domain_rules():
-            in_force = anchor_as_of((version for version, _ in pairs), at)
+            versions = (version for version, _ in pairs)
+            in_force = (
+                anchor_as_of(versions, moment)
+                if moment is not None
+                else anchor_effective_on(versions, at.astimezone(dt.UTC).date())
+            )
         if in_force is None:
             raise NotFoundError(
                 f"No {anchor_type.value} anchor is in force at "
