@@ -111,6 +111,43 @@ class FolderList(BaseModel):
     items: list[FolderRead]
 
 
+class FolderCandidateRead(BaseModel):
+    """A folder arc thinks the athlete's activity files are already in."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: Dropbox's own spelling, posted straight back as a feed's `remote_path`.
+    path: str
+    #: How many `.fit`, `.gpx` or `.tcx` files are directly in it. Always at
+    #: least one — a folder holding none is left out, not reported as zero.
+    activity_files: int
+    #: When the newest of them was written by the device. Null when Dropbox
+    #: reported no stamp arc could read, which costs a tie-break and nothing
+    #: else.
+    newest_at: dt.datetime | None
+
+
+class FolderDiscoveryRead(BaseModel):
+    """Where the rides look like they already are, and what may be in the way.
+
+    A 200 with an empty `candidates` list is a real answer, not a 404: "arc
+    looked and found no activity files anywhere it can see" is precisely what
+    an athlete whose head unit has never uploaded should be told, and the
+    manual browser is right there.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: Best first: most activity files, then most recently written.
+    candidates: list[FolderCandidateRead]
+    #: `"app_folder"` when an empty Dropbox *and* an absent `/Apps` together
+    #: suggest the Dropbox app was registered with App-folder access; null when
+    #: they do not. An inference, never a fact — no Dropbox API reports an
+    #: app's access type — so the panel words it as a question the athlete can
+    #: check rather than an accusation.
+    access_type_suspect: str | None
+
+
 class FeedCreate(BaseModel):
     """Start watching a folder on a connection."""
 

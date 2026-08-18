@@ -2111,6 +2111,60 @@
         "title": "FeedUpdate",
         "type": "object"
       },
+      "FolderCandidateRead": {
+        "description": "A folder arc thinks the athlete's activity files are already in.",
+        "properties": {
+          "activity_files": {
+            "title": "Activity Files",
+            "type": "integer"
+          },
+          "newest_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest At"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": ["path", "activity_files", "newest_at"],
+        "title": "FolderCandidateRead",
+        "type": "object"
+      },
+      "FolderDiscoveryRead": {
+        "description": "Where the rides look like they already are, and what may be in the way.\n\nA 200 with an empty `candidates` list is a real answer, not a 404: \"arc\nlooked and found no activity files anywhere it can see\" is precisely what\nan athlete whose head unit has never uploaded should be told, and the\nmanual browser is right there.",
+        "properties": {
+          "access_type_suspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Type Suspect"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/FolderCandidateRead"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "required": ["candidates", "access_type_suspect"],
+        "title": "FolderDiscoveryRead",
+        "type": "object"
+      },
       "FolderList": {
         "description": "The folders directly under one remote path.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.",
         "properties": {
@@ -10897,6 +10951,93 @@
           }
         ],
         "summary": "Get Connection",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/{connection_id}/discover": {
+      "get": {
+        "description": "The folders the athlete's activity files are already in, best first.\n\nA read beside `/folders`, not a replacement for it: this one answers \"where\nare my rides\", the browser answers \"show me my Dropbox\", and an athlete\nwhose head unit files somewhere discovery does not look still needs the\nsecond one.",
+        "operationId": "connections-discover_folders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderDiscoveryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox is rate-limiting arc"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Discover Folders",
         "tags": ["connections"]
       }
     },

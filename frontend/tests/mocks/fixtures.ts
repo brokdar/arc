@@ -4132,6 +4132,14 @@ function daysBetween(from: string, to: string): number {
 type Connection = Schemas["ConnectionRead"];
 type Feed = Schemas["FeedRead"];
 type Folder = Schemas["FolderRead"];
+type Discovery = Schemas["FolderDiscoveryRead"];
+type Candidate = Schemas["FolderCandidateRead"];
+
+/** One file in the mock Dropbox, as much of it as discovery reads. */
+interface MockFile {
+  readonly name: string;
+  readonly client_modified: string;
+}
 
 /** The connection id every seeded fixture uses. */
 export const DROPBOX_CONNECTION_ID = "0199b000-0000-7000-8000-00000000c001";
@@ -4152,12 +4160,35 @@ export const DROPBOX_READ_SCOPES = [
   "files.metadata.read",
 ];
 
+/**
+ * The rides sitting in `/Apps/WahooFitness` in the mock Dropbox.
+ *
+ * Exported so a test asserts the count and the stamp the panel renders against
+ * the files that produced them, rather than against a number typed twice.
+ */
+export const WAHOO_ACTIVITY_FILES: readonly MockFile[] = [
+  {
+    name: "2026-08-14-090000-Cycling.fit",
+    client_modified: "2026-08-14T09:00:00Z",
+  },
+  {
+    name: "2026-08-15-063000-Cycling.fit",
+    client_modified: "2026-08-15T06:30:00Z",
+  },
+  {
+    name: "2026-08-16-053000-Cycling.fit",
+    client_modified: "2026-08-16T05:30:00Z",
+  },
+];
+
 interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
   authorizationStarted: boolean;
   /** Remote path → the folders directly under it. */
   folders: Map<string, Folder[]>;
+  /** Remote path → the files directly in it. Empty where none are modelled. */
+  files: Map<string, MockFile[]>;
   minted: number;
 }
 
@@ -4177,6 +4208,15 @@ function seedConnectionsState(): ConnectionsMockState {
       // A folder holding only files: Dropbox answers 200 with no entries, and
       // the picker has to say so rather than draw an empty box.
       ["/apps/wahoofitness", []],
+    ]),
+    files: new Map<string, MockFile[]>([
+      ["/apps/wahoofitness", [...WAHOO_ACTIVITY_FILES]],
+      // Not an activity file, so `/photos` is no candidate at all — the same
+      // rule the service applies, not a hand-written exclusion.
+      [
+        "/photos",
+        [{ name: "beach.jpg", client_modified: "2026-07-01T12:00:00Z" }],
+      ],
     ]),
     minted: 0,
   };
@@ -4321,4 +4361,70 @@ export function createDropboxFeed(
 /** The folders directly under a path, or null when the path is unknown. */
 export function dropboxFolders(path: string): Folder[] | null {
   return connectionsState().folders.get(normaliseRemotePath(path)) ?? null;
+}
+
+/** The extensions `app.domain.connections.ACTIVITY_EXTENSIONS` counts. */
+const ACTIVITY_EXTENSIONS = new Set(["fit", "gpx", "tcx"]);
+
+function isActivityFile(name: string): boolean {
+  const cut = name.lastIndexOf(".");
+  return cut > -1 && ACTIVITY_EXTENSIONS.has(name.slice(cut + 1).toLowerCase());
+}
+
+/**
+ * Leave the mock Dropbox showing what an App-folder app would see: nothing.
+ *
+ * Not a canned `access_type_suspect` — the state is what an App-folder
+ * credential really produces (an empty root, and no `/Apps` at all), and
+ * `dropboxDiscovery` draws the same inference from it that the service does.
+ */
+export function seedAppFolderDropbox(): void {
+  const state = connectionsState();
+  state.folders = new Map<string, Folder[]>([["", []]]);
+  state.files = new Map<string, MockFile[]>();
+}
+
+/**
+ * Discovery, computed the way `ConnectionService.discover_folders` computes it.
+ *
+ * The counts and stamps are derived from the files the mock actually holds and
+ * the ordering from the same two keys, so a panel tested against this cannot
+ * agree with a fixture the real API could never produce.
+ */
+export function dropboxDiscovery(): Discovery {
+  const state = connectionsState();
+  const root = state.folders.get("") ?? [];
+  const apps = state.folders.get("/apps");
+  const searched = [...root, ...(apps ?? [])].map(
+    (folder) => folder.path_lower,
+  );
+
+  const candidates: Candidate[] = [];
+  for (const path of new Set(searched)) {
+    const activity = (state.files.get(path) ?? []).filter((file) =>
+      isActivityFile(file.name),
+    );
+    if (activity.length > 0) {
+      candidates.push({
+        path,
+        activity_files: activity.length,
+        newest_at: activity
+          .map((file) => file.client_modified)
+          .toSorted()
+          .at(-1) as string,
+      });
+    }
+  }
+  candidates.sort(
+    (left, right) =>
+      right.activity_files - left.activity_files ||
+      String(right.newest_at).localeCompare(String(left.newest_at)),
+  );
+
+  const rootEmpty =
+    root.length === 0 && (state.files.get("") ?? []).length === 0;
+  return {
+    candidates,
+    access_type_suspect: rootEmpty && apps === undefined ? "app_folder" : null,
+  };
 }

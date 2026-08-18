@@ -58,7 +58,11 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
-from app.domain.connections import FEED_DELIVERED_ACTION, ConnectionStatus
+from app.domain.connections import (
+    ACTIVITY_EXTENSIONS,
+    FEED_DELIVERED_ACTION,
+    ConnectionStatus,
+)
 from app.ingest.parsers import extension_of
 from app.ingest.pipeline import FileOrigin, IngestPaths, IngestPipeline
 from app.ingest.service import MAX_UPLOAD_BYTES, safe_filename, staged_name
@@ -104,7 +108,10 @@ DELIVERED_ACTION = FEED_DELIVERED_ACTION
 #: holds screenshots, CSV exports and the odd PDF, and a quarantine queue full
 #: of files that were never rides is a queue nobody reads. The queue's value is
 #: that everything in it is a decision somebody has to take.
-ACTIVITY_EXTENSIONS = frozenset({"fit", "gpx", "tcx"})
+#:
+#: The list itself lives in `app.domain.connections`, because folder discovery
+#: ranks candidate folders by the same rule from a layer that may not import
+#: this one — see :data:`app.domain.connections.ACTIVITY_EXTENSIONS`.
 
 #: Filenames that are never a finished activity, matched lowercased.
 #:

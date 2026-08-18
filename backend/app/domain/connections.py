@@ -87,6 +87,33 @@ class FeedDeliveryState(StrEnum):
     DELIVERING = "delivering"
 
 
+#: The extensions arc treats as an activity file, without the dot.
+#:
+#: In the domain rather than beside the poll that acts on it
+#: (`app.ingest.feeds`) for the reason :data:`FEED_DELIVERED_ACTION` is: it is
+#: now read from `app.services.connections` too, which the layer contract
+#: forbids from importing `app.ingest`. Folder discovery ranks a folder by how
+#: many of these are in it, and the poll then downloads exactly those — two
+#: copies of the list would eventually disagree, and the failure is silent:
+#: discovery would recommend a folder the poll then ignores.
+ACTIVITY_EXTENSIONS = frozenset({"fit", "gpx", "tcx"})
+
+
+def is_activity_file(name: str) -> bool:
+    """Whether a filename looks like a ride arc could read.
+
+    Case-insensitive, because Dropbox stores the name the device wrote and a
+    Garmin writes `RIDE.FIT` in capitals; a file with no extension at all is
+    not one, because the dispatch that would eventually parse it has nothing
+    to dispatch on.
+
+    A name, not a path, and a *guess*, not a promise: this decides whether a
+    folder is worth recommending, and the file is only read later.
+    """
+    _, dot, extension = name.rpartition(".")
+    return bool(dot) and extension.lower() in ACTIVITY_EXTENSIONS
+
+
 def normalise_remote_path(path: str) -> str:
     """Reduce a remote folder path to the one spelling arc stores.
 

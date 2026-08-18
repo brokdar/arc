@@ -18,6 +18,8 @@ import { formatAthleteStamp } from "@/lib/format";
 type Schemas = components["schemas"];
 type Connection = Schemas["ConnectionRead"];
 type Feed = Schemas["FeedRead"];
+type Folder = Schemas["FolderRead"];
+type Candidate = Schemas["FolderCandidateRead"];
 
 const connectionsKey = $api.queryOptions("get", "/api/v1/connections").queryKey;
 
@@ -427,6 +429,11 @@ function FeedRow({ feed }: { readonly feed: Feed }) {
  * this is almost always pointed at is `/Apps/WahooFitness`, which nobody
  * remembers the spelling of, and a typo would produce a feed that polls a
  * folder that does not exist and reports nothing wrong.
+ *
+ * Discovery sits **above** the tree rather than replacing it. It answers the
+ * question the athlete actually has — "which of these does my head unit write
+ * to" — and it answers it from the files that are there, so the tree stays as
+ * the path for every producer discovery has never heard of.
  */
 function FolderPicker({
   connection,
@@ -437,6 +444,11 @@ function FolderPicker({
 }) {
   const queryClient = useQueryClient();
   const [path, setPath] = useState("");
+  const discovery = $api.useQuery(
+    "get",
+    "/api/v1/connections/{connection_id}/discover",
+    { params: { path: { connection_id: connection.id } } },
+  );
   const folders = $api.useQuery(
     "get",
     "/api/v1/connections/{connection_id}/folders",
@@ -456,6 +468,12 @@ function FolderPicker({
 
   const start = (remote_path: string) =>
     watch.mutate({ body: { connection_id: connection.id, remote_path } });
+  const walledOff = discovery.data?.access_type_suspect === "app_folder";
+  // `discovery.error` is deliberately not in `Problems`. Discovery is an
+  // accelerator over a browser that works without it and reports its own
+  // failures, so a rate-limited discovery would otherwise put the same red
+  // box on screen twice and read as "the folder picker is broken" — which it
+  // is not; it is right below, listing folders.
 
   return (
     <div
@@ -466,7 +484,7 @@ function FolderPicker({
         <span className="mr-auto font-mono text-ink-secondary text-sm">
           {path === "" ? "/" : path}
         </span>
-        {path === "" ? null : (
+        {path === "" || walledOff ? null : (
           <Button
             type="button"
             size="xs"
@@ -481,13 +499,164 @@ function FolderPicker({
         </Button>
       </div>
 
-      {folders.isPending ? (
+      <Candidates
+        candidates={discovery.data?.candidates ?? []}
+        watched={connection.feeds.map((feed) => feed.remote_path)}
+        busy={watch.isPending}
+        onWatch={start}
+      />
+
+      {walledOff ? (
+        <AppFolderDiagnosis />
+      ) : (
+        <FolderTree
+          items={folders.data?.items}
+          isPending={folders.isPending}
+          error={folders.error}
+          path={path}
+          busy={watch.isPending}
+          onOpen={setPath}
+          onWatch={start}
+        />
+      )}
+      <Problems problems={apiErrorMessages(watch.error)} />
+    </div>
+  );
+}
+
+/**
+ * The folders arc found activity files in, best first.
+ *
+ * Each line is the whole case for the folder — its path, how many rides are in
+ * it and when the newest arrived — because "which folder" is a question the
+ * athlete cannot answer from names alone: `/Apps/WahooFitness` and
+ * `/Apps/HealthFit` both sound right, and only one of them has this year's
+ * rides in it.
+ */
+function Candidates({
+  candidates,
+  watched,
+  busy,
+  onWatch,
+}: {
+  readonly candidates: readonly Candidate[];
+  readonly watched: readonly string[];
+  readonly busy: boolean;
+  readonly onWatch: (path: string) => void;
+}) {
+  if (candidates.length === 0) {
+    return null;
+  }
+  return (
+    <div className="w-full" data-testid="dropbox-candidates">
+      <SectionLabel>Where your activity files already are</SectionLabel>
+      <ul className="mt-1 flex w-full flex-col gap-1">
+        {candidates.map((candidate) => (
+          <li
+            key={candidate.path}
+            data-testid="dropbox-candidate"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1"
+          >
+            <span className="font-mono text-ink-secondary text-sm">
+              {candidate.path}
+            </span>
+            <span className="mr-auto text-ink-faint text-xs">
+              <span className="font-mono">{candidate.activity_files}</span>{" "}
+              activity files
+              {candidate.newest_at === null ? null : (
+                <>
+                  , newest{" "}
+                  <span className="font-mono">
+                    {formatUtcStamp(candidate.newest_at)}
+                  </span>
+                </>
+              )}
+            </span>
+            {watched.includes(candidate.path) ? (
+              // No control: watching it again is a 409, and offering a click
+              // that can only fail is worse than saying it is already done.
+              <span className="text-ink-faint text-xs">already watching</span>
+            ) : (
+              <Button
+                type="button"
+                size="xs"
+                disabled={busy}
+                onClick={() => onWatch(candidate.path)}
+              >
+                {`Watch ${candidate.path}`}
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * What an empty Dropbox with no `/Apps` in it usually means.
+ *
+ * Worded as a condition the athlete can go and check — "if you chose", not
+ * "your app is" — because no Dropbox API reports an app's access type. arc is
+ * inferring from what it cannot see, and the remedy it names is destructive
+ * (the app has to be deleted and registered again), so the sentence has to
+ * carry the doubt with it rather than leave the athlete to discover it.
+ */
+function AppFolderDiagnosis() {
+  return (
+    <div
+      data-testid="dropbox-access-type-suspect"
+      role="status"
+      className="flex max-w-[62ch] flex-col gap-2 text-ink-muted text-sm"
+    >
+      <p>
+        arc can see nothing at all in this Dropbox — not even the /Apps folder,
+        which is where an ELEMNT or HealthFit would be writing. That is what a
+        Dropbox app registered with <strong>App folder</strong> access looks
+        like from here: it can only ever read its own folder, and arc is not in
+        it.
+      </p>
+      <p>
+        Dropbox <strong>cannot change</strong> an app&apos;s access type after
+        it has been created. If that is what happened, the fix is to delete that
+        app at dropbox.com/developers/apps and register a new app with
+        &ldquo;Full Dropbox&rdquo; access, then connect arc to it again.
+      </p>
+      <p>
+        If your Dropbox really is empty, nothing is wrong here — upload a ride
+        and come back.
+      </p>
+    </div>
+  );
+}
+
+/** The folder tree: where you are, what is under it, and what to watch. */
+function FolderTree({
+  items,
+  isPending,
+  error,
+  path,
+  busy,
+  onOpen,
+  onWatch,
+}: {
+  readonly items: readonly Folder[] | undefined;
+  readonly isPending: boolean;
+  readonly error: unknown;
+  readonly path: string;
+  readonly busy: boolean;
+  readonly onOpen: (path: string) => void;
+  readonly onWatch: (path: string) => void;
+}) {
+  return (
+    <div data-testid="dropbox-folder-tree" className="w-full">
+      {isPending ? (
         <p className="text-ink-muted text-sm">Reading your Dropbox…</p>
-      ) : !folders.data ? (
+      ) : !items ? (
         <p role="alert" className="text-destructive text-sm">
-          {loadFailureMessage(folders.error, "that Dropbox folder")}
+          {loadFailureMessage(error, "that Dropbox folder")}
         </p>
-      ) : folders.data.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <div className="flex flex-col items-start gap-2">
           <p className="max-w-[62ch] text-ink-muted text-sm">
             {path === "" ? "Your Dropbox" : path} has no folders inside it.
@@ -497,8 +666,8 @@ function FolderPicker({
             <Button
               type="button"
               size="sm"
-              disabled={watch.isPending}
-              onClick={() => start(path)}
+              disabled={busy}
+              onClick={() => onWatch(path)}
             >
               Watch this folder
             </Button>
@@ -506,8 +675,8 @@ function FolderPicker({
               type="button"
               size="sm"
               variant="secondary"
-              disabled={watch.isPending}
-              onClick={() => start("")}
+              disabled={busy}
+              onClick={() => onWatch("")}
             >
               Watch the whole Dropbox
             </Button>
@@ -515,7 +684,7 @@ function FolderPicker({
         </div>
       ) : (
         <ul className="flex w-full flex-col gap-1">
-          {folders.data.items.map((folder) => (
+          {items.map((folder) => (
             <li
               key={folder.path_lower}
               className="flex flex-wrap items-center gap-2"
@@ -527,15 +696,15 @@ function FolderPicker({
                 type="button"
                 size="xs"
                 variant="secondary"
-                onClick={() => setPath(folder.path_lower)}
+                onClick={() => onOpen(folder.path_lower)}
               >
                 {`Open ${folder.name}`}
               </Button>
               <Button
                 type="button"
                 size="xs"
-                disabled={watch.isPending}
-                onClick={() => start(folder.path_lower)}
+                disabled={busy}
+                onClick={() => onWatch(folder.path_lower)}
               >
                 {`Watch ${folder.name}`}
               </Button>
@@ -543,7 +712,6 @@ function FolderPicker({
           ))}
         </ul>
       )}
-      <Problems problems={apiErrorMessages(watch.error)} />
     </div>
   );
 }

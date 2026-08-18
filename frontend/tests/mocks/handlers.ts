@@ -20,6 +20,7 @@ import {
   DETAILS,
   declarationRead,
   defaultZoneModel,
+  dropboxDiscovery,
   dropboxFolders,
   EXERCISES,
   ingestedSessionFixture,
@@ -1587,6 +1588,23 @@ export const connectionHandlers = [
       return folders === null
         ? response(404).json({ detail: `Dropbox has no folder at ${path}` })
         : response(200).json({ items: folders });
+    },
+  ),
+  http.get(
+    "/api/v1/connections/{connection_id}/discover",
+    ({ params, response }) => {
+      if (
+        !connectionsState().connections.some(
+          (row) => row.id === params.connection_id,
+        )
+      ) {
+        return response(404).json({
+          detail: `Connection ${params.connection_id} not found`,
+        });
+      }
+      // Computed from the folders and files the mock holds, not canned: a
+      // count the handler invented could not disagree with the panel.
+      return response(200).json(dropboxDiscovery());
     },
   ),
   http.delete("/api/v1/connections/{connection_id}", ({ params, response }) => {

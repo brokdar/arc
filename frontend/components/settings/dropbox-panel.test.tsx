@@ -5,11 +5,14 @@ import { HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { DropboxPanel } from "@/components/settings/dropbox-panel";
 import { AthleteClock } from "@/lib/clock";
+import { formatUtcStamp } from "@/lib/format";
 import {
   ATHLETE_TIMEZONE,
   DROPBOX_CODE,
   dropboxFeed,
+  seedAppFolderDropbox,
   seedDropboxConnection,
+  WAHOO_ACTIVITY_FILES,
 } from "@/tests/mocks/fixtures";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
@@ -306,6 +309,120 @@ describe("the folder picker", () => {
         name: /Watch the whole Dropbox/i,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("the folders arc found by itself", () => {
+  /** The stamp the panel should show, derived from the files the mock holds. */
+  const NEWEST_WAHOO_STAMP = formatUtcStamp(
+    WAHOO_ACTIVITY_FILES.map((file) => file.client_modified)
+      .toSorted()
+      .at(-1) as string,
+  );
+
+  async function openPicker(): Promise<HTMLElement> {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(
+      await screen.findByRole("button", { name: "Add a folder" }),
+    );
+    return screen.findByTestId("dropbox-folder-picker");
+  }
+
+  it("names the folder the activity files are in, with how many and how recent", async () => {
+    seedDropboxConnection();
+    const picker = await openPicker();
+
+    const candidate = await within(picker).findByTestId("dropbox-candidate");
+    expect(within(candidate).getByText("/apps/wahoofitness")).toBeVisible();
+    // Counted from the files the mock Dropbox actually holds, so a panel that
+    // read the wrong field would disagree with the fixture rather than match
+    // a number typed into it.
+    expect(candidate).toHaveTextContent(String(WAHOO_ACTIVITY_FILES.length));
+    expect(candidate).toHaveTextContent(NEWEST_WAHOO_STAMP);
+  });
+
+  it("watches the candidate at its own path and then lists it as watched", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    const picker = await openPicker();
+
+    await user.click(
+      await within(picker).findByRole("button", {
+        name: "Watch /apps/wahoofitness",
+      }),
+    );
+
+    // The path goes back verbatim: rebuilding it from the display name is how
+    // a feed ends up pointed at a folder that does not exist.
+    const surface = await panel();
+    const watched = within(surface).getByTestId("dropbox-feed");
+    expect(within(watched).getByText("/apps/wahoofitness")).toBeVisible();
+    expect(within(surface).getByTestId("dropbox-feed-count")).toHaveTextContent(
+      "1",
+    );
+  });
+
+  it("shows a candidate arc already watches without a control that would 409", async () => {
+    seedDropboxConnection({
+      feeds: [dropboxFeed({ remote_path: "/apps/wahoofitness" })],
+    });
+    const picker = await openPicker();
+
+    const candidate = await within(picker).findByTestId("dropbox-candidate");
+    expect(within(candidate).getByText(/already watching/i)).toBeVisible();
+    expect(
+      within(candidate).queryByRole("button", {
+        name: /^Watch /,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the candidates on screen and shows why the server refused", async () => {
+    const user = userEvent.setup();
+    // The folder was watched from another tab between the discovery read and
+    // this click — a 409 the real API produces, not an invented failure.
+    server.use(
+      http.post("/api/v1/feeds", ({ response }) =>
+        response(409).json({
+          detail:
+            "arc is already watching /apps/wahoofitness on this connection.",
+        }),
+      ),
+    );
+    seedDropboxConnection();
+    const picker = await openPicker();
+
+    await user.click(
+      await within(picker).findByRole("button", {
+        name: "Watch /apps/wahoofitness",
+      }),
+    );
+
+    expect(await within(picker).findByRole("alert")).toHaveTextContent(
+      /already watching/i,
+    );
+    expect(within(picker).getByTestId("dropbox-candidate")).toBeVisible();
+  });
+
+  it("says an App-folder app is the likely cause instead of drawing an empty tree", async () => {
+    seedDropboxConnection();
+    seedAppFolderDropbox();
+    const picker = await openPicker();
+
+    const diagnosis = await within(picker).findByTestId(
+      "dropbox-access-type-suspect",
+    );
+    // Worded as something the athlete can go and check: no Dropbox API reports
+    // an app's access type, so arc is inferring and has to say so.
+    expect(diagnosis).toHaveTextContent(/App folder/);
+    expect(diagnosis).toHaveTextContent(/cannot change/);
+    expect(diagnosis).toHaveTextContent(/register a new app/);
+    // An empty tree is what this replaces: it looked like a Dropbox with
+    // nothing in it, which is the one thing it was not.
+    expect(
+      within(picker).queryByTestId("dropbox-folder-tree"),
+    ).not.toBeInTheDocument();
   });
 });
 

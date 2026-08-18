@@ -26,6 +26,7 @@ from app.api.schemas.connections import (
     FeedCreate,
     FeedRead,
     FeedUpdate,
+    FolderDiscoveryRead,
     FolderList,
     FolderRead,
 )
@@ -145,6 +146,25 @@ async def list_folders(
             FolderRead(path_lower=folder.path_lower, name=folder.name)
             for folder in await service.folders(connection_id, path=path)
         ]
+    )
+
+
+@router.get(
+    "/{connection_id}/discover",
+    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED,
+)
+async def discover_folders(
+    service: ServiceDep, connection_id: uuid.UUID
+) -> FolderDiscoveryRead:
+    """The folders the athlete's activity files are already in, best first.
+
+    A read beside `/folders`, not a replacement for it: this one answers "where
+    are my rides", the browser answers "show me my Dropbox", and an athlete
+    whose head unit files somewhere discovery does not look still needs the
+    second one.
+    """
+    return FolderDiscoveryRead.model_validate(
+        await service.discover_folders(connection_id)
     )
 
 

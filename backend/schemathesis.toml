@@ -264,3 +264,11 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/connections/{connection_id}/folders"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# Discovery reads Dropbox exactly as `folders` does and is refused on the same
+# grounds, so it carries the same narrowing — and is equally unreachable from a
+# fuzz run, which has no connection row to discover anything for.
+[[operations]]
+include-name = "GET /api/v1/connections/{connection_id}/discover"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

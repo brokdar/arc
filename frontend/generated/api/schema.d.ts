@@ -375,6 +375,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/connections/{connection_id}/discover": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Discover Folders
+     * @description The folders the athlete's activity files are already in, best first.
+     *
+     *     A read beside `/folders`, not a replacement for it: this one answers "where
+     *     are my rides", the browser answers "show me my Dropbox", and an athlete
+     *     whose head unit files somewhere discovery does not look still needs the
+     *     second one.
+     */
+    get: operations["connections-discover_folders"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/connections/{connection_id}/folders": {
     parameters: {
       query?: never;
@@ -2932,6 +2957,33 @@ export interface components {
     FeedUpdate: {
       /** Enabled */
       enabled: boolean;
+    };
+    /**
+     * FolderCandidateRead
+     * @description A folder arc thinks the athlete's activity files are already in.
+     */
+    FolderCandidateRead: {
+      /** Activity Files */
+      activity_files: number;
+      /** Newest At */
+      newest_at: string | null;
+      /** Path */
+      path: string;
+    };
+    /**
+     * FolderDiscoveryRead
+     * @description Where the rides look like they already are, and what may be in the way.
+     *
+     *     A 200 with an empty `candidates` list is a real answer, not a 404: "arc
+     *     looked and found no activity files anywhere it can see" is precisely what
+     *     an athlete whose head unit has never uploaded should be told, and the
+     *     manual browser is right there.
+     */
+    FolderDiscoveryRead: {
+      /** Access Type Suspect */
+      access_type_suspect: string | null;
+      /** Candidates */
+      candidates: components["schemas"]["FolderCandidateRead"][];
     };
     /**
      * FolderList
@@ -7269,6 +7321,73 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "connections-discover_folders": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        connection_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FolderDiscoveryRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such connection, feed or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The setup is incomplete, or Dropbox refused the code */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+      /** @description Dropbox is rate-limiting arc */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };
