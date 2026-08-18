@@ -595,6 +595,36 @@ async def test_an_apps_probe_that_is_rate_limited_draws_no_inference(
     assert response.json()["access_type_suspect"] is None
 
 
+async def test_the_probed_app_container_is_listed_once_and_counted_once(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    # `/Apps` is reached twice over: once as the container discovery probes for
+    # the access-type inference, once as a folder of the root that might hold
+    # rides. Both arrive under a different spelling — `/Apps` and `/apps`.
+    fake.tree = {
+        "": [folder_entry("Apps", "/apps")],
+        "/apps": [file_entry("ride.fit", "/apps/ride.fit")],
+    }
+
+    response = await discover(client, connection)
+
+    # One row holding one file: two rows, or one claiming two, would be arc
+    # counting the same ride twice and ranking a folder on the duplicate.
+    assert discovery_of(response) == [
+        {"path": "/apps", "activity_files": 1, "newest_at": "2026-01-01T00:00:00Z"}
+    ]
+    # And listed once: the probe's answer is reused rather than fetched again
+    # under the other spelling, which would spend a request the rate limit
+    # wants later to learn what arc already knows.
+    listings = [
+        call
+        for call in fake.calls_to(LIST_FOLDER_PATH)
+        if str((call.body or {}).get("path", "")).lower() == "/apps"
+    ]
+    assert len(listings) == 1
+
+
 async def test_discovery_on_a_connection_needing_reauth_is_a_409(
     client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
 ) -> None:

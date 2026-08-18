@@ -2,12 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DropboxPanel } from "@/components/settings/dropbox-panel";
 import { AthleteClock } from "@/lib/clock";
 import { formatUtcStamp } from "@/lib/format";
 import {
   ATHLETE_TIMEZONE,
+  createDropboxFeed,
   DROPBOX_CODE,
   dropboxFeed,
   seedAppFolderDropbox,
@@ -340,10 +341,32 @@ describe("the folders arc found by itself", () => {
     // a number typed into it.
     expect(candidate).toHaveTextContent(String(WAHOO_ACTIVITY_FILES.length));
     expect(candidate).toHaveTextContent(NEWEST_WAHOO_STAMP);
+    // Above the tree, not instead of it: discovery is a shortcut past the
+    // browser, and the browser is what an athlete whose producer arc has
+    // never heard of still needs. Also what makes the App-folder test's
+    // "no tree" assertion mean anything.
+    expect(within(picker).getByTestId("dropbox-folder-tree")).toBeVisible();
   });
 
   it("watches the candidate at its own path and then lists it as watched", async () => {
     const user = userEvent.setup();
+    const posted = vi.fn();
+    // Watches the wire, and still creates the feed the way the shared handler
+    // does, so the same click proves both halves: what was sent, and what the
+    // panel does with the answer.
+    server.use(
+      http.post("/api/v1/feeds", async ({ request, response }) => {
+        const body = await request.json();
+        posted(body);
+        const result = createDropboxFeed(
+          body.connection_id,
+          body.remote_path ?? "",
+        );
+        return "feed" in result
+          ? response(201).json(result.feed)
+          : response(409).json({ detail: result.detail });
+      }),
+    );
     seedDropboxConnection();
     const picker = await openPicker();
 
@@ -353,8 +376,13 @@ describe("the folders arc found by itself", () => {
       }),
     );
 
-    // The path goes back verbatim: rebuilding it from the display name is how
-    // a feed ends up pointed at a folder that does not exist.
+    // The candidate's own path goes back verbatim, asserted on the request
+    // rather than on the reply: the API normalises, so a panel that rebuilt
+    // the path from the display name would be corrected on the way in and
+    // look right on the way out.
+    expect(posted).toHaveBeenCalledWith(
+      expect.objectContaining({ remote_path: "/apps/wahoofitness" }),
+    );
     const surface = await panel();
     const watched = within(surface).getByTestId("dropbox-feed");
     expect(within(watched).getByText("/apps/wahoofitness")).toBeVisible();
