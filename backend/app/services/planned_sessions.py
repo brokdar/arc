@@ -4,7 +4,7 @@ Build-plan invariant 4, in one place:
 
 * **Creating** a session writes intent version 1 and **pins**, for every
   anchor the prescription refers to, whichever version of that anchor is in
-  force right now (`app.domain.anchors.anchor_as_of`, through
+  force right now (`app.domain.anchors.anchor_effective_on`, through
   `AnchorService.current`). A prescription that refers to an anchor nobody has
   entered yet is refused — an unresolvable prescription is not a plan.
 * **Editing intent before the session has been matched** writes version n+1

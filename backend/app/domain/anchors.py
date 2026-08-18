@@ -240,8 +240,16 @@ def current_anchor(versions: Iterable[AnchorVersion]) -> AnchorVersion | None:
 
     A version whose ``effective_date`` is in the future is not yet in force —
     back-dating and forward-dating are both legal, and only the past counts.
+
+    Deliberately :func:`anchor_effective_on` over today rather than
+    :func:`anchor_as_of` at this instant: the ``created_at <= moment`` half is
+    a reproducibility guard for *historical* questions, and against "now" it
+    only ever excludes a row stamped in the future — which a wall clock that
+    steps backwards (NTP, a resumed VM) produces out of a perfectly ordinary
+    append. See ``AnchorService.current``, which answers the same question over
+    stored rows and must agree with this.
     """
-    return anchor_as_of(versions, dt.datetime.now(dt.UTC))
+    return anchor_effective_on(versions, dt.datetime.now(dt.UTC).date())
 
 
 def anchor_as_of(
