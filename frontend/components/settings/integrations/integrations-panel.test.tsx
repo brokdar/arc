@@ -122,6 +122,18 @@ describe("what the panel lists", () => {
     ).toBeInTheDocument();
   });
 
+  it("names no integration arc cannot deliver", async () => {
+    const { container } = renderPanel();
+    await entry("Local drop");
+
+    // AC-28: what this exists to catch is a "coming soon" card — a Strava or
+    // Garmin entry rendered for something arc cannot deliver.
+    const text = (container.textContent ?? "").toLowerCase();
+    for (const absent of ["strava", "zwift", "garmin", "apple"]) {
+      expect(text).not.toContain(absent);
+    }
+  });
+
   it("lists every folder of an integration that has two", async () => {
     seedDropboxConnection();
     seedIntegration("wahoo", ["/apps/wahoo-backup", WAHOO_PATH]);

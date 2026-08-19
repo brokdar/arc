@@ -293,6 +293,26 @@ async def test_the_catalogue_names_no_integration_arc_cannot_deliver(
         assert absent not in body, f"{absent} is offered and cannot be delivered"
 
 
+async def test_the_list_names_no_integration_arc_cannot_deliver(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """AC-28 on the list, as the twin above is on the catalogue.
+
+    What this exists to catch is a "coming soon" entry: a Strava or Garmin
+    card surfacing in the athlete's own list — synthesized, seeded by a
+    migration, or leaked from a template — for something arc cannot deliver.
+    """
+    connection = await connect(client)
+    await seed_classified_feed(
+        db_session, connection["id"], IntegrationKind.WAHOO, "/apps/wahoofitness"
+    )
+
+    body = (await client.get(INTEGRATIONS)).text.lower()
+
+    for absent in ("strava", "zwift", "garmin", "apple"):
+        assert absent not in body, f"{absent} is listed and cannot be delivered"
+
+
 async def test_posting_to_the_catalogue_is_a_405_not_a_uuid_complaint(
     data_root: Path, client: httpx.AsyncClient
 ) -> None:

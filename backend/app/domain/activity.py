@@ -196,7 +196,11 @@ class IngestSource(StrEnum):
     "arrived on this machine". Back-filling it would be a migration inventing a
     distinction nothing reads: what the column exists to answer is "did this
     ride come in over a connector, and which one", and locally-dropped files
-    are the absence of that, not a third transport.
+    are the absence of that, not a third transport. So a recording with no
+    remote transport — the inbox sweep, a manual upload — stores ``NULL``,
+    and deliberately not a ``local`` member: the two local paths are
+    indistinguishable at the point the row is written, and a value that
+    cannot tell them apart would be read as though it could.
 
     **Which integration delivered it is configuration, and it is not stored
     here.** "Wahoo" is not a property of the bytes — it is the athlete's answer
