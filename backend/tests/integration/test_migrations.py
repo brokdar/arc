@@ -316,3 +316,52 @@ def test_an_existing_authorization_survives_with_both_columns_null(
         "WHERE id = :id",
         id=authorization_id,
     ) == [("a-verifier", None, None)]
+
+
+# --- 0019: the stored Dropbox app key --------------------------------------------
+
+
+def test_head_carries_the_provider_apps_table(alembic_config: Config) -> None:
+    command.upgrade(alembic_config, "head")
+
+    assert sorted(
+        row[0]
+        for row in rows(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'provider_apps'"
+        )
+    ) == ["app_key", "created_at", "id", "provider", "updated_at"]
+
+
+def test_downgrading_0019_drops_the_table_and_keeps_everything_else(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+    seed_connection(uuid.uuid7())
+    run_sql(
+        [
+            (
+                (
+                    "INSERT INTO provider_apps "
+                    "(id, provider, app_key, created_at, updated_at) "
+                    "VALUES (:id, 'dropbox', 'abc123def456', now(), now())"
+                ),
+                {"id": uuid.uuid7()},
+            )
+        ]
+    )
+
+    command.downgrade(alembic_config, "-1")
+
+    assert rows("SELECT to_regclass('public.provider_apps')") == [(None,)]
+    # The rest of the aggregate is untouched: the stored key is the only thing
+    # lost, and the athlete re-pastes it — or `DROPBOX__APP_KEY`, which the
+    # table only overrides, is in force again.
+    assert rows("SELECT count(*) FROM connections") == [(1,)]
+
+    command.upgrade(alembic_config, "head")
+
+    assert rows("SELECT count(*) FROM provider_apps") == [(0,)]
+    # The schema the models describe, again — a downgrade/upgrade round trip
+    # that left a column behind would show up here and nowhere else.
+    command.check(alembic_config)

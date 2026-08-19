@@ -89,7 +89,10 @@ describe("the Dropbox transport's steps", () => {
     await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
 
     const checklist = await screen.findByTestId("app-key-step");
-    expect(checklist).toHaveTextContent("DROPBOX__APP_KEY");
+    // The key is pasted here, not into `.env`: the paste field is the step.
+    expect(
+      within(checklist).getByLabelText(/Dropbox app key/i),
+    ).toBeInTheDocument();
     expect(checklist).toHaveTextContent(/dropbox.com\/developers\/apps/i);
     expect(checklist).toHaveTextContent(/Full Dropbox/i);
     // Never past a step that has not been done.

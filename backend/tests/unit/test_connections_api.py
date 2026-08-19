@@ -29,9 +29,11 @@ from app.connectors.dropbox import READ_SCOPES
 from app.core.config import get_settings
 from app.domain.connections import ConnectionStatus
 from app.persistence.connections import (
+    MAX_APP_KEY_LENGTH,
     ConnectionRow,
     FeedRow,
     OAuthAuthorizationRow,
+    ProviderAppRow,
 )
 from app.persistence.integrations import IntegrationRow
 from app.persistence.types import JSONColumn
@@ -52,6 +54,8 @@ pytestmark = pytest.mark.usefixtures("dropbox_env")
 AUTHORIZE = "/api/v1/connections/dropbox/authorize"
 COMPLETE = "/api/v1/connections/dropbox/complete"
 CONNECTIONS = "/api/v1/connections"
+SETUP = "/api/v1/connections/dropbox/setup"
+APP = "/api/v1/connections/dropbox/app"
 INTEGRATIONS = "/api/v1/integrations"
 #: Retired by this PR. Kept as a constant so the tests that prove it is gone
 #: name the same path the panel used to call.
@@ -101,6 +105,175 @@ async def count_of(session: AsyncSession, model: type[Any]) -> int:
     return await session.scalar(select(func.count()).select_from(model)) or 0
 
 
+def no_env_app_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset `DROPBOX__APP_KEY` for this test, cache cleared both ways.
+
+    `delenv` rather than an empty string: "the operator never wrote the line"
+    is the state a fresh install is in, and it is the one the setup read is
+    about. The empty-string spelling is its own edge case below.
+    """
+    monkeypatch.delenv("DROPBOX__APP_KEY", raising=False)
+    get_settings.cache_clear()
+
+
+async def app_keys_of(session: AsyncSession) -> list[str]:
+    """Every stored provider app key, so "exactly one row" is provable."""
+    rows = (await session.execute(select(ProviderAppRow))).scalars().all()
+    return [row.app_key for row in rows]
+
+
+# --- the app key the athlete pastes in -----------------------------------------
+
+
+async def test_setup_reports_no_app_key_when_neither_source_has_one(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_env_app_key(monkeypatch)
+
+    response = await client.get(SETUP)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"app_key_set": False, "source": None}
+
+
+async def test_an_app_key_set_to_the_empty_string_is_not_a_source(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `DROPBOX__APP_KEY=` in a .env file is a *set* variable holding nothing.
+    # Reporting `environment` for it would send the add flow to a connect
+    # button that fails on Dropbox's error page with a blank `client_id`.
+    monkeypatch.setenv("DROPBOX__APP_KEY", "")
+    get_settings.cache_clear()
+
+    response = await client.get(SETUP)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"app_key_set": False, "source": None}
+
+
+async def test_setup_reports_the_environment_when_only_env_has_a_key(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(SETUP)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"app_key_set": True, "source": "environment"}
+
+
+async def test_a_stored_app_key_authorizes_in_the_same_process(
+    client: httpx.AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_env_app_key(monkeypatch)
+
+    stored = await client.put(APP, json={"app_key": "abc123def456"})
+
+    assert stored.status_code == 200, stored.text
+    assert stored.json() == {"app_key_set": True, "source": "stored"}
+    assert await app_keys_of(db_session) == ["abc123def456"]
+    # No restart, no re-read of the environment: the very next authorize call
+    # carries the key that was just pasted in.
+    started = await client.post(AUTHORIZE)
+    assert started.status_code == 200, started.text
+    assert query_of(started.json()["authorize_url"])["client_id"] == ["abc123def456"]
+
+
+async def test_a_second_put_overwrites_the_stored_key(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.put(APP, json={"app_key": "first-key"})
+
+    response = await client.put(APP, json={"app_key": "second-key"})
+
+    assert response.status_code == 200, response.text
+    assert await app_keys_of(db_session) == ["second-key"]
+
+
+async def test_a_blank_app_key_is_refused_and_stores_nothing(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.put(APP, json={"app_key": "   "})
+
+    assert response.status_code == 422, response.text
+    assert await app_keys_of(db_session) == []
+
+
+async def test_an_over_long_app_key_is_refused_and_stores_nothing(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.put(APP, json={"app_key": "k" * (MAX_APP_KEY_LENGTH + 1)})
+
+    assert response.status_code == 422, response.text
+    assert await app_keys_of(db_session) == []
+
+
+async def test_changing_the_app_key_under_a_live_connection_is_a_409(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await connect(client)
+
+    response = await client.put(APP, json={"app_key": "another-app-entirely"})
+
+    assert response.status_code == 409, response.text
+    # The remedy is named, because a stored credential belongs to the app it
+    # was granted to: pointing arc at a different app leaves a token that
+    # refreshes against a client id that never issued it.
+    assert "Disconnect it" in response.json()["detail"]
+    assert await app_keys_of(db_session) == []
+
+
+async def test_stored_app_key_overrides_environment(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DROPBOX__APP_KEY", "fromenv")
+    get_settings.cache_clear()
+    stored = await client.put(APP, json={"app_key": "fromdb"})
+    assert stored.status_code == 200, stored.text
+
+    setup = await client.get(SETUP)
+    started = await client.post(AUTHORIZE)
+
+    assert setup.json() == {"app_key_set": True, "source": "stored"}
+    assert query_of(started.json()["authorize_url"])["client_id"] == ["fromdb"]
+
+    cleared = await client.delete(APP)
+
+    assert cleared.status_code == 204, cleared.text
+    after = await client.get(SETUP)
+    restarted = await client.post(AUTHORIZE)
+    assert after.json() == {"app_key_set": True, "source": "environment"}
+    assert query_of(restarted.json()["authorize_url"])["client_id"] == ["fromenv"]
+
+
+async def test_clearing_a_key_that_was_never_stored_is_a_204(
+    client: httpx.AsyncClient,
+) -> None:
+    # The desired state — arc holds no app key of its own — is already true.
+    # A 404 would make the athlete read a failure off a button that did
+    # exactly what it promised.
+    response = await client.delete(APP)
+
+    assert response.status_code == 204, response.text
+
+
+async def test_clearing_the_only_key_there_was_leaves_the_setup_unset(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_env_app_key(monkeypatch)
+    await client.put(APP, json={"app_key": "abc123def456"})
+
+    await client.delete(APP)
+
+    assert (await client.get(SETUP)).json() == {"app_key_set": False, "source": None}
+
+
+async def test_the_app_key_routes_need_a_session(
+    anon_client: httpx.AsyncClient,
+) -> None:
+    assert (await anon_client.get(SETUP)).status_code == 401
+    assert (await anon_client.put(APP, json={"app_key": "k"})).status_code == 401
+    assert (await anon_client.delete(APP)).status_code == 401
+
+
 # --- AC-1: the authorization URL ---------------------------------------------
 
 
@@ -137,16 +310,22 @@ async def test_the_verifier_is_never_in_the_response_body(
     assert (await stored_verifier(db_session)) not in response.text
 
 
-async def test_an_empty_app_key_is_a_422_naming_the_setting(
+async def test_authorizing_with_no_app_key_anywhere_is_a_422_naming_the_remedy(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The remedy is a paste into Settings, not an edit to `.env` and a
+    # restart, so that is what the refusal says. The add-integration flow
+    # reads `GET /connections/dropbox/setup` and never offers the button that
+    # gets here — this is the guard for everything that is not that flow.
     monkeypatch.setenv("DROPBOX__APP_KEY", "")
     get_settings.cache_clear()
 
     response = await client.post(AUTHORIZE)
 
     assert response.status_code == 422, response.text
-    assert "DROPBOX__APP_KEY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "app key" in detail
+    assert "Full Dropbox" in detail
 
 
 async def test_a_second_authorize_supersedes_the_first_verifier(
@@ -257,6 +436,29 @@ async def test_an_invalid_grant_is_a_422_and_writes_no_row(
     detail = response.json()["detail"]
     assert "already been used" in detail
     assert "expired" in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_token_exchange_that_never_reaches_dropbox_is_a_422(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A dead network during `complete` is the answer `complete` promises.
+
+    Not a 500. Every other failure of this call is a sentence the athlete can
+    act on, and "arc could not reach Dropbox — try again" is one too; a stack
+    trace is not. It is asserted here rather than left to the connector's own
+    suite because this is the status code the caller sees, and because the
+    fuzz job can now reach this exchange for real: with the app key writable
+    over the API, a generated `PUT` + `authorize` + `complete` is a token
+    request to a host CI may not be able to resolve.
+    """
+    await client.post(AUTHORIZE)
+    fake.raises[TOKEN_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
     assert await count_of(db_session, ConnectionRow) == 0
 
 

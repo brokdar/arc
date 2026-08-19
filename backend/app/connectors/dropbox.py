@@ -225,10 +225,47 @@ def set_transport(transport: httpx.AsyncBaseTransport | None) -> None:
     _transport = transport
 
 
+class _ReachableTransport(httpx.AsyncBaseTransport):
+    """Turns a network that is simply not there into a `DropboxError`.
+
+    httpx raises its own hierarchy for a DNS failure, a refused connection or
+    a timeout, and none of it descends from :class:`DropboxError` — so the one
+    failure arc has no influence over at all was the one that escaped every
+    caller's `except DropboxError` and reached the athlete as a 500, while
+    every failure Dropbox *chose* (a spent code, a rate limit, a missing path)
+    arrived as a sentence naming the remedy.
+
+    Wrapped at the transport rather than at each call site so a request added
+    later inherits it: there are several of them in this module and the next
+    one would have been written without the `try`.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await self._inner.handle_async_request(request)
+        except httpx.TransportError as exc:
+            # The class name is in the message because the three cases the
+            # operator would act on differently — DNS, refused, timed out —
+            # are otherwise indistinguishable in a log line.
+            raise DropboxUpstreamError(
+                f"{request.url.host} did not answer ({type(exc).__name__}: {exc})"
+            ) from exc
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 def _client() -> httpx.AsyncClient:
     """An HTTP client for one exchange, honouring the installed transport."""
     return httpx.AsyncClient(
-        transport=_transport, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=False
+        # The default transport, named rather than left implicit, because the
+        # wrapper has to have something to wrap in production too.
+        transport=_ReachableTransport(_transport or httpx.AsyncHTTPTransport()),
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        follow_redirects=False,
     )
 
 

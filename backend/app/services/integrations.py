@@ -21,7 +21,6 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.domain.actor import Actor
 from app.domain.connections import (
@@ -122,7 +121,10 @@ class StorageStatus:
     """
 
     provider: StorageProvider
-    #: Whether `DROPBOX__APP_KEY` is configured at all.
+    #: Whether an app key is configured in *either* source — stored in
+    #: Settings or seeded by `DROPBOX__APP_KEY`. Read through
+    #: `ConnectionService.app_key`, because a key the athlete just stored has
+    #: to end the registration step without a restart.
     app_configured: bool
     connection_id: uuid.UUID | None
     account_label: str | None
@@ -250,7 +252,7 @@ class IntegrationService:
         connections = {
             row.provider: row for row in await self._connection_service.list()
         }
-        app_key = get_settings().dropbox.app_key.get_secret_value()
+        app_key = await self._connection_service.app_key(ConnectionProvider.DROPBOX)
         statuses = []
         for provider in StorageProvider:
             row = connections.get(provider)

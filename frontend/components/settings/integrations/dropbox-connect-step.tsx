@@ -8,8 +8,18 @@ import { SectionLabel } from "@/components/design/section-label";
 import { Problems } from "@/components/settings/integrations/integration-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+
+const setupKey = $api.queryOptions(
+  "get",
+  "/api/v1/connections/dropbox/setup",
+).queryKey;
+const catalogueKey = $api.queryOptions(
+  "get",
+  "/api/v1/integration-catalogue",
+).queryKey;
 
 /**
  * The two Dropbox steps an integration's cloud-folder transport needs first.
@@ -29,9 +39,11 @@ import { apiErrorMessages } from "@/lib/api-errors";
  *
  * arc has no Dropbox app of its own **by design** — a self-hosted install has
  * no shared client to be a client of — so the athlete registers one and hands
- * arc the key. Shown only when `DROPBOX__APP_KEY` is unset, and never
- * re-entered once it is: a completed step re-asked is a step the athlete
- * cannot tell from a failure.
+ * arc the key, pasted straight into the field below rather than into `.env`:
+ * `PUT /connections/dropbox/app` stores it and the very next authorize call
+ * carries it, with no restart. Shown only while arc holds no app key in
+ * either source, and never re-entered once it does: a completed step re-asked
+ * is a step the athlete cannot tell from a failure.
  */
 export function DropboxAppKeyStep({
   onRecheck,
@@ -40,6 +52,19 @@ export function DropboxAppKeyStep({
   readonly onRecheck: () => void;
   readonly checking: boolean;
 }) {
+  const base = useId();
+  const queryClient = useQueryClient();
+  const [appKey, setAppKey] = useState("");
+  const save = $api.useMutation("put", "/api/v1/connections/dropbox/app", {
+    onSuccess: () => {
+      setAppKey("");
+      queryClient.invalidateQueries({ queryKey: setupKey });
+      // The catalogue's `app_configured` is what decides this step is done —
+      // rechecking it is what moves the flow on to connecting the account.
+      onRecheck();
+    },
+  });
+
   return (
     <div
       data-testid="app-key-step"
@@ -68,7 +93,8 @@ export function DropboxAppKeyStep({
           Pick <strong>Scoped access</strong>, then{" "}
           <strong>Full Dropbox</strong> — an App folder app can only see a
           directory it created itself, which is never the one your head unit
-          already uploads to.
+          already uploads to. Dropbox cannot change this afterwards; getting it
+          wrong means registering another app.
         </li>
         <li>
           On the app&apos;s <strong>Permissions</strong> tab, tick{" "}
@@ -77,14 +103,89 @@ export function DropboxAppKeyStep({
           <code className="font-mono">files.content.read</code>, then submit.
         </li>
         <li>
-          Copy the <strong>App key</strong> into{" "}
-          <code className="font-mono">DROPBOX__APP_KEY</code> in arc&apos;s
-          environment and restart arc.
+          Copy the <strong>App key</strong> from the app&apos;s Settings tab and
+          paste it below. There is no app secret to copy: arc connects with
+          PKCE.
         </li>
       </ol>
-      <Button type="button" disabled={checking} onClick={onRecheck}>
-        {checking ? "Checking…" : "I have added the app key"}
-      </Button>
+      <form
+        className="flex w-full flex-col items-start gap-2.5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          // The previous refusal described a key that is no longer in the
+          // field; react-query holds it until the next `mutate()`.
+          save.reset();
+          save.mutate({ body: { app_key: appKey } });
+        }}
+      >
+        <Field
+          label="Dropbox app key"
+          htmlFor={`${base}-app-key`}
+          className="w-full max-w-[42ch]"
+        >
+          <Input
+            id={`${base}-app-key`}
+            className="font-mono"
+            value={appKey}
+            autoComplete="off"
+            onChange={(event) => setAppKey(event.target.value)}
+          />
+        </Field>
+        <Button
+          type="submit"
+          disabled={save.isPending || checking || appKey.trim() === ""}
+        >
+          {save.isPending || checking ? "Saving…" : "Save app key"}
+        </Button>
+      </form>
+      <Problems problems={apiErrorMessages(save.error)} />
+    </div>
+  );
+}
+
+/**
+ * Which app key arc is connecting with, and whether Settings can undo it.
+ *
+ * Named rather than reduced to "an app key is set", because the two sources
+ * are fixed in different places: a stored key is removed from here, while
+ * `DROPBOX__APP_KEY` needs an edit and a restart. A remove control offered
+ * against an environment key would appear to do nothing.
+ */
+function AppKeyInForce({
+  source,
+}: {
+  readonly source: components["schemas"]["SettingSource"] | null;
+}) {
+  const queryClient = useQueryClient();
+  const clear = $api.useMutation("delete", "/api/v1/connections/dropbox/app", {
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: setupKey });
+      // The catalogue too: with no environment seed behind the stored key the
+      // flow owes the athlete the registration step again, and the catalogue's
+      // `app_configured` is what says so.
+      queryClient.invalidateQueries({ queryKey: catalogueKey });
+    },
+  });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2.5">
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        {source === "stored"
+          ? "arc is using the Dropbox app key saved here."
+          : "arc is using the app key from DROPBOX__APP_KEY."}
+      </p>
+      {source === "stored" ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          disabled={clear.isPending}
+          onClick={() => clear.mutate({})}
+        >
+          Use a different app
+        </Button>
+      ) : null}
+      <Problems problems={apiErrorMessages(clear.error)} />
     </div>
   );
 }
@@ -106,6 +207,11 @@ export function DropboxConnectStep({
   const base = useId();
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
+  // Which app key the connect will run on, and from which source. The flow
+  // only renders this step once a key exists, so the read is informative
+  // rather than gating — but "saved here" versus "from DROPBOX__APP_KEY" is a
+  // difference the athlete acts on, and only this endpoint can tell them.
+  const setup = $api.useQuery("get", "/api/v1/connections/dropbox/setup");
   const start = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/authorize",
@@ -132,6 +238,9 @@ export function DropboxConnectStep({
         arc reads the folder your head unit already uploads to, so a ride never
         has to be uploaded by hand.
       </p>
+      {setup.data?.app_key_set ? (
+        <AppKeyInForce source={setup.data.source} />
+      ) : null}
       {start.data ? (
         <form
           className="flex w-full flex-col items-start gap-2.5"

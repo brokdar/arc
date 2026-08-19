@@ -312,3 +312,26 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/connections/{connection_id}/discover"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# The stored app key refuses two things the schema cannot state, pinned in
+# `test_connections_api.py`: a key that is nothing but whitespace passes
+# `min_length` and is still not a key (422, as a sentence), and a PUT while a
+# Dropbox account is connected is a 409 naming disconnect — the credential was
+# granted to a particular app, and swapping the key under it would surface
+# hours later as a connection that stopped working. `GET /dropbox/setup` and
+# `DELETE /dropbox/app` need no entry: they take no body and refuse nothing.
+#
+# Storing the key over the API also made one outbound request reachable from a
+# fuzz run: PUT a key, start a flow, and `complete` performs a token exchange
+# against api.dropboxapi.com with a code Dropbox never issued. Both answers are
+# the 422 that operation already documents — Dropbox refusing the code, and the
+# host not being reachable from the runner at all, which arrives as a
+# `DropboxUpstreamError` because `connectors/dropbox.py` wraps its transport
+# for exactly this reason (pinned by
+# `test_a_token_exchange_that_never_reaches_dropbox_is_a_422`; it was a 500,
+# and a 500 is a `server_error` failure here).
+
+[[operations]]
+include-name = "PUT /api/v1/connections/dropbox/app"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

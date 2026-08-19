@@ -4158,6 +4158,10 @@ interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
   authorizationStarted: boolean;
+  /** The app key pasted into Settings, as `provider_apps` holds it. */
+  storedAppKey: string | null;
+  /** `DROPBOX__APP_KEY`, the config-as-code seed the store overrides. */
+  envAppKey: string | null;
   /** Remote path → the folders directly under it. */
   folders: Map<string, Folder[]>;
   minted: number;
@@ -4167,6 +4171,11 @@ function seedConnectionsState(): ConnectionsMockState {
   return {
     connections: [],
     authorizationStarted: false,
+    // The seeded instance is one whose operator set `DROPBOX__APP_KEY` — the
+    // configuration every existing test was written against. A test about
+    // the registration checklist clears it with `seedDropboxAppKey(false)`.
+    storedAppKey: null,
+    envAppKey: "test-app-key",
     folders: new Map<string, Folder[]>([
       [
         "",
@@ -4348,8 +4357,6 @@ interface IntegrationsMockState {
   scanIntervalSeconds: number;
   /** Whether the interval above was set in the app or read from `.env`. */
   scanIntervalStored: boolean;
-  /** Whether `DROPBOX__APP_KEY` is configured on the server. */
-  appConfigured: boolean;
   minted: number;
 }
 
@@ -4359,7 +4366,6 @@ function seedIntegrationsState(): IntegrationsMockState {
     paused: new Set<string>(),
     scanIntervalSeconds: 30,
     scanIntervalStored: false,
-    appConfigured: true,
     minted: 0,
   };
 }
@@ -4390,9 +4396,17 @@ export function seedIntegration(
   });
 }
 
-/** Say whether the server has a Dropbox app key, which gates the checklist. */
+/**
+ * Say whether the server has a Dropbox app key, which gates the checklist.
+ *
+ * Writes the **environment** seed, because that is what "configured before
+ * the athlete did anything" means now that a key can also be stored in-app —
+ * the catalogue's `app_configured` is derived from both, exactly as
+ * `IntegrationService.storage_statuses` derives it.
+ */
 export function seedDropboxAppKey(configured: boolean): void {
-  integrationsState().appConfigured = configured;
+  connectionsState().envAppKey = configured ? "test-app-key" : null;
+  connectionsState().storedAppKey = null;
 }
 
 const DISPLAY_NAMES: Record<IntegrationKind, string> = {
@@ -4508,7 +4522,6 @@ export function integrationList(): Integration[] {
 
 /** `GET /api/v1/integration-catalogue`, exactly what the backend ships. */
 export function integrationCatalogue(): Catalogue {
-  const state = integrationsState();
   const connection = connectionsState().connections[0] ?? null;
   return {
     items: [
@@ -4538,7 +4551,9 @@ export function integrationCatalogue(): Catalogue {
     storage: [
       {
         provider: "dropbox",
-        app_configured: state.appConfigured,
+        // Stored or seeded, as the service resolves it: a key the athlete
+        // just pasted in has to end the registration step without a restart.
+        app_configured: dropboxAppKey() !== null,
         connection_id: connection?.id ?? null,
         account_label: connection?.account_label ?? null,
         status: connection?.status ?? null,
@@ -4880,4 +4895,79 @@ export function discoverIntegrations(connectionId: string): Discovery | null {
     proposals,
     access_type_suspect: discoveryState().accessTypeSuspect,
   };
+}
+
+// ============================================================================
+// The Dropbox app key, stored in-app (the add-integration flow's first step)
+// ============================================================================
+
+/** `MAX_APP_KEY_LENGTH` in `app/persistence/connections.py`. */
+export const MAX_APP_KEY_LENGTH = 128;
+
+/** The setup read, resolved exactly as `ConnectionService.dropbox_setup` is. */
+export function dropboxSetup(): Schemas["DropboxSetupRead"] {
+  const state = connectionsState();
+  if (state.storedAppKey !== null) {
+    return { app_key_set: true, source: "stored" };
+  }
+  if ((state.envAppKey ?? "").trim() !== "") {
+    return { app_key_set: true, source: "environment" };
+  }
+  return { app_key_set: false, source: null };
+}
+
+/** The app key arc would connect with, or null — a stored key wins. */
+export function dropboxAppKey(): string | null {
+  const state = connectionsState();
+  return state.storedAppKey ?? (state.envAppKey?.trim() || null);
+}
+
+/**
+ * Store an app key the way the API does, or say why not.
+ *
+ * Both 422 shapes are here because the API produces both: an over-long key is
+ * refused by the *schema* (`Field(max_length=...)`, FastAPI's list of
+ * per-field errors), while a key that is nothing but whitespace passes the
+ * schema and is refused by the service as a sentence.
+ */
+export function setDropboxAppKey(appKey: string):
+  | { setup: Schemas["DropboxSetupRead"] }
+  // 409 is an `ErrorDetail` (a sentence); 422 is the two-shaped
+  // `ValidationErrorDetail`, which is why only it widens.
+  | { status: 409; detail: string }
+  | { status: 422; detail: string | unknown[] } {
+  const state = connectionsState();
+  const key = appKey.trim();
+  if (appKey.length > MAX_APP_KEY_LENGTH) {
+    return {
+      status: 422,
+      detail: [
+        {
+          type: "string_too_long",
+          loc: ["body", "app_key"],
+          msg: `String should have at most ${MAX_APP_KEY_LENGTH} characters`,
+        },
+      ],
+    };
+  }
+  if (key === "") {
+    return {
+      status: 422,
+      detail:
+        "That is not a Dropbox app key. Register an app at " +
+        "https://www.dropbox.com/developers/apps — Scoped access, access " +
+        "type Full Dropbox — and paste its app key into Settings, in the " +
+        "steps for adding an integration.",
+    };
+  }
+  if (state.connections.length > 0) {
+    return {
+      status: 409,
+      detail:
+        "A Dropbox account is already connected with the current app key. " +
+        "Disconnect it before changing the app arc connects through.",
+    };
+  }
+  state.storedAppKey = key;
+  return { setup: dropboxSetup() };
 }

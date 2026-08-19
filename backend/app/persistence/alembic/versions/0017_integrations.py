@@ -24,8 +24,10 @@ behaviour change rather than a schema change against a database already holding
 live credentials: the migration is the risky half of that work, and it belongs
 with the one that is already touching these tables.
 
-`0016` is deliberately absent: it is reserved for the in-app Dropbox app key
-(PR #68), which is not on this branch.
+`0016` is deliberately absent: it was reserved for the in-app Dropbox app key
+while that work sat on a parallel branch, and the reservation was never spent —
+the rebuilt change ships its table as `0019` instead. The gap is permanent:
+renumbering a shipped chain would strand every database stamped by it.
 
 Revision ID: 0017
 Revises: 0015
