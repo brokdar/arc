@@ -69,7 +69,11 @@ from app.persistence.scoring import (
 from app.persistence.wellness import WellnessDayRow
 from app.persistence.wellness_prompt import WellnessPromptRow
 from app.persistence.workouts import WorkoutRow
-from app.services.connections import FeedStatus, IngestStatus
+from app.services.connections import (
+    FeedStatus,
+    IngestStatus,
+    IntegrationIngestStatus,
+)
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary, measured_channels
 from app.services.plan import CompletedSession, PlanWeek, WeekSession
@@ -1282,16 +1286,31 @@ def wellness_prompt(row: WellnessPromptRow | None) -> Any:
 
 
 def ingest_status(status: IngestStatus) -> dict[str, Any]:
-    """Whether arc's supply of activity files is working, and through what.
+    """Whether arc's supply of activity files is working, and from where.
+
+    Keyed on `integrations` and not on folders: the coach's sentence is
+    "Wahoo has stopped delivering", and a flat list of remote paths makes it
+    unsayable. There is deliberately **no** `feeds` key any more — a second
+    spelling of the same folders would let the two disagree.
 
     `local_inbox_only` is the shape that keeps the answer honest when there is
-    nothing connected: an empty `feeds` list on its own reads like every feed
-    broke, and the two configurations need different conclusions from a coach
-    looking at a thin week.
+    nothing connected: a list holding only the local drop reads like every
+    source broke, and the two configurations need different conclusions from a
+    coach looking at a thin week.
     """
     return {
-        "feeds": [_feed_status(feed) for feed in status.feeds],
+        "integrations": [_integration_status(row) for row in status.integrations],
         "local_inbox_only": status.local_inbox_only,
+    }
+
+
+def _integration_status(integration: IntegrationIngestStatus) -> dict[str, Any]:
+    """One source: what it brings in, and how each of its folders is doing."""
+    return {
+        "kind": None if integration.kind is None else integration.kind.value,
+        "display_name": integration.display_name,
+        "data_kinds": [kind.value for kind in integration.data_kinds],
+        "folders": [_feed_status(feed) for feed in integration.folders],
     }
 
 

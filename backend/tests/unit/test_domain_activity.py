@@ -17,6 +17,7 @@ from hypothesis import strategies as st
 from app.domain.activity import (
     UTC_TIMEZONE,
     ClassificationSource,
+    IngestSource,
     SessionDiscipline,
     as_planned_discipline,
     classify_discipline,
@@ -290,3 +291,29 @@ def test_the_session_date_is_the_local_calendar_date_of_the_start(
     # Never more than a day either side of the UTC date — the property that
     # catches an offset applied twice or in the wrong direction.
     assert abs((derived - start.date()).days) <= 1
+
+
+# --- AC-16: what `recordings.source` does and does not promise ----------------
+
+
+def test_the_integration_behind_a_recording_is_a_documented_limitation() -> None:
+    """`IngestSource` is the transport, and says so — plus what that costs.
+
+    The cost is real and it is written down rather than designed away: nothing
+    stores which *integration* delivered a file, so the only route from a
+    session back to "Wahoo" is the feed it arrived through, and removing the
+    integration severs that route while keeping every recording (AC-9). This
+    test is here so a later edit cannot quietly drop the sentence that warns a
+    reader off building a feature on a link arc does not hold.
+    """
+    # Transports only. A member named after a source — `wahoo` — would be the
+    # guess this docstring refuses.
+    assert {source.value for source in IngestSource} == {"dropbox"}
+    docstring = IngestSource.__doc__ or ""
+    for claim in (
+        "configuration",  # the integration is configuration, not data
+        "feed",  # ...recoverable only through the feed it arrived on
+        "severed",  # ...and the link is severed when the integration goes
+        "limitation",  # stated as a limitation, not offered as a feature
+    ):
+        assert claim in docstring, f"IngestSource's docstring no longer says {claim!r}"

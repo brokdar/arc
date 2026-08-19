@@ -48,15 +48,19 @@ the **UTC** Monday while the wellness beside it was read on the athlete's
 clock, so `get_coaching_context` could hand back last week's plan next to this
 week's readings with nothing saying so (issue #62).
 
-**Connecting a cloud account has no tool here, and will not get one.** The
-standing parity rule is about *capability* — anything the athlete can ask arc
-to reason about, the agent can too — not about every endpoint having a twin.
-Holding, exchanging and revoking the athlete's Dropbox OAuth credential is not
-a coaching capability; it is the operator's setup ritual, done once, at a
-screen, with a code pasted from another site. An agent with a
-``connect_dropbox`` tool would be an agent that can move where the athlete's
-training files come from. What the agent *does* get is the read half —
-:func:`get_ingest_status` — so it can tell a quiet week from a broken one.
+**Choosing what arc collects from has no tool here, and will not get one.**
+That covers both halves of it: connecting a cloud account, and adding,
+editing or removing an *integration* — a named source such as Wahoo — over
+the folders it is collected through. The standing parity rule is about
+*capability* — anything the athlete can ask arc to reason about, the agent can
+too — not about every endpoint having a twin. Holding the athlete's Dropbox
+OAuth credential and deciding which of their folders arc watches is not a
+coaching capability; it is the operator's setup ritual, done once, at a
+screen, looking at their own folders. An agent with a ``connect_dropbox`` or
+an ``add_integration`` tool would be an agent that can move where the
+athlete's training files come from, on a guess about where they keep them.
+What the agent *does* get is the read half — :func:`get_ingest_status` — so it
+can tell a quiet week from a broken one, and name the source that went quiet.
 """
 
 import datetime as dt
@@ -1494,24 +1498,50 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         `failing` feed is a broken pipe, not a rest week, and a plan revised on
         the second reading would be wrong in the direction that costs fitness.
 
-        Per watched folder: the `folder` itself, `last_delivery_at` (when arc
-        last successfully heard from the provider at all — not when a ride last
+        The answer is keyed on `integrations` — the **sources** arc collects
+        from, each with its `kind`, `display_name` ("Wahoo"), the `data_kinds`
+        it brings in (`recordings` or `wellness`), and the `folders` it is
+        collected through. Say it by name: "Wahoo has not delivered in five
+        days" is something the athlete can act on, and the remote path it
+        happens to sit at is not.
+
+        Per folder: the `folder` itself, `last_delivery_at` (when arc last
+        successfully heard from the provider at all — not when a ride last
         arrived), `deliveries_7d` (files that became sessions in the last seven
         days), `last_error`, and the `connection_status` of the credential
         behind it. `state` folds those into one word: `paused` (switched off on
         purpose), `failing` (the last poll left an error), `never_delivered`
         (nothing has ever come through — a fact about setup, not a fault), or
-        `delivering`.
+        `delivering`. A source with two folders reports **both**, and there is
+        no one word for the source itself: one failing folder beside one
+        delivering folder is neither "Wahoo is broken" nor "Wahoo is fine".
 
-        `local_inbox_only: true` with an empty `feeds` list means no cloud
-        account is connected at all. That is a **supported configuration**, not
-        a failure: files are dropped into arc's watched folder on the server.
-        There is nothing to report and nothing to worry about.
+        Two entries are not what they look like:
 
-        You cannot connect, repair or re-authorise anything from here — that is
-        the athlete's own setup ritual, at a screen, with a code pasted from
-        another site. What you can do is *say* that it is broken, which is the
-        thing nobody notices until a month of rides is missing.
+        * **Local drop** is always listed and always has an empty `folders`
+          list. It is a directory on the arc server that the athlete drops
+          files into — no credential to expire and no poll to fail, so there is
+          no folder state to report. It is here so you can see every source,
+          not because something is wrong with it.
+        * A `kind: null` entry is a folder configured before arc had a name for
+          the source behind it. It is still collecting; only the athlete can
+          say what it is.
+
+        `local_inbox_only: true` means no cloud account is connected at all —
+        it is about the **account**, not about the list, which always holds at
+        least the local drop. That is a **supported configuration**, not a
+        failure: files are dropped into arc's watched folder on the server.
+        There is nothing to report and nothing to worry about. `false` with
+        nothing but the local drop listed is the other case: an account is
+        connected and pointed at nothing.
+
+        This surface is **read-only** over the athlete's sources: nothing here
+        adds, removes or repairs an integration, and no other tool does either.
+        Choosing what arc collects from is done at a screen, with the athlete
+        looking at their own folders — a coach that could add one would be
+        guessing at where an athlete keeps their rides. What you can do is
+        *say* that it is broken, which is the thing nobody notices until a
+        month of rides is missing.
 
         Requires a `read` key.
         """
