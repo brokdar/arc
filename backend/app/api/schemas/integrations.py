@@ -19,6 +19,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
+from app.core.config import SettingSource
 from app.domain.connections import ConnectionStatus, FeedDeliveryState
 from app.domain.integrations import (
     DataKind,
@@ -174,3 +175,43 @@ class FolderUpdate(BaseModel):
     """Pause or resume one folder, keeping its cursor."""
 
     enabled: bool
+
+
+class LocalDropSettingsRead(BaseModel):
+    """The local drop's configuration, and which of it the athlete decided.
+
+    A superset of `LocalDropRead`, and deliberately not the same model: the
+    list entry answers "what is arc collecting", while this answers "what may I
+    change and what happens if I do". The three fields the list does not carry
+    are all about the second question.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: Resolved and absolute, and **read-only**: `DATA__ROOT` roots
+    #: `originals/`, `streams/` and `quarantine/` as well, and is a mounted
+    #: volume in Compose. There is no endpoint that changes it.
+    inbox_path: str
+    scan_interval_seconds: int
+    #: `stored` was set here and took effect at once; `environment` came from
+    #: `INGEST__SCAN_INTERVAL_SECONDS` and would need a restart to change.
+    source: SettingSource
+    #: What this endpoint will accept, so the form states the rule the server
+    #: enforces rather than a copy of it that can drift.
+    minimum_seconds: int
+    maximum_seconds: int
+
+
+class LocalDropSettingsUpdate(BaseModel):
+    """How often arc should sweep the drop folder.
+
+    A plain integer with no `ge`/`le`: the bounds are a service rule
+    (`IngestSettingsService.set_scan_interval`), so `0` is a schema-valid body
+    answered with a sentence that names both limits and says why they are
+    where they are — which is what an athlete can act on, and what pydantic's
+    "Input should be greater than or equal to 5" is not. The limits reach the
+    client through :class:`LocalDropSettingsRead` instead, and the fuzzer is
+    told about the refusal in `backend/schemathesis.toml`.
+    """
+
+    scan_interval_seconds: int

@@ -623,6 +623,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/integrations/local-drop/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read Local Drop Settings
+     * @description Where the local drop looks, how often, and what may be changed.
+     *
+     *     The path is reported and has no writer: `DATA__ROOT` roots `originals/`,
+     *     `streams/` and `quarantine/` too and is a mounted volume, so moving it from
+     *     a form would strand every file arc has already filed.
+     */
+    get: operations["integrations-read_local_drop_settings"];
+    /**
+     * Set Local Drop Settings
+     * @description Set how often arc sweeps the drop folder, from this moment on.
+     *
+     *     **The running scheduler is re-timed before this answers**, so a 200 means
+     *     the sweep is already on the new interval — no restart, and no window in
+     *     which Settings shows one number and the job runs another.
+     *
+     *     PUT rather than PATCH because the resource is singular and the write is
+     *     idempotent: there is one drop folder and setting its interval twice leaves
+     *     the same one row.
+     */
+    put: operations["integrations-set_local_drop_settings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/integrations/{integration_id}": {
     parameters: {
       query?: never;
@@ -3402,6 +3438,42 @@ export interface components {
       scan_interval_seconds: number;
     };
     /**
+     * LocalDropSettingsRead
+     * @description The local drop's configuration, and which of it the athlete decided.
+     *
+     *     A superset of `LocalDropRead`, and deliberately not the same model: the
+     *     list entry answers "what is arc collecting", while this answers "what may I
+     *     change and what happens if I do". The three fields the list does not carry
+     *     are all about the second question.
+     */
+    LocalDropSettingsRead: {
+      /** Inbox Path */
+      inbox_path: string;
+      /** Maximum Seconds */
+      maximum_seconds: number;
+      /** Minimum Seconds */
+      minimum_seconds: number;
+      /** Scan Interval Seconds */
+      scan_interval_seconds: number;
+      source: components["schemas"]["SettingSource"];
+    };
+    /**
+     * LocalDropSettingsUpdate
+     * @description How often arc should sweep the drop folder.
+     *
+     *     A plain integer with no `ge`/`le`: the bounds are a service rule
+     *     (`IngestSettingsService.set_scan_interval`), so `0` is a schema-valid body
+     *     answered with a sentence that names both limits and says why they are
+     *     where they are — which is what an athlete can act on, and what pydantic's
+     *     "Input should be greater than or equal to 5" is not. The limits reach the
+     *     client through :class:`LocalDropSettingsRead` instead, and the fuzzer is
+     *     told about the refusal in `backend/schemathesis.toml`.
+     */
+    LocalDropSettingsUpdate: {
+      /** Scan Interval Seconds */
+      scan_interval_seconds: number;
+    };
+    /**
      * LoggedSetCreate
      * @description One set of a manually entered session.
      *
@@ -5480,6 +5552,19 @@ export interface components {
       /** Min Fraction */
       min_fraction: number;
     };
+    /**
+     * SettingSource
+     * @description Which of the two places a setting arc is running on was fixed in.
+     *
+     *     Reported rather than inferred, because the two are undone in different
+     *     ways and a panel that said only "it is 120 seconds" would leave the
+     *     athlete guessing which. ``stored`` was set in the app and takes effect at
+     *     once; ``environment`` came from `.env` and needs a file edit and a restart
+     *     to change. Every setting that follows this pattern — env seeds it, a
+     *     stored row overrides it — reports one of these.
+     * @enum {string}
+     */
+    SettingSource: "stored" | "environment";
     /**
      * Sex
      * @description Biological sex, as it affects physiological reference values.
@@ -8067,6 +8152,86 @@ export interface operations {
         };
       };
       /** @description The integration cannot be added, the transport is not one it supports, or its storage provider has no account connected */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-read_local_drop_settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LocalDropSettingsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-set_local_drop_settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LocalDropSettingsUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LocalDropSettingsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The interval is outside the documented bounds — below the minimum or above the maximum the read reports */
       422: {
         headers: {
           [name: string]: unknown;

@@ -29,6 +29,7 @@ import {
   linkForPlanned,
   linkForSession,
   linkRecord,
+  localDropSettings,
   MATCH_NOW,
   matchRead,
   matchSummary,
@@ -54,6 +55,7 @@ import {
   scoreRead,
   scoringFor,
   setFolderEnabled,
+  setLocalDropScanInterval,
   statedBreakdown,
   statedRematch,
   statedScoring,
@@ -1676,3 +1678,31 @@ export const integrationHandlers = [
 ];
 
 handlers.push(...integrationHandlers);
+
+/**
+ * The local drop's own settings facet: the interval, and the fixed path.
+ *
+ * Reads and writes the **same** `integrationsState()` the list is derived
+ * from, so a save that the card believes in is a save the list agrees with.
+ * There is no handler that changes `inbox_path` because there is no endpoint
+ * that does — `DATA__ROOT` also roots `originals/`, `streams/` and
+ * `quarantine/`.
+ */
+export const localDropSettingsHandlers = [
+  http.get("/api/v1/integrations/local-drop/settings", ({ response }) =>
+    response(200).json(localDropSettings()),
+  ),
+  http.put(
+    "/api/v1/integrations/local-drop/settings",
+    async ({ request, response }) => {
+      const result = setLocalDropScanInterval(
+        (await request.json()).scan_interval_seconds,
+      );
+      return "settings" in result
+        ? response(200).json(result.settings)
+        : response(422).json({ detail: result.detail });
+    },
+  ),
+];
+
+handlers.push(...localDropSettingsHandlers);

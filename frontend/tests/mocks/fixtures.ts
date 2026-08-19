@@ -4345,6 +4345,8 @@ interface IntegrationsMockState {
   /** Folders the athlete has paused, by remote path. */
   paused: Set<string>;
   scanIntervalSeconds: number;
+  /** Whether the interval above was set in the app or read from `.env`. */
+  scanIntervalStored: boolean;
   /** Whether `DROPBOX__APP_KEY` is configured on the server. */
   appConfigured: boolean;
   minted: number;
@@ -4355,6 +4357,7 @@ function seedIntegrationsState(): IntegrationsMockState {
     stored: new Map(),
     paused: new Set<string>(),
     scanIntervalSeconds: 30,
+    scanIntervalStored: false,
     appConfigured: true,
     minted: 0,
   };
@@ -4686,4 +4689,61 @@ export function removeFolder(
     return { removed: true };
   }
   return removeIntegration(integrationId);
+}
+
+// ============================================================================
+// The local drop's own settings facet
+// ============================================================================
+
+type LocalDropSettings = Schemas["LocalDropSettingsRead"];
+
+/** The bounds the real service enforces (`app/core/config.py`). */
+export const MIN_SCAN_INTERVAL_SECONDS = 5;
+export const MAX_SCAN_INTERVAL_SECONDS = 86_400;
+
+/**
+ * `GET /api/v1/integrations/local-drop/settings`, derived from the same state
+ * the list is derived from — so the sentence the card renders and the value in
+ * its field can never disagree, exactly as they cannot on the server.
+ */
+export function localDropSettings(): LocalDropSettings {
+  const state = integrationsState();
+  return {
+    inbox_path: INBOX_PATH,
+    scan_interval_seconds: state.scanIntervalSeconds,
+    source: state.scanIntervalStored ? "stored" : "environment",
+    minimum_seconds: MIN_SCAN_INTERVAL_SECONDS,
+    maximum_seconds: MAX_SCAN_INTERVAL_SECONDS,
+  };
+}
+
+/**
+ * `PUT /api/v1/integrations/local-drop/settings`, honouring the request.
+ *
+ * Refuses out of range with the sentence the service writes, because the
+ * refusal copy is what the card renders — a canned "invalid" would let a card
+ * that printed its own message pass.
+ */
+export function setLocalDropScanInterval(
+  seconds: number,
+): { settings: LocalDropSettings } | { detail: string } {
+  if (
+    !Number.isInteger(seconds) ||
+    seconds < MIN_SCAN_INTERVAL_SECONDS ||
+    seconds > MAX_SCAN_INTERVAL_SECONDS
+  ) {
+    return {
+      detail:
+        `arc sweeps the drop folder every ${MIN_SCAN_INTERVAL_SECONDS}\u2013` +
+        `${MAX_SCAN_INTERVAL_SECONDS} seconds; ${seconds} is outside that. ` +
+        `Below ${MIN_SCAN_INTERVAL_SECONDS} seconds the sweep runs faster ` +
+        "than a file can prove it has finished copying, and above " +
+        `${MAX_SCAN_INTERVAL_SECONDS} the folder is not watched in any ` +
+        "useful sense.",
+    };
+  }
+  const state = integrationsState();
+  state.scanIntervalSeconds = seconds;
+  state.scanIntervalStored = true;
+  return { settings: localDropSettings() };
 }

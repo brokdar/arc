@@ -2884,6 +2884,51 @@
         "title": "LocalDropRead",
         "type": "object"
       },
+      "LocalDropSettingsRead": {
+        "description": "The local drop's configuration, and which of it the athlete decided.\n\nA superset of `LocalDropRead`, and deliberately not the same model: the\nlist entry answers \"what is arc collecting\", while this answers \"what may I\nchange and what happens if I do\". The three fields the list does not carry\nare all about the second question.",
+        "properties": {
+          "inbox_path": {
+            "title": "Inbox Path",
+            "type": "string"
+          },
+          "maximum_seconds": {
+            "title": "Maximum Seconds",
+            "type": "integer"
+          },
+          "minimum_seconds": {
+            "title": "Minimum Seconds",
+            "type": "integer"
+          },
+          "scan_interval_seconds": {
+            "title": "Scan Interval Seconds",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SettingSource"
+          }
+        },
+        "required": [
+          "inbox_path",
+          "scan_interval_seconds",
+          "source",
+          "minimum_seconds",
+          "maximum_seconds"
+        ],
+        "title": "LocalDropSettingsRead",
+        "type": "object"
+      },
+      "LocalDropSettingsUpdate": {
+        "description": "How often arc should sweep the drop folder.\n\nA plain integer with no `ge`/`le`: the bounds are a service rule\n(`IngestSettingsService.set_scan_interval`), so `0` is a schema-valid body\nanswered with a sentence that names both limits and says why they are\nwhere they are \u2014 which is what an athlete can act on, and what pydantic's\n\"Input should be greater than or equal to 5\" is not. The limits reach the\nclient through :class:`LocalDropSettingsRead` instead, and the fuzzer is\ntold about the refusal in `backend/schemathesis.toml`.",
+        "properties": {
+          "scan_interval_seconds": {
+            "title": "Scan Interval Seconds",
+            "type": "integer"
+          }
+        },
+        "required": ["scan_interval_seconds"],
+        "title": "LocalDropSettingsUpdate",
+        "type": "object"
+      },
       "LoggedSetCreate": {
         "additionalProperties": false,
         "description": "One set of a manually entered session.\n\n``reps`` and ``duration_s`` are both optional *here* and exactly one of\nthem is required by the service: the exactly-one-of rule cannot be stated\nin a JSON schema without an ``oneOf`` the generated client would render as\ntwo unrelated shapes, and the #17 lesson says a bound that lives only in\nthe API schema is a bound a dry run passes and the write then fails. One\nrule, one message, one place.",
@@ -7489,6 +7534,12 @@
         "title": "SetsCompletedSchema",
         "type": "object"
       },
+      "SettingSource": {
+        "description": "Which of the two places a setting arc is running on was fixed in.\n\nReported rather than inferred, because the two are undone in different\nways and a panel that said only \"it is 120 seconds\" would leave the\nathlete guessing which. ``stored`` was set in the app and takes effect at\nonce; ``environment`` came from `.env` and needs a file edit and a restart\nto change. Every setting that follows this pattern \u2014 env seeds it, a\nstored row overrides it \u2014 reports one of these.",
+        "enum": ["stored", "environment"],
+        "title": "SettingSource",
+        "type": "string"
+      },
       "Sex": {
         "description": "Biological sex, as it affects physiological reference values.\n\n``UNSPECIFIED`` is a real member rather than ``None`` so the column is\nnever null and reads state \"not answered\" instead of \"unknown why\".",
         "enum": ["female", "male", "unspecified"],
@@ -12067,6 +12118,104 @@
           }
         ],
         "summary": "Add Integration",
+        "tags": ["integrations"]
+      }
+    },
+    "/api/v1/integrations/local-drop/settings": {
+      "get": {
+        "description": "Where the local drop looks, how often, and what may be changed.\n\nThe path is reported and has no writer: `DATA__ROOT` roots `originals/`,\n`streams/` and `quarantine/` too and is a mounted volume, so moving it from\na form would strand every file arc has already filed.",
+        "operationId": "integrations-read_local_drop_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalDropSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Read Local Drop Settings",
+        "tags": ["integrations"]
+      },
+      "put": {
+        "description": "Set how often arc sweeps the drop folder, from this moment on.\n\n**The running scheduler is re-timed before this answers**, so a 200 means\nthe sweep is already on the new interval \u2014 no restart, and no window in\nwhich Settings shows one number and the job runs another.\n\nPUT rather than PATCH because the resource is singular and the write is\nidempotent: there is one drop folder and setting its interval twice leaves\nthe same one row.",
+        "operationId": "integrations-set_local_drop_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalDropSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalDropSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The interval is outside the documented bounds \u2014 below the minimum or above the maximum the read reports"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Set Local Drop Settings",
         "tags": ["integrations"]
       }
     },

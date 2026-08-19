@@ -38,12 +38,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from apscheduler.schedulers.base import BaseScheduler
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.scheduler import current_scheduler
 from app.domain.actor import Actor
 from app.ingest.pipeline import IngestPaths, IngestPipeline, IngestReport
 from app.persistence.db import session_scope
+from app.services.ingest_settings import IngestSettingsService, LocalDropSettings
 
 logger = get_logger(__name__)
 
@@ -165,8 +168,82 @@ async def scan_inbox(
     return reports
 
 
+async def set_scan_interval(
+    session: AsyncSession, seconds: int, *, actor: Actor
+) -> LocalDropSettings:
+    """Store how often the drop folder is swept, and re-time the running sweep.
+
+    The whole use-case, in one call, because the two halves are worthless
+    apart: a stored interval nothing re-times is a number the athlete sets and
+    the sweep ignores until the next deploy, and a re-timed job with nothing
+    stored is a change that disappears at the next restart.
+
+    It lives in `app.ingest` rather than beside the rest of the use-case in
+    `app.services.ingest_settings` because re-timing the sweep is knowledge of
+    the sweep's job — :data:`INBOX_JOB_ID`, registered by this module — and
+    `app.services` may not import `app.ingest`. The storage half stays in the
+    service, where the bounds, the audit row and the commit are.
+
+    The scheduler is touched **after** the commit: a job re-timed for a change
+    that then failed to persist would sweep on an interval nothing recorded.
+    """
+    applied = await IngestSettingsService.from_session(session).set_scan_interval(
+        seconds, actor=actor
+    )
+    reschedule_inbox_job(applied.scan_interval_seconds)
+    return applied
+
+
+def reschedule_inbox_job(seconds: int) -> bool:
+    """Point the running sweep at a new interval, without a restart.
+
+    Returns:
+        Whether a running job was re-timed. ``False`` is normal rather than an
+        error: a test that never booted a lifespan, and a management command
+        run against the same database from another process, both have a
+        perfectly good reason to store an interval with no scheduler in front
+        of them. The stored row is the durable half; this is the live one.
+    """
+    scheduler = current_scheduler()
+    job = None if scheduler is None else scheduler.get_job(INBOX_JOB_ID)
+    if scheduler is None or job is None:
+        logger.info("inbox_job_not_running", seconds=seconds)
+        return False
+    scheduler.reschedule_job(INBOX_JOB_ID, trigger="interval", seconds=seconds)
+    logger.info("inbox_job_rescheduled", seconds=seconds)
+    return True
+
+
+async def apply_stored_scan_interval() -> None:
+    """Re-time the sweep onto the stored interval, if there is one.
+
+    Called at the top of every sweep rather than during startup, and that is
+    the point: `app.main`'s lifespan reads no database on purpose, so a boot
+    still does not depend on one. The cost is that an instance whose athlete
+    chose an hour runs one sweep on the environment's thirty seconds after a
+    restart before settling; the benefit is that the setting survives restarts
+    at all, and that a row changed out of band is picked up without one.
+    """
+    async with session_scope() as session:
+        stored = await IngestSettingsService.from_session(
+            session
+        ).stored_scan_interval()
+    if stored is not None:
+        reschedule_inbox_job(stored)
+
+
 async def run_inbox_job() -> None:
-    """The scheduled sweep. Never raises — a failed sweep must not kill the job."""
+    """The scheduled sweep. Never raises — a failed sweep must not kill the job.
+
+    Two `try`s, not one. Reconciling the interval reads the database and the
+    sweep does not need it to have worked: folded into one block, a hiccup
+    reading one small row would skip the sweep entirely, which is the failure
+    this job exists to avoid dressed up as a settings problem.
+    """
+    try:
+        await apply_stored_scan_interval()
+    except Exception:  # noqa: BLE001 — the interval is not worth a missed sweep
+        logger.exception("inbox_interval_reconcile_failed")
     try:
         await scan_inbox()
     except Exception:  # noqa: BLE001 — a scheduler job that raises stops running
@@ -181,6 +258,11 @@ def register_inbox_job(scheduler: BaseScheduler) -> None:
     registers it. The first run is one interval away — a boot is busy enough
     — and ``max_instances=1`` plus ``coalesce`` mean a slow sweep delays the
     next one instead of running two over the same directory.
+
+    Registered on the **environment's** interval, which is the seed: a stored
+    one overrides it, and the sweep applies that itself on its first run
+    (:func:`apply_stored_scan_interval`) so that startup still touches no
+    database.
     """
     interval = get_settings().ingest.scan_interval_seconds
     scheduler.add_job(
