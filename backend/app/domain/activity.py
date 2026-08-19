@@ -197,6 +197,23 @@ class IngestSource(StrEnum):
     distinction nothing reads: what the column exists to answer is "did this
     ride come in over a connector, and which one", and locally-dropped files
     are the absence of that, not a third transport.
+
+    **Which integration delivered it is configuration, and it is not stored
+    here.** "Wahoo" is not a property of the bytes — it is the athlete's answer
+    to "what should arc collect", recorded on the `feeds` row the file arrived
+    through (`app.persistence.connections.FeedRow.integration_id`) and
+    changeable the moment they change their mind. The only route from a
+    recording back to it is that feed: the delivery is in the audit trail
+    against the feed (`app.domain.connections.FEED_DELIVERED_ACTION`), and the
+    feed names the integration. Remove the integration and the link is
+    **severed** — the feeds go, the recordings and their sessions stay, because
+    a folder the athlete stopped watching does not un-ride the rides.
+
+    That is a stated **limitation**, not a feature: nothing in arc answers
+    "which source brought this session in", and nothing should be built as
+    though it could. The day that question is worth answering it needs a column
+    here and a migration that can only fill it going forward — which is exactly
+    the cost of freezing configuration onto data, paid late instead of wrongly.
     """
 
     DROPBOX = "dropbox"

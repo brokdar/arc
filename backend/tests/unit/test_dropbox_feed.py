@@ -20,6 +20,7 @@ import datetime as dt
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -38,6 +39,14 @@ from app.domain.connections import (
     ConnectionStatus,
     FeedDeliveryState,
 )
+from app.domain.integrations import (
+    DataKind,
+    IntegrationKind,
+    IntegrationSpec,
+    StorageProvider,
+    TransportKind,
+    TransportSpec,
+)
 from app.ingest import feeds
 from app.ingest.inbox import scan_inbox
 from app.ingest.pipeline import IngestPipeline
@@ -51,7 +60,9 @@ from app.persistence.connections import (
 )
 from app.persistence.db import session_scope
 from app.persistence.ingest_log import IngestEventRow, QuarantineRecordRow
+from app.persistence.integrations import IntegrationRow
 from app.services.connections import ConnectionService
+from app.services.integrations import IntegrationService
 from tests.unit.dropbox_fake import (
     DOWNLOAD_PATH,
     LIST_FOLDER_CONTINUE_PATH,
@@ -1125,3 +1136,218 @@ async def test_a_feed_records_its_own_deliveries_in_the_audit_trail(
     assert deliveries[0].actor == "system"
     assert isinstance(deliveries[0].payload_json.get("external_id"), str)
     assert uuid.UUID(str(deliveries[0].payload_json["session_id"]))
+
+
+# --- AC-14/AC-15: what the integration provides decides where the files go ---------
+
+
+async def classify(
+    session: AsyncSession,
+    feed: FeedRow,
+    *,
+    kind: IntegrationKind = IntegrationKind.WAHOO,
+) -> IntegrationRow:
+    """Attach a watched folder to an integration, as `0017` and `add` both do."""
+    row = IntegrationRow(kind=kind)
+    session.add(row)
+    await session.flush()
+    feed.integration_id = row.id
+    await session.commit()
+    return row
+
+
+def provides_only_wellness(patched: pytest.MonkeyPatch) -> None:
+    """Make the stored integration one that feeds `wellness` and nothing else.
+
+    There is no shipped `IntegrationKind` whose `provides` is `{wellness}`, and
+    there deliberately never will be one until arc can deliver it — the
+    `CATALOGUE` docstring is the argument. Patching the catalogue the poll
+    reads, rather than inventing an enum member, keeps the test on the branch
+    production code actually takes: the poll asks `CATALOGUE[row.kind].provides`
+    whatever the row's kind happens to be, which is the same question it will
+    ask of Apple Health.
+    """
+    patched.setattr(
+        feeds,
+        "CATALOGUE",
+        MappingProxyType(
+            {
+                IntegrationKind.WAHOO: IntegrationSpec(
+                    kind=IntegrationKind.WAHOO,
+                    display_name="Wahoo",
+                    provides=frozenset({DataKind.WELLNESS}),
+                    transports=(
+                        TransportSpec(
+                            kind=TransportKind.CLOUD_FOLDER,
+                            storage=StorageProvider.DROPBOX,
+                            default_path="/apps/wahoofitness",
+                        ),
+                    ),
+                )
+            }
+        ),
+    )
+
+
+def pipeline_calls(patched: pytest.MonkeyPatch) -> list[str]:
+    """Replace `IngestPipeline.ingest_file` with a fake that only counts.
+
+    A fake rather than "no session row appeared": a file that reached the
+    pipeline and quarantined leaves no session either, so the absence of a
+    session cannot tell "never delivered" from "delivered and rejected". The
+    claim AC-15 makes is about the *call*.
+    """
+    calls: list[str] = []
+
+    async def never_called(self: Any, path: Path, **kwargs: Any) -> Any:
+        calls.append(str(path))
+        raise AssertionError("a wellness feed reached IngestPipeline.ingest_file")
+
+    patched.setattr(IngestPipeline, "ingest_file", never_called)
+    return calls
+
+
+async def folder_states(session: AsyncSession) -> dict[str, list[FeedDeliveryState]]:
+    """What the settings panel renders for each integration's folders."""
+    views = await IntegrationService.from_session(session).list()
+    return {
+        view.display_name: [folder.state for folder in view.folders] for view in views
+    }
+
+
+async def test_the_transport_is_recorded_not_the_integration(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-14: a classified feed ingests exactly as an unclassified one did.
+
+    The recording says `dropbox` — the transport that carried the bytes — and
+    says nothing at all about Wahoo, which is configuration living on the feed.
+    """
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    feed_id = feed.id
+    await classify(db_session, feed)
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+
+    await feeds.poll_feeds()
+
+    [session_row] = await rows_of(db_session, SessionRow)
+    [recording] = await rows_of(db_session, RecordingRow)
+    assert recording.session_id == session_row.id
+    assert recording.source == IngestSource.DROPBOX.value == "dropbox"
+    assert recording.external_id == entry["id"]
+    # The integration kind is in no column of `recordings` — not by name and
+    # not by value. It is recoverable through the feed, and nowhere else.
+    columns = [column.name for column in RecordingRow.__table__.columns]
+    assert [name for name in columns if "integration" in name] == []
+    stored_values = [str(getattr(recording, name)).lower() for name in columns]
+    assert [
+        value for value in stored_values if IntegrationKind.WAHOO.value in value
+    ] == []
+    # And the feed's own delivery ledger is unchanged.
+    deliveries = [
+        row
+        for row in await rows_of(db_session, AuditLogEntry)
+        if row.action == feeds.DELIVERED_ACTION
+    ]
+    assert [row.entity_id for row in deliveries] == [feed_id]
+
+
+async def test_an_unclassified_feed_still_ingests(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-14 edge: a folder configured before integrations existed keeps going.
+
+    `integration_id IS NULL` means "not yet classified", never "do not
+    collect": these rows are the installations that predate this vocabulary,
+    and stopping them would lose rides over a schema change.
+    """
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+
+    await feeds.poll_feeds()
+
+    stored = await reread(db_session, feed)
+    assert stored.integration_id is None
+    assert stored.last_error is None
+    [session_row] = await rows_of(db_session, SessionRow)
+    [recording] = await rows_of(db_session, RecordingRow)
+    assert recording.session_id == session_row.id
+    assert recording.source == IngestSource.DROPBOX.value == "dropbox"
+
+
+async def test_a_wellness_feed_is_never_handed_to_the_pipeline(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-15: a feed arc has no destination for is refused, loudly."""
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    await classify(db_session, feed)
+    entry = file_entry("weight.fit", f"{WATCHED}/weight.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+
+    with pytest.MonkeyPatch.context() as patched:
+        provides_only_wellness(patched)
+        calls = pipeline_calls(patched)
+
+        await feeds.poll_feeds()
+
+        assert calls == []
+    assert downloads(fake) == []
+    assert await rows_of(db_session, SessionRow) == []
+    stored = await reread(db_session, feed)
+    assert stored.last_error is not None
+    assert DataKind.WELLNESS.value in stored.last_error
+    # The cursor never moved past the file arc did not deliver, and no attempt
+    # was spent: there is nothing here to give up on.
+    assert stored.cursor is None
+    assert stored.cursor_attempts == 0
+    assert stored.last_delivery_at is None
+    # And both reads say the same word about it.
+    status = await ConnectionService.from_session(db_session).ingest_status()
+    assert [row.state for row in status.feeds] == [FeedDeliveryState.FAILING]
+    assert (await folder_states(db_session))["Wahoo"] == [FeedDeliveryState.FAILING]
+
+
+async def test_a_wellness_feed_is_retried_rather_than_treated_as_finished(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-15 edge: the next poll tries again, and nothing was skipped meanwhile.
+
+    Proved the only way that cannot be faked by a held cursor: once the
+    destination exists, the very file the refused polls never delivered is
+    still offered and still becomes a session.
+    """
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    await classify(db_session, feed)
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+
+    with pytest.MonkeyPatch.context() as patched:
+        provides_only_wellness(patched)
+        calls = pipeline_calls(patched)
+
+        await feeds.poll_feeds()
+        await feeds.poll_feeds()
+
+        assert calls == []
+    refused = await reread(db_session, feed)
+    assert refused.cursor is None
+    assert refused.cursor_attempts == 0
+    assert refused.last_error is not None
+
+    await feeds.poll_feeds()
+
+    [session_row] = await rows_of(db_session, SessionRow)
+    delivered = await reread(db_session, feed)
+    assert delivered.cursor == "cursor-1"
+    assert delivered.last_error is None
+    assert session_row.id is not None
