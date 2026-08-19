@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import dropbox
+from app.core.config import get_settings
 from app.domain.connections import ConnectionStatus
 from app.domain.integrations import IntegrationKind
 from app.persistence.activity import RecordingRow
@@ -305,8 +306,6 @@ async def test_posting_to_the_catalogue_is_a_405_not_a_uuid_complaint(
 async def test_a_stored_app_key_reaches_the_catalogue_without_a_restart(
     data_root: Path, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.core.config import get_settings
-
     # A fresh install: no `DROPBOX__APP_KEY` line, nothing stored yet. The add
     # flow reads `storage[].app_configured` off the catalogue to decide
     # whether the registration checklist is still owed.

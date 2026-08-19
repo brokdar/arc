@@ -351,7 +351,9 @@ def test_downgrading_0019_drops_the_table_and_keeps_everything_else(
         ]
     )
 
-    command.downgrade(alembic_config, "-1")
+    # "0018" by name, not "-1": the day 0020 lands, this test still has to
+    # exercise 0019's downgrade rather than the newest one's.
+    command.downgrade(alembic_config, "0018")
 
     assert rows("SELECT to_regclass('public.provider_apps')") == [(None,)]
     # The rest of the aggregate is untouched: the stored key is the only thing

@@ -7,6 +7,7 @@ import { IntegrationsPanel } from "@/components/settings/integrations/integratio
 import { AthleteClock } from "@/lib/clock";
 import {
   ATHLETE_TIMEZONE,
+  connectionsState,
   DROPBOX_CODE,
   DROPBOX_CONNECTION_ID,
   integrationsState,
@@ -98,6 +99,48 @@ describe("the Dropbox transport's steps", () => {
     // Never past a step that has not been done.
     expect(screen.queryByTestId("connect-step")).toBeNull();
     expect(screen.queryByTestId("folder-step")).toBeNull();
+  });
+
+  it("saves the pasted app key and then offers to connect", async () => {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const checklist = await screen.findByTestId("app-key-step");
+
+    await user.type(
+      within(checklist).getByLabelText(/Dropbox app key/i),
+      "abc123def456",
+    );
+    await user.click(screen.getByRole("button", { name: "Save app key" }));
+
+    // The save asks the flow to re-read the catalogue, whose `app_configured`
+    // is derived from the same state the PUT wrote — so the checklist is done
+    // and the next unanswered step is the account.
+    expect(await screen.findByTestId("connect-step")).toBeInTheDocument();
+    expect(screen.queryByTestId("app-key-step")).toBeNull();
+    expect(connectionsState().storedAppKey).toBe("abc123def456");
+  });
+
+  it("returns to the checklist when the stored key is removed", async () => {
+    const user = userEvent.setup();
+    // A key stored in-app and nothing behind it: removing it leaves arc with
+    // no key from either source, so the registration step is owed again.
+    seedDropboxAppKey(false);
+    connectionsState().storedAppKey = "stored-key";
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    await screen.findByTestId("connect-step");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Use a different app" }),
+    );
+
+    expect(await screen.findByTestId("app-key-step")).toBeInTheDocument();
+    expect(screen.queryByTestId("connect-step")).toBeNull();
+    expect(connectionsState().storedAppKey).toBeNull();
   });
 
   it("skips the checklist when the app key is already stored", async () => {
