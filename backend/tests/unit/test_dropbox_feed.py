@@ -911,7 +911,9 @@ async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
     # And the coach is told, rather than being shown a working pipe.
     async with session_scope() as session:
         status = await ConnectionService.from_session(session).ingest_status()
-    [reported] = status.feeds
+    [reported] = [
+        folder for integration in status.integrations for folder in integration.folders
+    ]
     assert reported.state is FeedDeliveryState.FAILING
 
 

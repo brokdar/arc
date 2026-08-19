@@ -41,6 +41,7 @@ from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
 from app.domain.connections import ConnectionProvider, ConnectionStatus
+from app.domain.integrations import IntegrationKind
 from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
@@ -56,6 +57,7 @@ from app.persistence.connections import (
     FeedRow,
 )
 from app.persistence.db import session_scope
+from app.persistence.integrations import IntegrationRow
 from app.persistence.metrics import SessionMetricsRow
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
@@ -3376,7 +3378,7 @@ async def test_the_opener_names_the_weeks_unplanned_rides(client: AsyncClient) -
     assert entry["duration_s"] == 3_600
 
 
-# --- AC-18: the coach can see its own supply line ----------------------------------
+# --- AC-17/18: the coach can see its own supply line, by source --------------------
 
 
 async def test_get_ingest_status_answers_with_no_connection_at_all(
@@ -3386,28 +3388,73 @@ async def test_get_ingest_status_answers_with_no_connection_at_all(
     # an error: files arrive in `data/inbox/` and the answer says so.
     data = await call(READER, "get_ingest_status")
 
-    assert data["feeds"] == []
     assert data["local_inbox_only"] is True
+    # AC-17: one key, and it is not `feeds` — a coach reasons about sources.
+    assert "feeds" not in data
+    [local] = data["integrations"]
+    assert local["kind"] == "local_drop"
 
 
-async def test_get_ingest_status_reports_a_feed_that_has_never_delivered(
+async def test_get_ingest_status_lists_the_local_drop_as_a_source_of_its_own(
     dropbox_env: None, session_factory: Any, db_session: AsyncSession
 ) -> None:
+    # AC-17 edge: every source arc collects from is here, including the one
+    # nobody configured. It is listed first and it has no folders: a directory
+    # on the arc server has no credential to expire and no poll to fail, so
+    # there is no per-folder delivery ledger to report from.
     connection = await seed_dropbox(db_session)
-    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
+    await seed_integration(db_session, connection, "/apps/wahoofitness")
+
+    data = await call(READER, "get_ingest_status")
+
+    local, wahoo = data["integrations"]
+    assert local["kind"] == "local_drop"
+    assert local["display_name"] == "Local drop"
+    assert local["data_kinds"] == ["recordings"]
+    assert local["folders"] == []
+    assert wahoo["kind"] == "wahoo"
+
+
+async def test_get_ingest_status_names_the_source_behind_the_folder(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    # AC-17: "Wahoo has not delivered in five days" is the sentence a coach can
+    # act on; "/apps/wahoofitness has not" is not.
+    connection = await seed_dropbox(db_session)
+    integration = await seed_integration(db_session, connection, "/apps/wahoofitness")
+    [feed] = integration.feeds
 
     data = await call(READER, "get_ingest_status")
 
     assert data["local_inbox_only"] is False
-    [entry] = data["feeds"]
-    assert entry["feed_id"] == str(feed.id)
-    assert entry["folder"] == "/apps/wahoofitness"
-    # Never `0`, never an error: a feed nothing has arrived through yet is a
-    # fact about setup, and "0 deliveries" would read as a broken pipe.
-    assert entry["last_delivery_at"] is None
-    assert entry["state"] == "never_delivered"
-    assert entry["deliveries_7d"] == 0
-    assert entry["connection_status"] == "connected"
+    [_local, wahoo] = data["integrations"]
+    assert wahoo["kind"] == "wahoo"
+    assert wahoo["display_name"] == "Wahoo"
+    assert wahoo["data_kinds"] == ["recordings"]
+    [folder] = wahoo["folders"]
+    # The per-folder facts survive the regrouping byte-identically.
+    assert folder["feed_id"] == str(feed.id)
+    assert folder["folder"] == "/apps/wahoofitness"
+    assert folder["last_delivery_at"] is None
+    assert folder["state"] == "never_delivered"
+    assert folder["deliveries_7d"] == 0
+    assert folder["last_error"] is None
+    assert folder["connection_status"] == "connected"
+
+
+async def test_a_connected_dropbox_with_no_integrations_is_not_local_inbox_only(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    # AC-17 edge: `local_inbox_only` keeps its meaning — **no connection
+    # exists**. An account that is connected but collecting nothing is a
+    # different fault from an athlete who never connected one, and folding the
+    # two together would tell the coach to stop worrying about the first.
+    await seed_dropbox(db_session)
+
+    data = await call(READER, "get_ingest_status")
+
+    assert data["local_inbox_only"] is False
+    assert [row["kind"] for row in data["integrations"]] == ["local_drop"]
 
 
 async def test_get_ingest_status_reports_a_paused_feed_even_with_an_error_set(
@@ -3417,30 +3464,86 @@ async def test_get_ingest_status_reports_a_paused_feed_even_with_an_error_set(
     # purpose, and reporting `failing` would send the coach hunting a fault
     # that isn't one.
     connection = await seed_dropbox(db_session)
-    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
+    integration = await seed_integration(db_session, connection, "/apps/wahoofitness")
+    [feed] = integration.feeds
     feed.enabled = False
     feed.last_error = "Dropbox would not list /apps/wahoofitness: 503"
     await db_session.commit()
 
     data = await call(READER, "get_ingest_status")
 
-    [entry] = data["feeds"]
-    assert entry["state"] == "paused"
+    [_local, wahoo] = data["integrations"]
+    [folder] = wahoo["folders"]
+    assert folder["state"] == "paused"
 
 
-async def test_get_ingest_status_reports_a_failing_feed(
+async def test_a_source_whose_every_folder_is_paused_reads_paused_throughout(
     dropbox_env: None, session_factory: Any, db_session: AsyncSession
 ) -> None:
+    # AC-17 edge: nothing is arriving from Wahoo and that is deliberate. Both
+    # folders say so, so the coach reads one story rather than a silence.
     connection = await seed_dropbox(db_session)
-    feed = await seed_feed(db_session, connection, "/apps/wahoofitness")
-    feed.last_error = "Dropbox would not list /apps/wahoofitness: 503"
+    integration = await seed_integration(
+        db_session, connection, "/apps/wahoofitness", "/apps/wahoo-second"
+    )
+    for feed in integration.feeds:
+        feed.enabled = False
     await db_session.commit()
 
     data = await call(READER, "get_ingest_status")
 
-    [entry] = data["feeds"]
-    assert entry["state"] == "failing"
-    assert entry["last_error"] == feed.last_error
+    [_local, wahoo] = data["integrations"]
+    assert len(wahoo["folders"]) == 2
+    assert {folder["state"] for folder in wahoo["folders"]} == {"paused"}
+
+
+async def test_a_half_broken_source_reports_both_folders_not_one_word(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    # AC-17 edge: one folder failing and one delivering is not "Wahoo is
+    # failing" and not "Wahoo is fine". Collapsing the two into a single word
+    # would either raise a false alarm or hide a real one, so the answer keeps
+    # both folders and their own states.
+    connection = await seed_dropbox(db_session)
+    integration = await seed_integration(
+        db_session, connection, "/apps/wahoo-broken", "/apps/wahoofitness"
+    )
+    broken, working = sorted(integration.feeds, key=lambda feed: feed.remote_path)
+    broken.last_error = "Dropbox would not list /apps/wahoo-broken: 503"
+    working.last_delivery_at = dt.datetime.now(dt.UTC)
+    await db_session.commit()
+
+    data = await call(READER, "get_ingest_status")
+
+    [_local, wahoo] = data["integrations"]
+    reported = {folder["folder"]: folder["state"] for folder in wahoo["folders"]}
+    assert reported == {
+        "/apps/wahoo-broken": "failing",
+        "/apps/wahoofitness": "delivering",
+    }
+    assert [folder["last_error"] for folder in wahoo["folders"]] == [
+        broken.last_error,
+        None,
+    ]
+
+
+async def test_get_ingest_status_still_reports_a_folder_no_source_owns(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    # A folder configured before integrations existed is still collecting, and
+    # dropping it from this answer would make a working pipe invisible to the
+    # only tool that reports on pipes.
+    connection = await seed_dropbox(db_session)
+    feed = await seed_feed(db_session, connection, "/apps/wahoo-unclassified")
+
+    data = await call(READER, "get_ingest_status")
+
+    [_local, loose] = data["integrations"]
+    assert loose["kind"] is None
+    assert loose["display_name"] == "/apps/wahoo-unclassified"
+    assert loose["data_kinds"] == []
+    [folder] = loose["folders"]
+    assert folder["feed_id"] == str(feed.id)
 
 
 async def test_get_ingest_status_counts_the_last_seven_days_of_deliveries(
@@ -3454,7 +3557,7 @@ async def test_get_ingest_status_counts_the_last_seven_days_of_deliveries(
     from tests.unit.golden_fit import golden
 
     connection = await seed_dropbox(db_session)
-    await seed_feed(db_session, connection, "/apps/wahoofitness")
+    await seed_integration(db_session, connection, "/apps/wahoofitness")
     upstream = FakeDropbox()
     entry = file_entry("ride.fit", "/apps/wahoofitness/ride.fit")
     upstream.by_cursor = {None: page(entry, cursor="cursor-1")}
@@ -3467,10 +3570,11 @@ async def test_get_ingest_status_counts_the_last_seven_days_of_deliveries(
 
     data = await call(READER, "get_ingest_status")
 
-    [status] = data["feeds"]
-    assert status["deliveries_7d"] == 1
-    assert status["last_delivery_at"] is not None
-    assert status["state"] == "delivering"
+    [_local, wahoo] = data["integrations"]
+    [folder] = wahoo["folders"]
+    assert folder["deliveries_7d"] == 1
+    assert folder["last_delivery_at"] is not None
+    assert folder["state"] == "delivering"
 
 
 async def test_get_ingest_status_refuses_a_write_only_key(
@@ -3480,6 +3584,100 @@ async def test_get_ingest_status_refuses_a_write_only_key(
     # `read`, and the refusal has to name the one that is missing.
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "get_ingest_status")
+
+
+async def test_the_ingest_status_docstring_answers_by_integration(
+    session_factory: Any,
+) -> None:
+    # AC-17 edge: the docstring pinned the old shape verbatim — a `feeds` list
+    # and what an empty one meant. A tool whose prose describes a key it no
+    # longer returns teaches the model to look for it and conclude nothing is
+    # connected when it is missing.
+    async with connected_as(server_for(COACH, READER), READER) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+
+    description = tools["get_ingest_status"].description or ""
+    assert "`integrations`" in description
+    assert "`feeds`" not in description
+    # It still has to say what `local_inbox_only` means, because that meaning
+    # did not change and the empty-folder-list case now looks like it might.
+    assert "`local_inbox_only: true`" in description
+    # AC-18: the docstring says why nothing here writes.
+    assert "read-only" in description.lower()
+
+
+async def test_no_tool_adds_edits_or_removes_an_integration(
+    session_factory: Any,
+) -> None:
+    # AC-18: which sources arc collects from is the athlete's own setup, made
+    # at a screen with a folder in front of them. The check is over the tool
+    # *names* because a tool that could do it would have to be one of these,
+    # and an exhaustive name check is the only thing that catches one being
+    # added quietly.
+    async with connected_as(server_for(COACH, READER), COACH) as client:
+        names = {tool.name for tool in await client.list_tools()}
+
+    subjects = ("integration", "connection", "feed", "folder", "dropbox", "source")
+    verbs = (
+        "add",
+        "create",
+        "update",
+        "edit",
+        "set",
+        "remove",
+        "delete",
+        "connect",
+        "disconnect",
+        "pause",
+        "resume",
+        "configure",
+    )
+    mutating = {
+        name
+        for name in names
+        if any(subject in name for subject in subjects)
+        and any(name.startswith(f"{verb}_") or f"_{verb}_" in name for verb in verbs)
+    }
+    assert mutating == set()
+    # Stronger, and the reason the list above can stay short: arc's whole
+    # setup surface is absent from MCP. No tool names an integration, a
+    # connection, a feed or a folder at all — the one tool that reports on
+    # them is named for the question it answers, not for the rows it reads.
+    assert {name for name in names if any(s in name for s in subjects)} == set()
+
+
+async def test_the_agent_never_appears_in_the_integration_audit_trail(
+    dropbox_env: None,
+    client: AsyncClient,
+    session_factory: Any,
+    db_session: AsyncSession,
+) -> None:
+    # AC-18 edge: the consequence of the surface, asserted on the trail rather
+    # than on the tool list — no `agent:` actor is ever recorded against an
+    # integration write, because the agent has no way to make one.
+    connection = await seed_dropbox(db_session)
+    added = await client.post(
+        "/api/v1/integrations",
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": str(connection.id),
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+    assert added.status_code == 201, added.text
+
+    for tool in ("get_ingest_status", "get_coaching_context"):
+        await call(READER, tool)
+
+    trail = [
+        (entry.actor, entry.action)
+        for entry in await rows(db_session, AuditLogEntry)
+        if entry.entity_type == "integration"
+    ]
+    # The athlete's own write is here — so the query would catch an agent's.
+    assert ("athlete", "integration.created") in trail
+    assert [actor for actor, _ in trail if actor.startswith("agent:")] == []
 
 
 async def seed_dropbox(session: AsyncSession) -> Any:
@@ -3500,8 +3698,24 @@ async def seed_dropbox(session: AsyncSession) -> Any:
 
 
 async def seed_feed(session: AsyncSession, connection: Any, path: str) -> Any:
-    """A folder arc watches on a connection."""
+    """A folder arc watches on a connection, owned by no integration."""
     row = FeedRow(connection_id=connection.id, remote_path=path)
     session.add(row)
     await session.commit()
+    return row
+
+
+async def seed_integration(
+    session: AsyncSession, connection: Any, *paths: str
+) -> IntegrationRow:
+    """A Wahoo integration collected through one or more folders."""
+    row = IntegrationRow(
+        kind=IntegrationKind.WAHOO,
+        feeds=[
+            FeedRow(connection_id=connection.id, remote_path=path) for path in paths
+        ],
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row, ["feeds"])
     return row
