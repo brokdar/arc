@@ -162,6 +162,19 @@ class AnchorRepository:
         )
         return list(result.scalars())
 
+    async def latest_created_at(self, anchor_type: AnchorType) -> dt.datetime | None:
+        """Return the newest ``created_at`` in one anchor type's history.
+
+        One aggregate rather than :meth:`history`: `AnchorService.append` asks
+        this on every write to keep the stamps it hands the tie-break strictly
+        increasing, and it needs the one value, not the rows.
+        """
+        return await self._session.scalar(
+            select(func.max(AnchorVersionRow.created_at)).where(
+                AnchorVersionRow.anchor_type == anchor_type
+            )
+        )
+
     async def add(self, row: AnchorVersionRow) -> AnchorVersionRow:
         """Append a version and refresh server-generated fields.
 

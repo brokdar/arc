@@ -5,6 +5,7 @@ There is no `update` and no `delete` here, and there is none in
 handlers state the rule; these two absences are what enforce it.
 """
 
+import dataclasses
 import datetime as dt
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
@@ -261,6 +262,28 @@ class AnchorService:
             ci_low=ci_low,
             ci_high=ci_high,
         )
+        # Clamp `created_at` to strictly after the newest stamp already in this
+        # anchor type's history, rather than trusting the wall clock alone. The
+        # tie-break in `app.domain.anchors._ordering_key` is *"a correction
+        # appended later with the same effective date wins"*, and `created_at`
+        # is its only witness to "later" — but the stamp `preview` takes comes
+        # from `dt.datetime.now`, which reads `CLOCK_REALTIME` and is not
+        # monotonic (an NTP correction anywhere; this WSL2 host by ~95 ms twice
+        # a minute). A backwards step between two appends would stamp the
+        # correction *earlier* than the value it corrects, and every read from
+        # then on would return the corrected value as current. One microsecond
+        # is the resolution of the column and of `dt.datetime`; the clamp only
+        # engages while the clock is behind the history, so stamps return to
+        # honest wall time as soon as it catches up. This also keeps
+        # `anchor_as_of`'s `created_at <= moment` replays ordered the way the
+        # appends actually happened. (Companion to #66, which made *reads*
+        # survive a stamp the clock has not reached; this makes *writes* stop
+        # producing out-of-order stamps at all.)
+        latest = await self._repository.latest_created_at(anchor_type)
+        if latest is not None and version.created_at <= latest:
+            version = dataclasses.replace(
+                version, created_at=latest + dt.timedelta(microseconds=1)
+            )
 
         row = await self._repository.add(
             AnchorVersionRow(
