@@ -22,6 +22,7 @@ from app.persistence.activity import RecordingRow
 from app.persistence.connections import ConnectionRow, FeedRow
 from app.persistence.integrations import IntegrationRow
 from tests.unit.dropbox_fake import (
+    LIST_FOLDER_PATH,
     FakeDropbox,
     file_entry,
     folder_entry,
@@ -821,6 +822,65 @@ async def test_a_paged_listing_is_followed_to_the_end_before_counting(
     body = (await client.get(discover_url(connection))).json()
 
     assert body["proposals"][0]["activity_files"] == 7
+
+
+async def test_the_probed_app_container_is_listed_once_and_counted_once(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    # `/Apps` is reached twice over: once as the container discovery probes for
+    # the access-type inference, once as a folder of the root that might hold
+    # rides. Both arrive under a different spelling — `/Apps` and `/apps`.
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps")],
+        apps=[file_entry("ride.fit", "/apps/ride.fit")],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # One proposal holding one file: two proposals, or one claiming two, would
+    # be arc counting the same ride twice and ranking a folder on the
+    # duplicate.
+    assert body["proposals"] == [
+        {
+            "kind": None,
+            "display_name": "/apps",
+            "connection_id": connection["id"],
+            "transport": "cloud_folder",
+            "path": "/apps",
+            "activity_files": 1,
+            "newest_at": "2026-01-01T00:00:00Z",
+            "configured": False,
+        }
+    ]
+    # And listed once: the probe's answer is reused rather than fetched again
+    # under the other spelling, which would spend a request the rate limit
+    # wants later to learn what arc already knows.
+    listings = [
+        call
+        for call in fake.calls_to(LIST_FOLDER_PATH)
+        if str((call.body or {}).get("path", "")).lower() == "/apps"
+    ]
+    assert len(listings) == 1
+
+
+async def test_discovery_on_a_connection_needing_reauth_is_a_409(
+    data_root: Path,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+) -> None:
+    connection = await connect(client)
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    row.status = ConnectionStatus.NEEDS_REAUTH
+    await db_session.commit()
+
+    response = await client.get(discover_url(connection))
+
+    assert response.status_code == 409, response.text
+    # Refused locally: no point spending a request on a credential arc knows
+    # is dead.
+    assert fake.calls_to(LIST_FOLDER_PATH) == []
 
 
 async def test_a_folder_already_collected_is_flagged_as_configured(
