@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import dropbox
+from app.core.config import get_settings
 from app.domain.connections import ConnectionStatus
 from app.domain.integrations import IntegrationKind
 from app.persistence.activity import RecordingRow
@@ -320,6 +321,29 @@ async def test_posting_to_the_catalogue_is_a_405_not_a_uuid_complaint(
     response = await client.post(CATALOGUE_URL, json={})
 
     assert response.status_code == 405, response.text
+
+
+async def test_a_stored_app_key_reaches_the_catalogue_without_a_restart(
+    data_root: Path, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fresh install: no `DROPBOX__APP_KEY` line, nothing stored yet. The add
+    # flow reads `storage[].app_configured` off the catalogue to decide
+    # whether the registration checklist is still owed.
+    monkeypatch.delenv("DROPBOX__APP_KEY", raising=False)
+    get_settings.cache_clear()
+    before = (await client.get(CATALOGUE_URL)).json()["storage"]
+    assert [row["app_configured"] for row in before] == [False]
+
+    stored = await client.put(
+        "/api/v1/connections/dropbox/app", json={"app_key": "abc123def456"}
+    )
+    assert stored.status_code == 200, stored.text
+
+    # The very next read, in the same process: a catalogue still answering
+    # from the `Settings` object frozen at boot would keep showing the
+    # registration checklist after the athlete finished it.
+    after = (await client.get(CATALOGUE_URL)).json()["storage"]
+    assert [row["app_configured"] for row in after] == [True]
 
 
 # --- AC-8: adding an integration -----------------------------------------------

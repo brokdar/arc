@@ -21,7 +21,9 @@ import {
   declarationRead,
   defaultZoneModel,
   discoverIntegrations,
+  dropboxAppKey,
   dropboxFolders,
+  dropboxSetup,
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
@@ -55,6 +57,7 @@ import {
   SESSION_IDS,
   scoreRead,
   scoringFor,
+  setDropboxAppKey,
   setFolderEnabled,
   setLocalDropScanInterval,
   statedBreakdown,
@@ -1552,10 +1555,22 @@ export const connectionHandlers = [
     response(200).json({ items: connectionsState().connections }),
   ),
   http.post("/api/v1/connections/dropbox/authorize", ({ response }) => {
+    const appKey = dropboxAppKey();
+    if (appKey === null) {
+      return response(422).json({
+        detail:
+          "arc has no Dropbox app key yet. Register an app at " +
+          "https://www.dropbox.com/developers/apps — Scoped access, access " +
+          "type Full Dropbox — and paste its app key into Settings, in the " +
+          "steps for adding an integration.",
+      });
+    }
     connectionsState().authorizationStarted = true;
     return response(200).json({
       authorize_url:
-        "https://www.dropbox.com/oauth2/authorize?client_id=test-app-key" +
+        // The key in force, not a constant: a flow that offered connect
+        // before one was set would otherwise get a working link back.
+        `https://www.dropbox.com/oauth2/authorize?client_id=${appKey}` +
         "&response_type=code&token_access_type=offline" +
         "&code_challenge=fake-challenge&code_challenge_method=S256" +
         "&scope=account_info.read+files.content.read+files.metadata.read",
@@ -1731,3 +1746,33 @@ export const discoveryHandlers = [
 ];
 
 handlers.push(...discoveryHandlers);
+
+/**
+ * The Dropbox app key, stored in-app.
+ *
+ * The PUT honours the request the way the service does — trims, refuses a
+ * blank or over-long key, 409s under a live connection — and the authorize
+ * handler above echoes whichever key is in force, so a step that saved
+ * nothing cannot produce a working connect link by accident.
+ */
+export const appKeyHandlers = [
+  http.get("/api/v1/connections/dropbox/setup", ({ response }) =>
+    response(200).json(dropboxSetup()),
+  ),
+  http.put("/api/v1/connections/dropbox/app", async ({ request, response }) => {
+    const result = setDropboxAppKey((await request.json()).app_key);
+    if ("setup" in result) {
+      return response(200).json(result.setup);
+    }
+    return result.status === 409
+      ? response(409).json({ detail: result.detail })
+      : response(422).json({ detail: result.detail });
+  }),
+  http.delete("/api/v1/connections/dropbox/app", ({ response }) => {
+    // 204 whether or not anything was stored: the desired state is the same.
+    connectionsState().storedAppKey = null;
+    return response(204).empty();
+  }),
+];
+
+handlers.push(...appKeyHandlers);

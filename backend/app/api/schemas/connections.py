@@ -12,7 +12,39 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config import SettingSource
 from app.domain.connections import ConnectionProvider, ConnectionStatus
+from app.persistence.connections import MAX_APP_KEY_LENGTH
+
+
+class DropboxSetupRead(BaseModel):
+    """Whether Dropbox can be connected yet, and on whose app key.
+
+    Nullable `source` is load-bearing rather than an omission: `null` is a
+    state the add-integration flow renders — the registration checklist — and
+    not the absence of an answer.
+    """
+
+    #: False until an app key exists in either source. The flow offers the
+    #: registration checklist rather than a connect button that would fail.
+    app_key_set: bool
+    #: Which key is in force. `stored` is removable from Settings;
+    #: `environment` comes from `DROPBOX__APP_KEY` and is not.
+    source: SettingSource | None
+
+
+class DropboxAppKeySubmit(BaseModel):
+    """The app key from the athlete's own Dropbox app registration.
+
+    Not a secret: a Dropbox app key is a public OAuth client id, which is why
+    it is stored in the clear (see `ProviderAppRow`) and may be echoed back as
+    a source rather than a value.
+    """
+
+    #: Surrounding whitespace is stripped by the service — this arrives by
+    #: paste from a console page. A key that is nothing but whitespace is
+    #: refused there, with the registration steps named.
+    app_key: str = Field(min_length=1, max_length=MAX_APP_KEY_LENGTH)
 
 
 class DropboxAuthorizationRead(BaseModel):
