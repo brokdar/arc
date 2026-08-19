@@ -23,7 +23,7 @@ import datetime as dt
 import json
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import (
@@ -45,6 +45,12 @@ from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.persistence.db import Base, flush
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle broken for the annotation
+    # `app.persistence.integrations` imports `FeedRow` from here, so the
+    # reverse edge exists only for the type checker; SQLAlchemy resolves the
+    # relationship through its own class registry, which `load_models()` fills.
+    from app.persistence.integrations import IntegrationRow
+
 #: Longest account label kept — a display name plus an email address.
 MAX_ACCOUNT_LABEL_LENGTH = 300
 
@@ -56,6 +62,13 @@ MAX_ERROR_LENGTH = 1_000
 
 #: Longest PKCE verifier RFC 7636 allows.
 MAX_VERIFIER_LENGTH = 128
+
+#: Longest OAuth `state` nonce stored. Generous: the value is arc's own, and
+#: 128 characters is far more entropy than the flow needs.
+MAX_STATE_LENGTH = 128
+
+#: Longest redirect URI stored — an origin plus arc's own callback path.
+MAX_REDIRECT_URI_LENGTH = 500
 
 #: Named in every message this module raises, so the operator is never left
 #: guessing between a rotated key and a corrupted column.
@@ -219,6 +232,17 @@ class FeedRow(Base):
     connection_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("connections.id", ondelete="CASCADE"), index=True
     )
+    #: Which source the athlete asked arc to collect through this folder.
+    #:
+    #: **Nullable, and it means something**: "configured before integrations
+    #: existed, not yet classified". A folder watched since WP-4.3 keeps
+    #: collecting — `0017` classifies only the ones whose path *is* a catalogue
+    #: default and guesses at nothing else, because a wrong guess here would
+    #: put a folder under a name the athlete never chose and no later edit
+    #: would question it. Deleting the integration takes the feed with it.
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("integrations.id", ondelete="CASCADE"), index=True
+    )
     #: Normalised by `app.domain.connections.normalise_remote_path`. The empty
     #: string is the Dropbox root, which is legal if unwise.
     remote_path: Mapped[str] = mapped_column(String(MAX_REMOTE_PATH_LENGTH))
@@ -235,6 +259,7 @@ class FeedRow(Base):
     )
 
     connection: Mapped[ConnectionRow] = relationship(back_populates="feeds")
+    integration: Mapped[IntegrationRow | None] = relationship(back_populates="feeds")
 
 
 class OAuthAuthorizationRow(Base):
@@ -255,6 +280,17 @@ class OAuthAuthorizationRow(Base):
         enum_column(ConnectionProvider), index=True
     )
     code_verifier: Mapped[str] = mapped_column(String(MAX_VERIFIER_LENGTH))
+    #: The CSRF nonce a redirect flow round-trips through Dropbox, and the URI
+    #: Dropbox is told to send the athlete back to.
+    #:
+    #: Both **nullable and unread by any code in this release**: the paste flow
+    #: has neither, and the redirect flow that fills them in is a later PR. The
+    #: columns ship here so that PR is a behaviour change and not a schema
+    #: change on a database already holding live credentials — a migration is
+    #: the risky half of that work and it belongs with the one that is already
+    #: touching these tables.
+    state: Mapped[str | None] = mapped_column(String(MAX_STATE_LENGTH))
+    redirect_uri: Mapped[str | None] = mapped_column(String(MAX_REDIRECT_URI_LENGTH))
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )

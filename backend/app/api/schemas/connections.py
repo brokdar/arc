@@ -13,7 +13,6 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.connections import ConnectionProvider, ConnectionStatus
-from app.persistence.connections import MAX_REMOTE_PATH_LENGTH
 
 
 class DropboxAuthorizationRead(BaseModel):
@@ -109,18 +108,3 @@ class FolderList(BaseModel):
     """
 
     items: list[FolderRead]
-
-
-class FeedCreate(BaseModel):
-    """Start watching a folder on a connection."""
-
-    connection_id: uuid.UUID
-    #: Any spelling; stored normalised. `""` is the Dropbox root, which is
-    #: legal — watching all of Dropbox is unwise, not forbidden.
-    remote_path: str = Field(default="", max_length=MAX_REMOTE_PATH_LENGTH)
-
-
-class FeedUpdate(BaseModel):
-    """Turn a feed's polling on or off, keeping its cursor."""
-
-    enabled: bool

@@ -42,8 +42,8 @@ from app.domain.connections import (
     ConnectionProvider,
     ConnectionStatus,
     FeedDeliveryState,
-    normalise_remote_path,
 )
+from app.domain.integrations import CATALOGUE
 from app.persistence.audit import AuditRepository
 from app.persistence.connections import (
     KEY_SETTING,
@@ -56,13 +56,13 @@ from app.persistence.connections import (
     OAuthAuthorizationRow,
 )
 from app.persistence.db import commit
+from app.persistence.integrations import IntegrationRepository, IntegrationRow
 from app.services.guardrails import check_write_cap
 
 logger = get_logger(__name__)
 
 #: `entity_type` written on this use-case's audit rows.
 CONNECTION_ENTITY = "connection"
-FEED_ENTITY = "feed"
 
 #: How long a started PKCE flow stays completable.
 #:
@@ -133,16 +133,23 @@ class ConnectionService:
         self,
         session: AsyncSession,
         repository: ConnectionRepository,
+        integrations: IntegrationRepository,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._repository = repository
+        self._integrations = integrations
         self._audit = audit
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and its repositories to one session."""
-        return cls(session, ConnectionRepository(session), AuditRepository(session))
+        return cls(
+            session,
+            ConnectionRepository(session),
+            IntegrationRepository(session),
+            AuditRepository(session),
+        )
 
     # --- reads ---------------------------------------------------------------
 
@@ -207,7 +214,7 @@ class ConnectionService:
             feed_id=feed.id,
             folder=feed.remote_path,
             enabled=feed.enabled,
-            state=_delivery_state(feed),
+            state=delivery_state(feed),
             last_delivery_at=feed.last_delivery_at,
             deliveries=await self._audit.count_for_entity_since(
                 action=FEED_DELIVERED_ACTION, entity_id=feed.id, since=since
@@ -393,6 +400,7 @@ class ConnectionService:
         await check_write_cap(self._session, actor)
         row = await self.get(connection_id)
         feed_count = len(row.feeds)
+        orphaned = await self._integrations_only_on(connection_id)
         try:
             await self._client_for(row).revoke()
         except Exception as exc:  # noqa: BLE001 — the local delete must happen
@@ -406,15 +414,48 @@ class ConnectionService:
                 connection_id=str(row.id),
                 error=type(exc).__name__,
             )
+        # Before the connection, and deliberately: an integration whose every
+        # folder lived on this account has nothing behind it once the account
+        # is gone, and an entry in Settings that collects from nowhere is worse
+        # than no entry at all. One with a folder on a *second* account keeps
+        # that folder and survives.
+        names = [CATALOGUE[integration.kind].display_name for integration in orphaned]
+        for integration in orphaned:
+            await self._integrations.delete(integration)
+        if orphaned:
+            # Re-read the connection's folders: the deletes above took some of
+            # them by cascade, and the connection's own cascade would otherwise
+            # issue a second DELETE for rows that are already gone.
+            await self._session.refresh(row, ["feeds"])
         await self._repository.delete(row)
         await self._audit.record(
             actor=actor,
             action="connection.disconnected",
             entity_type=CONNECTION_ENTITY,
             entity_id=connection_id,
-            payload={"provider": "dropbox", "feeds_removed": feed_count},
+            payload={
+                "provider": "dropbox",
+                "feeds_removed": feed_count,
+                "integrations_removed": names,
+            },
         )
         await commit(self._session)
+
+    async def _integrations_only_on(
+        self, connection_id: uuid.UUID
+    ) -> Sequence[IntegrationRow]:
+        """Integrations with no folder anywhere but this connection.
+
+        `Sequence`, not `list`: this class has a method called `list`, which
+        shadows the builtin inside the class body and makes `list[...]` in an
+        annotation a subscript of the method.
+        """
+        return [
+            row
+            for row in await self._integrations.list()
+            if row.feeds
+            and all(feed.connection_id == connection_id for feed in row.feeds)
+        ]
 
     # --- browsing ------------------------------------------------------------
 
@@ -466,95 +507,8 @@ class ConnectionService:
             app_key=get_settings().dropbox.app_key.get_secret_value(),
         )
 
-    # --- feeds ---------------------------------------------------------------
 
-    async def create_feed(
-        self, *, connection_id: uuid.UUID, remote_path: str, actor: Actor
-    ) -> FeedRow:
-        """Start watching a folder.
-
-        The path is normalised before anything is stored (see
-        `app.domain.connections.normalise_remote_path`), so the same folder in
-        another spelling is the *same* feed and a 409, not a second poll of one
-        directory.
-
-        Raises:
-            NotFoundError: When the connection does not exist.
-            ConflictError: When that folder is already watched.
-        """
-        await check_write_cap(self._session, actor)
-        await self.get(connection_id)
-        path = normalise_remote_path(remote_path)
-        if await self._repository.feed_for_path(connection_id, path) is not None:
-            raise ConflictError(
-                f"arc is already watching {path or 'the Dropbox root'} on this "
-                "connection."
-            )
-        row = await self._repository.add_feed(
-            FeedRow(connection_id=connection_id, remote_path=path)
-        )
-        await self._audit.record(
-            actor=actor,
-            action="feed.created",
-            entity_type=FEED_ENTITY,
-            entity_id=row.id,
-            payload={"connection_id": str(connection_id), "remote_path": path},
-        )
-        await commit(self._session)
-        return row
-
-    async def set_feed_enabled(
-        self, feed_id: uuid.UUID, *, enabled: bool, actor: Actor
-    ) -> FeedRow:
-        """Turn a feed's polling on or off, keeping its cursor.
-
-        Keeping the cursor is the point of a flag rather than a delete: a feed
-        switched off for a week and back on resumes where it stopped instead of
-        re-listing the folder from scratch.
-
-        Raises:
-            NotFoundError: When no feed has that id.
-        """
-        await check_write_cap(self._session, actor)
-        row = await self._feed(feed_id)
-        row.enabled = enabled
-        await self._audit.record(
-            actor=actor,
-            action="feed.enabled" if enabled else "feed.disabled",
-            entity_type=FEED_ENTITY,
-            entity_id=row.id,
-            payload={"remote_path": row.remote_path, "enabled": enabled},
-        )
-        await commit(self._session)
-        return row
-
-    async def delete_feed(self, feed_id: uuid.UUID, *, actor: Actor) -> None:
-        """Stop watching a folder and forget its polling state.
-
-        Raises:
-            NotFoundError: When no feed has that id.
-        """
-        await check_write_cap(self._session, actor)
-        row = await self._feed(feed_id)
-        remote_path = row.remote_path
-        await self._repository.delete_feed(row)
-        await self._audit.record(
-            actor=actor,
-            action="feed.removed",
-            entity_type=FEED_ENTITY,
-            entity_id=feed_id,
-            payload={"remote_path": remote_path},
-        )
-        await commit(self._session)
-
-    async def _feed(self, feed_id: uuid.UUID) -> FeedRow:
-        row = await self._repository.get_feed(feed_id)
-        if row is None:
-            raise NotFoundError(f"Feed {feed_id} not found")
-        return row
-
-
-def _delivery_state(feed: FeedRow) -> FeedDeliveryState:
+def delivery_state(feed: FeedRow) -> FeedDeliveryState:
     """One word for how a feed is doing. See :class:`FeedDeliveryState`.
 
     The order is the enum's and it is the point: a paused feed is silent

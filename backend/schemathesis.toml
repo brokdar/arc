@@ -264,3 +264,27 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "GET /api/v1/connections/{connection_id}/folders"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# The integrations surface refuses four things a JSON schema cannot state, each
+# pinned by a unit test (`test_integrations_api.py`):
+#
+#   * the local drop cannot be added — it is synthesized and always present,
+#     which is a fact about the catalogue and not about the request body;
+#   * an integration is added only over a transport it declares, and the
+#     refusal names the ones it does declare;
+#   * a cloud-folder transport needs an account for its storage provider, and
+#     with none connected the answer says so rather than 500ing on a missing
+#     credential;
+#   * two integrations may not share one folder, compared on the **normalised**
+#     path — `normalise_remote_path` is Python, so no unique constraint can
+#     express it and the 409 is the service's.
+#
+# The reads (`GET /integrations`, `GET /integration-catalogue`) and the folder
+# operations need no entry: they refuse only with 404, which the default list
+# already admits, and `POST /integration-catalogue` is Starlette's own 405
+# because the facet lives outside the id namespace.
+
+[[operations]]
+include-name = "POST /api/v1/integrations"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

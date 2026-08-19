@@ -1388,6 +1388,45 @@
         "title": "CadenceMetricsRead",
         "type": "object"
       },
+      "CatalogueEntry": {
+        "description": "One integration arc can actually deliver.",
+        "properties": {
+          "addable": {
+            "title": "Addable",
+            "type": "boolean"
+          },
+          "data_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/DataKind"
+            },
+            "title": "Data Kinds",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/IntegrationKind"
+          },
+          "transports": {
+            "items": {
+              "$ref": "#/components/schemas/TransportOffer"
+            },
+            "title": "Transports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "display_name",
+          "data_kinds",
+          "addable",
+          "transports"
+        ],
+        "title": "CatalogueEntry",
+        "type": "object"
+      },
       "CeilingSchema": {
         "additionalProperties": false,
         "description": "No more than this long spent above this limit on this channel.",
@@ -1724,6 +1763,12 @@
         "title": "CriterionOutcomeRead",
         "type": "object"
       },
+      "DataKind": {
+        "description": "Which arc subsystem consumes what an integration brings in.\n\n**Two members, because arc has exactly two destinations**: a file becomes\na recording (`IngestPipeline.ingest_file` \u2192 `recordings` \u2192 `sessions` and\n`logged_sets`), or a reading becomes a wellness day (`WellnessService`\n\u2192 `wellness_days`). Nothing else in arc eats ingested data.\n\nThis is emphatically **not the sport**. \"Apple Workouts provides rides and\nstrength training\" is one `DataKind` \u2014 `recordings` \u2014 not two, because arc\nclassifies each file itself: `app.domain.activity.SessionDiscipline` exists\nbecause \"a device file ... can hold a walk, a swim or a sport the head unit\ndoes not name\", and a folder cannot tell you what wrote a file nor what\nsport it was. A vocabulary of `rides | strength | wellness` would put a\nguess about the sport into configuration, where nothing can correct it,\nand every disagreement between the guess and the file would be resolved in\nfavour of the guess. `IngestSource` already makes this argument for where a\nfile came from; this extends it rather than overturning it.",
+        "enum": ["recordings", "wellness"],
+        "title": "DataKind",
+        "type": "string"
+      },
       "Direction": {
         "description": "Where the rolling mean sits relative to the band. Never a valence.\n\n``above`` and ``below`` are geometry, not judgement: a resting heart rate\nabove its band and an HRV above its band are opposite news, and a reader\nthat assumed one direction was good would be wrong half the time. The\npolarity table in `app.domain.wellness` is where direction acquires\nmeaning, and it does so in the reader, not here.",
         "enum": ["below", "within", "above"],
@@ -2001,24 +2046,11 @@
         "title": "ExplanationRead",
         "type": "object"
       },
-      "FeedCreate": {
-        "description": "Start watching a folder on a connection.",
-        "properties": {
-          "connection_id": {
-            "format": "uuid",
-            "title": "Connection Id",
-            "type": "string"
-          },
-          "remote_path": {
-            "default": "",
-            "maxLength": 1000,
-            "title": "Remote Path",
-            "type": "string"
-          }
-        },
-        "required": ["connection_id"],
-        "title": "FeedCreate",
-        "type": "object"
+      "FeedDeliveryState": {
+        "description": "How a watched folder is doing, in one word the coach can branch on.\n\nThe vocabulary exists because the numbers alone are ambiguous in exactly\nthe case that matters: `last_delivery_at: null` and `deliveries_7d: 0` read\nidentically for a folder that was connected an hour ago and for one whose\ncredential died last Tuesday, and the second is a week of missing rides.\n\n* ``paused`` \u2014 the athlete switched this feed off. Silence is intended.\n* ``failing`` \u2014 the last poll left an error on the row. Silence is a fault.\n* ``never_delivered`` \u2014 nothing has ever arrived through it. **Never\n  reported as ``0`` deliveries and never as an error**: a folder that has\n  not delivered yet is a fact about setup, and both of the other spellings\n  would send a coach looking for a break that is not there.\n* ``delivering`` \u2014 arc has heard from Dropbox and nothing is wrong. Whether\n  any *rides* arrived is `deliveries_7d`, which is the training question;\n  this is the plumbing question.\n\nOrder matters where two apply: an athlete's own pause outranks everything,\nthen a recorded fault, then the absence of a first delivery.",
+        "enum": ["paused", "failing", "never_delivered", "delivering"],
+        "title": "FeedDeliveryState",
+        "type": "string"
       },
       "FeedRead": {
         "description": "One folder arc watches, and its polling state.",
@@ -2099,18 +2131,6 @@
         "title": "FeedRead",
         "type": "object"
       },
-      "FeedUpdate": {
-        "description": "Turn a feed's polling on or off, keeping its cursor.",
-        "properties": {
-          "enabled": {
-            "title": "Enabled",
-            "type": "boolean"
-          }
-        },
-        "required": ["enabled"],
-        "title": "FeedUpdate",
-        "type": "object"
-      },
       "FolderList": {
         "description": "The folders directly under one remote path.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.",
         "properties": {
@@ -2140,6 +2160,18 @@
         },
         "required": ["path_lower", "name"],
         "title": "FolderRead",
+        "type": "object"
+      },
+      "FolderUpdate": {
+        "description": "Pause or resume one folder, keeping its cursor.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled"],
+        "title": "FolderUpdate",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2351,6 +2383,254 @@
         },
         "required": ["field", "tier"],
         "title": "InputTierRead",
+        "type": "object"
+      },
+      "IntegrationCatalogue": {
+        "description": "What arc can collect, and how ready each transport is to carry it.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogueEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "items": {
+              "$ref": "#/components/schemas/StorageStatusRead"
+            },
+            "title": "Storage",
+            "type": "array"
+          }
+        },
+        "required": ["items", "storage"],
+        "title": "IntegrationCatalogue",
+        "type": "object"
+      },
+      "IntegrationCreate": {
+        "description": "Add a source, and the first folder it is collected through.",
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/IntegrationKind"
+          },
+          "remote_path": {
+            "maxLength": 1000,
+            "title": "Remote Path",
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportKind"
+          }
+        },
+        "required": ["kind", "transport"],
+        "title": "IntegrationCreate",
+        "type": "object"
+      },
+      "IntegrationFolderRead": {
+        "description": "One folder an integration is collected through, and how it is doing.",
+        "properties": {
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "connection_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Error"
+          },
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "connection_status": {
+            "$ref": "#/components/schemas/ConnectionStatus"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "feed_id": {
+            "format": "uuid",
+            "title": "Feed Id",
+            "type": "string"
+          },
+          "last_delivery_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivery At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "remote_path": {
+            "title": "Remote Path",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FeedDeliveryState"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          }
+        },
+        "required": [
+          "feed_id",
+          "connection_id",
+          "storage",
+          "remote_path",
+          "enabled",
+          "state",
+          "last_delivery_at",
+          "last_error",
+          "connection_status",
+          "connection_error",
+          "account_label"
+        ],
+        "title": "IntegrationFolderRead",
+        "type": "object"
+      },
+      "IntegrationKind": {
+        "description": "The sources arc ships. Exactly the keys of :data:`CATALOGUE`.\n\nMembers are added the day arc can actually collect from that source, never\nahead of it \u2014 see the :data:`CATALOGUE` docstring for why nothing is listed\nas \"coming soon\".",
+        "enum": ["local_drop", "wahoo"],
+        "title": "IntegrationKind",
+        "type": "string"
+      },
+      "IntegrationList": {
+        "description": "Every source arc collects from, the local drop first.\n\nA bare list rather than a page: there is one athlete, and the number of\nsources is the number of devices they own.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["items"],
+        "title": "IntegrationList",
+        "type": "object"
+      },
+      "IntegrationRead": {
+        "description": "One source arc collects from, as the settings panel renders it.",
+        "properties": {
+          "data_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/DataKind"
+            },
+            "title": "Data Kinds",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationFolderRead"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntegrationKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalDropRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "removable": {
+            "title": "Removable",
+            "type": "boolean"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportKind"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "display_name",
+          "data_kinds",
+          "transport",
+          "storage",
+          "removable",
+          "prompt",
+          "local",
+          "folders"
+        ],
+        "title": "IntegrationRead",
         "type": "object"
       },
       "IntervalRead": {
@@ -2586,6 +2866,22 @@
         },
         "required": ["pct_tolerance"],
         "title": "LoadWithinSchema",
+        "type": "object"
+      },
+      "LocalDropRead": {
+        "description": "The local drop's whole configuration: where it looks, how often.",
+        "properties": {
+          "inbox_path": {
+            "title": "Inbox Path",
+            "type": "string"
+          },
+          "scan_interval_seconds": {
+            "title": "Scan Interval Seconds",
+            "type": "integer"
+          }
+        },
+        "required": ["inbox_path", "scan_interval_seconds"],
+        "title": "LocalDropRead",
         "type": "object"
       },
       "LoggedSetCreate": {
@@ -7370,6 +7666,60 @@
         "title": "StepSelectorSchema",
         "type": "object"
       },
+      "StorageStatusRead": {
+        "description": "How ready a storage provider is to carry a cloud-folder transport.\n\nThe add flow reads this to skip steps that are already done: no app key\nmeans the registration checklist, a key with no account means the connect\nritual, and a connected account means going straight to the folder.",
+        "properties": {
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "app_configured": {
+            "title": "App Configured",
+            "type": "boolean"
+          },
+          "connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "provider",
+          "app_configured",
+          "connection_id",
+          "account_label",
+          "status"
+        ],
+        "title": "StorageStatusRead",
+        "type": "object"
+      },
       "StreamAnomalyRead": {
         "description": "One region of one channel the cleaner repaired (A4.2).",
         "properties": {
@@ -7894,6 +8244,44 @@
           }
         },
         "title": "TimeInZoneRead",
+        "type": "object"
+      },
+      "TransportKind": {
+        "description": "How the bytes reach arc.\n\n* ``local_folder`` \u2014 a directory on the arc server, swept on a timer. The\n  `data/inbox/` sweep that has run since WP-4.3.\n* ``cloud_folder`` \u2014 a folder on a :class:`StorageProvider` arc holds a\n  credential for, polled with a cursor. Dropbox today.\n* ``oauth_api`` \u2014 a per-vendor API arc calls with its own OAuth grant.\n  Expressible, deliberately unimplemented: it is what makes Garmin and\n  Strava statable in the model without pretending arc can deliver them.",
+        "enum": ["local_folder", "cloud_folder", "oauth_api"],
+        "title": "TransportKind",
+        "type": "string"
+      },
+      "TransportOffer": {
+        "description": "One way the athlete may choose to collect an integration.",
+        "properties": {
+          "default_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Path"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TransportKind"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["kind", "storage", "default_path"],
+        "title": "TransportOffer",
         "type": "object"
       },
       "TrendBaselineRead": {
@@ -11158,236 +11546,6 @@
         "tags": ["exercises"]
       }
     },
-    "/api/v1/feeds": {
-      "post": {
-        "description": "Watch a folder on a connection.\n\nThe path is normalised, so `/Apps/WahooFitness/` and `/apps/wahoofitness`\nare one feed and the second attempt is a 409.",
-        "operationId": "connections-create_feed",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeedCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeedRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Malformed body"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No such connection, feed or folder"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Create Feed",
-        "tags": ["connections"]
-      }
-    },
-    "/api/v1/feeds/{feed_id}": {
-      "delete": {
-        "description": "Stop watching a folder and forget its polling state.",
-        "operationId": "connections-delete_feed",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "feed_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Feed Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No such connection, feed or folder"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Delete Feed",
-        "tags": ["connections"]
-      },
-      "patch": {
-        "description": "Turn a feed's polling on or off. The cursor is kept either way.",
-        "operationId": "connections-update_feed",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "feed_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Feed Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FeedUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeedRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "Malformed body"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No valid session"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorDetail"
-                }
-              }
-            },
-            "description": "No such connection, feed or folder"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "summary": "Update Feed",
-        "tags": ["connections"]
-      }
-    },
     "/api/v1/ingest/events": {
       "get": {
         "description": "List the ingest log, newest first.\n\nOne row per file the pipeline looked at, including the ones it had already\nseen: \"nothing happened because I already have it\" is the answer to most\nof the questions this log is opened for.",
@@ -11747,6 +11905,391 @@
         ],
         "summary": "Upload Activity File",
         "tags": ["ingest"]
+      }
+    },
+    "/api/v1/integration-catalogue": {
+      "get": {
+        "description": "Every source arc can collect from, and how ready each transport is.\n\nExactly what arc ships. There is no \"coming soon\" entry: an integration the\nathlete can pick and arc cannot deliver is a promise broken at the one\nmoment the application asked for trust. That the model can express Garmin,\nApple Health and the rest is proven by a domain test, not by this list.",
+        "operationId": "integrations-get_catalogue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationCatalogue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Catalogue",
+        "tags": ["integrations"]
+      }
+    },
+    "/api/v1/integrations": {
+      "get": {
+        "description": "Every source arc collects from, the local drop first.\n\nThe local drop is always in this list and has no row behind it \u2014 see\n`IntegrationService.list`.",
+        "operationId": "integrations-list_integrations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Integrations",
+        "tags": ["integrations"]
+      },
+      "post": {
+        "description": "Add a source and the folder it is collected through, in one call.\n\n**201** when the integration is new, **200** when an existing one grew a\nfolder: adding Wahoo a second time with a different directory is one Wahoo\nwith two folders, and answering 201 would tell the client a second entry\nappeared in a list that did not change length.",
+        "operationId": "integrations-add_integration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntegrationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationRead"
+                }
+              }
+            },
+            "description": "The integration is new"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such integration or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Another integration is already collecting that folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The integration cannot be added, the transport is not one it supports, or its storage provider has no account connected"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Add Integration",
+        "tags": ["integrations"]
+      }
+    },
+    "/api/v1/integrations/{integration_id}": {
+      "delete": {
+        "description": "Stop collecting from a source, keeping the account and the rides.\n\nA 404 for `local_drop`: it is synthesized, always present, and there is\nnothing to delete.",
+        "operationId": "integrations-remove_integration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "title": "Integration Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such integration or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Remove Integration",
+        "tags": ["integrations"]
+      }
+    },
+    "/api/v1/integrations/{integration_id}/folders/{folder_id}": {
+      "delete": {
+        "description": "Stop collecting through one folder.\n\nRemoving the **last** folder removes the integration with it: an entry with\nno transport is a source arc claims to collect from and cannot reach.",
+        "operationId": "integrations-remove_folder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "title": "Integration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "folder_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Folder Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such integration or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Remove Folder",
+        "tags": ["integrations"]
+      },
+      "patch": {
+        "description": "Pause or resume one folder. The cursor is kept either way.",
+        "operationId": "integrations-update_folder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "integration_id",
+            "required": true,
+            "schema": {
+              "title": "Integration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "folder_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Folder Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such integration or folder"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Folder",
+        "tags": ["integrations"]
       }
     },
     "/api/v1/manual-sessions": {

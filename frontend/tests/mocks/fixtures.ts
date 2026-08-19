@@ -1975,6 +1975,7 @@ export function resetMockState(): void {
   resetAnchorState();
   resetWellnessState();
   resetConnectionsState();
+  resetIntegrationsState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -4321,4 +4322,368 @@ export function createDropboxFeed(
 /** The folders directly under a path, or null when the path is unknown. */
 export function dropboxFolders(path: string): Folder[] | null {
   return connectionsState().folders.get(normaliseRemotePath(path)) ?? null;
+}
+
+// ============================================================================
+// Integrations — every source arc collects from
+// ============================================================================
+
+type Integration = Schemas["IntegrationRead"];
+type IntegrationFolder = Schemas["IntegrationFolderRead"];
+type Catalogue = Schemas["IntegrationCatalogue"];
+type IntegrationKind = Schemas["IntegrationKind"];
+
+/** Where the local drop looks, as a real deployment would report it. */
+export const INBOX_PATH = "/srv/arc/data/inbox";
+
+/** The Wahoo folder, in the spelling arc stores. */
+export const WAHOO_PATH = "/apps/wahoofitness";
+
+interface IntegrationsMockState {
+  /** `kind` → the folders that integration is collected through. */
+  stored: Map<IntegrationKind, { id: string; folders: string[] }>;
+  /** Folders the athlete has paused, by remote path. */
+  paused: Set<string>;
+  scanIntervalSeconds: number;
+  /** Whether `DROPBOX__APP_KEY` is configured on the server. */
+  appConfigured: boolean;
+  minted: number;
+}
+
+function seedIntegrationsState(): IntegrationsMockState {
+  return {
+    stored: new Map(),
+    paused: new Set<string>(),
+    scanIntervalSeconds: 30,
+    appConfigured: true,
+    minted: 0,
+  };
+}
+
+let integrations: IntegrationsMockState | null = null;
+
+/** The current integrations mock state. */
+export function integrationsState(): IntegrationsMockState {
+  integrations ??= seedIntegrationsState();
+  return integrations;
+}
+
+/** Put the integrations mock back to its seed. Wired into `resetMockState`. */
+export function resetIntegrationsState(): void {
+  integrations = seedIntegrationsState();
+}
+
+/** Seed an integration the panel will find, with the folders it watches. */
+export function seedIntegration(
+  kind: IntegrationKind,
+  folders: readonly string[] = [WAHOO_PATH],
+): void {
+  integrationsState().stored.set(kind, {
+    id: `0199b000-0000-7000-8000-00000000a${String(
+      integrationsState().stored.size + 1,
+    ).padStart(3, "0")}`,
+    folders: [...folders],
+  });
+}
+
+/** Say whether the server has a Dropbox app key, which gates the checklist. */
+export function seedDropboxAppKey(configured: boolean): void {
+  integrationsState().appConfigured = configured;
+}
+
+const DISPLAY_NAMES: Record<IntegrationKind, string> = {
+  local_drop: "Local drop",
+  wahoo: "Wahoo",
+};
+
+/**
+ * The synthesized local drop, exactly as `IntegrationService.list` builds it.
+ *
+ * Always first and never removable: there is no row behind it, so nothing a
+ * `DELETE` could find.
+ */
+function localDrop(): Integration {
+  return {
+    id: "local_drop",
+    kind: "local_drop",
+    display_name: DISPLAY_NAMES.local_drop,
+    data_kinds: ["recordings"],
+    transport: "local_folder",
+    storage: null,
+    removable: false,
+    prompt: null,
+    local: {
+      inbox_path: INBOX_PATH,
+      scan_interval_seconds: integrationsState().scanIntervalSeconds,
+    },
+    folders: [],
+  };
+}
+
+/** One watched folder, carrying the connection's own state as the API does. */
+function integrationFolder(
+  remotePath: string,
+  overrides: Partial<IntegrationFolder> = {},
+): IntegrationFolder {
+  const connection = connectionsState().connections[0] ?? null;
+  return {
+    feed_id: `0199b000-0000-7000-8000-00000000f${String(
+      Math.abs(hashOfPath(remotePath)) % 1000,
+    ).padStart(3, "0")}`,
+    connection_id: connection?.id ?? DROPBOX_CONNECTION_ID,
+    storage: "dropbox",
+    remote_path: remotePath,
+    enabled: !integrationsState().paused.has(remotePath),
+    state: integrationsState().paused.has(remotePath)
+      ? "paused"
+      : "never_delivered",
+    last_delivery_at: null,
+    last_error: null,
+    connection_status: connection?.status ?? "connected",
+    connection_error: connection?.last_error ?? null,
+    account_label: connection?.account_label ?? null,
+    ...overrides,
+  };
+}
+
+/** A stable per-path id, so the same folder keeps the same feed id. */
+function hashOfPath(path: string): number {
+  let value = 0;
+  for (const character of path) {
+    value = (value * 31 + character.charCodeAt(0)) | 0;
+  }
+  return value;
+}
+
+/**
+ * `GET /api/v1/integrations`, derived rather than canned.
+ *
+ * Local drop first, then what has been added, then every watched folder no
+ * integration owns — which is how the real service builds it, so a panel that
+ * only handles the first two cannot pass by accident.
+ */
+export function integrationList(): Integration[] {
+  const state = integrationsState();
+  const claimed = new Set(
+    [...state.stored.values()].flatMap((entry) => entry.folders),
+  );
+  const stored: Integration[] = [...state.stored.entries()].map(
+    ([kind, entry]) => ({
+      id: entry.id,
+      kind,
+      display_name: DISPLAY_NAMES[kind],
+      data_kinds: ["recordings"],
+      transport: "cloud_folder",
+      storage: "dropbox",
+      removable: true,
+      prompt: null,
+      local: null,
+      folders: [...entry.folders].sort().map((path) => integrationFolder(path)),
+    }),
+  );
+  const loose: Integration[] = connectionsState()
+    .connections.flatMap((connection) => connection.feeds)
+    .filter((feed) => !claimed.has(feed.remote_path))
+    .map((feed) => ({
+      id: feed.id,
+      kind: null,
+      display_name: feed.remote_path || "the Dropbox root",
+      data_kinds: [],
+      transport: "cloud_folder",
+      storage: "dropbox",
+      removable: true,
+      prompt:
+        `arc does not know which source ${feed.remote_path || "the Dropbox root"} ` +
+        "belongs to, so it cannot say what this folder brings in. Remove it " +
+        "here, then add the integration it belongs to.",
+      local: null,
+      folders: [integrationFolder(feed.remote_path, { feed_id: feed.id })],
+    }));
+  return [localDrop(), ...stored, ...loose];
+}
+
+/** `GET /api/v1/integration-catalogue`, exactly what the backend ships. */
+export function integrationCatalogue(): Catalogue {
+  const state = integrationsState();
+  const connection = connectionsState().connections[0] ?? null;
+  return {
+    items: [
+      {
+        kind: "local_drop",
+        display_name: DISPLAY_NAMES.local_drop,
+        data_kinds: ["recordings"],
+        addable: false,
+        transports: [
+          { kind: "local_folder", storage: null, default_path: null },
+        ],
+      },
+      {
+        kind: "wahoo",
+        display_name: DISPLAY_NAMES.wahoo,
+        data_kinds: ["recordings"],
+        addable: true,
+        transports: [
+          {
+            kind: "cloud_folder",
+            storage: "dropbox",
+            default_path: WAHOO_PATH,
+          },
+        ],
+      },
+    ],
+    storage: [
+      {
+        provider: "dropbox",
+        app_configured: state.appConfigured,
+        connection_id: connection?.id ?? null,
+        account_label: connection?.account_label ?? null,
+        status: connection?.status ?? null,
+      },
+    ],
+  };
+}
+
+/**
+ * `POST /api/v1/integrations`, honouring the request the way the service does.
+ *
+ * Normalises the path, refuses a folder another entry already holds with the
+ * holder's name in the message, and answers 200 rather than 201 when an
+ * existing integration merely grew a folder.
+ */
+export function addIntegration(body: {
+  kind: IntegrationKind;
+  transport: Schemas["TransportKind"];
+  connection_id?: string;
+  remote_path?: string;
+}):
+  | { status: 200 | 201; integration: Integration }
+  | { status: 404 | 409 | 422; detail: string } {
+  const state = integrationsState();
+  if (body.kind === "local_drop") {
+    return {
+      status: 422,
+      detail:
+        "Local drop is always present and cannot be added: arc sweeps its " +
+        "inbox folder whether or not anything is configured.",
+    };
+  }
+  if (body.transport !== "cloud_folder") {
+    return {
+      status: 422,
+      detail: `${DISPLAY_NAMES[body.kind]} cannot be collected over ${body.transport}. arc collects it over: cloud_folder.`,
+    };
+  }
+  const connection = connectionsState().connections[0] ?? null;
+  if (!connection) {
+    return {
+      status: 422,
+      detail:
+        "No Dropbox account is connected, so arc has nowhere to collect " +
+        "from. Connect Dropbox first, then add this integration.",
+    };
+  }
+  const path = normaliseRemotePath(body.remote_path ?? WAHOO_PATH);
+  for (const [kind, entry] of state.stored) {
+    if (entry.folders.includes(path)) {
+      return {
+        status: 409,
+        detail: `${DISPLAY_NAMES[kind]} is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+      };
+    }
+  }
+  if (connection.feeds.some((feed) => feed.remote_path === path)) {
+    return {
+      status: 409,
+      detail: `A folder arc has not classified yet is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+    };
+  }
+  const existing = state.stored.get(body.kind);
+  if (existing) {
+    existing.folders = [...existing.folders, path];
+  } else {
+    state.minted += 1;
+    state.stored.set(body.kind, {
+      id: `0199b000-0000-7000-8000-00000000a${String(state.minted).padStart(3, "0")}`,
+      folders: [path],
+    });
+  }
+  const integration = integrationList().find((row) => row.kind === body.kind);
+  if (!integration) {
+    return { status: 422, detail: "unreachable" };
+  }
+  return { status: existing ? 200 : 201, integration };
+}
+
+/** `DELETE /api/v1/integrations/{id}` — the integration, or a loose folder. */
+export function removeIntegration(
+  integrationId: string,
+): { removed: true } | { detail: string } {
+  const state = integrationsState();
+  for (const [kind, entry] of state.stored) {
+    if (entry.id === integrationId) {
+      state.stored.delete(kind);
+      return { removed: true };
+    }
+  }
+  for (const connection of connectionsState().connections) {
+    const kept = connection.feeds.filter((feed) => feed.id !== integrationId);
+    if (kept.length !== connection.feeds.length) {
+      connection.feeds = kept;
+      return { removed: true };
+    }
+  }
+  return { detail: `Integration ${integrationId} not found` };
+}
+
+/** `PATCH /integrations/{id}/folders/{feed_id}` — pause or resume one folder. */
+export function setFolderEnabled(
+  integrationId: string,
+  folderId: string,
+  enabled: boolean,
+): { integration: Integration } | { detail: string } {
+  const owner = integrationList().find((row) => row.id === integrationId);
+  const folder = owner?.folders.find((row) => row.feed_id === folderId);
+  if (!owner || !folder) {
+    return { detail: `Folder ${folderId} is not part of ${integrationId}` };
+  }
+  if (enabled) {
+    integrationsState().paused.delete(folder.remote_path);
+  } else {
+    integrationsState().paused.add(folder.remote_path);
+  }
+  const refreshed = integrationList().find((row) => row.id === integrationId);
+  return refreshed
+    ? { integration: refreshed }
+    : { detail: `Integration ${integrationId} not found` };
+}
+
+/**
+ * `DELETE /integrations/{id}/folders/{feed_id}` — stop watching one folder.
+ *
+ * Removing the last folder removes the integration with it, as the service
+ * does: no integration ever exists with zero transports.
+ */
+export function removeFolder(
+  integrationId: string,
+  folderId: string,
+): { removed: true } | { detail: string } {
+  const owner = integrationList().find((row) => row.id === integrationId);
+  const folder = owner?.folders.find((row) => row.feed_id === folderId);
+  if (!owner || !folder) {
+    return { detail: `Folder ${folderId} is not part of ${integrationId}` };
+  }
+  const state = integrationsState();
+  for (const [kind, entry] of state.stored) {
+    if (entry.id !== integrationId) {
+      continue;
+    }
+    const kept = entry.folders.filter((path) => path !== folder.remote_path);
+    if (kept.length === 0) {
+      state.stored.delete(kind);
+    } else {
+      entry.folders = kept;
+    }
+    return { removed: true };
+  }
+  return removeIntegration(integrationId);
 }

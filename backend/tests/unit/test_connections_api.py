@@ -13,11 +13,13 @@ import hashlib
 import json
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
@@ -31,6 +33,8 @@ from app.persistence.connections import (
     FeedRow,
     OAuthAuthorizationRow,
 )
+from app.persistence.integrations import IntegrationRow
+from app.persistence.types import JSONColumn
 from tests.unit.dropbox_fake import (
     LIST_FOLDER_CONTINUE_PATH,
     LIST_FOLDER_PATH,
@@ -48,6 +52,9 @@ pytestmark = pytest.mark.usefixtures("dropbox_env")
 AUTHORIZE = "/api/v1/connections/dropbox/authorize"
 COMPLETE = "/api/v1/connections/dropbox/complete"
 CONNECTIONS = "/api/v1/connections"
+INTEGRATIONS = "/api/v1/integrations"
+#: Retired by this PR. Kept as a constant so the tests that prove it is gone
+#: name the same path the panel used to call.
 FEEDS = "/api/v1/feeds"
 
 
@@ -358,90 +365,143 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     assert fake.calls_to(LIST_FOLDER_PATH) == []
 
 
-# --- AC-6: feeds -------------------------------------------------------------
+# --- AC-10: `/feeds` is gone, and the integration owns its folders -----------
+#
+# `POST /api/v1/feeds` created a `FeedRow` with nothing recording what the
+# folder brings in — the exact folder-shaped configuration the integrations
+# surface exists to replace. Retired rather than deprecated: one write path
+# that produces rows the panel cannot describe is one too many, and the pause,
+# resume and remove it also carried are reachable through the integration.
 
 
-async def test_a_new_feed_starts_enabled_with_no_cursor_and_no_delivery(
-    client: httpx.AsyncClient,
-) -> None:
-    connection = await connect(client)
-
-    response = await client.post(
-        FEEDS,
-        json={"connection_id": connection["id"], "remote_path": "/Apps/WahooFitness"},
-    )
-
-    assert response.status_code == 201, response.text
-    feed = response.json()
-    assert feed["enabled"] is True
-    assert feed["cursor"] is None
-    assert feed["last_delivery_at"] is None
-    assert feed["remote_path"] == "/apps/wahoofitness"
-
-
-async def test_the_same_folder_in_another_spelling_is_one_feed_and_a_409(
+async def test_the_retired_feed_routes_are_gone(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
     connection = await connect(client)
-    first = await client.post(
-        FEEDS,
-        json={"connection_id": connection["id"], "remote_path": "/Apps/WahooFitness/"},
+    feed = FeedRow(
+        connection_id=uuid.UUID(connection["id"]), remote_path="/apps/wahoofitness"
     )
-    assert first.status_code == 201, first.text
+    db_session.add(feed)
+    await db_session.commit()
 
-    second = await client.post(
+    created = await client.post(
         FEEDS,
         json={"connection_id": connection["id"], "remote_path": "/apps/wahoofitness"},
     )
+    patched = await client.patch(f"{FEEDS}/{feed.id}", json={"enabled": False})
+    deleted = await client.delete(f"{FEEDS}/{feed.id}")
 
-    assert second.status_code == 409, second.text
+    for response in (created, patched, deleted):
+        assert response.status_code in {404, 405}, response.text
+    # And nothing happened to the folder that was already there.
+    await db_session.refresh(feed)
+    assert feed.enabled is True
     assert await count_of(db_session, FeedRow) == 1
-    row = (await db_session.execute(select(FeedRow))).scalars().one()
-    assert row.remote_path == "/apps/wahoofitness"
 
 
-async def test_patch_flips_enabled_and_delete_removes_the_feed(
+async def test_the_openapi_schema_no_longer_publishes_the_feed_operations(
+    client: httpx.AsyncClient,
+) -> None:
+    spec = (await client.get("/openapi.json")).json()
+
+    # The committed frontend types are generated from this document, so a
+    # retired operation that lingers here is a hook the panel can still call.
+    assert "/api/v1/feeds" not in spec["paths"]
+    assert "/api/v1/feeds/{feed_id}" not in spec["paths"]
+
+
+async def test_removing_an_integrations_last_folder_removes_the_integration(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
     connection = await connect(client)
     created = await client.post(
-        FEEDS, json={"connection_id": connection["id"], "remote_path": "/apps"}
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
     )
-    feed_id = created.json()["id"]
+    assert created.status_code == 201, created.text
+    integration_id = created.json()["id"]
+    second = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/spare",
+        },
+    )
+    assert second.status_code == 200, second.text
+    folders = {row["remote_path"]: row["feed_id"] for row in second.json()["folders"]}
 
-    patched = await client.patch(f"{FEEDS}/{feed_id}", json={"enabled": False})
-    assert patched.status_code == 200, patched.text
-    assert patched.json()["enabled"] is False
+    first_removed = await client.delete(
+        f"{INTEGRATIONS}/{integration_id}/folders/{folders['/apps/spare']}"
+    )
+    assert first_removed.status_code == 204, first_removed.text
+    assert await count_of(db_session, IntegrationRow) == 1
 
-    deleted = await client.delete(f"{FEEDS}/{feed_id}")
-    assert deleted.status_code == 204, deleted.text
+    last_removed = await client.delete(
+        f"{INTEGRATIONS}/{integration_id}/folders/{folders['/apps/wahoofitness']}"
+    )
+
+    # No integration ever exists with zero transports: an entry arc claims to
+    # collect from and has no way to reach is worse than no entry at all.
+    assert last_removed.status_code == 204, last_removed.text
+    assert await count_of(db_session, IntegrationRow) == 0
     assert await count_of(db_session, FeedRow) == 0
 
 
-async def test_a_feed_on_an_unknown_connection_is_a_404_and_writes_nothing(
-    client: httpx.AsyncClient, db_session: AsyncSession
-) -> None:
-    response = await client.post(
-        FEEDS, json={"connection_id": str(uuid.uuid7()), "remote_path": "/apps"}
-    )
-
-    assert response.status_code == 404, response.text
-    assert await count_of(db_session, FeedRow) == 0
-
-
-async def test_the_dropbox_root_is_a_legal_feed_path(
+async def test_pausing_and_resuming_a_folder_goes_through_the_integration(
     client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
     connection = await connect(client)
-
-    response = await client.post(
-        FEEDS, json={"connection_id": connection["id"], "remote_path": ""}
+    created = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
     )
+    assert created.status_code == 201, created.text
+    integration_id = created.json()["id"]
+    folder_id = created.json()["folders"][0]["feed_id"]
+    url = f"{INTEGRATIONS}/{integration_id}/folders/{folder_id}"
 
-    assert response.status_code == 201, response.text
-    assert response.json()["remote_path"] == ""
+    paused = await client.patch(url, json={"enabled": False})
+
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["folders"][0]["enabled"] is False
+    assert paused.json()["folders"][0]["state"] == "paused"
+    resumed = await client.patch(url, json={"enabled": True})
+    assert resumed.json()["folders"][0]["enabled"] is True
+    # The cursor survived the pause, which is why this is a flag not a delete.
     row = (await db_session.execute(select(FeedRow))).scalars().one()
-    assert row.remote_path == ""
+    assert row.enabled is True
+
+
+async def test_a_folder_addressed_under_the_wrong_integration_is_a_404(
+    client: httpx.AsyncClient,
+) -> None:
+    connection = await connect(client)
+    created = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+    folder_id = created.json()["folders"][0]["feed_id"]
+
+    response = await client.delete(f"{INTEGRATIONS}/{uuid.uuid7()}/folders/{folder_id}")
+
+    assert response.status_code == 404, response.text
 
 
 # --- AC-7: disconnecting -----------------------------------------------------
@@ -489,10 +549,10 @@ async def test_disconnecting_takes_every_feed_with_it(
 ) -> None:
     connection = await connect(client)
     for path in ("/apps/wahoo", "/apps/healthfit", "/apps/zwift"):
-        created = await client.post(
-            FEEDS, json={"connection_id": connection["id"], "remote_path": path}
+        db_session.add(
+            FeedRow(connection_id=uuid.UUID(connection["id"]), remote_path=path)
         )
-        assert created.status_code == 201, created.text
+    await db_session.commit()
     assert await count_of(db_session, FeedRow) == 3
 
     response = await client.delete(f"{CONNECTIONS}/{connection['id']}")
@@ -501,16 +561,126 @@ async def test_disconnecting_takes_every_feed_with_it(
     assert await count_of(db_session, FeedRow) == 0
 
 
+# --- AC-11: disconnecting takes what only existed through the account --------
+
+
+async def test_disconnecting_removes_an_integration_that_lived_only_there(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    connection = await connect(client)
+    created = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = await client.delete(f"{CONNECTIONS}/{connection['id']}")
+
+    assert response.status_code == 204, response.text
+    # Not an entry in Settings with nothing behind it: the account it collected
+    # through is gone, so the source it named is gone too.
+    assert await count_of(db_session, IntegrationRow) == 0
+    assert await count_of(db_session, FeedRow) == 0
+
+
+async def test_disconnecting_leaves_the_local_drop_alone(
+    data_root: Path, client: httpx.AsyncClient
+) -> None:
+    connection = await connect(client)
+    created = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    assert (await client.delete(f"{CONNECTIONS}/{connection['id']}")).status_code == 204
+
+    items = (await client.get(INTEGRATIONS)).json()["items"]
+    # The local drop is synthesized from settings and owes nothing to a
+    # credential — it keeps sweeping and keeps its entry.
+    assert [item["kind"] for item in items] == ["local_drop"]
+    assert items[0]["local"]["inbox_path"] == str((data_root / "inbox").resolve())
+
+
+async def test_an_integration_with_a_folder_on_another_account_survives(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    connection = await connect(client)
+    created = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+    assert created.status_code == 201, created.text
+    integration_id = uuid.UUID(created.json()["id"])
+    # A second storage account, written directly: `connections` is unique on
+    # provider, so two accounts mean two providers, and the column is a plain
+    # VARCHAR with no CHECK (`enum_column`). Six characters, because that
+    # column is sized to the longest member value — seven today.
+    elsewhere_id = uuid.uuid7()
+    # Written through a bare Core table rather than the mapped class: the ORM
+    # enum validates on the way in and `gdrive` is not a member yet, while
+    # the column itself is a plain VARCHAR with no CHECK (`enum_column`).
+    await db_session.execute(
+        sa.table(
+            "connections",
+            sa.column("id", sa.Uuid),
+            sa.column("provider", sa.String),
+            sa.column("status", sa.String),
+            sa.column("scopes", JSONColumn),
+            sa.column("credentials", sa.LargeBinary),
+        )
+        .insert()
+        .values(
+            id=elsewhere_id,
+            provider="gdrive",
+            status="connected",
+            scopes=[],
+            credentials=b"\x00",
+        )
+    )
+    db_session.add(
+        FeedRow(
+            connection_id=elsewhere_id,
+            integration_id=integration_id,
+            remote_path="/backup/wahoo",
+        )
+    )
+    await db_session.commit()
+
+    response = await client.delete(f"{CONNECTIONS}/{connection['id']}")
+
+    assert response.status_code == 204, response.text
+    assert await count_of(db_session, IntegrationRow) == 1
+    remaining = (await db_session.execute(select(FeedRow))).scalars().all()
+    assert [row.remote_path for row in remaining] == ["/backup/wahoo"]
+
+
 # --- the collection read the panel is built on -------------------------------
 
 
 async def test_connections_lists_the_connection_with_its_feeds(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
     connection = await connect(client)
-    await client.post(
-        FEEDS, json={"connection_id": connection["id"], "remote_path": "/apps/wahoo"}
+    db_session.add(
+        FeedRow(connection_id=uuid.UUID(connection["id"]), remote_path="/apps/wahoo")
     )
+    await db_session.commit()
 
     response = await client.get(CONNECTIONS)
 
@@ -535,7 +705,7 @@ async def test_every_connection_route_needs_a_session(
 ) -> None:
     assert (await anon_client.get(CONNECTIONS)).status_code == 401
     assert (await anon_client.post(AUTHORIZE)).status_code == 401
-    assert (await anon_client.post(FEEDS, json={})).status_code == 401
+    assert (await anon_client.post(COMPLETE, json={"code": "x"})).status_code == 401
 
 
 # --- found by Schemathesis: a body that does not parse -----------------------
@@ -554,16 +724,27 @@ async def test_a_body_that_is_not_json_is_a_documented_400(
 ) -> None:
     connection = await connect(client)
     created = await client.post(
-        FEEDS, json={"connection_id": connection["id"], "remote_path": "/apps/wahoo"}
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoo",
+        },
     )
     assert created.status_code == 201, created.text
-    feed_id = created.json()["id"]
+    integration_id = created.json()["id"]
+    folder_id = created.json()["folders"][0]["feed_id"]
     spec = (await client.get("/openapi.json")).json()
 
     for method, url, operation in (
         ("POST", COMPLETE, "/api/v1/connections/dropbox/complete"),
-        ("POST", FEEDS, "/api/v1/feeds"),
-        ("PATCH", f"{FEEDS}/{feed_id}", "/api/v1/feeds/{feed_id}"),
+        ("POST", INTEGRATIONS, "/api/v1/integrations"),
+        (
+            "PATCH",
+            f"{INTEGRATIONS}/{integration_id}/folders/{folder_id}",
+            "/api/v1/integrations/{integration_id}/folders/{folder_id}",
+        ),
     ):
         response = await client.request(
             method,
