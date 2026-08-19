@@ -272,10 +272,14 @@ async def test_with_nothing_stored_the_read_is_the_environment_value(
         await db_session.scalar(select(func.count()).select_from(IngestSettingsRow))
         == 0
     )
+    # A value the default (30) cannot be mistaken for: the read consults
+    # `get_settings()` per request, so setting the environment after boot is
+    # exactly what this read must reflect.
+    env_interval(45)
 
     body = (await live_client.get(SETTINGS_URL)).json()
 
-    assert body["scan_interval_seconds"] == get_settings().ingest.scan_interval_seconds
+    assert body["scan_interval_seconds"] == 45
     assert body["source"] == "environment"
     assert body["inbox_path"] == str((data_root / "inbox").resolve())
     assert Path(body["inbox_path"]).is_absolute()

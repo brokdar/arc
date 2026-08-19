@@ -204,7 +204,22 @@ async def read_local_drop_settings(
     return LocalDropSettingsRead.model_validate(await service.read())
 
 
-@router.put("/local-drop/settings", responses=BAD_BODY | INVALID)
+#: Not `INVALID`: that description narrates POST /integrations' refusals
+#: (unknown kind, wrong transport, disconnected storage), none of which this
+#: operation can produce. Its one 422 is the service refusing an interval
+#: outside the bounds the read reports.
+INTERVAL_OUT_OF_BOUNDS: Responses = {
+    422: {
+        "model": ValidationErrorDetail,
+        "description": (
+            "The interval is outside the documented bounds — below the "
+            "minimum or above the maximum the read reports"
+        ),
+    }
+}
+
+
+@router.put("/local-drop/settings", responses=BAD_BODY | INTERVAL_OUT_OF_BOUNDS)
 async def set_local_drop_settings(
     session: SessionDep, actor: ActorDep, submitted: LocalDropSettingsUpdate
 ) -> LocalDropSettingsRead:

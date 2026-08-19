@@ -8231,7 +8231,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
-      /** @description The integration cannot be added, the transport is not one it supports, or its storage provider has no account connected */
+      /** @description The interval is outside the documented bounds — below the minimum or above the maximum the read reports */
       422: {
         headers: {
           [name: string]: unknown;

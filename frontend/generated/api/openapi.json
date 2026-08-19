@@ -12207,7 +12207,7 @@
                 }
               }
             },
-            "description": "The integration cannot be added, the transport is not one it supports, or its storage provider has no account connected"
+            "description": "The interval is outside the documented bounds \u2014 below the minimum or above the maximum the read reports"
           }
         },
         "security": [
