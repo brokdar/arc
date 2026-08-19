@@ -23,6 +23,12 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # A healthy run takes 4-5 minutes. Without a job timeout the default is
+    # six hours, and an apt mirror outage during `playwright install
+    # --with-deps` has already held required checks hostage for 70+ minutes
+    # until someone cancelled them by hand. A hang must fail fast and be
+    # retryable, not sit silent.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

@@ -16,6 +16,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Healthy runs take 2-4 minutes per job. Without job timeouts the default
+    # is six hours, and an apt mirror outage during `playwright install
+    # --with-deps` has already hung the e2e shards for 60+ minutes until they
+    # were cancelled by hand. A hang must fail fast and be retryable.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -43,6 +48,7 @@ jobs:
   e2e:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +96,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs: e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
