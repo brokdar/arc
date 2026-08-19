@@ -7,11 +7,12 @@ repository root in sync — `tests/unit/test_env_example_completeness.py`
 enforces it.
 """
 
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -74,11 +75,55 @@ class DataSettings(BaseModel):
     """Root of the runtime data tree — inbox/, originals/, streams/, quarantine/."""
 
 
+class SettingSource(StrEnum):
+    """Which of the two places a setting arc is running on was fixed in.
+
+    Reported rather than inferred, because the two are undone in different
+    ways and a panel that said only "it is 120 seconds" would leave the
+    athlete guessing which. ``stored`` was set in the app and takes effect at
+    once; ``environment`` came from `.env` and needs a file edit and a restart
+    to change. Every setting that follows this pattern — env seeds it, a
+    stored row overrides it — reports one of these.
+    """
+
+    STORED = "stored"
+    ENVIRONMENT = "environment"
+
+
+#: The narrowest sweep the local drop will accept, in seconds.
+#:
+#: Below this the sweep runs faster than a file can prove it has settled
+#: (`INGEST__SETTLE_SECONDS`, and a file is never taken on its first sighting),
+#: so it buys no earlier ingest and costs a directory listing per second for
+#: the life of the process. Enforced on the environment value here **and** on
+#: the value the athlete may set in Settings, by
+#: `app.services.ingest_settings.IngestSettingsService` — one rule, stated
+#: once, wherever it is fixed from.
+MIN_SCAN_INTERVAL_SECONDS = 5
+
+#: The widest sweep the local drop will accept: one day.
+#:
+#: Past this the folder is not watched in any sense the word supports — a ride
+#: dropped in on Monday would surface on Tuesday — and the honest way to stop
+#: sweeping is to stop dropping files in, not to set the timer to a month.
+MAX_SCAN_INTERVAL_SECONDS = 86_400
+
+
 class IngestSettings(BaseModel):
     """The watched folder and the two thresholds the pipeline reads."""
 
-    scan_interval_seconds: int = 30
-    """How often the scheduler sweeps `data/inbox/` (build-plan WP-4.3)."""
+    scan_interval_seconds: int = Field(
+        30, ge=MIN_SCAN_INTERVAL_SECONDS, le=MAX_SCAN_INTERVAL_SECONDS
+    )
+    """How often the scheduler sweeps `data/inbox/` (build-plan WP-4.3).
+
+    The **seed**, not the last word: the athlete sets the sweep interval in
+    Settings, and a stored value overrides this one on the running scheduler
+    without a restart (`app.ingest.inbox.set_scan_interval`). Bounded by
+    :data:`MIN_SCAN_INTERVAL_SECONDS` and :data:`MAX_SCAN_INTERVAL_SECONDS` so
+    a nonsense value in `.env` stops the boot rather than surfacing as a sweep
+    that never runs.
+    """
 
     settle_seconds: float = 2.0
     """How long a file must have sat unchanged before it is read.

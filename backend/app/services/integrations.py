@@ -46,6 +46,7 @@ from app.persistence.db import commit
 from app.persistence.integrations import IntegrationRepository, IntegrationRow
 from app.services.connections import ConnectionService, delivery_state
 from app.services.guardrails import check_write_cap
+from app.services.ingest_settings import IngestSettingsService, LocalDropSettings
 
 #: `entity_type` written on this use-case's audit rows.
 INTEGRATION_ENTITY = "integration"
@@ -58,9 +59,6 @@ INTEGRATION_ENTITY = "integration"
 #: about UUID syntax — the athlete asked to remove something that cannot be
 #: removed, and the honest answer is "there is nothing there to delete".
 LOCAL_DROP_ID = IntegrationKind.LOCAL_DROP.value
-
-#: The subdirectory of `DATA__ROOT` the sweep watches (`app.ingest.inbox`).
-INBOX_DIRECTORY = "inbox"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,12 +145,14 @@ class IntegrationService:
         repository: IntegrationRepository,
         connections: ConnectionRepository,
         connection_service: ConnectionService,
+        ingest_settings: IngestSettingsService,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._repository = repository
         self._connections = connections
         self._connection_service = connection_service
+        self._ingest_settings = ingest_settings
         self._audit = audit
 
     @classmethod
@@ -163,6 +163,7 @@ class IntegrationService:
             IntegrationRepository(session),
             ConnectionRepository(session),
             ConnectionService.from_session(session),
+            IngestSettingsService.from_session(session),
             AuditRepository(session),
         )
 
@@ -192,7 +193,11 @@ class IntegrationService:
             self._unclassified(feed, connections)
             for feed in await self._repository.unclassified_feeds()
         ]
-        return (self._local_drop(), *stored, *loose)
+        return (
+            self._local_drop(await self._ingest_settings.read()),
+            *stored,
+            *loose,
+        )
 
     async def storage_statuses(self) -> tuple[StorageStatus, ...]:
         """How ready each storage provider is to carry a cloud-folder transport."""
@@ -214,10 +219,15 @@ class IntegrationService:
             )
         return tuple(statuses)
 
-    def _local_drop(self) -> IntegrationView:
-        """The always-present entry, built from settings rather than a row."""
+    def _local_drop(self, configured: LocalDropSettings) -> IntegrationView:
+        """The always-present entry, built from settings rather than a row.
+
+        `configured` is resolved by `IngestSettingsService`, not read from the
+        environment here: the athlete sets the sweep interval in Settings, and
+        a list that kept quoting `INGEST__SCAN_INTERVAL_SECONDS` would tell
+        them their change had not taken while the sweep ran on the new one.
+        """
         spec = CATALOGUE[IntegrationKind.LOCAL_DROP]
-        settings = get_settings()
         return IntegrationView(
             id=LOCAL_DROP_ID,
             kind=IntegrationKind.LOCAL_DROP,
@@ -231,8 +241,8 @@ class IntegrationService:
                 # Resolved and absolute: `DATA__ROOT` is normally relative, and
                 # a relative path in Settings tells the athlete nothing about
                 # where on the server (or in the container) to drop a file.
-                inbox_path=str((settings.data.root / INBOX_DIRECTORY).resolve()),
-                scan_interval_seconds=settings.ingest.scan_interval_seconds,
+                inbox_path=configured.inbox_path,
+                scan_interval_seconds=configured.scan_interval_seconds,
             ),
             folders=(),
         )

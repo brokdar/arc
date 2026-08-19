@@ -18,6 +18,15 @@ synthesized and its id is the literal `local_drop`; typed as a UUID, a `DELETE`
 on it would be a 422 about hex digits, when what the athlete asked for is
 something that does not exist and cannot be made to. The service answers 404.
 
+**`/integrations/local-drop/settings` is a literal, and so it is a 405.**
+Nothing declares `/{integration_id}/settings`, so this two-segment literal
+shadows no id route and every method it does not declare gets Starlette's own
+405 rather than a 422 about path-parameter syntax — the same outcome
+`.claude/rules/api-collection-facets.md` demands, reached by having no
+collision instead of by moving the path. The segment is spelled `local-drop`
+where the id is `local_drop`: the id is an `IntegrationKind` value and travels
+in JSON, the path segment is a URL and travels in a browser bar.
+
 There is deliberately **no `POST /api/v1/feeds` any more**. A feed created
 without an integration is a folder arc polls with nothing recording what it
 brings in, which is the whole defect this surface exists to close; the folder
@@ -37,12 +46,16 @@ from app.api.schemas.integrations import (
     IntegrationCreate,
     IntegrationList,
     IntegrationRead,
+    LocalDropSettingsRead,
+    LocalDropSettingsUpdate,
     StorageStatusRead,
     TransportOffer,
 )
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.domain.integrations import CATALOGUE, SYNTHESIZED_KINDS, ordered_data_kinds
+from app.ingest.inbox import set_scan_interval
 from app.persistence.db import SessionDep
+from app.services.ingest_settings import IngestSettingsService
 from app.services.integrations import IntegrationService
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -168,6 +181,46 @@ async def remove_integration(
     nothing to delete.
     """
     await service.remove(integration_id, actor=actor)
+
+
+def get_ingest_settings(session: SessionDep) -> IngestSettingsService:
+    """Bind the local drop's settings service to a request-scoped session."""
+    return IngestSettingsService.from_session(session)
+
+
+IngestSettingsDep = Annotated[IngestSettingsService, Depends(get_ingest_settings)]
+
+
+@router.get("/local-drop/settings")
+async def read_local_drop_settings(
+    service: IngestSettingsDep,
+) -> LocalDropSettingsRead:
+    """Where the local drop looks, how often, and what may be changed.
+
+    The path is reported and has no writer: `DATA__ROOT` roots `originals/`,
+    `streams/` and `quarantine/` too and is a mounted volume, so moving it from
+    a form would strand every file arc has already filed.
+    """
+    return LocalDropSettingsRead.model_validate(await service.read())
+
+
+@router.put("/local-drop/settings", responses=BAD_BODY | INVALID)
+async def set_local_drop_settings(
+    session: SessionDep, actor: ActorDep, submitted: LocalDropSettingsUpdate
+) -> LocalDropSettingsRead:
+    """Set how often arc sweeps the drop folder, from this moment on.
+
+    **The running scheduler is re-timed before this answers**, so a 200 means
+    the sweep is already on the new interval — no restart, and no window in
+    which Settings shows one number and the job runs another.
+
+    PUT rather than PATCH because the resource is singular and the write is
+    idempotent: there is one drop folder and setting its interval twice leaves
+    the same one row.
+    """
+    return LocalDropSettingsRead.model_validate(
+        await set_scan_interval(session, submitted.scan_interval_seconds, actor=actor)
+    )
 
 
 @router.patch("/{integration_id}/folders/{folder_id}", responses=BAD_BODY | NOT_FOUND)

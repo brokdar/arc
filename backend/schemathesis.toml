@@ -288,3 +288,18 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "POST /api/v1/integrations"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# The local drop's sweep interval refuses one thing the schema does not state:
+# a value outside `MIN_SCAN_INTERVAL_SECONDS`..`MAX_SCAN_INTERVAL_SECONDS`
+# (`app/core/config.py`). The body is published as a plain integer on purpose —
+# the refusal is a sentence naming both limits and why they are where they are,
+# where a `ge`/`le` in the schema would answer "Input should be greater than or
+# equal to 5" — so a fuzz run sends `0` and gets that 422. The limits reach the
+# client through `GET /api/v1/integrations/local-drop/settings`, which needs no
+# entry: it takes no body and refuses nothing. Pinned by
+# `test_ingest_settings_api.py`.
+
+[[operations]]
+include-name = "PUT /api/v1/integrations/local-drop/settings"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
