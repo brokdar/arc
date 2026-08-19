@@ -7,9 +7,10 @@ that will eventually consume them. What is here is configuration — hand arc a
 credential, point it at a folder — and nothing in it fetches a file.
 """
 
+import contextlib
 import datetime as dt
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Self
 
@@ -21,6 +22,7 @@ from app.connectors.dropbox import (
     DropboxClient,
     DropboxError,
     DropboxFolder,
+    DropboxListing,
     DropboxPathNotFoundError,
     DropboxRateLimitedError,
     authorize_url,
@@ -42,6 +44,8 @@ from app.domain.connections import (
     ConnectionProvider,
     ConnectionStatus,
     FeedDeliveryState,
+    is_activity_file,
+    normalise_remote_path,
 )
 from app.domain.integrations import (
     CATALOGUE,
@@ -86,6 +90,50 @@ AUTHORIZATION_TTL = dt.timedelta(minutes=15)
 #: current ISO week: a Monday-morning read would otherwise report near zero for
 #: a perfectly healthy feed.
 DELIVERY_WINDOW = dt.timedelta(days=7)
+
+#: Where Dropbox keeps the folders other apps write into.
+#:
+#: Spelled the way Dropbox displays it rather than lower-cased: it is sent as a
+#: path in a request, and the athlete may see it quoted back in an explanation.
+#: Dropbox matches paths case-insensitively, so the casing is cosmetic upstream
+#: and load-bearing on screen.
+APP_CONTAINER = "/Apps"
+
+#: What `access_type_suspect` says when the evidence points at an App-folder
+#: Dropbox app. One word, because the panel has to branch on it; a sentence
+#: would put the athlete-facing wording in two places at once.
+APP_FOLDER_SUSPECT = "app_folder"
+
+#: The stamp a folder with no readable dates sorts as. Older than any file.
+_NEVER = dt.datetime.min.replace(tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class FolderCandidate:
+    """A folder discovery thinks the athlete's rides are already in."""
+
+    #: Dropbox's own spelling, ready to be posted straight back as a feed's
+    #: `remote_path` — the panel never rebuilds it from the display name.
+    path: str
+    #: How many `.fit`/`.gpx`/`.tcx` files are directly in it. Never zero: a
+    #: folder with none is not a candidate at all.
+    activity_files: int
+    #: The newest `client_modified` among them, or ``None`` when Dropbox
+    #: reported none arc could read.
+    newest_at: dt.datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class FolderDiscovery:
+    """What arc found looking for the folder the ride files are in."""
+
+    #: Best first: most activity files, then most recently written.
+    candidates: tuple[FolderCandidate, ...]
+    #: :data:`APP_FOLDER_SUSPECT` when the evidence says the Dropbox app was
+    #: registered with App-folder access, ``None`` when it does not. Never a
+    #: statement of fact — no Dropbox API reports an app's access type, so this
+    #: is an inference, and the panel words it as one.
+    access_type_suspect: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,6 +631,134 @@ class ConnectionService:
             ValidationError: When arc cannot read its own credential, or
                 Dropbox failed in a way arc did not cause.
         """
+        client = await self._readable_client(connection_id)
+        with _dropbox_failures_translated():
+            return await client.list_folders(path)
+
+    async def discover_folders(self, connection_id: uuid.UUID) -> FolderDiscovery:
+        """Name the folders the athlete's activity files are already in.
+
+        **The search is the root's folders plus one level under `/Apps`, not a
+        recursive sweep.** `list_folder(recursive=True)` from the root would be
+        the obvious implementation and it is unbounded: a real Dropbox holds
+        photo libraries and project archives with six-figure entry counts, and
+        the listing arc would have to walk to the end before ranking anything
+        is the athlete's whole cloud drive. Two levels is enough because every
+        producer this exists for — Wahoo, HealthFit — writes *flat* into its
+        own folder under the app container, so the ride files are exactly one
+        level below `/Apps` or sitting in a folder at the top. Anything deeper
+        is what the manual browser is for, and it is untouched.
+
+        **The App-folder diagnosis needs an empty root *and* an absent
+        `/Apps`.** An App-folder Dropbox app can only ever see its own
+        directory, so arc — which is not that directory — sees a Dropbox with
+        nothing in it, `/Apps` included, and that pair is the signature. The
+        empty root alone is not: a genuinely empty Dropbox produces it too, and
+        accusing that athlete of a misconfiguration sends them to delete a
+        Dropbox app that was working. The remedy carries a cost (Dropbox cannot
+        change an app's access type; the app has to be re-registered), which is
+        exactly why it is not offered on a guess. Nothing is inferred from a
+        `/Apps` probe that failed for any *other* reason — a 429 is Dropbox
+        being busy, not a statement about what arc may see.
+
+        Raises:
+            NotFoundError: When the connection does not exist.
+            ConflictError: When the credential needs re-authorizing.
+            RateLimitedError: When Dropbox is throttling arc.
+            ValidationError: When arc cannot read its own credential, or
+                Dropbox failed in a way arc did not cause.
+        """
+        client = await self._readable_client(connection_id)
+        with _dropbox_failures_translated():
+            root = await client.list_entries("")
+            listings = {"": root}
+            apps, apps_missing = await self._probe_app_container(client)
+            if apps is not None:
+                listings[normalise_remote_path(APP_CONTAINER)] = apps
+            search = [folder.path_lower for folder in root.folders] + [
+                folder.path_lower for folder in (apps.folders if apps else ())
+            ]
+            candidates: list[FolderCandidate] = []
+            # `dict.fromkeys` de-duplicates while keeping the order: `/Apps` is
+            # both a folder of the root and the container that was probed, and
+            # listing it twice would double a count as well as a request.
+            for path in dict.fromkeys(search):
+                listing = await self._listing(client, path, listings)
+                counted = _count_activity(path, listing)
+                # A folder with nothing arc can read is left out rather than
+                # reported as zero: this list is an answer to "where are your
+                # rides", and a folder that holds none is not an answer to it.
+                if counted.activity_files:
+                    candidates.append(counted)
+        return FolderDiscovery(
+            # Most files first, then the folder still being written to: two
+            # folders holding one ride each are told apart by which one the
+            # head unit touched this week.
+            candidates=tuple(
+                sorted(
+                    candidates,
+                    key=lambda entry: (
+                        -entry.activity_files,
+                        -(entry.newest_at or _NEVER).timestamp(),
+                    ),
+                )
+            ),
+            access_type_suspect=APP_FOLDER_SUSPECT
+            if root.is_empty and apps_missing
+            else None,
+        )
+
+    async def _probe_app_container(
+        self, client: DropboxClient
+    ) -> tuple[DropboxListing | None, bool]:
+        """List `/Apps`, and say whether Dropbox stated it is not there.
+
+        The second half of the answer is deliberately narrower than "the probe
+        failed": only `path/not_found` is evidence about what this credential
+        can see. Every other failure — a 429, a 503, a dead socket — is
+        answered with "no listing, and no inference", so a bad minute upstream
+        cannot produce a diagnosis telling the athlete to delete their app.
+        """
+        try:
+            return await client.list_entries(APP_CONTAINER), False
+        except DropboxPathNotFoundError:
+            return None, True
+        except DropboxError as exc:
+            logger.info("dropbox_app_container_probe_failed", error=type(exc).__name__)
+            return None, False
+
+    async def _listing(
+        self,
+        client: DropboxClient,
+        path: str,
+        listings: dict[str, DropboxListing],
+    ) -> DropboxListing:
+        """One candidate folder's contents, reusing the `/Apps` probe's answer.
+
+        A folder that has gone between the root listing and this call counts as
+        empty rather than aborting the discovery: the athlete is being offered
+        the folders that *are* there, and one that vanished mid-read is simply
+        not one of them.
+        """
+        if path in listings:
+            return listings[path]
+        try:
+            listings[path] = await client.list_entries(path)
+        except DropboxPathNotFoundError:
+            listings[path] = DropboxListing(folders=(), files=())
+        return listings[path]
+
+    async def _readable_client(self, connection_id: uuid.UUID) -> DropboxClient:
+        """A client for a connection arc can actually read Dropbox with.
+
+        Refused locally rather than upstream: spending a request to be told
+        what the row already says is a request the rate limit will want later.
+
+        Raises:
+            NotFoundError: When the connection does not exist.
+            ConflictError: When the credential needs re-authorizing.
+            ValidationError: When arc cannot read its own credential.
+        """
         row = await self.get(connection_id)
         if row.status is ConnectionStatus.NEEDS_REAUTH:
             raise ConflictError(
@@ -591,21 +767,7 @@ class ConnectionService:
             )
         if row.status is ConnectionStatus.ERROR:
             raise ValidationError(row.last_error or f"{KEY_SETTING} is not usable")
-        try:
-            return await self._client_for(row).list_folders(path)
-        except DropboxPathNotFoundError as exc:
-            raise NotFoundError(f"Dropbox has no folder at {exc.path or '/'}") from exc
-        except DropboxAuthError as exc:
-            raise ConflictError(
-                "Dropbox refused arc's credential. Reconnect the account."
-            ) from exc
-        except DropboxRateLimitedError as exc:
-            raise RateLimitedError(
-                "Dropbox is rate-limiting arc. Try again in about "
-                f"{int(exc.retry_after)} seconds."
-            ) from exc
-        except DropboxError as exc:
-            raise ValidationError(f"Dropbox could not be reached: {exc}") from exc
+        return self._client_for(row)
 
     def _client_for(self, row: ConnectionRow) -> DropboxClient:
         return DropboxClient(
@@ -630,6 +792,47 @@ def _local_drop_status() -> IntegrationIngestStatus:
         display_name=spec.display_name,
         data_kinds=ordered_data_kinds(spec.provides),
         folders=(),
+    )
+
+
+@contextlib.contextmanager
+def _dropbox_failures_translated() -> Iterator[None]:
+    """Turn a Dropbox failure into the `AppError` the adapter can answer with.
+
+    One place rather than one per read, because the mapping is the *contract*
+    the folder picker and discovery both publish: an upstream 429 reaching the
+    client as a 500 makes a transient condition look like a broken feature,
+    and a refused credential has to arrive as the one status the panel offers
+    a reconnect for.
+    """
+    try:
+        yield
+    except DropboxPathNotFoundError as exc:
+        raise NotFoundError(f"Dropbox has no folder at {exc.path or '/'}") from exc
+    except DropboxAuthError as exc:
+        raise ConflictError(
+            "Dropbox refused arc's credential. Reconnect the account."
+        ) from exc
+    except DropboxRateLimitedError as exc:
+        raise RateLimitedError(
+            "Dropbox is rate-limiting arc. Try again in about "
+            f"{int(exc.retry_after)} seconds."
+        ) from exc
+    except DropboxError as exc:
+        raise ValidationError(f"Dropbox could not be reached: {exc}") from exc
+
+
+def _count_activity(path: str, listing: DropboxListing) -> FolderCandidate:
+    """How much of a folder is activity data, and how recent the newest is."""
+    stamps = [
+        file.client_modified
+        for file in listing.files
+        if is_activity_file(file.name) and file.client_modified is not None
+    ]
+    return FolderCandidate(
+        path=path,
+        activity_files=sum(1 for file in listing.files if is_activity_file(file.name)),
+        newest_at=max(stamps, default=None),
     )
 
 

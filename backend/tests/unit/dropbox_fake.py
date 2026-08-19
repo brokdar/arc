@@ -54,6 +54,13 @@ def folder_entry(name: str, path_lower: str) -> dict[str, Any]:
     }
 
 
+#: The `client_modified` a file entry carries unless a test says otherwise.
+#:
+#: Not omitted: Dropbox stamps every file in a listing, and a fake that left
+#: the field out would let a reader that never parses it pass.
+DEFAULT_CLIENT_MODIFIED = "2026-01-01T00:00:00Z"
+
+
 def file_entry(
     name: str,
     path_lower: str,
@@ -61,6 +68,7 @@ def file_entry(
     size: int = 1024,
     entry_id: str | None = None,
     rev: str = "0123456789abcdef",
+    client_modified: str = DEFAULT_CLIENT_MODIFIED,
 ) -> dict[str, Any]:
     """A `file` entry as `list_folder` returns it."""
     return {
@@ -70,6 +78,10 @@ def file_entry(
         "id": entry_id or f"id:{name}",
         "size": size,
         "rev": rev,
+        "client_modified": client_modified,
+        # Dropbox returns both; arc reads `client_modified`, which is when the
+        # head unit wrote the ride rather than when Dropbox received it.
+        "server_modified": client_modified,
     }
 
 
@@ -113,8 +125,20 @@ class FakeDropbox:
     #: is exactly what a replay is — and an **unknown** cursor is answered with
     #: Dropbox's `reset`, which is also what Dropbox does.
     by_cursor: dict[str | None, dict[str, Any]] | None = None
+    #: A whole Dropbox: normalised folder path → the entries under it, root at
+    #: ``""``. Set this instead of :attr:`pages` when a test needs *several*
+    #: folders to answer differently — discovery lists one folder per candidate
+    #: and the call-counting :attr:`pages` list cannot express that, because it
+    #: walks forward on every call whatever path was asked for. A path that is
+    #: not a key answers Dropbox's `path/not_found`.
+    tree: dict[str, list[dict[str, Any]]] | None = None
+    #: Entries per page when serving :attr:`tree`. ``None`` serves each folder
+    #: in one page; a number makes Dropbox paginate, which is how the
+    #: follow-`has_more` rule is exercised against a real listing.
+    tree_page_size: int | None = None
     #: Responses that pre-empt an opening `list_folder`, keyed by its `path`.
     #: One feed failing while another succeeds is only expressible per path.
+    #: Matched case-insensitively, as Dropbox matches paths.
     list_failures: dict[str, httpx.Response] = field(default_factory=dict)
 
     # --- the file contents ---------------------------------------------------
@@ -218,8 +242,13 @@ class FakeDropbox:
     def _list_folder(self, call: Call) -> httpx.Response:
         if call.path == LIST_FOLDER_PATH:
             wanted = str((call.body or {}).get("path", ""))
-            if (failure := self.list_failures.get(wanted)) is not None:
+            failure = self.list_failures.get(wanted) or self.list_failures.get(
+                wanted.lower()
+            )
+            if failure is not None:
                 return failure
+        if self.tree is not None:
+            return self._from_tree(call)
         if self.by_cursor is not None:
             presented = (
                 str((call.body or {}).get("cursor"))
@@ -238,6 +267,42 @@ class FakeDropbox:
             len(pages) - 1,
         )
         return httpx.Response(200, json=pages[index])
+
+    def _from_tree(self, call: Call) -> httpx.Response:
+        """Serve one page of :attr:`tree`, paginating like Dropbox does.
+
+        The cursor is ``"<path>#<offset>"`` and carries the folder with it, so
+        a continuation is answered from the same directory the opening call
+        opened — a caller that lost track of which listing it was walking would
+        otherwise be handed the wrong folder's entries and never know.
+        """
+        assert self.tree is not None
+        body = call.body or {}
+        if call.path == LIST_FOLDER_CONTINUE_PATH:
+            path, _, offset_text = str(body.get("cursor") or "").rpartition("#")
+            offset = int(offset_text) if offset_text.isdigit() else -1
+            if offset < 0 or path not in self.tree:
+                return reset_cursor()
+        else:
+            path = str(body.get("path", "")).lower()
+            offset = 0
+            if path not in self.tree:
+                return path_not_found(path)
+
+        entries = self.tree[path]
+        end = (
+            len(entries)
+            if self.tree_page_size is None
+            else min(offset + self.tree_page_size, len(entries))
+        )
+        return httpx.Response(
+            200,
+            json={
+                "entries": entries[offset:end],
+                "cursor": f"{path}#{end}",
+                "has_more": end < len(entries),
+            },
+        )
 
     def _download(self, call: Call) -> httpx.Response:
         # The content endpoint carries its argument in a header and answers

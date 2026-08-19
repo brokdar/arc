@@ -30,10 +30,12 @@ from app.api.schemas.connections import (
     FolderList,
     FolderRead,
 )
+from app.api.schemas.integrations import IntegrationDiscoveryRead
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.persistence.connections import MAX_REMOTE_PATH_LENGTH
 from app.persistence.db import SessionDep
 from app.services.connections import ConnectionService
+from app.services.integrations import IntegrationService
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
@@ -71,6 +73,19 @@ def get_service(session: SessionDep) -> ConnectionService:
 
 
 ServiceDep = Annotated[ConnectionService, Depends(get_service)]
+
+
+def get_integrations(session: SessionDep) -> IntegrationService:
+    """Bind the integration service to a request-scoped session."""
+    return IntegrationService.from_session(session)
+
+
+#: Discovery is a read *of a connection* that answers in the **integration**
+#: vocabulary, so the path lives here with the rest of `/connections` and the
+#: use-case lives with the catalogue that names what was found. One more
+#: segment than `/connections/{connection_id}`, so nothing is shadowed and
+#: `.claude/rules/api-collection-facets.md` has nothing to say about it.
+IntegrationsDep = Annotated[IntegrationService, Depends(get_integrations)]
 
 #: The remote folder to list. `""` — the default — is the Dropbox root.
 #:
@@ -145,6 +160,28 @@ async def list_folders(
             FolderRead(path_lower=folder.path_lower, name=folder.name)
             for folder in await service.folders(connection_id, path=path)
         ]
+    )
+
+
+@router.get(
+    "/{connection_id}/discover",
+    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED,
+)
+async def discover_integrations(
+    integrations: IntegrationsDep, connection_id: uuid.UUID
+) -> IntegrationDiscoveryRead:
+    """The integrations arc thinks are already writing into this account.
+
+    A read beside `/folders`, not a replacement for it: this one answers "where
+    are my rides, and what wrote them", the browser answers "show me my
+    Dropbox", and an athlete whose head unit files somewhere discovery does not
+    look still needs the second one.
+
+    Accepting a proposal is `POST /api/v1/integrations` with the fields on it,
+    unchanged — the same write path, and the same refusals, as adding by hand.
+    """
+    return IntegrationDiscoveryRead.model_validate(
+        await integrations.propose(connection_id)
     )
 
 

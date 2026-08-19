@@ -2431,6 +2431,32 @@
         "title": "IntegrationCreate",
         "type": "object"
       },
+      "IntegrationDiscoveryRead": {
+        "description": "What arc found looking through one connection for training data.\n\nA 200 with an empty `proposals` list is a real answer, not a 404: \"arc\nlooked and found no activity files anywhere it can see\" is precisely what\nan athlete whose head unit has never uploaded should be told.",
+        "properties": {
+          "access_type_suspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Type Suspect"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationProposalRead"
+            },
+            "title": "Proposals",
+            "type": "array"
+          }
+        },
+        "required": ["proposals", "access_type_suspect"],
+        "title": "IntegrationDiscoveryRead",
+        "type": "object"
+      },
       "IntegrationFolderRead": {
         "description": "One folder an integration is collected through, and how it is doing.",
         "properties": {
@@ -2542,6 +2568,69 @@
         },
         "required": ["items"],
         "title": "IntegrationList",
+        "type": "object"
+      },
+      "IntegrationProposalRead": {
+        "description": "A folder arc found on a connection, named as the integration behind it.\n\nWhat discovery hands the panel is a source with a count and a stamp \u2014\n\"Wahoo, 342 activity files, newest 16.08\" \u2014 because a path is the one thing\nthe athlete has to translate and arc does not. `connection_id`, `kind`,\n`transport` and `path` are exactly the body of `POST /api/v1/integrations`,\nso accepting is one click and no rebuilding.",
+        "properties": {
+          "activity_files": {
+            "title": "Activity Files",
+            "type": "integer"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntegrationKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "newest_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest At"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/TransportKind"
+          }
+        },
+        "required": [
+          "kind",
+          "display_name",
+          "connection_id",
+          "transport",
+          "path",
+          "activity_files",
+          "newest_at",
+          "configured"
+        ],
+        "title": "IntegrationProposalRead",
         "type": "object"
       },
       "IntegrationRead": {
@@ -11336,6 +11425,93 @@
           }
         ],
         "summary": "Get Connection",
+        "tags": ["connections"]
+      }
+    },
+    "/api/v1/connections/{connection_id}/discover": {
+      "get": {
+        "description": "The integrations arc thinks are already writing into this account.\n\nA read beside `/folders`, not a replacement for it: this one answers \"where\nare my rides, and what wrote them\", the browser answers \"show me my\nDropbox\", and an athlete whose head unit files somewhere discovery does not\nlook still needs the second one.\n\nAccepting a proposal is `POST /api/v1/integrations` with the fields on it,\nunchanged \u2014 the same write path, and the same refusals, as adding by hand.",
+        "operationId": "connections-discover_integrations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationDiscoveryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "The setup is incomplete, or Dropbox refused the code"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox is rate-limiting arc"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Discover Integrations",
         "tags": ["connections"]
       }
     },

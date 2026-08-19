@@ -165,6 +165,32 @@ class DropboxFile:
     path_lower: str
     size: int
     rev: str
+    #: When the *device* wrote the file, as Dropbox reports it — not when
+    #: Dropbox received it (`server_modified`). Folder discovery ranks by this
+    #: because a folder synced from a backup last night would otherwise look
+    #: like the one the head unit is writing to. ``None`` when Dropbox omits
+    #: it or sends something unparseable, which is a missing fact rather than
+    #: a failure: it costs a tie-break, not a listing.
+    client_modified: dt.datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DropboxListing:
+    """One folder's contents, split the way every caller reads them.
+
+    Both halves in one value because they arrive in one listing, and the two
+    callers that want only folders would otherwise spend a second round trip
+    each to ask the same question — and because "the listing was empty" is a
+    fact about *entries*, which neither half can state on its own.
+    """
+
+    folders: tuple[DropboxFolder, ...]
+    files: tuple[DropboxFile, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether Dropbox reported nothing at all under this path."""
+        return not self.folders and not self.files
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,30 +419,38 @@ class DropboxClient:
     # --- public calls --------------------------------------------------------
 
     async def list_folders(self, path: str) -> list[DropboxFolder]:
-        """Every folder directly under ``path`` (``""`` is the Dropbox root).
+        """Every folder directly under ``path`` (``""`` is the Dropbox root)."""
+        return list((await self.list_entries(path)).folders)
+
+    async def list_entries(self, path: str) -> DropboxListing:
+        """Everything directly under ``path``, folders and files alike.
 
         Follows `has_more` to the end. A folder holding a thousand entries is
         served in pages, and stopping at the first one would silently hide the
-        folder the athlete is looking for — so this returns everything or
-        raises, never a truncated list that looks complete.
+        folder the athlete is looking for — or, for a count, report a fraction
+        of what is there as if it were the total. This returns everything or
+        raises, never a truncated listing that looks complete.
         """
         folders: list[DropboxFolder] = []
+        files: list[DropboxFile] = []
         body = await self._call(
             "/2/files/list_folder",
             {"path": path, "recursive": False, "include_deleted": False},
             path=path,
         )
         while True:
-            folders.extend(
-                DropboxFolder(
-                    path_lower=str(entry.get("path_lower") or ""),
-                    name=str(entry.get("name") or ""),
-                )
-                for entry in body.get("entries", [])
-                if entry.get(".tag") == "folder"
-            )
+            for entry in body.get("entries", []):
+                if entry.get(".tag") == "folder":
+                    folders.append(
+                        DropboxFolder(
+                            path_lower=str(entry.get("path_lower") or ""),
+                            name=str(entry.get("name") or ""),
+                        )
+                    )
+                elif entry.get(".tag") == "file":
+                    files.append(_file_from(entry))
             if not body.get("has_more"):
-                return folders
+                return DropboxListing(folders=tuple(folders), files=tuple(files))
             body = await self._call(
                 "/2/files/list_folder/continue", {"cursor": body["cursor"]}, path=path
             )
@@ -460,13 +494,7 @@ class DropboxClient:
         )
         return DropboxChanges(
             entries=tuple(
-                DropboxFile(
-                    id=str(entry.get("id") or ""),
-                    name=str(entry.get("name") or ""),
-                    path_lower=str(entry.get("path_lower") or ""),
-                    size=int(entry.get("size") or 0),
-                    rev=str(entry.get("rev") or ""),
-                )
+                _file_from(entry)
                 for entry in body.get("entries", [])
                 if entry.get(".tag") == "file"
             ),
@@ -653,6 +681,38 @@ class DropboxClient:
                 f"Dropbox answered {response.status_code} for {endpoint}"
             )
         return _json_or_empty(response)
+
+
+def _file_from(entry: dict[str, Any]) -> DropboxFile:
+    """One `file` entry of a listing, as arc stores it."""
+    return DropboxFile(
+        id=str(entry.get("id") or ""),
+        name=str(entry.get("name") or ""),
+        path_lower=str(entry.get("path_lower") or ""),
+        size=int(entry.get("size") or 0),
+        rev=str(entry.get("rev") or ""),
+        client_modified=_stamp(entry.get("client_modified")),
+    )
+
+
+def _stamp(raw: Any) -> dt.datetime | None:
+    """Dropbox's `2026-08-16T05:30:00Z` as an aware UTC datetime, or None.
+
+    Never raises. A stamp arc cannot read is a missing fact — it costs a
+    tie-break between two folders — and letting it abort a listing would turn
+    one malformed entry into a folder picker that shows nothing.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return (
+        parsed.replace(tzinfo=dt.UTC)
+        if parsed.tzinfo is None
+        else parsed.astimezone(dt.UTC)
+    )
 
 
 def _json_or_empty(response: httpx.Response) -> dict[str, Any]:

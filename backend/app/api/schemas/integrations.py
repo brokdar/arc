@@ -153,6 +153,56 @@ class IntegrationCatalogue(BaseModel):
     storage: list[StorageStatusRead]
 
 
+class IntegrationProposalRead(BaseModel):
+    """A folder arc found on a connection, named as the integration behind it.
+
+    What discovery hands the panel is a source with a count and a stamp —
+    "Wahoo, 342 activity files, newest 16.08" — because a path is the one thing
+    the athlete has to translate and arc does not. `connection_id`, `kind`,
+    `transport` and `path` are exactly the body of `POST /api/v1/integrations`,
+    so accepting is one click and no rebuilding.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: `null` when no catalogue integration writes here. Not a failure: the
+    #: folder holds activity files, so it is offered, and the athlete says
+    #: which source it is rather than arc guessing from its name.
+    kind: IntegrationKind | None
+    display_name: str
+    connection_id: uuid.UUID
+    transport: TransportKind
+    #: Normalised — the spelling arc stores and the clash refusal compares.
+    path: str
+    activity_files: int
+    #: When the newest of them was written by the device, `null` when Dropbox
+    #: reported no stamp arc could read.
+    newest_at: dt.datetime | None
+    #: True when arc is already collecting this folder: shown, so the athlete
+    #: sees arc has their rides, with no control to add it a second time.
+    configured: bool
+
+
+class IntegrationDiscoveryRead(BaseModel):
+    """What arc found looking through one connection for training data.
+
+    A 200 with an empty `proposals` list is a real answer, not a 404: "arc
+    looked and found no activity files anywhere it can see" is precisely what
+    an athlete whose head unit has never uploaded should be told.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: Best first: most activity files, then most recently written.
+    proposals: list[IntegrationProposalRead]
+    #: `"app_folder"` when an empty Dropbox *and* an absent `/Apps` together
+    #: suggest the Dropbox app was registered with App-folder access; null when
+    #: they do not. An inference, never a fact — no Dropbox API reports an
+    #: app's access type — so the panel words it as something to check, and
+    #: says what it would cost to fix.
+    access_type_suspect: str | None
+
+
 class IntegrationCreate(BaseModel):
     """Add a source, and the first folder it is collected through."""
 
