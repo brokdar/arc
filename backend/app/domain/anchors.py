@@ -229,9 +229,9 @@ def _ordering_key(version: AnchorVersion) -> tuple[dt.date, dt.datetime]:
 
     The tie-break is only as truthful as the stamps: "appended later" must
     mean "greater ``created_at``", which a wall clock alone does not promise.
-    `AnchorService.append` guarantees it by clamping each new stamp strictly
-    above the newest one already in that type's history — this pure layer
-    just trusts the ordering it is handed.
+    `AnchorService` guarantees it by stamping each new version — real append
+    and dry-run draft alike — strictly above the newest stamp already in that
+    type's history; this pure layer just trusts the ordering it is handed.
     """
     return (version.effective_date, version.created_at)
 
