@@ -236,9 +236,16 @@ class RecordingRow(Base):
     #: `StreamChannel` values actually present in the parquet frame.
     channels: Mapped[list[str]] = mapped_column(JSONColumn, default=list)
 
-    #: Reserved (R4), no behavior: the vendor's own id and which integration
-    #: it came from, for the MMP's adapters and for the "a richer file
-    #: supersedes a lower-fidelity import of the same ride" merge case.
+    #: Reserved (R4), no behavior: the vendor's own id for the file, and the
+    #: **transport** that carried it (`app.domain.activity.IngestSource` —
+    #: `dropbox`, or null for a file that arrived on this machine). Both are
+    #: for the MMP's adapters and for the "a richer file supersedes a
+    #: lower-fidelity import of the same ride" merge case.
+    #:
+    #: `source` is **not** which integration it came from, and no column here
+    #: is: that is configuration on the feed, and `IngestSource`'s docstring
+    #: says why a folder cannot name the source and what is lost by not
+    #: freezing a guess about it into these rows.
     external_id: Mapped[str | None] = mapped_column(String(200))
     source: Mapped[str | None] = mapped_column(String(60))
 

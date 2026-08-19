@@ -7,6 +7,14 @@ upload and the local `data/inbox/` sweep go through, so a ride that arrives
 this way is indistinguishable downstream from one dropped in by hand, except
 that its recording says which transport carried it.
 
+**Where a feed's files go is decided before Dropbox is asked anything.** An
+integration declares which of arc's two destinations it feeds
+(`app.domain.integrations.DataKind`), and a watched folder can only reach one
+of them: :data:`DELIVERABLE_KINDS`. A feed whose integration provides a kind
+this transport cannot deliver is refused with an error on the row rather than
+poured into the pipeline — see :func:`_undeliverable`, which is the whole
+reason `DataKind` exists.
+
 **An interval job, not `list_folder/longpoll`.** Dropbox offers a long-poll
 endpoint that answers the moment a file lands, and it would give push-quality
 latency. It is not used, and the reason is not the endpoint: a long poll is a
@@ -59,6 +67,7 @@ from app.core.logging import get_logger
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
 from app.domain.connections import FEED_DELIVERED_ACTION, ConnectionStatus
+from app.domain.integrations import CATALOGUE, DataKind, ordered_data_kinds
 from app.ingest.parsers import extension_of
 from app.ingest.pipeline import FileOrigin, IngestPaths, IngestPipeline
 from app.ingest.service import MAX_UPLOAD_BYTES, safe_filename, staged_name
@@ -77,6 +86,7 @@ from app.persistence.ingest_log import (
     MAX_FILENAME_LENGTH,
     IngestEventRepository,
 )
+from app.persistence.integrations import IntegrationRow
 
 logger = get_logger(__name__)
 
@@ -114,6 +124,19 @@ ACTIVITY_EXTENSIONS = frozenset({"fit", "gpx", "tcx"})
 #: a session that looks legitimate and is short — the worst kind of wrong,
 #: because nothing downstream can tell it from an easy day.
 SKIPPED_NAMES = frozenset({"inprogressactivity.fit"})
+
+#: The `DataKind`s this transport — a watched cloud folder — can deliver into.
+#:
+#: `recordings` only, and `wellness`'s absence is the point of the whole
+#: dispatch. `WellnessService` exists and `wellness_days` exists, but **no**
+#: ingest path reaches them from a file, so a folder full of an Apple Health
+#: export handed to `IngestPipeline` would not land in wellness — it would be
+#: parsed as ride files and quarantined one by one, or worse, produce sessions
+#: from something that was never a session. Naming what this module can deliver
+#: turns that into one refusal the athlete can read, on the day such an
+#: integration is added rather than on the day somebody reads the quarantine
+#: queue. Add a member here only together with the code that consumes it.
+DELIVERABLE_KINDS = frozenset({DataKind.RECORDINGS})
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +205,47 @@ def _should_take(entry: DropboxFile) -> _Refusal | None:
             recorded=True,
         )
     return None
+
+
+async def _undeliverable(session: AsyncSession, feed: FeedRow) -> str | None:
+    """Why this feed's files have nowhere to go, or ``None`` to poll it.
+
+    Asked of the **catalogue**, not of the row: `integrations` stores that the
+    athlete asked arc to collect from a source and nothing more, so what that
+    source provides is read from `CATALOGUE` every time and a widened spec
+    takes effect everywhere at once (`app.persistence.integrations`).
+
+    An **unclassified** feed (`integration_id IS NULL`) is deliverable. It has
+    to be: those are the folders configured before integrations existed, they
+    have been feeding `IngestPipeline` since WP-4.3, and a vocabulary arriving
+    underneath them is not a reason to stop collecting a ride. The classified
+    ones are the ones arc knows something about, and knowing is what earns the
+    right to refuse.
+
+    A refusal is returned as prose rather than raised, because the caller has
+    somewhere better to put it than a traceback: ``feed.last_error``, which is
+    what the settings panel and the coach's `get_ingest_status` both read.
+    """
+    if feed.integration_id is None:
+        return None
+    row = await session.get(IntegrationRow, feed.integration_id)
+    if row is None:  # pragma: no cover — the FK cascade removes the feed with it
+        return None
+    # Total by construction: `IntegrationKind`'s members are exactly the
+    # catalogue's keys, pinned by `test_integrations_domain.py`.
+    spec = CATALOGUE[row.kind]
+    provides = ordered_data_kinds(spec.provides)
+    missing = [kind for kind in provides if kind not in DELIVERABLE_KINDS]
+    if not missing:
+        return None
+    return (
+        "arc cannot yet collect "
+        f"{', '.join(kind.value for kind in missing)} from a watched folder. "
+        f"{spec.display_name} provides "
+        f"{', '.join(kind.value for kind in provides)}, and of those only "
+        f"{DataKind.RECORDINGS.value} has an ingest destination, so nothing in "
+        f"{feed.remote_path or '/'} was downloaded or delivered."
+    )
 
 
 # --- the sweep ----------------------------------------------------------------
@@ -261,6 +325,12 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
     catch-all needs a usable session to write its quarantine record on.
     The session opened here is the *control* session: it holds the feed row,
     the connection whose token the client may refresh, and the refusal log.
+
+    **The destination is settled first** (:func:`_undeliverable`). A feed whose
+    integration provides something a folder cannot deliver never reaches the
+    client at all, so "never passed to `IngestPipeline`" is true by the shape
+    of the function rather than by a check further down that a later edit could
+    step around.
     """
     async with session_scope() as session:
         repository = ConnectionRepository(session)
@@ -268,6 +338,23 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
         if feed is None:  # deleted between the sweep's read and now
             return
         if not feed.enabled:  # paused between the sweep's read and now
+            return
+        undeliverable = await _undeliverable(session, feed)
+        if undeliverable is not None:
+            # Before the client, before the listing: a feed arc has no
+            # destination for must not spend a Dropbox request either, and
+            # refusing here means no entry is ever downloaded, so there is
+            # nothing for the cursor to advance past. It does not blame the
+            # batch — the page is fine, arc is not — so the budget is untouched
+            # and the next poll asks the same question again, which is what
+            # makes the feed start delivering the moment the destination exists
+            # rather than only after somebody re-adds it.
+            await _record_failure(
+                session,
+                feed,
+                failure=_BatchFailure(undeliverable, blames_batch=False),
+                advance_to=None,
+            )
             return
         connection = await repository.get(feed.connection_id)
         if connection is None:  # pragma: no cover — cascade removes the feed
