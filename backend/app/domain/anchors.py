@@ -226,6 +226,12 @@ def _ordering_key(version: AnchorVersion) -> tuple[dt.date, dt.datetime]:
     ``effective_date`` first, because that is the axis the athlete reasons on;
     ``created_at`` breaks ties, so appending a correction with the same
     effective date wins over the value it corrects.
+
+    The tie-break is only as truthful as the stamps: "appended later" must
+    mean "greater ``created_at``", which a wall clock alone does not promise.
+    `AnchorService` guarantees it by stamping each new version — real append
+    and dry-run draft alike — strictly above the newest stamp already in that
+    type's history; this pure layer just trusts the ordering it is handed.
     """
     return (version.effective_date, version.created_at)
 

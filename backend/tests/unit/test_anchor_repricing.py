@@ -13,6 +13,7 @@ the domain computes.
 """
 
 import datetime as dt
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -263,3 +264,46 @@ async def test_an_append_dry_run_predicts_the_repricing_and_writes_nothing(
     # Nothing was appended and nothing recomputed.
     assert list((await db_session.execute(select(AnchorVersionRow))).scalars()) == []
     assert (await metrics_of(client, session_id))["version"] == 1
+
+
+async def test_a_dry_run_after_a_backward_clock_step_predicts_with_the_correction(
+    data_root: Path,
+    client: AsyncClient,
+    session_factory: Any,
+    db_session: AsyncSession,
+) -> None:
+    """The dry-run draft wins the same `created_at` tie-break a real append wins.
+
+    The prediction folds the draft into the stored history and asks the same
+    `anchor_effective_on` the write-side scan asks, so the draft's stamp
+    fights the same ``(effective_date, created_at)`` tie-break. Stamped raw
+    off a stepped-back wall clock, a same-effective-date correction loses to
+    the version it corrects and the dry run predicts `would_reprice: 0` —
+    governed by the old value — while the real append, clamped, reprices.
+    The stamp must be chosen by one piece of code for both paths.
+
+    Same move-the-row mechanism as the clock-step tests in
+    `test_anchors_api.py`: a history whose newest stamp is ahead of now is
+    exactly the state a backwards step leaves the next append (or dry run) in.
+    """
+    session_id = await ingest_ride(client)
+    body = await append_ftp(client, effective="2026-01-01", value=250)
+    assert (await metrics_of(client, session_id))["version"] == 2
+    row = await db_session.get(AnchorVersionRow, uuid.UUID(body["id"]))
+    assert row is not None
+    row.created_at = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+    await db_session.commit()
+
+    data = await call_append_anchor(
+        {
+            "anchor_type": "ftp",
+            "value": 300,
+            "provenance": "estimated",
+            "effective_date": "2026-01-01",
+            "dry_run": True,
+        }
+    )
+
+    # The correction governs the prediction, exactly as it would the write.
+    assert data["dry_run"] is True
+    assert data["reprice"] == {"examined": 1, "would_reprice": 1, "unchanged": 0}

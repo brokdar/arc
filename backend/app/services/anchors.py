@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
 from app.core.exceptions import NotFoundError, ValidationError, domain_rules
+from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.anchors import (
     ANCHOR_UNITS,
@@ -31,6 +32,8 @@ from app.persistence.anchors import AnchorRepository, AnchorVersionRow
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
 from app.services.guardrails import check_write_cap
+
+logger = get_logger(__name__)
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "anchor_version"
@@ -140,7 +143,60 @@ class AnchorService:
             )
         return next(row for version, row in pairs if version is in_force)
 
-    def preview(
+    async def _next_created_at(
+        self, anchor_type: AnchorType, *, now: dt.datetime
+    ) -> dt.datetime:
+        """Choose the stamp a new version of ``anchor_type`` carries.
+
+        The wall clock, clamped **strictly above the newest stamp already in
+        that type's history** — rather than the wall clock trusted alone,
+        which is what this displaced. The tie-break in
+        `app.domain.anchors._ordering_key` is *"a correction appended later
+        with the same effective date wins over the value it corrects"*, and
+        ``created_at`` is its only witness to "later" — but `dt.datetime.now`
+        reads ``CLOCK_REALTIME``, which is not monotonic. A backwards step
+        (an NTP correction anywhere; this WSL2 host by ~95 ms twice a minute)
+        landing between two appends would stamp the correction *earlier* than
+        the row it corrects, and every read from then on would return the
+        corrected value as current. One microsecond is the resolution of the
+        column and of `dt.datetime`; the clamp only engages while the clock
+        is behind the history, so stamps return to honest wall time as soon
+        as it catches up. It also keeps `anchor_as_of`'s
+        ``created_at <= moment`` replays ordered the way the appends actually
+        happened. (Companion to #66, which made *reads* survive a stamp the
+        clock has not reached; this makes *writes* stop producing
+        out-of-order stamps at all.)
+
+        Chosen here, once, for both callers of :meth:`preview`: the dry run's
+        draft joins the stored history in the repricing `_scan`, so an
+        unclamped draft would lose the tie-break the real append wins and the
+        prediction would use a different rule than the write.
+
+        Known and accepted: nothing serializes the ``max(created_at)`` read
+        against the insert, so two *concurrent* appends of one type inside
+        the clamp window could both compute ``latest + 1µs`` and recreate the
+        tie. Accepted because this is a single-athlete application with no
+        concurrent writer in practice, the window is the clock-error
+        interval, and the failure mode is the pre-fix status quo (an ordering
+        tie), not a new corruption. If multi-writer appends ever matter, a
+        unique constraint on ``(anchor_type, created_at)`` plus a retry — or
+        a per-type advisory lock — closes it.
+
+        The clamp engaging at all means the host clock is broken *right now*,
+        and since #66 made reads tolerate future stamps and this makes writes
+        tolerate them, the log line below is the only remaining signal.
+        """
+        latest = await self._repository.latest_created_at(anchor_type)
+        if latest is None or now > latest:
+            return now
+        logger.warning(
+            "anchor_created_at_clamped",
+            anchor_type=anchor_type.value,
+            behind_seconds=(latest - now).total_seconds(),
+        )
+        return latest + dt.timedelta(microseconds=1)
+
+    async def preview(
         self,
         *,
         anchor_type: AnchorType,
@@ -164,9 +220,13 @@ class AnchorService:
         consequence asks for the check.
 
         Every rule `append` applies is applied here — the reserved types, the
-        unit, and the domain invariants including *`tested` requires a
-        protocol* — because `append` calls this to build its row. There is no
-        second code path to disagree with.
+        unit, the domain invariants including *`tested` requires a protocol*,
+        and the monotonic ``created_at`` (:meth:`_next_created_at`, the one
+        read this otherwise write-free method does) — because `append` calls
+        this to build its row. There is no second code path to disagree with,
+        and the repricing dry run folds this draft into the stored history,
+        where a stamp chosen by a different rule than the write's would make
+        the prediction disagree with the append it predicts.
 
         Returns:
             The domain version, unsaved and unrecorded.
@@ -182,7 +242,8 @@ class AnchorService:
                 f"{anchor_type.value} anchors are reserved for the "
                 "critical-power model (WP-5) and cannot be appended yet"
             )
-        created_at = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.UTC)
+        created_at = await self._next_created_at(anchor_type, now=now)
         # The athlete's calendar day, not the UTC one: an FTP appended at 08:00
         # on the 20th in Auckland is effective from the 20th, and dating it the
         # 19th would put it in force a day early for every score that reads it
@@ -195,7 +256,11 @@ class AnchorService:
         # a client error. Every other read of this clock — `PlanService.week`,
         # `AnchorService.current`, the MCP tools — lets it surface as a 500, and
         # this was the one place that did not.
-        day = athlete_today(created_at)
+        #
+        # From the wall clock, not the clamped stamp: the default effective
+        # date is the day the athlete is appending on, and a stamp pushed past
+        # a future-dated one must not push their append into tomorrow.
+        day = athlete_today(now)
         with domain_rules():
             return AnchorVersion(
                 anchor_type=anchor_type,
@@ -250,7 +315,7 @@ class AnchorService:
                 every path an agent can reach this write through.
         """
         await check_write_cap(self._session, actor)
-        version = self.preview(
+        version = await self.preview(
             anchor_type=anchor_type,
             value=value,
             provenance=provenance,

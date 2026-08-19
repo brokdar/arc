@@ -208,7 +208,7 @@ async def preview_anchor_append(
         ValidationError: For exactly the reasons the real append would
             raise it.
     """
-    draft = AnchorService.from_session(session).preview(
+    draft = await AnchorService.from_session(session).preview(
         anchor_type=anchor_type,
         value=value,
         provenance=provenance,

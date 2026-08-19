@@ -297,6 +297,42 @@ async def test_a_version_stamped_in_the_future_is_still_in_force(
     assert response.json()["id"] == appended["id"]
 
 
+async def test_a_correction_appended_after_a_backward_clock_step_still_wins(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An append is stamped strictly after the history it corrects.
+
+    The `_ordering_key` tie-break means "a correction appended later with the
+    same effective date wins over the value it corrects" — and `created_at`
+    is its only witness to "later". Stamped straight from the wall clock, a
+    backwards step (NTP anywhere; this WSL2 host by ~95 ms twice a minute)
+    landing between two appends gives the correction the *earlier* stamp, and
+    every read from then on returns the corrected value as current.
+
+    Like #66's test above, this moves the row rather than the clock: pushing
+    the first version's stamp ahead of now leaves exactly the state a
+    stepped-back clock puts the next append in, and does so deterministically.
+    Where #66 made reads survive that state, this pins the write-side clamp:
+    the correction must land with a stamp strictly above the one it corrects.
+    """
+    first = await append(client, value=250)
+    ahead = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+    row = await db_session.get(AnchorVersionRow, uuid.UUID(first["id"]))
+    assert row is not None
+    row.created_at = ahead
+    await db_session.commit()
+
+    # Same (defaulted) effective date, so only `created_at` separates them.
+    correction = await append(client, value=260)
+
+    stamped = dt.datetime.fromisoformat(correction["created_at"])
+    assert stamped > ahead
+
+    response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == correction["id"]
+
+
 async def test_current_without_any_version_returns_404(client: AsyncClient) -> None:
     response = await client.get(f"{ANCHORS}/current", params={"anchor_type": "ftp"})
 
