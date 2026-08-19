@@ -43,7 +43,12 @@ from app.domain.connections import (
     ConnectionStatus,
     FeedDeliveryState,
 )
-from app.domain.integrations import CATALOGUE
+from app.domain.integrations import (
+    CATALOGUE,
+    DataKind,
+    IntegrationKind,
+    ordered_data_kinds,
+)
 from app.persistence.audit import AuditRepository
 from app.persistence.connections import (
     KEY_SETTING,
@@ -105,14 +110,47 @@ class FeedStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class IntegrationIngestStatus:
+    """One source arc collects from, and how each of its folders is doing.
+
+    The grouping is the answer, not decoration. "`/apps/wahoofitness` has not
+    delivered in five days" is a sentence about a path the coach has never
+    seen; "Wahoo has not delivered in five days" names the thing the athlete
+    can go and look at. The per-folder facts underneath are unchanged — a
+    source with two folders has two of them, because one failing folder and
+    one delivering folder is neither "Wahoo is broken" nor "Wahoo is fine",
+    and no single word for the source could say which.
+    """
+
+    #: ``None`` for a folder configured before integrations existed. Still
+    #: reported: it is still collecting, and a working pipe left out of the
+    #: only tool that reports on pipes is a pipe nobody will notice breaking.
+    kind: IntegrationKind | None
+    display_name: str
+    data_kinds: tuple[DataKind, ...]
+    #: Empty for the **local drop**, which is a directory on the arc server:
+    #: no credential to expire, no poll to fail, and therefore no per-folder
+    #: delivery ledger to report from. It is listed all the same so the coach
+    #: sees every source arc collects from rather than only the fragile ones.
+    folders: tuple[FeedStatus, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class IngestStatus:
     """Whether arc's supply of activity files is working, and through what."""
 
-    feeds: tuple[FeedStatus, ...]
+    #: Every source, the local drop first. Grouped rather than a flat list of
+    #: folders — see :class:`IntegrationIngestStatus`.
+    integrations: tuple[IntegrationIngestStatus, ...]
     #: True when no connection exists at all. **Not an error**: files arriving
     #: in `data/inbox/` is the supported baseline configuration, and answering
     #: a coaching agent with a failure would teach it that a perfectly healthy
     #: single-user install is broken.
+    #:
+    #: Deliberately still about **connections**, not about integrations: an
+    #: account that is connected but collecting from nothing is a different
+    #: fault from an athlete who never connected one, and the remedy for the
+    #: first is to point it at a folder.
     local_inbox_only: bool
 
 
@@ -179,13 +217,26 @@ class ConnectionService:
         return row
 
     async def ingest_status(self) -> IngestStatus:
-        """How each watched folder is doing, and whether there are any.
+        """How each source arc collects from is doing, and whether there are any.
 
-        Read-only and cheap: one query for the connections, one count per feed
-        over the audit trail. The delivery count comes from that trail
-        (`app.ingest.feeds.DELIVERED_ACTION`) rather than from a column on the
-        feed, because the trail already records every delivery with the feed it
-        belonged to — see `AuditRepository.count_for_entity_since`.
+        Grouped **by integration**, because that is the vocabulary the answer
+        is acted on in: a coach told a path has gone quiet has nothing to say
+        to the athlete, and a coach told Wahoo has gone quiet does.
+
+        Read-only and cheap: one query for the connections, one for the
+        integrations, one for the folders nobody has classified, and one count
+        per folder over the audit trail. The delivery count comes from that
+        trail (`app.ingest.feeds.DELIVERED_ACTION`) rather than from a column
+        on the feed, because the trail already records every delivery with the
+        feed it belonged to — see `AuditRepository.count_for_entity_since`.
+
+        The local drop is **synthesized** here from the catalogue, exactly as
+        `IntegrationService.list` synthesizes it for the athlete's own panel:
+        it has no row, so it cannot be read from one. This service builds it
+        rather than calling that one because `IntegrationService` is the layer
+        *above* — it wires this service in — and reaching back up would be a
+        cycle. What is duplicated is a name and two data kinds, both read from
+        `CATALOGUE`; the shape of the answer is not.
 
         A connection whose credential will not open reports `error` here as it
         does everywhere else (:meth:`_settle_readability`), so a coach reading
@@ -195,15 +246,71 @@ class ConnectionService:
         rows = await self._repository.list()
         for connection in rows:
             self._settle_readability(connection)
+        connections = {connection.id: connection for connection in rows}
         return IngestStatus(
-            feeds=tuple(
-                [
-                    await self._feed_status(connection, feed, since=since)
-                    for connection in rows
-                    for feed in connection.feeds
-                ]
+            integrations=(
+                _local_drop_status(),
+                *[
+                    await self._integration_status(row, connections, since=since)
+                    for row in await self._integrations.list()
+                ],
+                *[
+                    await self._loose_folder_status(feed, connections, since=since)
+                    for feed in await self._integrations.unclassified_feeds()
+                ],
             ),
             local_inbox_only=not rows,
+        )
+
+    async def _integration_status(
+        self,
+        integration: IntegrationRow,
+        connections: dict[uuid.UUID, ConnectionRow],
+        *,
+        since: dt.datetime,
+    ) -> IntegrationIngestStatus:
+        """One added source, with every folder it is collected through."""
+        spec = CATALOGUE[integration.kind]
+        return IntegrationIngestStatus(
+            kind=integration.kind,
+            display_name=spec.display_name,
+            data_kinds=ordered_data_kinds(spec.provides),
+            folders=tuple(
+                [
+                    await self._feed_status(
+                        connections[feed.connection_id], feed, since=since
+                    )
+                    for feed in sorted(
+                        integration.feeds, key=lambda feed: feed.remote_path
+                    )
+                ]
+            ),
+        )
+
+    async def _loose_folder_status(
+        self,
+        feed: FeedRow,
+        connections: dict[uuid.UUID, ConnectionRow],
+        *,
+        since: dt.datetime,
+    ) -> IntegrationIngestStatus:
+        """A folder no integration owns, reported as the source it stands in for.
+
+        No kind, and none guessed: only the athlete can say which source a
+        folder configured before integrations existed belongs to, and a guess
+        here would reach the coach as a fact. Reported all the same — it is
+        still collecting, and a working pipe left out of the only tool that
+        reports on pipes is a pipe nobody will notice breaking.
+        """
+        return IntegrationIngestStatus(
+            kind=None,
+            display_name=feed.remote_path or "the Dropbox root",
+            data_kinds=(),
+            folders=(
+                await self._feed_status(
+                    connections[feed.connection_id], feed, since=since
+                ),
+            ),
         )
 
     async def _feed_status(
@@ -506,6 +613,24 @@ class ConnectionService:
             row,
             app_key=get_settings().dropbox.app_key.get_secret_value(),
         )
+
+
+def _local_drop_status() -> IntegrationIngestStatus:
+    """The always-present source, built from the catalogue rather than a row.
+
+    `data/inbox/` has been swept since WP-4.3 whether or not anybody
+    configured anything, so there is nothing to read it from — see
+    `app.domain.integrations.SYNTHESIZED_KINDS`. It reports no folders on
+    purpose; :class:`IntegrationIngestStatus` says why an empty list there is
+    not a fault.
+    """
+    spec = CATALOGUE[IntegrationKind.LOCAL_DROP]
+    return IntegrationIngestStatus(
+        kind=spec.kind,
+        display_name=spec.display_name,
+        data_kinds=ordered_data_kinds(spec.provides),
+        folders=(),
+    )
 
 
 def delivery_state(feed: FeedRow) -> FeedDeliveryState:

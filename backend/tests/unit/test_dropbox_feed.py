@@ -922,7 +922,9 @@ async def test_a_feed_that_cannot_store_what_it_downloaded_says_so(
     # And the coach is told, rather than being shown a working pipe.
     async with session_scope() as session:
         status = await ConnectionService.from_session(session).ingest_status()
-    [reported] = status.feeds
+    [reported] = [
+        folder for integration in status.integrations for folder in integration.folders
+    ]
     assert reported.state is FeedDeliveryState.FAILING
 
 
@@ -1309,7 +1311,11 @@ async def test_a_wellness_feed_is_never_handed_to_the_pipeline(
     assert stored.last_delivery_at is None
     # And both reads say the same word about it.
     status = await ConnectionService.from_session(db_session).ingest_status()
-    assert [row.state for row in status.feeds] == [FeedDeliveryState.FAILING]
+    assert [
+        folder.state
+        for integration in status.integrations
+        for folder in integration.folders
+    ] == [FeedDeliveryState.FAILING]
     assert (await folder_states(db_session))["Wahoo"] == [FeedDeliveryState.FAILING]
 
 
