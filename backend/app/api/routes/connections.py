@@ -1,10 +1,14 @@
 """HTTP endpoints for connecting a cloud account and picking folders.
 
 Thin over `app.services.connections`, which owns the OAuth exchange, the
-encryption and the commits. Two routers rather than one because feeds are a
-collection in their own right: a feed is addressed by its own id for `PATCH`
-and `DELETE`, and nesting it under `/connections/{id}/feeds/{feed_id}` would
-make every write carry an id it does not need.
+encryption and the commits.
+
+**There is no `/feeds` collection any more.** `POST /api/v1/feeds` used to
+create a `FeedRow` with nothing recording what the folder brings in, which is
+exactly the folder-shaped configuration `app.api.routes.integrations` replaces:
+a watched folder is now the *transport* of an integration, created and removed
+through the integration that owns it. Leaving the route in place would leave
+one write path that produces rows the panel cannot describe.
 
 There is deliberately **no callback route here, and none anywhere**. The PKCE
 paste flow is what makes that true: nothing on the internet ever has to reach
@@ -23,9 +27,6 @@ from app.api.schemas.connections import (
     ConnectionRead,
     DropboxAuthorizationRead,
     DropboxCodeSubmit,
-    FeedCreate,
-    FeedRead,
-    FeedUpdate,
     FolderList,
     FolderRead,
 )
@@ -35,7 +36,6 @@ from app.persistence.db import SessionDep
 from app.services.connections import ConnectionService
 
 router = APIRouter(prefix="/connections", tags=["connections"])
-feeds_router = APIRouter(prefix="/feeds", tags=["connections"])
 
 type Responses = dict[int | str, dict[str, Any]]
 NOT_FOUND: Responses = {
@@ -161,43 +161,3 @@ async def disconnect(
     side can be finished off from Dropbox's own connected-apps page.
     """
     await service.disconnect(connection_id, actor=actor)
-
-
-@feeds_router.post(
-    "",
-    status_code=status.HTTP_201_CREATED,
-    responses=BAD_BODY | NOT_FOUND | CONFLICT,
-)
-async def create_feed(
-    service: ServiceDep, actor: ActorDep, submitted: FeedCreate
-) -> FeedRead:
-    """Watch a folder on a connection.
-
-    The path is normalised, so `/Apps/WahooFitness/` and `/apps/wahoofitness`
-    are one feed and the second attempt is a 409.
-    """
-    return FeedRead.model_validate(
-        await service.create_feed(
-            connection_id=submitted.connection_id,
-            remote_path=submitted.remote_path,
-            actor=actor,
-        )
-    )
-
-
-@feeds_router.patch("/{feed_id}", responses=BAD_BODY | NOT_FOUND)
-async def update_feed(
-    service: ServiceDep, actor: ActorDep, feed_id: uuid.UUID, submitted: FeedUpdate
-) -> FeedRead:
-    """Turn a feed's polling on or off. The cursor is kept either way."""
-    return FeedRead.model_validate(
-        await service.set_feed_enabled(feed_id, enabled=submitted.enabled, actor=actor)
-    )
-
-
-@feeds_router.delete(
-    "/{feed_id}", status_code=status.HTTP_204_NO_CONTENT, responses=NOT_FOUND
-)
-async def delete_feed(service: ServiceDep, actor: ActorDep, feed_id: uuid.UUID) -> None:
-    """Stop watching a folder and forget its polling state."""
-    await service.delete_feed(feed_id, actor=actor)

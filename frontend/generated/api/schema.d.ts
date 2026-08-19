@@ -439,53 +439,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/v1/feeds": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Create Feed
-     * @description Watch a folder on a connection.
-     *
-     *     The path is normalised, so `/Apps/WahooFitness/` and `/apps/wahoofitness`
-     *     are one feed and the second attempt is a 409.
-     */
-    post: operations["connections-create_feed"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/v1/feeds/{feed_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    post?: never;
-    /**
-     * Delete Feed
-     * @description Stop watching a folder and forget its polling state.
-     */
-    delete: operations["connections-delete_feed"];
-    options?: never;
-    head?: never;
-    /**
-     * Update Feed
-     * @description Turn a feed's polling on or off. The cursor is kept either way.
-     */
-    patch: operations["connections-update_feed"];
-    trace?: never;
-  };
   "/api/v1/ingest/events": {
     parameters: {
       query?: never;
@@ -611,6 +564,113 @@ export interface paths {
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  "/api/v1/integration-catalogue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Catalogue
+     * @description Every source arc can collect from, and how ready each transport is.
+     *
+     *     Exactly what arc ships. There is no "coming soon" entry: an integration the
+     *     athlete can pick and arc cannot deliver is a promise broken at the one
+     *     moment the application asked for trust. That the model can express Garmin,
+     *     Apple Health and the rest is proven by a domain test, not by this list.
+     */
+    get: operations["integrations-get_catalogue"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/integrations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Integrations
+     * @description Every source arc collects from, the local drop first.
+     *
+     *     The local drop is always in this list and has no row behind it — see
+     *     `IntegrationService.list`.
+     */
+    get: operations["integrations-list_integrations"];
+    put?: never;
+    /**
+     * Add Integration
+     * @description Add a source and the folder it is collected through, in one call.
+     *
+     *     **201** when the integration is new, **200** when an existing one grew a
+     *     folder: adding Wahoo a second time with a different directory is one Wahoo
+     *     with two folders, and answering 201 would tell the client a second entry
+     *     appeared in a list that did not change length.
+     */
+    post: operations["integrations-add_integration"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/integrations/{integration_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Remove Integration
+     * @description Stop collecting from a source, keeping the account and the rides.
+     *
+     *     A 404 for `local_drop`: it is synthesized, always present, and there is
+     *     nothing to delete.
+     */
+    delete: operations["integrations-remove_integration"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/integrations/{integration_id}/folders/{folder_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Remove Folder
+     * @description Stop collecting through one folder.
+     *
+     *     Removing the **last** folder removes the integration with it: an entry with
+     *     no transport is a source arc claims to collect from and cannot reach.
+     */
+    delete: operations["integrations-remove_folder"];
+    options?: never;
+    head?: never;
+    /**
+     * Update Folder
+     * @description Pause or resume one folder. The cursor is kept either way.
+     */
+    patch: operations["integrations-update_folder"];
     trace?: never;
   };
   "/api/v1/manual-sessions": {
@@ -2432,6 +2492,21 @@ export interface components {
       max_cadence: components["schemas"]["MetricRead"];
     };
     /**
+     * CatalogueEntry
+     * @description One integration arc can actually deliver.
+     */
+    CatalogueEntry: {
+      /** Addable */
+      addable: boolean;
+      /** Data Kinds */
+      data_kinds: components["schemas"]["DataKind"][];
+      /** Display Name */
+      display_name: string;
+      kind: components["schemas"]["IntegrationKind"];
+      /** Transports */
+      transports: components["schemas"]["TransportOffer"][];
+    };
+    /**
      * CeilingSchema
      * @description No more than this long spent above this limit on this channel.
      */
@@ -2693,6 +2768,28 @@ export interface components {
       required?: number | null;
     };
     /**
+     * DataKind
+     * @description Which arc subsystem consumes what an integration brings in.
+     *
+     *     **Two members, because arc has exactly two destinations**: a file becomes
+     *     a recording (`IngestPipeline.ingest_file` → `recordings` → `sessions` and
+     *     `logged_sets`), or a reading becomes a wellness day (`WellnessService`
+     *     → `wellness_days`). Nothing else in arc eats ingested data.
+     *
+     *     This is emphatically **not the sport**. "Apple Workouts provides rides and
+     *     strength training" is one `DataKind` — `recordings` — not two, because arc
+     *     classifies each file itself: `app.domain.activity.SessionDiscipline` exists
+     *     because "a device file ... can hold a walk, a swim or a sport the head unit
+     *     does not name", and a folder cannot tell you what wrote a file nor what
+     *     sport it was. A vocabulary of `rides | strength | wellness` would put a
+     *     guess about the sport into configuration, where nothing can correct it,
+     *     and every disagreement between the guess and the file would be resolved in
+     *     favour of the guess. `IngestSource` already makes this argument for where a
+     *     file came from; this extends it rather than overturning it.
+     * @enum {string}
+     */
+    DataKind: "recordings" | "wellness";
+    /**
      * Direction
      * @description Where the rolling mean sits relative to the band. Never a valence.
      *
@@ -2877,21 +2974,29 @@ export interface components {
       };
     };
     /**
-     * FeedCreate
-     * @description Start watching a folder on a connection.
+     * FeedDeliveryState
+     * @description How a watched folder is doing, in one word the coach can branch on.
+     *
+     *     The vocabulary exists because the numbers alone are ambiguous in exactly
+     *     the case that matters: `last_delivery_at: null` and `deliveries_7d: 0` read
+     *     identically for a folder that was connected an hour ago and for one whose
+     *     credential died last Tuesday, and the second is a week of missing rides.
+     *
+     *     * ``paused`` — the athlete switched this feed off. Silence is intended.
+     *     * ``failing`` — the last poll left an error on the row. Silence is a fault.
+     *     * ``never_delivered`` — nothing has ever arrived through it. **Never
+     *       reported as ``0`` deliveries and never as an error**: a folder that has
+     *       not delivered yet is a fact about setup, and both of the other spellings
+     *       would send a coach looking for a break that is not there.
+     *     * ``delivering`` — arc has heard from Dropbox and nothing is wrong. Whether
+     *       any *rides* arrived is `deliveries_7d`, which is the training question;
+     *       this is the plumbing question.
+     *
+     *     Order matters where two apply: an athlete's own pause outranks everything,
+     *     then a recorded fault, then the absence of a first delivery.
+     * @enum {string}
      */
-    FeedCreate: {
-      /**
-       * Connection Id
-       * Format: uuid
-       */
-      connection_id: string;
-      /**
-       * Remote Path
-       * @default
-       */
-      remote_path: string;
-    };
+    FeedDeliveryState: "paused" | "failing" | "never_delivered" | "delivering";
     /**
      * FeedRead
      * @description One folder arc watches, and its polling state.
@@ -2926,14 +3031,6 @@ export interface components {
       remote_path: string;
     };
     /**
-     * FeedUpdate
-     * @description Turn a feed's polling on or off, keeping its cursor.
-     */
-    FeedUpdate: {
-      /** Enabled */
-      enabled: boolean;
-    };
-    /**
      * FolderList
      * @description The folders directly under one remote path.
      *
@@ -2954,6 +3051,14 @@ export interface components {
       name: string;
       /** Path Lower */
       path_lower: string;
+    };
+    /**
+     * FolderUpdate
+     * @description Pause or resume one folder, keeping its cursor.
+     */
+    FolderUpdate: {
+      /** Enabled */
+      enabled: boolean;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -3072,6 +3177,105 @@ export interface components {
       tier: components["schemas"]["InputTier"];
     };
     /**
+     * IntegrationCatalogue
+     * @description What arc can collect, and how ready each transport is to carry it.
+     */
+    IntegrationCatalogue: {
+      /** Items */
+      items: components["schemas"]["CatalogueEntry"][];
+      /** Storage */
+      storage: components["schemas"]["StorageStatusRead"][];
+    };
+    /**
+     * IntegrationCreate
+     * @description Add a source, and the first folder it is collected through.
+     */
+    IntegrationCreate: {
+      /**
+       * Connection Id
+       * Format: uuid
+       */
+      connection_id?: string;
+      kind: components["schemas"]["IntegrationKind"];
+      /** Remote Path */
+      remote_path?: string;
+      transport: components["schemas"]["TransportKind"];
+    };
+    /**
+     * IntegrationFolderRead
+     * @description One folder an integration is collected through, and how it is doing.
+     */
+    IntegrationFolderRead: {
+      /** Account Label */
+      account_label: string | null;
+      /** Connection Error */
+      connection_error: string | null;
+      /**
+       * Connection Id
+       * Format: uuid
+       */
+      connection_id: string;
+      connection_status: components["schemas"]["ConnectionStatus"];
+      /** Enabled */
+      enabled: boolean;
+      /**
+       * Feed Id
+       * Format: uuid
+       */
+      feed_id: string;
+      /** Last Delivery At */
+      last_delivery_at: string | null;
+      /** Last Error */
+      last_error: string | null;
+      /** Remote Path */
+      remote_path: string;
+      state: components["schemas"]["FeedDeliveryState"];
+      storage: components["schemas"]["ConnectionProvider"];
+    };
+    /**
+     * IntegrationKind
+     * @description The sources arc ships. Exactly the keys of :data:`CATALOGUE`.
+     *
+     *     Members are added the day arc can actually collect from that source, never
+     *     ahead of it — see the :data:`CATALOGUE` docstring for why nothing is listed
+     *     as "coming soon".
+     * @enum {string}
+     */
+    IntegrationKind: "local_drop" | "wahoo";
+    /**
+     * IntegrationList
+     * @description Every source arc collects from, the local drop first.
+     *
+     *     A bare list rather than a page: there is one athlete, and the number of
+     *     sources is the number of devices they own.
+     */
+    IntegrationList: {
+      /** Items */
+      items: components["schemas"]["IntegrationRead"][];
+    };
+    /**
+     * IntegrationRead
+     * @description One source arc collects from, as the settings panel renders it.
+     */
+    IntegrationRead: {
+      /** Data Kinds */
+      data_kinds: components["schemas"]["DataKind"][];
+      /** Display Name */
+      display_name: string;
+      /** Folders */
+      folders: components["schemas"]["IntegrationFolderRead"][];
+      /** Id */
+      id: string;
+      kind: components["schemas"]["IntegrationKind"] | null;
+      local: components["schemas"]["LocalDropRead"] | null;
+      /** Prompt */
+      prompt: string | null;
+      /** Removable */
+      removable: boolean;
+      storage: components["schemas"]["ConnectionProvider"] | null;
+      transport: components["schemas"]["TransportKind"];
+    };
+    /**
      * IntervalRead
      * @description One detected work interval, addressed by row on the 1 Hz grid.
      */
@@ -3186,6 +3390,16 @@ export interface components {
       kind: "load_within";
       /** Pct Tolerance */
       pct_tolerance: number;
+    };
+    /**
+     * LocalDropRead
+     * @description The local drop's whole configuration: where it looks, how often.
+     */
+    LocalDropRead: {
+      /** Inbox Path */
+      inbox_path: string;
+      /** Scan Interval Seconds */
+      scan_interval_seconds: number;
     };
     /**
      * LoggedSetCreate
@@ -5379,6 +5593,24 @@ export interface components {
       role?: components["schemas"]["StepRole"] | null;
     };
     /**
+     * StorageStatusRead
+     * @description How ready a storage provider is to carry a cloud-folder transport.
+     *
+     *     The add flow reads this to skip steps that are already done: no app key
+     *     means the registration checklist, a key with no account means the connect
+     *     ritual, and a connected account means going straight to the folder.
+     */
+    StorageStatusRead: {
+      /** Account Label */
+      account_label: string | null;
+      /** App Configured */
+      app_configured: boolean;
+      /** Connection Id */
+      connection_id: string | null;
+      provider: components["schemas"]["ConnectionProvider"];
+      status: components["schemas"]["ConnectionStatus"] | null;
+    };
+    /**
      * StreamAnomalyRead
      * @description One region of one channel the cleaner repaired (A4.2).
      */
@@ -5592,6 +5824,30 @@ export interface components {
        * @default []
        */
       zones: components["schemas"]["ZoneTimeRead"][];
+    };
+    /**
+     * TransportKind
+     * @description How the bytes reach arc.
+     *
+     *     * ``local_folder`` — a directory on the arc server, swept on a timer. The
+     *       `data/inbox/` sweep that has run since WP-4.3.
+     *     * ``cloud_folder`` — a folder on a :class:`StorageProvider` arc holds a
+     *       credential for, polled with a cursor. Dropbox today.
+     *     * ``oauth_api`` — a per-vendor API arc calls with its own OAuth grant.
+     *       Expressible, deliberately unimplemented: it is what makes Garmin and
+     *       Strava statable in the model without pretending arc can deliver them.
+     * @enum {string}
+     */
+    TransportKind: "local_folder" | "cloud_folder" | "oauth_api";
+    /**
+     * TransportOffer
+     * @description One way the athlete may choose to collect an integration.
+     */
+    TransportOffer: {
+      /** Default Path */
+      default_path: string | null;
+      kind: components["schemas"]["TransportKind"];
+      storage: components["schemas"]["ConnectionProvider"] | null;
     };
     /**
      * TrendBaselineRead
@@ -7436,184 +7692,6 @@ export interface operations {
       };
     };
   };
-  "connections-create_feed": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["FeedCreate"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["FeedRead"];
-        };
-      };
-      /** @description Malformed body */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No such connection, feed or folder */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description A Dropbox account is already connected, the folder is already watched, or the credential needs re-authorising */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "connections-delete_feed": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        feed_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No such connection, feed or folder */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  "connections-update_feed": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        feed_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["FeedUpdate"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["FeedRead"];
-        };
-      };
-      /** @description Malformed body */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No valid session */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description No such connection, feed or folder */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorDetail"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
   "ingest-list_ingest_events": {
     parameters: {
       query?: {
@@ -7859,6 +7937,300 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-get_catalogue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IntegrationCatalogue"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-list_integrations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IntegrationList"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-add_integration": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["IntegrationCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IntegrationRead"];
+        };
+      };
+      /** @description The integration is new */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IntegrationRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such integration or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Another integration is already collecting that folder */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The integration cannot be added, the transport is not one it supports, or its storage provider has no account connected */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "integrations-remove_integration": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        integration_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such integration or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "integrations-remove_folder": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        integration_id: string;
+        folder_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such integration or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "integrations-update_folder": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        integration_id: string;
+        folder_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FolderUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IntegrationRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such integration or folder */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

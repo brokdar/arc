@@ -5,6 +5,7 @@ import { mondayOf } from "@/lib/dates";
 import {
   AGENT_NOW,
   ATHLETE_TIMEZONE,
+  addIntegration,
   alignmentRead,
   anchorHistory,
   answerWellnessPrompt,
@@ -15,7 +16,6 @@ import {
   completeDropbox,
   connectionsState,
   contentHash,
-  createDropboxFeed,
   currentAnchor,
   DETAILS,
   declarationRead,
@@ -24,6 +24,8 @@ import {
   EXERCISES,
   ingestedSessionFixture,
   ingestState,
+  integrationCatalogue,
+  integrationList,
   linkForPlanned,
   linkForSession,
   linkRecord,
@@ -44,11 +46,14 @@ import {
   rateNote,
   reasonsRead,
   reasonsRefusal,
+  removeFolder,
+  removeIntegration,
   restoreLinkStatuses,
   SCORING_NOW,
   SESSION_IDS,
   scoreRead,
   scoringFor,
+  setFolderEnabled,
   statedBreakdown,
   statedRematch,
   statedScoring,
@@ -1601,45 +1606,73 @@ export const connectionHandlers = [
         })
       : response(204).empty();
   }),
-  http.post("/api/v1/feeds", async ({ request, response }) => {
-    const body = await request.json();
-    const result = createDropboxFeed(
-      body.connection_id,
-      body.remote_path ?? "",
-    );
-    if ("feed" in result) {
-      return response(201).json(result.feed);
-    }
-    return result.status === 404
-      ? response(404).json({ detail: result.detail })
-      : response(409).json({ detail: result.detail });
-  }),
-  http.patch(
-    "/api/v1/feeds/{feed_id}",
-    async ({ params, request, response }) => {
-      const body = await request.json();
-      for (const connection of connectionsState().connections) {
-        const feed = connection.feeds.find((row) => row.id === params.feed_id);
-        if (feed) {
-          // Echoes what it was sent: a panel that posted the value it already
-          // had would otherwise look like it worked.
-          feed.enabled = body.enabled;
-          return response(200).json(feed);
-        }
-      }
-      return response(404).json({ detail: `Feed ${params.feed_id} not found` });
-    },
-  ),
-  http.delete("/api/v1/feeds/{feed_id}", ({ params, response }) => {
-    for (const connection of connectionsState().connections) {
-      const kept = connection.feeds.filter((row) => row.id !== params.feed_id);
-      if (kept.length !== connection.feeds.length) {
-        connection.feeds = kept;
-        return response(204).empty();
-      }
-    }
-    return response(404).json({ detail: `Feed ${params.feed_id} not found` });
-  }),
 ];
 
 handlers.push(...connectionHandlers);
+
+/**
+ * The integrations surface: every source arc collects from.
+ *
+ * Derived from `integrationsState()` rather than canned — the local drop is
+ * synthesized, a stored integration lists its own folders, and a watched
+ * folder no integration claims comes back unclassified. A canned list could
+ * not fail when the panel drops one of the three.
+ */
+export const integrationHandlers = [
+  http.get("/api/v1/integrations", ({ response }) =>
+    response(200).json({ items: integrationList() }),
+  ),
+  http.get("/api/v1/integration-catalogue", ({ response }) =>
+    response(200).json(integrationCatalogue()),
+  ),
+  http.post("/api/v1/integrations", async ({ request, response }) => {
+    const result = addIntegration(await request.json());
+    if ("integration" in result) {
+      return result.status === 201
+        ? response(201).json(result.integration)
+        : response(200).json(result.integration);
+    }
+    if (result.status === 409) {
+      return response(409).json({ detail: result.detail });
+    }
+    if (result.status === 404) {
+      return response(404).json({ detail: result.detail });
+    }
+    return response(422).json({ detail: result.detail });
+  }),
+  http.delete(
+    "/api/v1/integrations/{integration_id}",
+    ({ params, response }) => {
+      const result = removeIntegration(params.integration_id);
+      return "removed" in result
+        ? response(204).empty()
+        : response(404).json({ detail: result.detail });
+    },
+  ),
+  http.patch(
+    "/api/v1/integrations/{integration_id}/folders/{folder_id}",
+    async ({ params, request, response }) => {
+      // Echoes what it was sent: a card that posted the value it already had
+      // would otherwise look like it worked.
+      const result = setFolderEnabled(
+        params.integration_id,
+        params.folder_id,
+        (await request.json()).enabled,
+      );
+      return "integration" in result
+        ? response(200).json(result.integration)
+        : response(404).json({ detail: result.detail });
+    },
+  ),
+  http.delete(
+    "/api/v1/integrations/{integration_id}/folders/{folder_id}",
+    ({ params, response }) => {
+      const result = removeFolder(params.integration_id, params.folder_id);
+      return "removed" in result
+        ? response(204).empty()
+        : response(404).json({ detail: result.detail });
+    },
+  ),
+];
+
+handlers.push(...integrationHandlers);
