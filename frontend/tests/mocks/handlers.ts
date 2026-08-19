@@ -20,6 +20,7 @@ import {
   DETAILS,
   declarationRead,
   defaultZoneModel,
+  discoverIntegrations,
   dropboxFolders,
   EXERCISES,
   ingestedSessionFixture,
@@ -1706,3 +1707,27 @@ export const localDropSettingsHandlers = [
 ];
 
 handlers.push(...localDropSettingsHandlers);
+
+/**
+ * Discovery: the folders arc found on a connection, named as integrations.
+ *
+ * Derived from the same state the folder browser and the integration list are,
+ * so a proposal arc has already accepted comes back flagged `configured` and a
+ * folder the catalogue knows comes back named — the two facts the panel
+ * branches on, which a canned body could not get wrong on its own.
+ */
+export const discoveryHandlers = [
+  http.get(
+    "/api/v1/connections/{connection_id}/discover",
+    ({ params, response }) => {
+      const found = discoverIntegrations(params.connection_id);
+      return found
+        ? response(200).json(found)
+        : response(404).json({
+            detail: `Connection ${params.connection_id} not found`,
+          });
+    },
+  ),
+];
+
+handlers.push(...discoveryHandlers);

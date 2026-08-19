@@ -303,3 +303,12 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "PUT /api/v1/integrations/local-drop/settings"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# Discovery reads Dropbox exactly as `folders` does and is refused on the same
+# grounds — an unreadable credential is a 409 or a 422, a throttled upstream a
+# 429 — so it carries the same narrowing, and is equally unreachable from a
+# fuzz run, which has no connection row to discover anything for.
+[[operations]]
+include-name = "GET /api/v1/connections/{connection_id}/discover"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]

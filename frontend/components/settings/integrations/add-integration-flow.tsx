@@ -14,14 +14,22 @@ import {
   Problems,
 } from "@/components/settings/integrations/integration-card";
 import { Button } from "@/components/ui/button";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
+import { useAthleteTimezone } from "@/lib/clock";
+import { formatAthleteStamp } from "@/lib/format";
 
 type Schemas = components["schemas"];
 type CatalogueEntry = Schemas["CatalogueEntry"];
 type TransportOffer = Schemas["TransportOffer"];
 type StorageStatus = Schemas["StorageStatusRead"];
+type Proposal = Schemas["IntegrationProposalRead"];
+type IntegrationKind = Schemas["IntegrationKind"];
 
 /**
  * Adding a source: pick the integration, then pick how arc should collect it.
@@ -37,8 +45,11 @@ type StorageStatus = Schemas["StorageStatusRead"];
  * re-ask the athlete for a Dropbox account they connected last month, and a
  * completed step re-asked is one nobody can tell from a failure.
  *
- * PR-5 owns this file next, when discovery proposes the integration behind a
- * folder it found rather than offering the path.
+ * **Discovery leads, the catalogue is the fallback.** With an account already
+ * connected arc looks first and says what it found — "Wahoo, 3 activity files,
+ * newest 16.08 20:12" — because the athlete came here to make their rides
+ * appear, not to describe their filesystem. Picking from the catalogue is
+ * still right there for the source arc could not find.
  */
 export function AddIntegrationFlow({
   onDone,
@@ -59,6 +70,12 @@ export function AddIntegrationFlow({
   const only = offers.length === 1 ? offers[0] : null;
   const activeTransport =
     offers.find((offer) => offer.kind === transport) ?? only ?? null;
+  // Discovery needs an account to look through. The first connected one, not
+  // one per provider: there is a single athlete, and a second cloud account is
+  // a thing arc has never been able to hold.
+  const connectedStorage =
+    (catalogue.data?.storage ?? []).find((row) => row.connection_id !== null)
+      ?.connection_id ?? null;
 
   return (
     <div
@@ -79,7 +96,16 @@ export function AddIntegrationFlow({
           {loadFailureMessage(catalogue.error, "what arc can collect")}
         </p>
       ) : chosen === null ? (
-        <PickIntegration entries={addable} onPick={setKind} />
+        <>
+          {connectedStorage === null ? null : (
+            <DiscoveredIntegrations
+              connectionId={connectedStorage}
+              entries={addable}
+              onDone={onDone}
+            />
+          )}
+          <PickIntegration entries={addable} onPick={setKind} />
+        </>
       ) : activeTransport === null ? (
         <PickTransport offers={offers} onPick={setTransport} />
       ) : (
@@ -93,6 +119,212 @@ export function AddIntegrationFlow({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * What arc found in the connected account, named as the sources behind it.
+ *
+ * The moment this whole surface exists for. Before it, the athlete was offered
+ * `/apps/wahoofitness` with a file count and left to work out that it meant
+ * their bike computer — a fact arc held all along, in the catalogue, and never
+ * said. Accepting posts the proposal to the **same** `POST /api/v1/integrations`
+ * the manual path uses, so there is one write path and one set of refusals.
+ */
+function DiscoveredIntegrations({
+  connectionId,
+  entries,
+  onDone,
+}: {
+  readonly connectionId: string;
+  readonly entries: readonly CatalogueEntry[];
+  readonly onDone: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const discovery = $api.useQuery(
+    "get",
+    "/api/v1/connections/{connection_id}/discover",
+    { params: { path: { connection_id: connectionId } } },
+  );
+  const add = $api.useMutation("post", "/api/v1/integrations", {
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: integrationsKey });
+      onDone();
+    },
+  });
+  // Only for a proposal arc could not name: the source the athlete chose, by
+  // folder, so two unnamed folders do not answer for each other.
+  const [named, setNamed] = useState<Record<string, IntegrationKind>>({});
+
+  const accept = (proposal: Proposal, kind: IntegrationKind) => {
+    // Reset first: react-query holds the previous refusal until the next
+    // `mutate()`, and a 409 about a folder the athlete has moved on from
+    // would sit under the one they just picked.
+    add.reset();
+    add.mutate({
+      body: {
+        kind,
+        transport: proposal.transport,
+        connection_id: proposal.connection_id,
+        remote_path: proposal.path,
+      },
+    });
+  };
+
+  if (discovery.isPending) {
+    return (
+      <p className="text-ink-muted text-sm">
+        Looking for training data in your Dropbox…
+      </p>
+    );
+  }
+  if (!discovery.data) {
+    return (
+      <p role="alert" className="text-destructive text-sm">
+        {loadFailureMessage(discovery.error, "what is in your Dropbox")}
+      </p>
+    );
+  }
+  if (discovery.data.access_type_suspect === "app_folder") {
+    return <AppFolderAlert />;
+  }
+  return (
+    <div
+      data-testid="discovery"
+      className="flex w-full flex-col items-start gap-2"
+    >
+      <SectionLabel>What arc found</SectionLabel>
+      {discovery.data.proposals.length === 0 ? (
+        // UI convention 3: the missing input, and the action that supplies it
+        // — which is the catalogue immediately below.
+        <p className="max-w-[62ch] text-ink-muted text-sm">
+          arc found no training data in the folders it can see. Pick the source
+          below and choose the folder yourself.
+        </p>
+      ) : (
+        <ul className="flex w-full flex-col gap-1.5">
+          {discovery.data.proposals.map((proposal) => (
+            <ProposalRow
+              key={proposal.path}
+              proposal={proposal}
+              entries={entries}
+              named={named[proposal.path] ?? null}
+              onName={(kind) =>
+                setNamed((current) => ({ ...current, [proposal.path]: kind }))
+              }
+              onAccept={(kind) => accept(proposal, kind)}
+              busy={add.isPending}
+            />
+          ))}
+        </ul>
+      )}
+      <Problems problems={apiErrorMessages(add.error)} />
+    </div>
+  );
+}
+
+/** One folder arc found: what it is, how much is in it, and how to take it. */
+function ProposalRow({
+  proposal,
+  entries,
+  named,
+  onName,
+  onAccept,
+  busy,
+}: {
+  readonly proposal: Proposal;
+  readonly entries: readonly CatalogueEntry[];
+  readonly named: IntegrationKind | null;
+  readonly onName: (kind: IntegrationKind) => void;
+  readonly onAccept: (kind: IntegrationKind) => void;
+  readonly busy: boolean;
+}) {
+  const timezone = useAthleteTimezone();
+  const kind = proposal.kind ?? named;
+
+  return (
+    <li
+      data-testid={`proposal-${proposal.kind ?? proposal.path}`}
+      className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-card border border-hairline px-3 py-2"
+    >
+      <span className="font-medium text-ink-primary text-sm">
+        {proposal.display_name}
+      </span>
+      <span className="font-mono text-ink-secondary text-sm">
+        {`${proposal.activity_files} activity files`}
+      </span>
+      {proposal.newest_at === null ? null : (
+        <span className="font-mono text-ink-muted text-sm">
+          {`newest ${formatAthleteStamp(proposal.newest_at, timezone)}`}
+        </span>
+      )}
+      <span className="mr-auto font-mono text-ink-muted text-sm">
+        {proposal.path || "the Dropbox root"}
+      </span>
+      {proposal.configured ? (
+        <span className="text-ink-muted text-sm">
+          arc is already collecting this folder.
+        </span>
+      ) : proposal.kind === null ? (
+        <>
+          <NativeSelect
+            size="sm"
+            aria-label={`Which source writes to ${proposal.path || "the Dropbox root"}?`}
+            value={named ?? ""}
+            onChange={(event) => onName(event.target.value as IntegrationKind)}
+          >
+            <NativeSelectOption value="">Pick a source</NativeSelectOption>
+            {entries.map((entry) => (
+              <NativeSelectOption key={entry.kind} value={entry.kind}>
+                {entry.display_name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <Button
+            type="button"
+            size="xs"
+            disabled={busy || kind === null}
+            onClick={() => kind !== null && onAccept(kind)}
+          >
+            Add this folder
+          </Button>
+        </>
+      ) : (
+        <Button
+          type="button"
+          size="xs"
+          disabled={busy}
+          onClick={() => onAccept(proposal.kind as IntegrationKind)}
+        >
+          {`Add ${proposal.display_name}`}
+        </Button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The diagnosis that replaces an empty folder tree.
+ *
+ * An App-folder Dropbox app can only ever see one directory of its own, so arc
+ * — which is not that directory — sees a Dropbox with nothing in it at all.
+ * Worded as something to check rather than an accusation, because no Dropbox
+ * API reports an app's access type and the remedy is not free: Dropbox cannot
+ * change it after the app is created.
+ */
+function AppFolderAlert() {
+  return (
+    <p
+      role="alert"
+      className="max-w-[62ch] rounded-card border border-danger-border bg-danger-surface px-3.5 py-2.5 text-destructive text-sm"
+    >
+      arc can see nothing at all in this Dropbox — not even the /Apps folder.
+      That usually means the Dropbox app was registered with{" "}
+      <strong>App folder</strong> access, which limits it to one directory of
+      its own. Dropbox cannot change an app&rsquo;s access type after it is
+      created, so the fix is to register a new app with Full Dropbox access and
+      connect it here.
+    </p>
   );
 }
 
@@ -223,6 +455,15 @@ function FolderStep({
 }) {
   const queryClient = useQueryClient();
   const [path, setPath] = useState("");
+  // The same read the proposals came from, so it costs nothing: react-query
+  // serves both from one request. Here it answers a different question —
+  // whether a tree with nothing in it means the athlete has nothing, or that
+  // arc is not allowed to see it.
+  const discovery = $api.useQuery(
+    "get",
+    "/api/v1/connections/{connection_id}/discover",
+    { params: { path: { connection_id: connectionId } } },
+  );
   const folders = $api.useQuery(
     "get",
     "/api/v1/connections/{connection_id}/folders",
@@ -250,6 +491,16 @@ function FolderStep({
     });
   };
 
+  if (discovery.data?.access_type_suspect === "app_folder") {
+    // An empty tree here would be a dead end with no remedy in it: the athlete
+    // would browse a Dropbox arc cannot see and conclude their rides are gone.
+    return (
+      <div data-testid="folder-step" className="flex w-full flex-col gap-2">
+        <SectionLabel>{`Which folder holds your ${entry.display_name} files?`}</SectionLabel>
+        <AppFolderAlert />
+      </div>
+    );
+  }
   return (
     <div data-testid="folder-step" className="flex w-full flex-col gap-2">
       <SectionLabel>{`Which folder holds your ${entry.display_name} files?`}</SectionLabel>
@@ -296,7 +547,7 @@ function FolderStep({
           Nothing but files in here. Collect this folder, or go back up.
         </p>
       ) : (
-        <ul className="flex w-full flex-col gap-1">
+        <ul data-testid="folder-tree" className="flex w-full flex-col gap-1">
           {folders.data.items.map((folder) => (
             <li
               key={folder.path_lower}

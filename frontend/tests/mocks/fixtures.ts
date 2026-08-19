@@ -1976,6 +1976,7 @@ export function resetMockState(): void {
   resetWellnessState();
   resetConnectionsState();
   resetIntegrationsState();
+  resetDiscoveryState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
@@ -4561,6 +4562,9 @@ export function addIntegration(body: {
 }):
   | { status: 200 | 201; integration: Integration }
   | { status: 404 | 409 | 422; detail: string } {
+  // Recorded before anything is decided: a test about *what the flow sent*
+  // has to see the body even when the server refuses it.
+  discoveryState().posted.push({ ...body });
   const state = integrationsState();
   if (body.kind === "local_drop") {
     return {
@@ -4746,4 +4750,134 @@ export function setLocalDropScanInterval(
   state.scanIntervalSeconds = seconds;
   state.scanIntervalStored = true;
   return { settings: localDropSettings() };
+}
+
+// ============================================================================
+// Integration discovery — the folders arc found, named as integrations
+// ============================================================================
+
+type Discovery = Schemas["IntegrationDiscoveryRead"];
+type Proposal = Schemas["IntegrationProposalRead"];
+
+/** One folder as the fake Dropbox holds it: how many rides, and how recent. */
+export interface DiscoveredFolder {
+  readonly path: string;
+  readonly activityFiles: number;
+  readonly newestAt: string | null;
+}
+
+/** The stamp on the newest ride in the seeded Wahoo folder. */
+export const WAHOO_NEWEST_AT = "2026-08-16T06:12:00Z";
+
+interface DiscoveryMockState {
+  folders: DiscoveredFolder[];
+  accessTypeSuspect: string | null;
+  /** Every body `POST /api/v1/integrations` was called with, in order. */
+  posted: Record<string, unknown>[];
+}
+
+function seedDiscoveryState(): DiscoveryMockState {
+  return {
+    // What an athlete with a Wahoo actually has: one folder under `/Apps`
+    // holding three rides. Matches the `folders` tree above, so the browser
+    // and discovery describe the same Dropbox.
+    folders: [
+      { path: WAHOO_PATH, activityFiles: 3, newestAt: WAHOO_NEWEST_AT },
+    ],
+    accessTypeSuspect: null,
+    posted: [],
+  };
+}
+
+let discovery: DiscoveryMockState | null = null;
+
+/** The current discovery mock state. */
+export function discoveryState(): DiscoveryMockState {
+  discovery ??= seedDiscoveryState();
+  return discovery;
+}
+
+/** Put the discovery mock back to its seed. Wired into `resetMockState`. */
+export function resetDiscoveryState(): void {
+  discovery = seedDiscoveryState();
+}
+
+/** Replace what the fake Dropbox holds, in the order the test cares about. */
+export function seedDiscoveredFolders(
+  ...folders: readonly DiscoveredFolder[]
+): void {
+  discoveryState().folders = [...folders];
+}
+
+/**
+ * The signature of an App-folder Dropbox app: nothing visible, `/Apps` absent.
+ *
+ * Set as the server's own conclusion rather than re-derived here — the
+ * inference is the backend's (`ConnectionService.discover_folders`), and a
+ * second copy of the rule in the mock would let the panel pass against a
+ * diagnosis the API never makes.
+ */
+export function seedAppFolderSuspicion(): void {
+  const state = discoveryState();
+  state.folders = [];
+  state.accessTypeSuspect = "app_folder";
+}
+
+/** Every body the flow posted to `POST /api/v1/integrations`, in order. */
+export function postedIntegrations(): readonly Record<string, unknown>[] {
+  return discoveryState().posted;
+}
+
+/**
+ * `GET /api/v1/connections/{id}/discover`, derived the way the service is.
+ *
+ * The kind comes from the stored classification first and the catalogue's
+ * default path second, `configured` from whether arc already collects that
+ * folder, and the order from the count then the stamp — all of which the panel
+ * reads and none of which a canned list could get wrong on its behalf.
+ */
+export function discoverIntegrations(connectionId: string): Discovery | null {
+  const connection = connectionsState().connections.find(
+    (row) => row.id === connectionId,
+  );
+  if (!connection) {
+    return null;
+  }
+  const classified = new Map<string, IntegrationKind>();
+  for (const [kind, entry] of integrationsState().stored) {
+    for (const path of entry.folders) {
+      classified.set(path, kind);
+    }
+  }
+  const held = new Set([
+    ...classified.keys(),
+    ...connection.feeds.map((feed) => feed.remote_path),
+  ]);
+  const proposals: Proposal[] = discoveryState()
+    .folders.filter((folder) => folder.activityFiles > 0)
+    .map((folder) => {
+      const path = normaliseRemotePath(folder.path);
+      const kind =
+        classified.get(path) ?? (path === WAHOO_PATH ? "wahoo" : null);
+      return {
+        kind,
+        display_name: kind ? DISPLAY_NAMES[kind] : path || "the Dropbox root",
+        connection_id: connectionId,
+        transport: "cloud_folder" as const,
+        path,
+        activity_files: folder.activityFiles,
+        newest_at: folder.newestAt,
+        configured: held.has(path),
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.activity_files - left.activity_files ||
+        Date.parse(right.newest_at ?? "1970-01-01T00:00:00Z") -
+          Date.parse(left.newest_at ?? "1970-01-01T00:00:00Z"),
+    );
+  return {
+    proposals,
+    access_type_suspect: discoveryState().accessTypeSuspect,
+  };
 }

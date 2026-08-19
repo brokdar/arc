@@ -38,6 +38,7 @@ from app.domain.integrations import (
     IntegrationSpec,
     StorageProvider,
     TransportKind,
+    kind_for_default_path,
     ordered_data_kinds,
 )
 from app.persistence.audit import AuditRepository
@@ -126,6 +127,51 @@ class StorageStatus:
     connection_id: uuid.UUID | None
     account_label: str | None
     status: ConnectionStatus | None
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationProposal:
+    """A folder arc found, named as the **integration** behind it.
+
+    The point of the whole surface, and the reason this is not
+    `FolderCandidate` with two more fields: what discovery hands the athlete is
+    "Wahoo — 342 rides, newest 16.08 20:12", not a filesystem path they have to
+    recognise. Every field here is either what to show or what to post back.
+    """
+
+    #: ``None`` when no catalogue integration writes to this folder. Nothing is
+    #: guessed from the folder's name: the athlete picks the source, and a
+    #: wrong guess would be stored as a fact and never questioned again.
+    kind: IntegrationKind | None
+    #: The integration's name, or — with no kind — the folder itself, because
+    #: that is the only true thing arc can call it.
+    display_name: str
+    #: Posted back verbatim, which is why it is on the proposal rather than
+    #: re-derived by the panel from whatever connection it happens to be
+    #: rendering: accepting is one click and one write path.
+    connection_id: uuid.UUID
+    transport: TransportKind
+    #: Normalised, so accepting stores the same spelling the folder-clash
+    #: refusal compares against.
+    path: str
+    activity_files: int
+    newest_at: dt.datetime | None
+    #: ``True`` when arc is already collecting this folder on this account.
+    #: Shown rather than hidden — "arc already has these" is the answer to the
+    #: question the athlete asked — but with no control to add it again.
+    configured: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredIntegrations:
+    """What arc found on one connection, and what may be in the way."""
+
+    #: Best first: most activity files, then most recently written.
+    proposals: tuple[IntegrationProposal, ...]
+    #: See `ConnectionService.discover_folders` — an inference about the
+    #: Dropbox app's access type, never a fact, and ``None`` unless the
+    #: evidence is unambiguous.
+    access_type_suspect: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +264,74 @@ class IntegrationService:
                 )
             )
         return tuple(statuses)
+
+    async def propose(self, connection_id: uuid.UUID) -> DiscoveredIntegrations:
+        """Name the integrations behind the folders on one connection.
+
+        The read the operator's complaint was about. `ConnectionService`
+        answers *where the activity files are* — it walks the root and `/Apps`,
+        counts and ranks — and this layer answers *what that folder is*, which
+        is the only half the athlete can act on. The split follows the module
+        boundary the catalogue lives on: the connection layer knows Dropbox and
+        nothing about Wahoo, and re-deriving a display name in the adapter
+        would put the catalogue in three places.
+
+        A proposal is accepted by posting it to `POST /api/v1/integrations` —
+        the **same** call the manual path makes, so there is one write path and
+        one set of refusals. Nothing here writes anything.
+
+        Raises:
+            NotFoundError: When the connection does not exist.
+            ConflictError: When the credential needs re-authorizing.
+            RateLimitedError: When Dropbox is throttling arc.
+            ValidationError: When arc cannot read its own credential, or
+                Dropbox failed in a way arc did not cause.
+        """
+        found = await self._connection_service.discover_folders(connection_id)
+        connection = await self._connections.get(connection_id)
+        held = {
+            feed.remote_path: feed
+            for feed in (connection.feeds if connection is not None else ())
+        }
+        proposals = []
+        for candidate in found.candidates:
+            path = normalise_remote_path(candidate.path)
+            feed = held.get(path)
+            kind = await self._kind_of(path, feed)
+            proposals.append(
+                IntegrationProposal(
+                    kind=kind,
+                    display_name=(
+                        CATALOGUE[kind].display_name
+                        if kind is not None
+                        else (path or "the Dropbox root")
+                    ),
+                    connection_id=connection_id,
+                    transport=TransportKind.CLOUD_FOLDER,
+                    path=path,
+                    activity_files=candidate.activity_files,
+                    newest_at=candidate.newest_at,
+                    configured=feed is not None,
+                )
+            )
+        return DiscoveredIntegrations(
+            proposals=tuple(proposals),
+            access_type_suspect=found.access_type_suspect,
+        )
+
+    async def _kind_of(self, path: str, feed: FeedRow | None) -> IntegrationKind | None:
+        """Which source a discovered folder belongs to, if arc can say.
+
+        The **stored** classification wins over the catalogue's default path:
+        an athlete who filed `/apps/wahoofitness` under something else has said
+        so, and answering with the catalogue's guess would contradict a
+        decision they already made.
+        """
+        if feed is not None and feed.integration_id is not None:
+            owner = await self._repository.get(feed.integration_id)
+            if owner is not None:
+                return owner.kind
+        return kind_for_default_path(path)
 
     def _local_drop(self, configured: LocalDropSettings) -> IntegrationView:
         """The always-present entry, built from settings rather than a row.

@@ -66,7 +66,11 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
-from app.domain.connections import FEED_DELIVERED_ACTION, ConnectionStatus
+from app.domain.connections import (
+    ACTIVITY_EXTENSIONS,
+    FEED_DELIVERED_ACTION,
+    ConnectionStatus,
+)
 from app.domain.integrations import CATALOGUE, DataKind, ordered_data_kinds
 from app.ingest.parsers import extension_of
 from app.ingest.pipeline import FileOrigin, IngestPaths, IngestPipeline
@@ -105,16 +109,6 @@ FEED_ENTITY = "feed"
 #: makes for the write cap, applied again). The name is spelled in
 #: `app.domain.connections` because the reader lives one layer below this one.
 DELIVERED_ACTION = FEED_DELIVERED_ACTION
-
-#: The only extensions arc will spend a download on.
-#:
-#: Everything else is skipped *without* downloading it and **without an ingest
-#: event**. The alternative — download everything and let the pipeline
-#: quarantine what it cannot read — was rejected because a real Dropbox folder
-#: holds screenshots, CSV exports and the odd PDF, and a quarantine queue full
-#: of files that were never rides is a queue nobody reads. The queue's value is
-#: that everything in it is a decision somebody has to take.
-ACTIVITY_EXTENSIONS = frozenset({"fit", "gpx", "tcx"})
 
 #: Filenames that are never a finished activity, matched lowercased.
 #:
@@ -196,6 +190,10 @@ def _should_take(entry: DropboxFile) -> _Refusal | None:
         return _Refusal(
             f"{entry.name} is written while a ride is still in progress", recorded=False
         )
+    # The one list, in the domain, because folder discovery ranks a folder by
+    # how many of these are in it from a layer that may not import this one —
+    # see :data:`app.domain.connections.ACTIVITY_EXTENSIONS` for why arc will
+    # not spend a download on anything else.
     if extension_of(Path(entry.name)) not in ACTIVITY_EXTENSIONS:
         return _Refusal(f"{entry.name} is not an activity file", recorded=False)
     if entry.size > MAX_UPLOAD_BYTES:

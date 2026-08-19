@@ -1,4 +1,4 @@
-"""AC-3 to AC-5, AC-8 and AC-9: every source arc collects from, over HTTP.
+"""AC-3 to AC-5, AC-8, AC-9, AC-21 and AC-22: every source, over HTTP.
 
 Asserted on the response body and on the rows behind it, never on a service
 return value: the panel reads this JSON and the athlete reads the panel, so a
@@ -21,7 +21,12 @@ from app.domain.integrations import IntegrationKind
 from app.persistence.activity import RecordingRow
 from app.persistence.connections import ConnectionRow, FeedRow
 from app.persistence.integrations import IntegrationRow
-from tests.unit.dropbox_fake import FakeDropbox
+from tests.unit.dropbox_fake import (
+    FakeDropbox,
+    file_entry,
+    folder_entry,
+    rate_limited,
+)
 
 pytestmark = pytest.mark.usefixtures("dropbox_env")
 
@@ -591,3 +596,328 @@ async def test_removing_an_integration_frees_its_folder_for_another(
 
     again = await client.post(INTEGRATIONS, json=body)
     assert again.status_code == 201, again.text
+
+
+# --- AC-21: discovery proposes integrations, not paths -----------------------
+
+
+def discover_url(connection: dict[str, Any]) -> str:
+    return f"/api/v1/connections/{connection['id']}/discover"
+
+
+def tree(**folders: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """A Dropbox laid out by keyword: `root=[...], apps_wahoofitness=[...]`.
+
+    The keyword is the path with `/` written as `_`, so a test reads as the
+    directory tree it is describing rather than as a dict of strings.
+    """
+    return {
+        ("" if name == "root" else "/" + name.replace("_", "/")): entries
+        for name, entries in folders.items()
+    }
+
+
+#: What AC-21's fixture holds: `/Apps/WahooFitness` with three rides.
+WAHOO_RIDES = [
+    file_entry(
+        "2026-08-14-ride.fit",
+        "/apps/wahoofitness/2026-08-14-ride.fit",
+        client_modified="2026-08-14T05:30:00Z",
+    ),
+    file_entry(
+        "2026-08-15-ride.fit",
+        "/apps/wahoofitness/2026-08-15-ride.fit",
+        client_modified="2026-08-15T06:00:00Z",
+    ),
+    file_entry(
+        "2026-08-16-ride.fit",
+        "/apps/wahoofitness/2026-08-16-ride.fit",
+        client_modified="2026-08-16T06:12:00Z",
+    ),
+]
+
+
+async def test_discovery_names_the_integration_behind_the_folder_it_finds(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps"), folder_entry("Documents", "/documents")],
+        apps=[folder_entry("WahooFitness", "/apps/wahoofitness")],
+        apps_wahoofitness=WAHOO_RIDES,
+        documents=[file_entry("plan.pdf", "/documents/plan.pdf")],
+    )
+
+    response = await client.get(discover_url(connection))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # The whole answer: the athlete is offered Wahoo, by name, and nothing else.
+    assert body["proposals"] == [
+        {
+            "kind": "wahoo",
+            "display_name": "Wahoo",
+            "connection_id": connection["id"],
+            "transport": "cloud_folder",
+            "path": "/apps/wahoofitness",
+            "activity_files": 3,
+            "newest_at": "2026-08-16T06:12:00Z",
+            "configured": False,
+        }
+    ]
+
+
+async def test_a_folder_holding_no_activity_files_is_absent_not_zero(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps"), folder_entry("Documents", "/documents")],
+        apps=[folder_entry("WahooFitness", "/apps/wahoofitness")],
+        apps_wahoofitness=WAHOO_RIDES,
+        documents=[file_entry("plan.pdf", "/documents/plan.pdf")],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # Not "/documents — 0 files": a folder holding no rides is not an answer to
+    # "where are your rides", and listing it as one costs the athlete a read.
+    assert [proposal["path"] for proposal in body["proposals"]] == [
+        "/apps/wahoofitness"
+    ]
+
+
+async def test_a_folder_matching_no_catalogue_path_is_proposed_unnamed(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Rides", "/rides")],
+        rides=[
+            file_entry("a.fit", "/rides/a.fit", client_modified="2026-08-10T07:00:00Z"),
+            file_entry("b.fit", "/rides/b.fit", client_modified="2026-08-11T07:00:00Z"),
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # Nothing found is silently dropped, and nothing is guessed: the folder is
+    # offered with no kind, and the athlete says which source it is.
+    assert len(body["proposals"]) == 1
+    proposal = body["proposals"][0]
+    assert proposal["kind"] is None
+    assert proposal["display_name"] == "/rides"
+    assert proposal["activity_files"] == 2
+
+
+async def test_an_activity_file_is_matched_whatever_its_case(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Rides", "/rides")],
+        rides=[file_entry("RIDE.FIT", "/rides/ride.fit")],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # A Garmin writes `RIDE.FIT` in capitals; a case-sensitive match would tell
+    # that athlete arc found nothing in a folder full of rides.
+    assert body["proposals"][0]["activity_files"] == 1
+
+
+async def test_only_the_extensions_arc_can_read_are_counted(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Rides", "/rides")],
+        rides=[
+            file_entry("a.fit", "/rides/a.fit"),
+            file_entry("b.gpx", "/rides/b.gpx"),
+            file_entry("c.tcx", "/rides/c.tcx"),
+            file_entry("d.json", "/rides/d.json"),
+            file_entry("README", "/rides/readme"),
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # `.json` is an export and a file with no extension has nothing to dispatch
+    # on, so neither is evidence that this is where the rides are.
+    assert body["proposals"][0]["activity_files"] == 3
+
+
+async def test_a_folder_holding_exactly_one_activity_file_is_proposed(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps")],
+        apps=[folder_entry("WahooFitness", "/apps/wahoofitness")],
+        apps_wahoofitness=[
+            file_entry(
+                "first.fit",
+                "/apps/wahoofitness/first.fit",
+                client_modified="2026-08-16T06:12:00Z",
+            )
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # The athlete who has ridden once is exactly the athlete setting arc up.
+    assert [proposal["path"] for proposal in body["proposals"]] == [
+        "/apps/wahoofitness"
+    ]
+    assert body["proposals"][0]["activity_files"] == 1
+
+
+async def test_proposals_order_by_count_then_by_recency(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[
+            folder_entry("Few", "/few"),
+            folder_entry("Stale", "/stale"),
+            folder_entry("Fresh", "/fresh"),
+        ],
+        few=[file_entry("a.fit", "/few/a.fit", client_modified="2026-08-18T06:00:00Z")],
+        stale=[
+            file_entry("a.fit", "/stale/a.fit", client_modified="2026-01-02T06:00:00Z"),
+            file_entry("b.fit", "/stale/b.fit", client_modified="2026-01-03T06:00:00Z"),
+        ],
+        fresh=[
+            file_entry("a.fit", "/fresh/a.fit", client_modified="2026-08-15T06:00:00Z"),
+            file_entry("b.fit", "/fresh/b.fit", client_modified="2026-08-16T06:00:00Z"),
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # Most files first; the tie between two folders holding two rides each goes
+    # to the one the head unit touched this week.
+    assert [proposal["path"] for proposal in body["proposals"]] == [
+        "/fresh",
+        "/stale",
+        "/few",
+    ]
+
+
+async def test_a_paged_listing_is_followed_to_the_end_before_counting(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    rides = [
+        file_entry(f"ride-{index}.fit", f"/rides/ride-{index}.fit")
+        for index in range(7)
+    ]
+    fake.tree = tree(root=[folder_entry("Rides", "/rides")], rides=rides)
+    # Dropbox serves a big folder in pages; stopping at the first one reports a
+    # fraction of what is there as if it were the total.
+    fake.tree_page_size = 2
+
+    body = (await client.get(discover_url(connection))).json()
+
+    assert body["proposals"][0]["activity_files"] == 7
+
+
+async def test_a_folder_already_collected_is_flagged_as_configured(
+    data_root: Path,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+) -> None:
+    connection = await connect(client)
+    await seed_classified_feed(
+        db_session, connection["id"], IntegrationKind.WAHOO, "/apps/wahoofitness"
+    )
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps")],
+        apps=[folder_entry("WahooFitness", "/apps/wahoofitness")],
+        apps_wahoofitness=WAHOO_RIDES,
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # Reported rather than hidden: the athlete who is looking for their rides
+    # is told arc already has them, which is the answer to the question they
+    # asked. The panel renders no create control for it.
+    assert len(body["proposals"]) == 1
+    assert body["proposals"][0]["configured"] is True
+    assert body["proposals"][0]["kind"] == "wahoo"
+
+
+async def test_finding_nothing_is_an_empty_list_and_a_200(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Documents", "/documents")],
+        documents=[file_entry("plan.pdf", "/documents/plan.pdf")],
+    )
+
+    response = await client.get(discover_url(connection))
+
+    # "arc looked and found no activity files" is a real answer, not a 404.
+    assert response.status_code == 200, response.text
+    assert response.json()["proposals"] == []
+
+
+# --- AC-22: the App-folder diagnosis, in place of an empty tree --------------
+
+
+async def test_an_empty_root_and_an_absent_apps_folder_suspect_app_folder(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    # An App-folder app sees only its own directory, so arc sees a Dropbox with
+    # nothing in it at all — `/Apps` included.
+    fake.tree = tree(root=[])
+
+    body = (await client.get(discover_url(connection))).json()
+
+    assert body["access_type_suspect"] == "app_folder"
+    assert body["proposals"] == []
+
+
+async def test_an_empty_dropbox_holding_apps_is_not_a_misconfiguration(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(root=[folder_entry("Apps", "/apps")], apps=[])
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # Accusing this athlete would send them to re-register a working app.
+    assert body["access_type_suspect"] is None
+
+
+async def test_a_populated_root_without_apps_is_not_a_misconfiguration(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Documents", "/documents")],
+        documents=[],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    # arc can see the whole Dropbox; there is simply no `/Apps` in it.
+    assert body["access_type_suspect"] is None
+
+
+async def test_a_throttled_apps_probe_infers_nothing(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.tree = tree(root=[])
+    fake.list_failures["/Apps"] = rate_limited()
+
+    response = await client.get(discover_url(connection))
+
+    # A 429 is Dropbox being busy, not a statement about what arc may see.
+    assert response.status_code == 200, response.text
+    assert response.json()["access_type_suspect"] is None
