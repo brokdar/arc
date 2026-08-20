@@ -60,7 +60,7 @@ from app.domain.matching import (
     MatchLinkStatus,
 )
 from app.domain.sessions import SessionStatus
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
@@ -340,7 +340,7 @@ class SessionMatchRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete(self, row: SessionMatchRow) -> None:
@@ -421,5 +421,5 @@ class EveningPromptRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row

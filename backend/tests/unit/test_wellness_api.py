@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
+from app.core.exceptions import NotFoundError
 from app.domain.actor import Actor
 from app.domain.wellness import (
     BOUNDS,
@@ -156,6 +157,31 @@ async def test_clearing_the_last_value_retracts_the_day(client: AsyncClient) -> 
 
     assert await patch(client, TODAY, {"resting_hr_bpm": None}) is None
     assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).status_code == 404
+
+
+async def test_a_day_retracted_between_the_write_and_the_read_back_answers_null(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found by Schemathesis: a 404 on a PATCH that succeeded.
+
+    The write commits, then the endpoint reads the day back to render it; a
+    concurrent retraction in that gap left the read with nothing and answered
+    404 — a status this operation does not document, on a request that worked.
+    `null` is what it already says for "there is nothing here now".
+    """
+    await record(client, resting_hr_bpm=46)
+
+    async def gone(self: WellnessService, local_date: dt.date) -> WellnessDayRow:
+        raise NotFoundError(f"No wellness was recorded for {local_date.isoformat()}")
+
+    monkeypatch.setattr(WellnessService, "get", gone)
+
+    response = await client.patch(
+        f"{DAYS}/{TODAY.isoformat()}", json={"resting_hr_bpm": 48}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() is None
 
 
 async def test_an_empty_write_to_a_day_that_never_existed_is_still_refused(

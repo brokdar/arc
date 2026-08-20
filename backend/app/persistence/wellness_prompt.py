@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.wellness import WellnessPromptStatus
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import UtcDateTime, enum_column
 
 
@@ -117,5 +117,5 @@ class WellnessPromptRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row

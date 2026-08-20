@@ -15,7 +15,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import MetaData
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -23,10 +23,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
-from app.core.exceptions import ConflictError
+from app.core.exceptions import ConflictError, ValidationError
 
 #: Deterministic names for every index and constraint.
 #:
@@ -93,9 +94,27 @@ def set_session_factory(factory: async_sessionmaker[AsyncSession] | None) -> Non
     _session_factory = factory
 
 
+#: Postgres `character_not_in_repertoire` — a NUL byte in a text value.
+#:
+#: Matched on the SQLSTATE rather than the driver's exception class or its
+#: message: the code is in the SQL standard, so it survives an asyncpg upgrade
+#: and needs no driver import here. SQLite stores NUL happily, so this never
+#: fires there and the unit suite cannot see the case at all.
+_CHARACTER_NOT_IN_REPERTOIRE = "22021"
+
+
 @asynccontextmanager
-async def _integrity_as_conflict(session: AsyncSession) -> AsyncIterator[None]:
-    """Turn a constraint violation into a `ConflictError` (409, not 500).
+async def _write_failures_translated(session: AsyncSession) -> AsyncIterator[None]:
+    """Turn a write the caller caused into an `AppError`, never a 500.
+
+    Three ways a write fails for a reason that is not arc breaking, all of them
+    reachable from ordinary concurrent use and none of them a server fault:
+
+    * a **uniqueness** violation — a service's pre-check lost a race;
+    * a **stale** UPDATE — the row was deleted between the read and the flush
+      of a read-modify-write, which is the same lost race seen from the other
+      side, and so also a 409;
+    * a **NUL byte** in text, which Postgres refuses outright.
 
     The session is rolled back first so it stays usable and no connection is
     left holding a failed transaction. Only the driver's own message is
@@ -109,26 +128,65 @@ async def _integrity_as_conflict(session: AsyncSession) -> AsyncIterator[None]:
         original = getattr(exc, "orig", None)
         detail = f"Conflicts with existing data: {original}" if original else str(exc)
         raise ConflictError(detail) from exc
+    except StaleDataError as exc:
+        await session.rollback()
+        raise ConflictError(
+            "That record changed while this write was in flight — it was "
+            "removed by another write. Read it again and retry."
+        ) from exc
+    except DBAPIError as exc:
+        # Everything else a DBAPI raises — a dropped connection, a timeout — is
+        # arc's problem and must stay a 500, so this re-raises unless it is the
+        # one client-caused code.
+        if getattr(exc.orig, "sqlstate", None) != _CHARACTER_NOT_IN_REPERTOIRE:
+            raise
+        await session.rollback()
+        raise ValidationError(
+            "That text contains a NUL byte, which cannot be stored. Remove it "
+            "and send the value again."
+        ) from exc
 
 
 async def flush(session: AsyncSession) -> None:
-    """Flush pending changes, translating constraint violations.
+    """Flush pending changes, translating the write failures a caller causes.
 
-    Repositories flush through here: a service's uniqueness pre-check can
-    always lose a race, and an untranslated `IntegrityError` is a 500.
+    Repositories flush through here: a pre-check can always lose a race, and an
+    untranslated driver exception is a 500.
     """
-    async with _integrity_as_conflict(session):
+    async with _write_failures_translated(session):
         await session.flush()
 
 
+async def refresh(
+    session: AsyncSession, instance: object, attribute_names: list[str] | None = None
+) -> None:
+    """Re-read server-generated columns, translating a row that vanished.
+
+    The write half of a read-modify-write is guarded by :func:`flush`; this is
+    the read that follows it, and it loses the same race one line later. When
+    another transaction deleted the row in between, SQLAlchemy has no row to
+    refresh from and raises `InvalidRequestError` — inside this function that
+    has exactly one meaning, because the only statement it issues is the
+    re-read of an instance the caller just wrote.
+    """
+    try:
+        await session.refresh(instance, attribute_names)
+    except InvalidRequestError as exc:
+        await session.rollback()
+        raise ConflictError(
+            "That record was removed while this write was in flight. Read it "
+            "again and retry."
+        ) from exc
+
+
 async def commit(session: AsyncSession) -> None:
-    """Commit, translating constraint violations into :class:`ConflictError`.
+    """Commit, translating the write failures a caller causes.
 
     The COMMIT is the last moment a write can fail — deferred constraints and
     races both surface here — so it happens inside the request/tool boundary
     where `AppError` still becomes a proper response.
     """
-    async with _integrity_as_conflict(session):
+    async with _write_failures_translated(session):
         await session.commit()
 
 

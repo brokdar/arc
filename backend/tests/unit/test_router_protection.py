@@ -92,6 +92,31 @@ def test_the_open_path_allowlist_is_not_stale(app: FastAPI) -> None:
     )
 
 
+def test_every_write_documents_the_race_it_can_lose(app: FastAPI) -> None:
+    """A write that loses a race answers 409, so the contract must say so.
+
+    `app.persistence.db` answers a uniqueness violation, a stale UPDATE and a
+    row deleted mid-write with `ConflictError`, which reaches the client as a
+    409 — from any endpoint that writes, not only the ones whose service
+    mentions conflicts. An operation that omits it is a contract the fuzzer
+    fails against on somebody else's branch, weeks later.
+    """
+    spec = app.openapi()
+    undocumented = [
+        f"{method.upper()} {path}"
+        for path, operations in spec["paths"].items()
+        if path not in OPEN_PATHS
+        for method, operation in operations.items()
+        if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        if "409" not in operation.get("responses", {})
+    ]
+
+    assert undocumented == [], (
+        "these writes can answer 409 and do not publish it — mount them on the "
+        f"guarded router in `app.main`, which declares it: {undocumented}"
+    )
+
+
 async def test_every_non_open_endpoint_rejects_an_anonymous_caller(
     app: FastAPI, anon_client: AsyncClient
 ) -> None:

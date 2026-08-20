@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.athlete import Discipline
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.search import contains
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
@@ -193,7 +193,7 @@ class WorkoutRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete(self, row: WorkoutRow) -> None:

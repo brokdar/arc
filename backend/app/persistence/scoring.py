@@ -49,7 +49,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.scoring import Verdict
 from app.domain.versioning import current_version
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest a recompute (or revision) reason may be. The same bound the metric
@@ -340,7 +340,7 @@ class SessionAlignmentRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
 
@@ -400,7 +400,7 @@ class SessionScoreRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
 
@@ -441,7 +441,7 @@ class VerdictDeclarationRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
 
@@ -481,5 +481,5 @@ class SessionReasonsRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row

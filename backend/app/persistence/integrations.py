@@ -30,7 +30,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
 from app.domain.integrations import IntegrationKind
 from app.persistence.connections import FeedRow
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import UtcDateTime, enum_column
 
 
@@ -107,7 +107,7 @@ class IntegrationRepository:
         """Persist an integration and refresh it."""
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row, ["feeds"])
+        await refresh(self._session, row, ["feeds"])
         return row
 
     async def delete(self, row: IntegrationRow) -> None:

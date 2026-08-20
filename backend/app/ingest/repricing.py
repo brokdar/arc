@@ -45,6 +45,7 @@ from app.domain.anchors import (
 from app.ingest.analysis import SessionAnalyser
 from app.persistence.activity import SessionRepository
 from app.persistence.anchors import AnchorRepository, AnchorVersionRow
+from app.persistence.db import refresh
 from app.persistence.metrics import SessionMetricsRepository
 from app.services.anchors import AnchorService
 from app.services.metrics import SessionMetricsService
@@ -148,7 +149,7 @@ async def append_anchor_and_reprice(
         await session.rollback()
         # The rollback expired the committed row; reload it so the adapter
         # can still render the version that *did* land.
-        await session.refresh(row)
+        await refresh(session, row)
         return row, RepriceReport(
             examined=0, repriced=0, unchanged=0, failed=0, note=SCAN_FAILED_NOTE
         )
@@ -175,7 +176,7 @@ async def append_anchor_and_reprice(
     if failed:
         # Rolling back expired every loaded instance, the committed anchor
         # row included; reload it so the adapter can still render it.
-        await session.refresh(row)
+        await refresh(session, row)
     return row, RepriceReport(
         examined=len(affected) + unchanged,
         repriced=repriced,

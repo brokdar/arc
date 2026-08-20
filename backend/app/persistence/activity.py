@@ -53,7 +53,7 @@ from app.domain.activity import (
 )
 from app.domain.anchors import Provenance
 from app.domain.streams import AnomalyKind, StreamChannel
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.exercises import MAX_SLUG_LENGTH
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
@@ -450,7 +450,7 @@ class SessionRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
 
@@ -514,7 +514,7 @@ class RecordingRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def add_anomalies(self, rows: Sequence[StreamAnomalyRow]) -> None:

@@ -48,7 +48,7 @@ from app.persistence.activity import SessionRepository, SessionRow
 from app.persistence.anchors import AnchorVersionRow
 from app.persistence.athlete import AthleteRepository
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit
+from app.persistence.db import commit, refresh
 from app.persistence.metrics import (
     MAX_REASON_LENGTH,
     SessionMetricsRepository,
@@ -277,7 +277,7 @@ class SessionMetricsService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def record_strength(

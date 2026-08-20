@@ -65,7 +65,7 @@ from app.persistence.connections import (
     FeedRow,
     OAuthAuthorizationRow,
 )
-from app.persistence.db import commit
+from app.persistence.db import commit, refresh
 from app.persistence.integrations import IntegrationRepository, IntegrationRow
 from app.services.guardrails import check_write_cap
 
@@ -715,7 +715,7 @@ class ConnectionService:
             # Re-read the connection's folders: the deletes above took some of
             # them by cascade, and the connection's own cascade would otherwise
             # issue a second DELETE for rows that are already gone.
-            await self._session.refresh(row, ["feeds"])
+            await refresh(self._session, row, ["feeds"])
         await self._repository.delete(row)
         await self._audit.record(
             actor=actor,

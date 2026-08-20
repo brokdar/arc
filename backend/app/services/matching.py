@@ -101,7 +101,7 @@ from app.persistence.activity import (
 )
 from app.persistence.athlete import AthleteRepository
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit, session_scope
+from app.persistence.db import commit, refresh, session_scope
 from app.persistence.matching import (
     EveningPromptRepository,
     EveningPromptRow,
@@ -355,7 +355,7 @@ class MatchingService:
             action="match.rematched" if rematch else "match.proposed",
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         await self._score_settled(link, actor=actor)
         return MatchOutcome(session=row, link=link, candidates=len(candidates))
 
@@ -466,7 +466,7 @@ class MatchingService:
             payload=_payload(link, row, planned) | {"from_status": previous.value},
         )
         await commit(self._session)
-        await self._session.refresh(link)
+        await refresh(self._session, link)
         await self._score_settled(link, actor=actor)
         return link
 
@@ -493,7 +493,7 @@ class MatchingService:
         row.status = SessionMatchStatus.UNPLANNED
         await self._sessions.add(row)
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def unlink(self, link_id: uuid.UUID, *, actor: Actor) -> SessionRow:
@@ -505,7 +505,7 @@ class MatchingService:
         link = await self.get(link_id)
         row = await self._restore(link, actor=actor, action="match.unlinked")
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def swap(
@@ -572,7 +572,7 @@ class MatchingService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(link)
+        await refresh(self._session, link)
         await self._score_settled(link, actor=actor)
         return link
 
@@ -679,7 +679,7 @@ class MatchingService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(survivor)
+        await refresh(self._session, survivor)
         return survivor
 
     # --- the missed sweep (build plan WP-6.7) --------------------------------
@@ -1003,7 +1003,7 @@ class MatchingService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return MatchOutcome(session=row, link=None, candidates=candidates)
 
 

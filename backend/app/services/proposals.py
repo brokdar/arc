@@ -77,7 +77,7 @@ from app.domain.purpose import Purpose
 from app.domain.sessions import SessionStatus
 from app.domain.workout import workout_body_to_json
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit, session_scope
+from app.persistence.db import commit, refresh, session_scope
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.persistence.proposals import PlanProposalRepository, PlanProposalRow
 from app.persistence.scoring import SessionReasonsRepository
@@ -281,7 +281,7 @@ class ProposalService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return ProposalOutcome(diff=diff, proposal=row, superseded=tuple(superseded))
 
     # --- answering one -------------------------------------------------------
@@ -359,7 +359,7 @@ class ProposalService:
             payload={"changes": len(changes), "proposed_by": row.created_by},
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def reject(
@@ -391,7 +391,7 @@ class ProposalService:
             payload={"reason": note, "proposed_by": row.created_by},
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     # --- the two automatic exits ---------------------------------------------

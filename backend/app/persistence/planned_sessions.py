@@ -43,7 +43,7 @@ from app.domain.athlete import Discipline
 from app.domain.purpose import Purpose
 from app.domain.sessions import MAX_INTENT_CHARS, SessionStatus
 from app.domain.versioning import current_version
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest a recompute reason may be.
@@ -249,7 +249,7 @@ class PlannedSessionRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete(self, row: PlannedSessionRow) -> None:
@@ -280,5 +280,5 @@ class PlannedSessionRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
