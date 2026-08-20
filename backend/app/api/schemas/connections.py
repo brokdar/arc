@@ -19,7 +19,6 @@ from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.persistence.connections import (
     MAX_APP_KEY_LENGTH,
     MAX_REDIRECT_URI_LENGTH,
-    MAX_STATE_LENGTH,
 )
 
 
@@ -97,10 +96,16 @@ class DropboxCodeSubmit(BaseModel):
     #: The nonce Dropbox round-tripped, from the callback page's query string.
     #: Omitted by the paste flow, which has none — and a paste flow completed
     #: *with* one is refused, so this is not a field a client may invent.
-    state: (
-        Annotated[str, Field(min_length=1, max_length=MAX_STATE_LENGTH)]
-        | SkipJsonSchema[None]
-    ) = None
+    #:
+    #: Unbounded, unlike `code` and unlike the column arc stores its own nonce
+    #: in: every verdict on a supplied `state` belongs to
+    #: `ConnectionService._check_state`, because a wrong one does not merely
+    #: fail — it **deletes** the pending authorization. A `min_length` or
+    #: `max_length` here would answer 422 without that deletion, so an empty
+    #: or over-long value would leave the flow sitting there redeemable and
+    #: hand an attacker an unlimited supply of guesses. Omission still means
+    #: "paste flow"; `null` is not a second way to say it.
+    state: str | SkipJsonSchema[None] = None
 
 
 class FeedRead(BaseModel):

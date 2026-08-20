@@ -11,6 +11,7 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import unicodedata
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -28,8 +29,10 @@ from app.connectors import dropbox
 from app.connectors.dropbox import READ_SCOPES
 from app.core.config import get_settings
 from app.domain.connections import ConnectionStatus
+from app.persistence.audit import AuditLogEntry
 from app.persistence.connections import (
     MAX_APP_KEY_LENGTH,
+    MAX_STATE_LENGTH,
     ConnectionRow,
     FeedRow,
     OAuthAuthorizationRow,
@@ -506,6 +509,9 @@ async def test_a_mismatched_state_is_refused_and_the_flow_is_deleted(
 
     assert response.status_code == 422, response.text
     assert await count_of(db_session, ConnectionRow) == 0
+    # "No connection is created" in the record as well as in the table: a
+    # `connection.connected` audit row would say arc believed it had one.
+    assert await count_of(db_session, AuditLogEntry) == 0
     # Not offered to Dropbox at all: a code arriving with the wrong nonce is
     # not arc's code, and redeeming it is the attack this guards against.
     assert fake.calls_to(TOKEN_PATH) == []
@@ -518,6 +524,127 @@ async def test_a_mismatched_state_is_refused_and_the_flow_is_deleted(
     assert retry.status_code == 422, retry.text
     assert "No Dropbox authorization is in progress" in retry.json()["detail"]
     assert await count_of(db_session, ConnectionRow) == 0
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        # Not ASCII, and `secrets.compare_digest` refuses a `str` that is not:
+        # the nonce arrives from a query string, so it is whatever the athlete's
+        # browser was pointed at, not something arc minted.
+        "nøt-the-state",
+        # ASCII apart from its last character: what breaks the comparison is
+        # one byte being outside ASCII, not the value looking exotic.
+        "not-the-statė",
+    ],
+)
+async def test_a_non_ascii_state_is_a_mismatch_and_still_deletes_the_flow(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+    supplied: str,
+) -> None:
+    # The comparison is over bytes, not characters. Comparing `str` here would
+    # raise inside `secrets.compare_digest` and turn a wrong nonce — the exact
+    # thing AC-25 is about — into a 500 that leaves the flow redeemable, so an
+    # attacker could deny arc the deletion simply by sending one accented
+    # character.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": supplied}
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    # The deletion is the half a crash would have skipped.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_lone_surrogate_state_is_a_mismatch_and_still_deletes_the_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Sent as raw bytes because no JSON encoder will emit one from a Python
+    # string, and a browser's `JSON.stringify` will: a lone surrogate escapes
+    # to ASCII on the way out and comes back a surrogate here. It has no plain
+    # UTF-8 form, so the comparison has to say what it does with one instead of
+    # raising on it.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE,
+        content=rb'{"code": "pasted-code", "state": "\ud800"}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_state_equal_only_after_unicode_normalisation_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # A nonce is compared as the bytes arc issued, never as text. This value
+    # is the real state with one character swapped for its fullwidth twin, so
+    # it normalises straight back to the state and is still a different value
+    # — encoding first is what keeps it one, and any folding on the way in
+    # would quietly widen what counts as a match.
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+    #: Every character `token_urlsafe` emits is ASCII punctuation-to-tilde,
+    #: which is exactly the range with a fullwidth form 0xFEE0 above it.
+    folded = chr(ord(state[0]) + 0xFEE0) + state[1:]
+    assert folded != state
+    assert unicodedata.normalize("NFKC", folded) == state
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": folded}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+@pytest.mark.parametrize(
+    ("label", "supplied"),
+    [
+        # Longer than any nonce arc mints. A bound in the request schema would
+        # refuse this before the service ever saw it — 422, but with the flow
+        # still sitting there redeemable.
+        ("over-long", "x" * (MAX_STATE_LENGTH + 1)),
+        # The empty string is a value the caller supplied, not an omission:
+        # `state=` in the callback's query string arrives as one.
+        ("empty", ""),
+    ],
+)
+async def test_a_state_the_schema_could_have_rejected_still_deletes_the_flow(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+    label: str,
+    supplied: str,
+) -> None:
+    # AC-25's two halves are one rule: a wrong nonce is refused *and* ends the
+    # flow. A shape the request schema turns away is refused without ending
+    # anything, which leaves the attacker who sent it free to keep guessing —
+    # so the verdict on `state` belongs to the service, not to a length bound.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": supplied}
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"], label
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
 
 
 async def test_a_redirect_flow_completed_without_a_state_is_refused(

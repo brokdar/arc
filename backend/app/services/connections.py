@@ -746,10 +746,22 @@ class ConnectionService:
         `compare_digest` rather than `==`: the value is a secret arc issued,
         and the timing of a byte-by-byte comparison is the one thing an
         attacker holding a code can measure.
+
+        Over **bytes** rather than `str`: `compare_digest` raises on a `str`
+        holding anything outside ASCII, and the supplied half is whatever the
+        athlete's browser was pointed at. Comparing text would turn the
+        wrong-nonce case — the one this method exists for — into a `TypeError`
+        that never reaches the deletion below, so one accented character would
+        be enough to keep a refused flow redeemable. `surrogatepass` because a
+        lone surrogate survives a JSON body and has no plain UTF-8 form; the
+        encoding is injective either way, so no two distinct nonces collide.
         """
         stored = pending.state
         if stored is not None and supplied is not None:
-            if secrets.compare_digest(stored, supplied):
+            if secrets.compare_digest(
+                stored.encode("utf-8", "surrogatepass"),
+                supplied.encode("utf-8", "surrogatepass"),
+            ):
                 return
         elif stored is None and supplied is None:
             return

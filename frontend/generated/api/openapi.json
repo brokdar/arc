@@ -1841,8 +1841,6 @@
             "type": "string"
           },
           "state": {
-            "maxLength": 128,
-            "minLength": 1,
             "title": "State",
             "type": "string"
           }
