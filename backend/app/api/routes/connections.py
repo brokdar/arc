@@ -10,10 +10,19 @@ a watched folder is now the *transport* of an integration, created and removed
 through the integration that owns it. Leaving the route in place would leave
 one write path that produces rows the panel cannot describe.
 
-There is deliberately **no callback route here, and none anywhere**. The PKCE
-paste flow is what makes that true: nothing on the internet ever has to reach
-arc for a connection to be made, so `OPEN_PATHS` is unchanged and every route
-below sits behind the session guard like the rest of `/api/v1`.
+There is deliberately **no callback route here, and none anywhere**, even now
+that Dropbox redirects the athlete back. The callback is a *frontend page* —
+`/settings/dropbox/callback` — which reads the code out of its own query
+string and posts it to `POST /connections/dropbox/complete` below, with the
+athlete's session cookie. The redirect lands in the browser they are already
+logged in to, so nothing unauthenticated ever has to reach arc: `OPEN_PATHS`
+is unchanged and every route here sits behind the session guard like the rest
+of `/api/v1`.
+
+A backend callback would have had to be public — Dropbox's redirect carries no
+cookie arc can require, because it is a fresh navigation from dropbox.com —
+and that is a route on the open internet accepting an authorization code, on a
+box whose whole security posture is "nothing on the internet reaches it".
 """
 
 import uuid
@@ -27,6 +36,7 @@ from app.api.schemas.connections import (
     ConnectionRead,
     DropboxAppKeySubmit,
     DropboxAuthorizationRead,
+    DropboxAuthorizationStart,
     DropboxCodeSubmit,
     DropboxSetupRead,
     FolderList,
@@ -150,18 +160,27 @@ async def clear_dropbox_app_key(service: ServiceDep, actor: ActorDep) -> None:
     await service.clear_dropbox_app_key(actor=actor)
 
 
-@router.post("/dropbox/authorize", responses=INVALID)
+@router.post("/dropbox/authorize", responses=BAD_BODY | INVALID)
 async def start_dropbox_authorization(
-    service: ServiceDep, actor: ActorDep
+    service: ServiceDep,
+    actor: ActorDep,
+    submitted: DropboxAuthorizationStart = DropboxAuthorizationStart(),
 ) -> DropboxAuthorizationRead:
     """Begin connecting Dropbox: get the link the athlete opens.
 
-    The link carries a PKCE challenge and **no redirect URI** — Dropbox shows
-    the athlete a code, which they paste into `POST /connections/dropbox/complete`.
-    That is what lets arc connect a cloud account from behind a home router
-    without registering a redirect or being reachable from the internet.
+    The body is optional and carries one field. With a `redirect_uri` the link
+    carries it and a `state`, and Dropbox sends the athlete back to that page
+    with the code in its query string. Without one — an empty body, which is
+    what the step sends when the browser's origin is not one Dropbox will
+    redirect to — the link is the pre-existing paste URL and Dropbox shows the
+    code on screen.
+
+    The URI is the *browser's*, not a header's, and the service decides
+    whether Dropbox will accept it before anything is stored.
     """
-    started = await service.start_dropbox_authorization(actor=actor)
+    started = await service.start_dropbox_authorization(
+        actor=actor, redirect_uri=submitted.redirect_uri
+    )
     return DropboxAuthorizationRead(
         authorize_url=started.authorize_url, expires_at=started.expires_at
     )
@@ -175,9 +194,17 @@ async def start_dropbox_authorization(
 async def complete_dropbox_authorization(
     service: ServiceDep, actor: ActorDep, submitted: DropboxCodeSubmit
 ) -> ConnectionRead:
-    """Finish connecting Dropbox with the code the athlete pasted back."""
+    """Finish connecting Dropbox with the code that came back.
+
+    Called by the athlete's own browser either way: by the form they pasted
+    into, or by the callback page at `/settings/dropbox/callback` reading its
+    own query string. The `state` is forwarded verbatim when there is one —
+    the service, not this route, decides whether it matches.
+    """
     return ConnectionRead.model_validate(
-        await service.complete_dropbox(code=submitted.code, actor=actor)
+        await service.complete_dropbox(
+            code=submitted.code, state=submitted.state, actor=actor
+        )
     )
 
 

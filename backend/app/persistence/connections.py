@@ -289,12 +289,17 @@ class OAuthAuthorizationRow(Base):
     #: The CSRF nonce a redirect flow round-trips through Dropbox, and the URI
     #: Dropbox is told to send the athlete back to.
     #:
-    #: Both **nullable and unread by any code in this release**: the paste flow
-    #: has neither, and the redirect flow that fills them in is a later PR. The
-    #: columns ship here so that PR is a behaviour change and not a schema
-    #: change on a database already holding live credentials — a migration is
-    #: the risky half of that work and it belongs with the one that is already
-    #: touching these tables.
+    #: Both **nullable, and null together**: a paste flow has neither, because
+    #: Dropbox shows the athlete a code instead of redirecting anywhere and
+    #: there is nothing to round-trip. `ConnectionService.complete_dropbox`
+    #: reads that as a rule in both directions — a row holding a state wants
+    #: one back, a row holding none must be completed without one — so "null"
+    #: here is a state the service asserts on, not a value that was not filled
+    #: in yet.
+    #:
+    #: They shipped inert one release ahead of the flow that uses them, so
+    #: adding the redirect was a behaviour change and not a schema change on a
+    #: database already holding live credentials.
     state: Mapped[str | None] = mapped_column(String(MAX_STATE_LENGTH))
     redirect_uri: Mapped[str | None] = mapped_column(String(MAX_REDIRECT_URI_LENGTH))
     created_at: Mapped[dt.datetime] = mapped_column(

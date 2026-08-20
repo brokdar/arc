@@ -25,7 +25,7 @@ import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Final
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -287,25 +287,77 @@ def code_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+#: The hosts Dropbox will redirect back to over plain `http`.
+#:
+#: Dropbox's own exemption, not arc's: every other redirect URI it accepts must
+#: be `https`. `::1` is spelled without its URL brackets because that is what
+#: `urlsplit(...).hostname` reports.
+LOOPBACK_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def redirect_eligible(redirect_uri: str) -> bool:
+    """Whether Dropbox will send the athlete back to this URI at all.
+
+    **The rule is Dropbox's and it is checked before the athlete leaves.** A
+    redirect URI must be `https` anywhere, or `http` on the loopback —
+    `localhost`, `127.0.0.1`, `[::1]`. Everything else is refused when the app
+    owner tries to *register* it, which is a console page arc never sees, and
+    then again by the authorize endpoint, which is an error page on
+    dropbox.com several clicks into a flow the athlete believed was working.
+    Neither failure names arc, and neither one says "connect by pasting the
+    code instead" — so arc decides here, and falls back before offering
+    anything.
+
+    The excluded case is the one this exists for: arc reached at
+    `http://192.168.1.50` from the sofa. That deployment connects by paste, and
+    it is not a broken install.
+
+    Matching is on the parsed host, never a prefix: `localhost.evil.example`
+    starts with `localhost` and is somebody else's machine.
+    """
+    parts = urlsplit(redirect_uri)
+    if not parts.hostname:
+        return False
+    if parts.scheme == "https":
+        return True
+    return parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS
+
+
+def new_state() -> str:
+    """A fresh CSRF nonce for a redirect flow.
+
+    43 characters of urlsafe base64 from 32 random bytes, comfortably past the
+    32 the contract asks for. It is stored beside the verifier and compared on
+    the way back: the verifier proves the *code* is arc's, and this proves the
+    *redirect* is — a code delivered to arc's callback by a page the athlete
+    was tricked into opening carries no nonce arc ever issued.
+    """
+    return secrets.token_urlsafe(32)
+
+
 def authorize_url(
-    *, app_key: str, verifier: str, scopes: Iterable[str] = READ_SCOPES
+    *,
+    app_key: str,
+    verifier: str,
+    scopes: Iterable[str] = READ_SCOPES,
+    redirect_uri: str | None = None,
+    state: str | None = None,
 ) -> str:
     """The URL the athlete opens to authorize arc.
 
-    **PKCE with a pasted code, and no `redirect_uri`.** The conventional OAuth
-    flow registers a redirect back to the application, and it is unavailable
-    here for a reason that is structural rather than aesthetic: a redirect URI
-    is registered *per origin*, and a self-hosted arc has no stable one. It is
-    `http://localhost:3000` on the developer's laptop, `http://arc.local` from
-    the phone, `http://192.168.1.42` when the router hands out a different
-    lease, and none of those is reachable from Dropbox's servers anyway without
-    exposing the box to the internet. Registering one pins the deployment to a
-    single hostname and breaks the day the athlete reaches arc by IP.
+    **PKCE either way, and the redirect is optional.** With a `redirect_uri`
+    Dropbox sends the athlete back to arc with the code in the query string;
+    without one it displays the code on screen for them to copy. The second is
+    what lets arc connect a cloud account from a deployment Dropbox will not
+    redirect to at all — plain `http` on a LAN address, which is a normal way
+    to run a self-hosted application and not a broken install
+    (:func:`redirect_eligible` decides which).
 
-    Without a redirect URI Dropbox displays the authorization code on screen
-    for the athlete to copy, and PKCE is what makes that safe: the code alone
-    is useless, because redeeming it requires the verifier that never left this
-    process (see :func:`code_challenge`).
+    PKCE is what makes the pasted code safe, and it is unchanged by the
+    redirect: the code alone is useless, because redeeming it requires the
+    verifier that never left this process (see :func:`code_challenge`).
+    `state` adds the other half the redirect needs — proof that the code came
+    back through the flow arc started, not through a link somebody sent.
 
     `token_access_type=offline` is what makes the grant carry a **refresh**
     token — without it arc holds a four-hour credential and the athlete
@@ -319,6 +371,10 @@ def authorize_url(
         "code_challenge_method": "S256",
         "scope": " ".join(sorted(scopes)),
     }
+    if redirect_uri is not None:
+        query["redirect_uri"] = redirect_uri
+    if state is not None:
+        query["state"] = state
     return f"{AUTHORIZE_ENDPOINT}?{urlencode(query)}"
 
 
@@ -352,28 +408,37 @@ def _token_failure(response: httpx.Response) -> DropboxError:
     )
 
 
-async def exchange_code(*, app_key: str, code: str, verifier: str) -> TokenGrant:
-    """Redeem a pasted authorization code for a token pair.
+async def exchange_code(
+    *, app_key: str, code: str, verifier: str, redirect_uri: str | None = None
+) -> TokenGrant:
+    """Redeem an authorization code — pasted or redirected — for a token pair.
 
     The form carries `client_id` and `code_verifier` and **no client secret**:
     arc is a public OAuth client (see the module docstring), and a deployment
     that never registered a secret must never be asked for one.
+
+    `redirect_uri` is sent **iff** the authorize call carried one (RFC 6749
+    s4.1.3): a code minted against a redirect is only redeemable by repeating
+    it, and one minted without a redirect is refused if it is sent. Either
+    mismatch comes back as `invalid_grant`, which the athlete reads as "the
+    code expired" — so the caller passes back what it stored, not what it
+    thinks the origin is now.
 
     Raises:
         DropboxAuthError: When Dropbox refuses the code (`invalid_grant` —
             spent, expired, or minted against a different verifier).
         DropboxUpstreamError: For any other failure.
     """
+    form = {
+        "code": code,
+        "grant_type": "authorization_code",
+        "code_verifier": verifier,
+        "client_id": app_key,
+    }
+    if redirect_uri is not None:
+        form["redirect_uri"] = redirect_uri
     async with _client() as http:
-        response = await http.post(
-            TOKEN_ENDPOINT,
-            data={
-                "code": code,
-                "grant_type": "authorization_code",
-                "code_verifier": verifier,
-                "client_id": app_key,
-            },
-        )
+        response = await http.post(TOKEN_ENDPOINT, data=form)
     if response.status_code != 200:
         raise _token_failure(response)
     return _grant_from(response.json())

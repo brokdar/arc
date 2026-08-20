@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DropboxAppKeyStep,
   DropboxConnectStep,
 } from "@/components/settings/integrations/dropbox-connect-step";
+import { takeAddFlow } from "@/lib/dropbox-redirect";
 import {
   connectionsState,
+  DROPBOX_CODE,
   MAX_APP_KEY_LENGTH,
   seedDropboxAppKey,
 } from "@/tests/mocks/fixtures";
@@ -28,6 +30,48 @@ function renderStep(step: React.ReactElement) {
     <QueryClientProvider client={queryClient}>{step}</QueryClientProvider>,
   );
 }
+
+/**
+ * Where the browser is, which is what chooses the flow.
+ *
+ * jsdom serves `http://localhost:3000`, which Dropbox *will* redirect to — so
+ * the default here is the redirect flow, and the paste flow has to be reached
+ * by moving the window somewhere Dropbox refuses. Both are real deployments
+ * and both are asserted.
+ */
+function atOrigin(origin: string) {
+  const url = new URL(origin);
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    writable: true,
+    value: {
+      ...window.location,
+      origin: url.origin,
+      href: `${url.origin}/settings`,
+      protocol: url.protocol,
+      host: url.host,
+      hostname: url.hostname,
+      assign: navigated,
+    },
+  });
+}
+
+/** Every URL the step handed the browser to. */
+const navigated = vi.fn<(url: string) => void>();
+const realLocation = window.location;
+
+beforeEach(() => {
+  navigated.mockClear();
+  atOrigin("http://localhost:3000");
+});
+
+afterEach(() => {
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    writable: true,
+    value: realLocation,
+  });
+});
 
 describe("the app-key step", () => {
   it("carries the registration checklist and the paste field, no .env in it", async () => {
@@ -50,6 +94,43 @@ describe("the app-key step", () => {
     // The key goes into the field below, not into a file and a restart.
     expect(screen.getByLabelText(/Dropbox app key/i)).toBeInTheDocument();
     expect(screen.queryByText(/DROPBOX__APP_KEY/)).not.toBeInTheDocument();
+  });
+
+  it("gives the redirect URI to register, as text and as a copy", async () => {
+    const user = userEvent.setup();
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboard },
+    });
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onRecheck={() => {}} checking={false} />);
+
+    // As text, and not only behind a button: a browser that refuses clipboard
+    // access must not leave the athlete unable to complete the step, and a
+    // mistyped redirect URI fails on dropbox.com naming neither arc nor the
+    // character that is wrong.
+    expect(await screen.findByTestId("redirect-uri")).toHaveTextContent(
+      "http://localhost:3000/settings/dropbox/callback",
+    );
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(clipboard).toHaveBeenCalledWith(
+      "http://localhost:3000/settings/dropbox/callback",
+    );
+  });
+
+  it("asks for no redirect URI where Dropbox would refuse one", async () => {
+    atOrigin("http://192.168.1.50");
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onRecheck={() => {}} checking={false} />);
+
+    // A step that cannot be completed is worse than one that is not there:
+    // Dropbox refuses to register this URI at all, so the checklist says what
+    // happens instead.
+    expect(
+      await screen.findByText(/show you a code to copy at the end/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("redirect-uri")).toBeNull();
   });
 
   it("stores the pasted key and asks the flow to recheck", async () => {
@@ -93,6 +174,94 @@ describe("the app-key step", () => {
   });
 });
 
+describe("connecting where Dropbox will redirect back", () => {
+  it("sends this browser's own address and follows the link in this tab", async () => {
+    const user = userEvent.setup();
+    renderStep(
+      <DropboxConnectStep onConnected={() => {}} integrationKind="wahoo" />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Connect Dropbox" }),
+    );
+
+    // The redirect URI is the browser's own origin plus arc's callback route.
+    // A server-derived one would be a proxy's idea of where arc is.
+    await waitFor(() =>
+      expect(connectionsState().authorizationRedirectUri).toBe(
+        "http://localhost:3000/settings/dropbox/callback",
+      ),
+    );
+    // Followed in *this* tab: the redirect has to come back somewhere, and a
+    // popup arc cannot get the athlete out of is what this replaces.
+    await waitFor(() => expect(navigated).toHaveBeenCalledTimes(1));
+    const url = new URL(navigated.mock.calls[0][0]);
+    expect(url.searchParams.get("redirect_uri")).toBe(
+      "http://localhost:3000/settings/dropbox/callback",
+    );
+    expect(url.searchParams.get("state")).toBe(
+      connectionsState().authorizationState,
+    );
+    // Where the add flow was, parked before the tab leaves: React state does
+    // not survive a navigation to dropbox.com.
+    expect(takeAddFlow()).toEqual({ kind: "wahoo" });
+  });
+
+  it("offers no code field, because there is no code to paste", async () => {
+    renderStep(<DropboxConnectStep onConnected={() => {}} />);
+
+    await screen.findByRole("button", { name: "Connect Dropbox" });
+    expect(screen.queryByLabelText(/Authorisation code/i)).toBeNull();
+  });
+
+  it("keeps the paste flow one click away when the redirect never arrives", async () => {
+    const user = userEvent.setup();
+    renderStep(<DropboxConnectStep onConnected={() => {}} />);
+
+    // UI convention 3: the remedy for a redirect that did not happen — a
+    // mistyped redirect URI in the Dropbox console, a blocked navigation — is
+    // named before it is needed rather than left as a dead end.
+    await user.click(await screen.findByTestId("use-paste-flow"));
+
+    await user.type(
+      await screen.findByLabelText(/Authorisation code/i),
+      DROPBOX_CODE,
+    );
+    await user.click(screen.getByRole("button", { name: "Finish connecting" }));
+
+    await waitFor(() => expect(connectionsState().connections).toHaveLength(1));
+    // Started with no redirect URI, so Dropbox showed a code: the fallback is
+    // the whole paste flow, not a differently-worded redirect.
+    expect(connectionsState().authorizationRedirectUri).toBeNull();
+    expect(navigated).not.toHaveBeenCalled();
+  });
+});
+
+describe("connecting where Dropbox will not redirect back", () => {
+  it("says why, and connects by paste instead", async () => {
+    const user = userEvent.setup();
+    // arc on the LAN over plain http: a normal way to run a self-hosted
+    // application, and the one deployment Dropbox refuses to redirect to.
+    atOrigin("http://192.168.1.50");
+    renderStep(<DropboxConnectStep onConnected={() => {}} />);
+
+    expect(
+      await screen.findByText(/only redirects to https addresses/i),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Connect Dropbox" }));
+    await user.type(
+      await screen.findByLabelText(/Authorisation code/i),
+      DROPBOX_CODE,
+    );
+    await user.click(screen.getByRole("button", { name: "Finish connecting" }));
+
+    await waitFor(() => expect(connectionsState().connections).toHaveLength(1));
+    expect(connectionsState().authorizationRedirectUri).toBeNull();
+    expect(navigated).not.toHaveBeenCalled();
+  });
+});
+
 describe("the connect step's app-key line", () => {
   it("names the environment key and offers no way to remove it here", async () => {
     renderStep(<DropboxConnectStep onConnected={() => {}} />);
@@ -113,7 +282,9 @@ describe("the connect step's app-key line", () => {
     renderStep(<DropboxConnectStep onConnected={() => {}} />);
 
     expect(await screen.findByText(/app key saved here/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Connect Dropbox" }));
+    // Through the paste flow, because that is the one that renders the link
+    // on screen instead of following it — the key in force is the same.
+    await user.click(screen.getByTestId("use-paste-flow"));
 
     // The link carries the key in force, echoed by the handler rather than
     // canned: a connect offered on the wrong key would fail on Dropbox's own

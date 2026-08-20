@@ -240,9 +240,16 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 #   * starting a connection needs `DROPBOX__APP_KEY`, and without it the answer
 #     names the setting rather than handing back a link with a blank
 #     `client_id` that fails on Dropbox's own error page minutes later;
-#   * a pasted code is only redeemable against the PKCE flow it was minted for,
-#     within fifteen minutes, and only if Dropbox granted offline access — none
-#     of which is a property of the request body;
+#   * a code is only redeemable against the PKCE flow it was minted for, within
+#     fifteen minutes, and only if Dropbox granted offline access — none of
+#     which is a property of the request body. The redirect flow adds one more
+#     of the same kind: the `state` must match the one stored against the flow
+#     exactly, in both directions, and a mismatch is a 422 that also deletes
+#     the flow;
+#   * a `redirect_uri` is accepted only where Dropbox would redirect to it —
+#     https anywhere, or http on the loopback — which is a rule about the
+#     deployment, not about the string, so a fuzzer generating `http://x/`
+#     gets that 422 with the paste flow named as the way through;
 #   * browsing folders on a connection whose stored credential will not decrypt
 #     is refused naming `SECRETS__ENCRYPTION_KEY`.
 #

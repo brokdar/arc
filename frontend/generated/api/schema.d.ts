@@ -351,10 +351,15 @@ export interface paths {
      * Start Dropbox Authorization
      * @description Begin connecting Dropbox: get the link the athlete opens.
      *
-     *     The link carries a PKCE challenge and **no redirect URI** — Dropbox shows
-     *     the athlete a code, which they paste into `POST /connections/dropbox/complete`.
-     *     That is what lets arc connect a cloud account from behind a home router
-     *     without registering a redirect or being reachable from the internet.
+     *     The body is optional and carries one field. With a `redirect_uri` the link
+     *     carries it and a `state`, and Dropbox sends the athlete back to that page
+     *     with the code in its query string. Without one — an empty body, which is
+     *     what the step sends when the browser's origin is not one Dropbox will
+     *     redirect to — the link is the pre-existing paste URL and Dropbox shows the
+     *     code on screen.
+     *
+     *     The URI is the *browser's*, not a header's, and the service decides
+     *     whether Dropbox will accept it before anything is stored.
      */
     post: operations["connections-start_dropbox_authorization"];
     delete?: never;
@@ -374,7 +379,12 @@ export interface paths {
     put?: never;
     /**
      * Complete Dropbox Authorization
-     * @description Finish connecting Dropbox with the code the athlete pasted back.
+     * @description Finish connecting Dropbox with the code that came back.
+     *
+     *     Called by the athlete's own browser either way: by the form they pasted
+     *     into, or by the callback page at `/settings/dropbox/callback` reading its
+     *     own query string. The `state` is forwarded verbatim when there is one —
+     *     the service, not this route, decides whether it matches.
      */
     post: operations["connections-complete_dropbox_authorization"];
     delete?: never;
@@ -2972,12 +2982,26 @@ export interface components {
       expires_at: string;
     };
     /**
+     * DropboxAuthorizationStart
+     * @description Where Dropbox should send the athlete back to, if it can send them.
+     *
+     *     The whole body is optional, and its absence is the **paste** flow — the
+     *     one arc has always had, still reachable and still the only one that works
+     *     on a deployment served over plain http at a LAN address.
+     */
+    DropboxAuthorizationStart: {
+      /** Redirect Uri */
+      redirect_uri?: string;
+    };
+    /**
      * DropboxCodeSubmit
-     * @description The authorization code Dropbox showed the athlete, pasted back.
+     * @description The authorization code Dropbox handed back, pasted or redirected.
      */
     DropboxCodeSubmit: {
       /** Code */
       code: string;
+      /** State */
+      state?: string;
     };
     /**
      * DropboxSetupRead
@@ -7809,7 +7833,11 @@ export interface operations {
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["DropboxAuthorizationStart"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -7818,6 +7846,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DropboxAuthorizationRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
       /** @description No valid session */

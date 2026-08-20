@@ -173,9 +173,11 @@ describe("the Dropbox transport's steps", () => {
     const flow = await openFlow(user);
     await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
 
-    await user.click(
-      await screen.findByRole("button", { name: /Connect Dropbox/i }),
-    );
+    // The paste flow, deliberately: this test is about which step the flow
+    // asks for next, and the redirect flow's answer is a navigation to
+    // dropbox.com that no component test can follow. Which flow is chosen,
+    // and what each one sends, is `dropbox-connect-step.test.tsx`.
+    await user.click(await screen.findByTestId("use-paste-flow"));
     await user.type(
       await screen.findByLabelText(/Authorisation code/i),
       DROPBOX_CODE,

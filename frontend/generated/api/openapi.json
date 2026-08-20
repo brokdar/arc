@@ -1818,13 +1818,32 @@
         "title": "DropboxAuthorizationRead",
         "type": "object"
       },
+      "DropboxAuthorizationStart": {
+        "description": "Where Dropbox should send the athlete back to, if it can send them.\n\nThe whole body is optional, and its absence is the **paste** flow \u2014 the\none arc has always had, still reachable and still the only one that works\non a deployment served over plain http at a LAN address.",
+        "properties": {
+          "redirect_uri": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Redirect Uri",
+            "type": "string"
+          }
+        },
+        "title": "DropboxAuthorizationStart",
+        "type": "object"
+      },
       "DropboxCodeSubmit": {
-        "description": "The authorization code Dropbox showed the athlete, pasted back.",
+        "description": "The authorization code Dropbox handed back, pasted or redirected.",
         "properties": {
           "code": {
             "maxLength": 500,
             "minLength": 1,
             "title": "Code",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "State",
             "type": "string"
           }
         },
@@ -11472,8 +11491,18 @@
     },
     "/api/v1/connections/dropbox/authorize": {
       "post": {
-        "description": "Begin connecting Dropbox: get the link the athlete opens.\n\nThe link carries a PKCE challenge and **no redirect URI** \u2014 Dropbox shows\nthe athlete a code, which they paste into `POST /connections/dropbox/complete`.\nThat is what lets arc connect a cloud account from behind a home router\nwithout registering a redirect or being reachable from the internet.",
+        "description": "Begin connecting Dropbox: get the link the athlete opens.\n\nThe body is optional and carries one field. With a `redirect_uri` the link\ncarries it and a `state`, and Dropbox sends the athlete back to that page\nwith the code in its query string. Without one \u2014 an empty body, which is\nwhat the step sends when the browser's origin is not one Dropbox will\nredirect to \u2014 the link is the pre-existing paste URL and Dropbox shows the\ncode on screen.\n\nThe URI is the *browser's*, not a header's, and the service decides\nwhether Dropbox will accept it before anything is stored.",
         "operationId": "connections-start_dropbox_authorization",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropboxAuthorizationStart",
+                "default": {}
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -11484,6 +11513,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
           },
           "401": {
             "content": {
@@ -11527,7 +11566,7 @@
     },
     "/api/v1/connections/dropbox/complete": {
       "post": {
-        "description": "Finish connecting Dropbox with the code the athlete pasted back.",
+        "description": "Finish connecting Dropbox with the code that came back.\n\nCalled by the athlete's own browser either way: by the form they pasted\ninto, or by the callback page at `/settings/dropbox/callback` reading its\nown query string. The `state` is forwarded verbatim when there is one \u2014\nthe service, not this route, decides whether it matches.",
         "operationId": "connections-complete_dropbox_authorization",
         "requestBody": {
           "content": {

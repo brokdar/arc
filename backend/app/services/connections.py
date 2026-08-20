@@ -9,6 +9,7 @@ credential, point it at a folder — and nothing in it fetches a file.
 
 import contextlib
 import datetime as dt
+import secrets
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from app.connectors.dropbox import (
     current_account,
     exchange_code,
     new_code_verifier,
+    new_state,
+    redirect_eligible,
 )
 from app.core.config import SettingSource, get_settings
 from app.core.exceptions import (
@@ -57,6 +60,7 @@ from app.persistence.audit import AuditRepository
 from app.persistence.connections import (
     KEY_SETTING,
     MAX_APP_KEY_LENGTH,
+    MAX_REDIRECT_URI_LENGTH,
     ConnectionRepository,
     ConnectionRow,
     CredentialDecryptionError,
@@ -528,12 +532,31 @@ class ConnectionService:
 
     # --- the connect ritual --------------------------------------------------
 
-    async def start_dropbox_authorization(self, *, actor: Actor) -> AuthorizationStart:
+    async def start_dropbox_authorization(
+        self, *, actor: Actor, redirect_uri: str | None = None
+    ) -> AuthorizationStart:
         """Mint a PKCE flow and return the URL the athlete opens.
+
+        **The redirect origin comes from the browser, and is validated here.**
+        arc has no trustworthy view of its own origin: it sits behind Caddy,
+        which fronts the API, the MCP server and the frontend as one host, and
+        the only header that claims to answer the question — `X-Forwarded-Host`
+        — is written by whatever spoke to the proxy. Trusting it would let a
+        request choose the URI Dropbox sends an authorization code to. So the
+        page that is *already open in the athlete's browser* says where it is,
+        and this method decides whether Dropbox will redirect there at all
+        (:func:`redirect_eligible`). Nothing is stored that did not pass.
+
+        Omitting `redirect_uri` is the paste flow, unchanged: Dropbox shows
+        the athlete a code instead of sending them anywhere, which is what
+        lets arc be connected from a deployment Dropbox will not redirect to.
 
         The verifier is stored (see the `oauth_authorizations` docstring) and
         never returned: the whole point of PKCE is that the code Dropbox shows
-        the athlete is useless to anyone who does not also hold it.
+        the athlete is useless to anyone who does not also hold it. The
+        `state` beside it *is* returned — in the URL — because Dropbox has to
+        hand it back for the comparison in :meth:`complete_dropbox` to mean
+        anything.
 
         Raises:
             ValidationError: When no app key is configured in either source —
@@ -542,6 +565,8 @@ class ConnectionService:
                 nothing the athlete can act on. The add-integration flow reads
                 :meth:`dropbox_setup` and never offers the control that gets
                 here; this is the guard for everything that is not that flow.
+                Also when the browser's origin is one Dropbox refuses to
+                redirect to, which names the paste flow as the way through.
         """
         await check_write_cap(self._session, actor)
         app_key = await self.app_key(ConnectionProvider.DROPBOX)
@@ -549,23 +574,65 @@ class ConnectionService:
             raise ValidationError(
                 f"arc has no Dropbox app key yet. {REGISTER_APP_REMEDY}"
             )
+        redirect_uri = self._checked_redirect(redirect_uri)
         verifier = new_code_verifier()
+        state = None if redirect_uri is None else new_state()
         now = dt.datetime.now(dt.UTC)
         row = await self._repository.replace_authorization(
             OAuthAuthorizationRow(
                 provider=ConnectionProvider.DROPBOX,
                 code_verifier=verifier,
+                state=state,
+                redirect_uri=redirect_uri,
                 created_at=now,
                 expires_at=now + AUTHORIZATION_TTL,
             )
         )
         await commit(self._session)
         return AuthorizationStart(
-            authorize_url(app_key=app_key, verifier=verifier), row.expires_at
+            authorize_url(
+                app_key=app_key,
+                verifier=verifier,
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            row.expires_at,
         )
 
-    async def complete_dropbox(self, *, code: str, actor: Actor) -> ConnectionRow:
-        """Redeem the pasted code and store the connection.
+    @staticmethod
+    def _checked_redirect(redirect_uri: str | None) -> str | None:
+        """The redirect URI to register with Dropbox, or `None` for the paste.
+
+        Refused *before* a flow is written rather than after: a started
+        authorization the athlete cannot finish is worse than none at all,
+        because the next paste-flow attempt would find it and use its
+        verifier.
+        """
+        if redirect_uri is None:
+            return None
+        candidate = redirect_uri.strip()
+        if not candidate:
+            return None
+        if len(candidate) > MAX_REDIRECT_URI_LENGTH:
+            raise ValidationError(
+                f"That address is longer than the {MAX_REDIRECT_URI_LENGTH} "
+                "characters arc can store for a Dropbox redirect. Connect by "
+                "pasting the code Dropbox shows you instead."
+            )
+        if not redirect_eligible(candidate):
+            raise ValidationError(
+                f"Dropbox will not redirect back to {candidate}: it only "
+                "redirects to https addresses, or to http on localhost. arc "
+                "reached over plain http at a LAN address is connected by "
+                "pasting the code Dropbox shows you — start the connection "
+                "again and paste the code."
+            )
+        return candidate
+
+    async def complete_dropbox(
+        self, *, code: str, actor: Actor, state: str | None = None
+    ) -> ConnectionRow:
+        """Redeem the code — pasted or redirected — and store the connection.
 
         **One connection per provider.** A second connect is a 409 naming
         disconnect as the remedy rather than a silent replacement: the existing
@@ -575,10 +642,29 @@ class ConnectionService:
         wrong one, since the athlete may well have been logged in as somebody
         else in that browser tab.
 
+        **A `state` that does not match deletes the pending authorization.**
+        Refusing but leaving the row redeemable would make the nonce a speed
+        bump: whoever delivered a code arc never asked for could simply try
+        again, and again, against a verifier arc is still holding. The flow is
+        cheap to restart and the athlete is told to; the attacker gets one
+        attempt at a value they cannot guess. The comparison runs **before**
+        anything is offered to Dropbox, so a code that arrived through some
+        other page is never redeemed at all.
+
+        The match is exact in both directions. A row that stored a state wants
+        one back; a row that stored none — the paste flow — must be completed
+        without one, because there is nothing to round-trip and a `state`
+        arriving against it came from somewhere arc did not send the athlete.
+
+        Expiry is judged first (:meth:`_pending_authorization`): an athlete
+        who left the Dropbox tab open over lunch is told the flow expired, not
+        told about a security token.
+
         Raises:
             ConflictError: When a Dropbox connection already exists.
             ValidationError: When the flow was never started, has expired, the
-                code is spent, or the grant carries no refresh token.
+                state does not match, the code is spent, or the grant carries
+                no refresh token.
         """
         await check_write_cap(self._session, actor)
         existing = await self._repository.by_provider(ConnectionProvider.DROPBOX)
@@ -590,13 +676,17 @@ class ConnectionService:
             )
 
         pending = await self._pending_authorization()
+        await self._check_state(pending, state)
         app_key = await self.app_key(ConnectionProvider.DROPBOX) or ""
         # `.strip()`: the code is copied off a web page into a form field, and
         # a trailing newline is what a paste normally carries. Refusing it
         # would be arc failing at the one manual step it asked for.
         try:
             grant = await exchange_code(
-                app_key=app_key, code=code.strip(), verifier=pending.code_verifier
+                app_key=app_key,
+                code=code.strip(),
+                verifier=pending.code_verifier,
+                redirect_uri=pending.redirect_uri,
             )
         except DropboxAuthError as exc:
             raise ValidationError(
@@ -647,6 +737,32 @@ class ConnectionService:
         )
         await commit(self._session)
         return row
+
+    async def _check_state(
+        self, pending: OAuthAuthorizationRow, supplied: str | None
+    ) -> None:
+        """Verify the CSRF nonce, and end the flow when it does not match.
+
+        `compare_digest` rather than `==`: the value is a secret arc issued,
+        and the timing of a byte-by-byte comparison is the one thing an
+        attacker holding a code can measure.
+        """
+        stored = pending.state
+        if stored is not None and supplied is not None:
+            if secrets.compare_digest(stored, supplied):
+                return
+        elif stored is None and supplied is None:
+            return
+        # Deleted and committed before raising — see the docstring on
+        # `complete_dropbox`: a refused flow that stays redeemable is a nonce
+        # nobody has to guess right the first time.
+        for row in await self._repository.authorizations(ConnectionProvider.DROPBOX):
+            await self._repository.delete_authorization(row)
+        await commit(self._session)
+        raise ValidationError(
+            "arc could not verify that connection came back from the link it "
+            "sent you, so it has been stopped. Start the connection again."
+        )
 
     async def _pending_authorization(self) -> OAuthAuthorizationRow:
         """The live PKCE flow, or a 422 explaining which way it failed."""

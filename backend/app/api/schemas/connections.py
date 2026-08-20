@@ -9,12 +9,18 @@ grants them in, and the remote paths; what arc keeps is everything else.
 
 import datetime as dt
 import uuid
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.core.config import SettingSource
 from app.domain.connections import ConnectionProvider, ConnectionStatus
-from app.persistence.connections import MAX_APP_KEY_LENGTH
+from app.persistence.connections import (
+    MAX_APP_KEY_LENGTH,
+    MAX_REDIRECT_URI_LENGTH,
+    MAX_STATE_LENGTH,
+)
 
 
 class DropboxSetupRead(BaseModel):
@@ -47,22 +53,54 @@ class DropboxAppKeySubmit(BaseModel):
     app_key: str = Field(min_length=1, max_length=MAX_APP_KEY_LENGTH)
 
 
+class DropboxAuthorizationStart(BaseModel):
+    """Where Dropbox should send the athlete back to, if it can send them.
+
+    The whole body is optional, and its absence is the **paste** flow — the
+    one arc has always had, still reachable and still the only one that works
+    on a deployment served over plain http at a LAN address.
+    """
+
+    #: The callback page in the browser that is asking, origin included:
+    #: `https://arc.example.com/settings/dropbox/callback`. Supplied by the
+    #: page rather than read from a proxy header, and validated server-side —
+    #: see `ConnectionService.start_dropbox_authorization`.
+    #:
+    #: `SkipJsonSchema[None]` rather than a nullable field: omitting it is how
+    #: a client says "paste flow", and `null` is not a second way to say the
+    #: same thing (`.claude/rules/api-nullability.md`). The length bound is on
+    #: the member, not the union, or pydantic measures `None`.
+    redirect_uri: (
+        Annotated[str, Field(min_length=1, max_length=MAX_REDIRECT_URI_LENGTH)]
+        | SkipJsonSchema[None]
+    ) = None
+
+
 class DropboxAuthorizationRead(BaseModel):
     """The link the athlete opens, and the deadline on the code they bring back."""
 
-    #: Opened in a new tab. Carries the PKCE challenge and no redirect URI.
+    #: Carries the PKCE challenge, and — when the browser's origin is one
+    #: Dropbox will redirect to — a `redirect_uri` and a `state`. Followed in
+    #: this tab when it redirects, opened in a new one when it does not.
     authorize_url: str
-    #: After this, the pasted code is refused and the flow must be restarted.
+    #: After this, the code is refused and the flow must be restarted.
     expires_at: dt.datetime
 
 
 class DropboxCodeSubmit(BaseModel):
-    """The authorization code Dropbox showed the athlete, pasted back."""
+    """The authorization code Dropbox handed back, pasted or redirected."""
 
     #: Whitespace and a trailing newline are stripped by the service: a code
     #: copied off a web page normally carries them, and refusing it would be
     #: arc failing at the one manual step it asked for.
     code: str = Field(min_length=1, max_length=500)
+    #: The nonce Dropbox round-tripped, from the callback page's query string.
+    #: Omitted by the paste flow, which has none — and a paste flow completed
+    #: *with* one is refused, so this is not a field a client may invent.
+    state: (
+        Annotated[str, Field(min_length=1, max_length=MAX_STATE_LENGTH)]
+        | SkipJsonSchema[None]
+    ) = None
 
 
 class FeedRead(BaseModel):

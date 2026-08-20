@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { InlineConfirm } from "@/components/design/confirm";
 import { Panel } from "@/components/design/panel";
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
+import { type AddFlowResume, takeAddFlow } from "@/lib/dropbox-redirect";
 
 type Connection = components["schemas"]["ConnectionRead"];
 
@@ -47,6 +48,25 @@ export function IntegrationsPanel({
 }) {
   const integrations = $api.useQuery("get", "/api/v1/integrations");
   const [adding, setAdding] = useState(false);
+  const [resumed, setResumed] = useState<AddFlowResume | null>(null);
+
+  // Connecting Dropbox by redirect hands this tab to dropbox.com and gets it
+  // back on `/settings`, so the flow the athlete was in the middle of is gone
+  // — React state does not survive a navigation. `DropboxConnectStep` writes
+  // where it was before leaving, and this reads it back once, on mount:
+  // landing on a bare Settings page with a freshly connected account would
+  // leave the athlete to work out that the folder step is still owed.
+  //
+  // In an effect rather than a lazy `useState`, because the panel is
+  // prerendered: reading `sessionStorage` during render would hydrate to a
+  // different tree than the server produced.
+  useEffect(() => {
+    const resume = takeAddFlow();
+    if (resume !== null) {
+      setResumed(resume);
+      setAdding(true);
+    }
+  }, []);
 
   return (
     <Panel className={className} data-testid="integrations-panel">
@@ -76,7 +96,13 @@ export function IntegrationsPanel({
         )}
 
         {adding ? (
-          <AddIntegrationFlow onDone={() => setAdding(false)} />
+          <AddIntegrationFlow
+            initialKind={resumed?.kind ?? null}
+            onDone={() => {
+              setAdding(false);
+              setResumed(null);
+            }}
+          />
         ) : (
           <Button
             type="button"

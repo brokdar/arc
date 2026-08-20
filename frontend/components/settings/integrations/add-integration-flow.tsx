@@ -53,11 +53,23 @@ type IntegrationKind = Schemas["IntegrationKind"];
  */
 export function AddIntegrationFlow({
   onDone,
+  initialKind = null,
 }: {
   readonly onDone: () => void;
+  /**
+   * The integration this flow was already on, when it is being resumed.
+   *
+   * Set when the athlete comes back from authorising Dropbox: the tab left
+   * the application and returned, so the flow reopens where it was rather
+   * than asking again for a source they already picked (see
+   * `lib/dropbox-redirect`). `null` is a fresh start at the catalogue.
+   */
+  readonly initialKind?: Schemas["IntegrationKind"] | null;
 }) {
   const catalogue = $api.useQuery("get", "/api/v1/integration-catalogue");
-  const [kind, setKind] = useState<Schemas["IntegrationKind"] | null>(null);
+  const [kind, setKind] = useState<Schemas["IntegrationKind"] | null>(
+    initialKind,
+  );
   const [transport, setTransport] = useState<Schemas["TransportKind"] | null>(
     null,
   );
@@ -421,7 +433,12 @@ function CloudFolderSteps({
     return <DropboxAppKeyStep onRecheck={onRecheck} checking={checking} />;
   }
   if (provider.connection_id === null) {
-    return <DropboxConnectStep onConnected={onRecheck} />;
+    return (
+      <DropboxConnectStep
+        onConnected={onRecheck}
+        integrationKind={entry.kind}
+      />
+    );
   }
   return (
     <FolderStep

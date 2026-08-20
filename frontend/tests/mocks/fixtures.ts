@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { redirectEligible } from "@/lib/dropbox-redirect";
 import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
@@ -4158,6 +4159,17 @@ interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
   authorizationStarted: boolean;
+  /**
+   * The nonce the started authorization was minted with, or null.
+   *
+   * Null is the paste flow, and the difference is load-bearing: the API
+   * refuses a completion whose `state` does not match this exactly, in either
+   * direction, so a step that sent the wrong one gets the refusal the real
+   * server would give it rather than a connection it should not have.
+   */
+  authorizationState: string | null;
+  /** The redirect URI the last authorize call was given, if any. */
+  authorizationRedirectUri: string | null;
   /** The app key pasted into Settings, as `provider_apps` holds it. */
   storedAppKey: string | null;
   /** `DROPBOX__APP_KEY`, the config-as-code seed the store overrides. */
@@ -4171,6 +4183,8 @@ function seedConnectionsState(): ConnectionsMockState {
   return {
     connections: [],
     authorizationStarted: false,
+    authorizationState: null,
+    authorizationRedirectUri: null,
     // The seeded instance is one whose operator set `DROPBOX__APP_KEY` — the
     // configuration every existing test was written against. A test about
     // the registration checklist clears it with `seedDropboxAppKey(false)`.
@@ -4274,6 +4288,7 @@ export function seedDropboxConnection(
 /** Complete an authorization the way the API does, or say why not. */
 export function completeDropbox(
   code: string,
+  nonce: string | null = null,
 ): { connection: Connection } | { detail: string } {
   const state = connectionsState();
   if (!state.authorizationStarted) {
@@ -4290,6 +4305,19 @@ export function completeDropbox(
         "connecting another.",
     };
   }
+  // The service's rule, both ways round: a redirect flow wants its nonce back
+  // and a paste flow must arrive without one. A mismatch ends the flow rather
+  // than leaving it redeemable.
+  if ((state.authorizationState ?? null) !== (nonce ?? null)) {
+    state.authorizationStarted = false;
+    state.authorizationState = null;
+    state.authorizationRedirectUri = null;
+    return {
+      detail:
+        "arc could not verify that connection came back from the link it " +
+        "sent you, so it has been stopped. Start the connection again.",
+    };
+  }
   if (code.trim() !== DROPBOX_CODE) {
     return {
       detail:
@@ -4298,9 +4326,73 @@ export function completeDropbox(
     };
   }
   state.authorizationStarted = false;
+  state.authorizationState = null;
+  state.authorizationRedirectUri = null;
   const connection = dropboxConnection();
   state.connections = [connection];
   return { connection };
+}
+
+/**
+ * `POST /connections/dropbox/authorize`, refusing what the service refuses.
+ *
+ * The eligibility rule is the server's — `app.connectors.dropbox`'s
+ * `redirect_eligible` — so the fake applies it too: a step that offered the
+ * redirect from a plain-http LAN address gets the 422 the real API would give
+ * it, rather than a link Dropbox would refuse minutes later.
+ */
+export function startDropboxAuthorization(
+  redirectUri: string | null,
+):
+  | { authorize_url: string; expires_at: string }
+  | { status: 422; detail: string } {
+  const state = connectionsState();
+  const appKey = dropboxAppKey();
+  if (appKey === null) {
+    return {
+      status: 422,
+      detail:
+        "arc has no Dropbox app key yet. Register an app at " +
+        "https://www.dropbox.com/developers/apps — Scoped access, access " +
+        "type Full Dropbox — and paste its app key into Settings, in the " +
+        "steps for adding an integration.",
+    };
+  }
+  if (redirectUri !== null && !redirectEligible(redirectUri)) {
+    return {
+      status: 422,
+      detail:
+        `Dropbox will not redirect back to ${redirectUri}: it only redirects ` +
+        "to https addresses, or to http on localhost. arc reached over plain " +
+        "http at a LAN address is connected by pasting the code Dropbox " +
+        "shows you — start the connection again and paste the code.",
+    };
+  }
+  state.authorizationStarted = true;
+  state.authorizationRedirectUri = redirectUri;
+  state.minted += 1;
+  // A fresh nonce per start, as the service mints one: a fake that reused one
+  // could not tell a resumed flow from a superseded one.
+  state.authorizationState =
+    redirectUri === null ? null : `nonce-${state.minted}`;
+  const query = new URLSearchParams({
+    // The key in force, not a constant: a flow that offered connect before
+    // one was set would otherwise get a working link back.
+    client_id: appKey,
+    response_type: "code",
+    token_access_type: "offline",
+    code_challenge: "fake-challenge",
+    code_challenge_method: "S256",
+    scope: DROPBOX_READ_SCOPES.join(" "),
+  });
+  if (redirectUri !== null) {
+    query.set("redirect_uri", redirectUri);
+    query.set("state", state.authorizationState as string);
+  }
+  return {
+    authorize_url: `https://www.dropbox.com/oauth2/authorize?${query}`,
+    expires_at: "2026-08-16T09:45:00Z",
+  };
 }
 
 /** Create a feed the way the API does — normalised path, 409 on a repeat. */

@@ -11,6 +11,14 @@ import { Input } from "@/components/ui/input";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+import {
+  redirectEligible,
+  redirectUriFor,
+  rememberAddFlow,
+  useBrowserOrigin,
+} from "@/lib/dropbox-redirect";
+
+type IntegrationKind = components["schemas"]["IntegrationKind"];
 
 const setupKey = $api.queryOptions(
   "get",
@@ -29,9 +37,14 @@ const catalogueKey = $api.queryOptions(
  * the road the rides travel down, and it shows up only for as long as it takes
  * to open it.
  *
- * PR-6 owns this file next, when the paste disappears in favour of a real
- * redirect. The paste stays reachable even then — on a plain-HTTP LAN
- * deployment Dropbox refuses to redirect at all.
+ * Two ways through, chosen by where the browser is. Where Dropbox will
+ * redirect — https anywhere, or http on the loopback — the athlete comes
+ * straight back and never sees a code. Where it will not, which is arc served
+ * over plain http at a LAN address, Dropbox shows a code and the athlete
+ * pastes it. The paste flow is not a legacy path: it is the only one that
+ * works on that deployment, it is offered explicitly on every other one as
+ * the way out when a redirect does not arrive, and it is what makes arc
+ * connectable from a box nothing on the internet can reach.
  */
 
 /**
@@ -102,6 +115,7 @@ export function DropboxAppKeyStep({
           <code className="font-mono">files.metadata.read</code> and{" "}
           <code className="font-mono">files.content.read</code>, then submit.
         </li>
+        <RedirectUriStep />
         <li>
           Copy the <strong>App key</strong> from the app&apos;s Settings tab and
           paste it below. There is no app secret to copy: arc connects with
@@ -140,6 +154,63 @@ export function DropboxAppKeyStep({
       </form>
       <Problems problems={apiErrorMessages(save.error)} />
     </div>
+  );
+}
+
+/**
+ * The registration step that makes the code disappear: arc’s redirect URI.
+ *
+ * A checklist item rather than a note, because it is a field on the same
+ * console page as everything else here and it is only free to fill in *while*
+ * the athlete is on it — coming back to add it later means finding the app
+ * again. Shown only where Dropbox would accept it: on a deployment reached
+ * over plain http at a LAN address, asking the athlete to register a URI
+ * Dropbox refuses would be a step that cannot be completed, so the step says
+ * what happens instead.
+ *
+ * Copyable as text and as a button. The button is the ordinary way; the text
+ * is what survives a browser that refuses clipboard access, and it must,
+ * because a mistyped redirect URI fails on dropbox.com with an error naming
+ * neither arc nor the character that is wrong.
+ */
+function RedirectUriStep() {
+  const origin = useBrowserOrigin();
+  const [copied, setCopied] = useState(false);
+
+  if (origin === null) {
+    return null;
+  }
+  if (!redirectEligible(origin)) {
+    return (
+      <li>
+        There is no redirect URI to register. arc is reached at{" "}
+        <code className="font-mono">{origin}</code>, and Dropbox only redirects
+        to https addresses or to localhost — so it will show you a code to copy
+        at the end instead of sending you back here.
+      </li>
+    );
+  }
+  const uri = redirectUriFor(origin);
+  return (
+    <li>
+      On the same Settings tab, under <strong>Redirect URIs</strong>, add{" "}
+      <code data-testid="redirect-uri" className="font-mono break-all">
+        {uri}
+      </code>{" "}
+      and choose <strong>Add</strong>. That is what lets Dropbox send you back
+      to arc instead of showing you a code to copy.{" "}
+      <Button
+        type="button"
+        size="xs"
+        variant="secondary"
+        onClick={() => {
+          void navigator.clipboard?.writeText(uri);
+          setCopied(true);
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </li>
   );
 }
 
@@ -191,22 +262,45 @@ function AppKeyInForce({
 }
 
 /**
- * The connect ritual: render the link, take the code Dropbox showed.
+ * The connect ritual: hand the browser to Dropbox and take what comes back.
  *
- * Two visible steps because it *is* two steps — there is no redirect and no
- * callback, which is what lets arc connect a cloud account from behind a home
- * router. The pasted code is **kept** when the exchange is refused: a
- * 43-character string copied off another site is exactly the thing a form must
- * not throw away on an error.
+ * **Where the browser is decides which flow runs**, and the browser is the
+ * only thing that knows: arc sits behind Caddy, so the server sees a proxy's
+ * idea of its own origin and `X-Forwarded-Host` is written by whoever spoke to
+ * the proxy. So this reads `window.location.origin`, sends it as the redirect
+ * URI, and the server validates it before Dropbox is ever told about it.
+ *
+ * On an eligible origin the athlete leaves in **this tab** — not a new one:
+ * the redirect has to come back somewhere, and a popup arc cannot get the
+ * athlete back out of is the failure mode this replaces. The place they were
+ * in the add flow is written to `sessionStorage` first, because the tab is
+ * about to be handed to dropbox.com and React state does not survive that.
+ *
+ * The paste flow is offered on every origin, not only the ineligible ones: a
+ * redirect that never arrives — a mistyped redirect URI in the Dropbox
+ * console, a browser that blocked the navigation — otherwise leaves the
+ * athlete with a working account and no way to finish.
  */
 export function DropboxConnectStep({
   onConnected,
+  integrationKind = null,
 }: {
   readonly onConnected: () => void;
+  /** What is being added, so the flow can resume there. */
+  readonly integrationKind?: IntegrationKind | null;
 }) {
   const base = useId();
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
+  // Set once the athlete asks for the code instead: either because Dropbox
+  // will not redirect to this origin at all, or because a redirect they were
+  // offered did not arrive.
+  const [pasting, setPasting] = useState(false);
+  const origin = useBrowserOrigin();
+  // `null` until mounted, which is "not decided yet" and not "not eligible":
+  // a redirect offered on the strength of a prerender would be offered on
+  // every deployment.
+  const canRedirect = origin !== null && redirectEligible(origin);
   // Which app key the connect will run on, and from which source. The flow
   // only renders this step once a key exists, so the read is informative
   // rather than gating — but "saved here" versus "from DROPBOX__APP_KEY" is a
@@ -215,6 +309,17 @@ export function DropboxConnectStep({
   const start = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/authorize",
+    {
+      onSuccess: (data, variables) => {
+        if (variables?.body?.redirect_uri === undefined) {
+          return;
+        }
+        // Written before the navigation, not after: there is no "after" in
+        // this tab.
+        rememberAddFlow(integrationKind);
+        window.location.assign(data.authorize_url);
+      },
+    },
   );
   const complete = $api.useMutation(
     "post",
@@ -227,6 +332,18 @@ export function DropboxConnectStep({
       },
     },
   );
+
+  const beginRedirect = () => {
+    // The previous refusal described an attempt that is over; react-query
+    // holds it until the next `mutate()`.
+    start.reset();
+    start.mutate({ body: { redirect_uri: redirectUriFor(origin as string) } });
+  };
+  const beginPaste = () => {
+    setPasting(true);
+    start.reset();
+    start.mutate({ body: {} });
+  };
 
   return (
     <div
@@ -241,7 +358,32 @@ export function DropboxConnectStep({
       {setup.data?.app_key_set ? (
         <AppKeyInForce source={setup.data.source} />
       ) : null}
-      {start.data ? (
+
+      {canRedirect && !pasting ? (
+        <div className="flex flex-col items-start gap-2.5">
+          <p className="max-w-[62ch] text-ink-muted text-sm">
+            Dropbox will ask you to allow arc to read your files, then send you
+            straight back here.
+          </p>
+          <Button
+            type="button"
+            disabled={start.isPending}
+            onClick={beginRedirect}
+          >
+            {start.isPending ? "Opening Dropbox…" : "Connect Dropbox"}
+          </Button>
+          {/* UI convention 3: the way out, named, before it is needed. A
+              redirect that does not arrive is otherwise a dead end. */}
+          <button
+            type="button"
+            data-testid="use-paste-flow"
+            className="text-ink-muted text-sm underline underline-offset-2"
+            onClick={beginPaste}
+          >
+            Dropbox did not bring you back? Connect with a code instead.
+          </button>
+        </div>
+      ) : start.data ? (
         <form
           className="flex w-full flex-col items-start gap-2.5"
           onSubmit={(event) => {
@@ -286,13 +428,19 @@ export function DropboxConnectStep({
           </Button>
         </form>
       ) : (
-        <Button
-          type="button"
-          disabled={start.isPending}
-          onClick={() => start.mutate({})}
-        >
-          {start.isPending ? "Starting…" : "Connect Dropbox"}
-        </Button>
+        <div className="flex flex-col items-start gap-2.5">
+          {origin !== null && !canRedirect ? (
+            <p className="max-w-[62ch] text-ink-muted text-sm">
+              arc is reached at <code className="font-mono">{origin}</code>, and
+              Dropbox only redirects to https addresses or to localhost. It will
+              show you a code to copy back here instead — nothing else about
+              connecting changes.
+            </p>
+          ) : null}
+          <Button type="button" disabled={start.isPending} onClick={beginPaste}>
+            {start.isPending ? "Starting…" : "Connect Dropbox"}
+          </Button>
+        </div>
       )}
       <Problems
         problems={[

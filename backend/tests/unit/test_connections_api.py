@@ -364,6 +364,215 @@ async def test_an_authorization_older_than_fifteen_minutes_is_refused_and_remove
     assert fake.calls_to(TOKEN_PATH) == []
 
 
+# --- AC-24 and AC-25: the redirect flow --------------------------------------
+#
+# The browser tells arc where it is, and arc decides whether Dropbox will
+# redirect there — every assertion below is on the query string arc renders or
+# on the `oauth_authorizations` row it wrote, never on a helper's return value.
+
+#: The origin the athlete reaches arc at, as their browser reports it.
+REDIRECT_URI = "https://arc.example.com/settings/dropbox/callback"
+
+
+async def authorization_row(session: AsyncSession) -> OAuthAuthorizationRow:
+    """The one pending flow, so "one row" is provable rather than assumed."""
+    rows = (await session.execute(select(OAuthAuthorizationRow))).scalars().all()
+    assert len(rows) == 1, f"expected one authorization row, found {len(rows)}"
+    return rows[0]
+
+
+async def test_a_redirect_start_carries_the_uri_and_a_state_and_stores_both(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    assert response.status_code == 200, response.text
+    query = query_of(response.json()["authorize_url"])
+    assert query["redirect_uri"] == [REDIRECT_URI]
+    state = query["state"][0]
+    # Long enough to be a nonce rather than a guess. The value itself is
+    # arbitrary; its length and its unguessability are the contract.
+    assert len(state) >= 32
+    row = await authorization_row(db_session)
+    assert row.state == state
+    assert row.redirect_uri == REDIRECT_URI
+    # The PKCE half is unchanged: the redirect adds a CSRF nonce, it does not
+    # replace the thing that makes the code useless to anyone else.
+    assert query["code_challenge"] == [challenge_for(row.code_verifier)]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://localhost:3000/settings/dropbox/callback",
+        "http://127.0.0.1:3000/settings/dropbox/callback",
+    ],
+)
+async def test_a_loopback_http_origin_still_gets_the_redirect_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, uri: str
+) -> None:
+    # The developer's laptop, and the athlete running arc on the machine in
+    # front of them. Dropbox exempts the loopback from its https rule, so
+    # falling back to the paste here would be arc being stricter than Dropbox.
+    response = await client.post(AUTHORIZE, json={"redirect_uri": uri})
+
+    assert response.status_code == 200, response.text
+    assert query_of(response.json()["authorize_url"])["redirect_uri"] == [uri]
+    assert (await authorization_row(db_session)).redirect_uri == uri
+
+
+async def test_a_plain_http_lan_origin_is_refused_naming_https_and_the_paste(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(
+        AUTHORIZE,
+        json={"redirect_uri": "http://192.168.1.50/settings/dropbox/callback"},
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "https" in detail
+    # The remedy, not just the refusal: this deployment connects by paste, and
+    # the athlete has to be told that rather than left at a dead end.
+    assert "paste" in detail.lower()
+    # Nothing was started: a flow the athlete cannot finish is worse than none.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_omitting_the_redirect_uri_leaves_the_paste_flow_exactly_as_it_was(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The fallback the whole feature rests on. A body-less start is what the
+    # step sends on a plain-HTTP LAN deployment, and it must still produce the
+    # link Dropbox shows a code on.
+    response = await client.post(AUTHORIZE)
+
+    assert response.status_code == 200, response.text
+    query = query_of(response.json()["authorize_url"])
+    assert "redirect_uri" not in query
+    assert "state" not in query
+    row = await authorization_row(db_session)
+    assert row.state is None
+    assert row.redirect_uri is None
+
+    completed = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert completed.status_code == 201, completed.text
+    assert "redirect_uri" not in fake.calls_to(TOKEN_PATH)[0].form
+
+
+async def test_a_second_redirect_start_supersedes_the_first_state(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    first = (await authorization_row(db_session)).state
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    # One row, not two: an abandoned tab must not leave a second redeemable
+    # flow behind it.
+    second = await authorization_row(db_session)
+    assert second.state != first
+
+    response = await client.post(COMPLETE, json={"code": "code", "state": first})
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_redirect_flow_completes_and_repeats_the_uri_to_dropbox(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert response.status_code == 201, response.text
+    # RFC 6749 s4.1.3: the exchange repeats the redirect URI the code was
+    # minted against, or Dropbox answers `invalid_grant`.
+    assert fake.calls_to(TOKEN_PATH)[0].form["redirect_uri"] == REDIRECT_URI
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_mismatched_state_is_refused_and_the_flow_is_deleted(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": "not-the-state"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    # Not offered to Dropbox at all: a code arriving with the wrong nonce is
+    # not arc's code, and redeeming it is the attack this guards against.
+    assert fake.calls_to(TOKEN_PATH) == []
+    # Deleted, not merely refused. Leaving the row redeemable would let the
+    # attacker who guessed wrong once simply try again.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+    retry = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert retry.status_code == 422, retry.text
+    assert "No Dropbox authorization is in progress" in retry.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_redirect_flow_completed_without_a_state_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # A code lifted out of a browser history and pasted into the form: it has
+    # the code and not the nonce, and that is exactly what `state` is for.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
+async def test_a_paste_flow_completed_with_a_state_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The other direction, and the reason the comparison is not "if the row
+    # has a state": a flow arc started with no redirect has nothing to
+    # round-trip, so a `state` arriving against it came from somewhere else.
+    await client.post(AUTHORIZE)
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": "invented"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
+async def test_an_expired_redirect_flow_says_it_expired_not_that_the_state_is_wrong(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Ordering, asserted: an athlete who left the Dropbox tab open over lunch
+    # gets "start again", not a sentence about a security token. The state is
+    # correct here; only the clock is against them.
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+    row = await authorization_row(db_session)
+    row.expires_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    await db_session.commit()
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert response.status_code == 422, response.text
+    assert "expired" in response.json()["detail"]
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
 # --- AC-3: exchanging the pasted code ----------------------------------------
 
 

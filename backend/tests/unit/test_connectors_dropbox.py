@@ -24,7 +24,10 @@ from app.connectors.dropbox import (
     DropboxRateLimitedError,
     DropboxUpstreamError,
     authorize_url,
+    exchange_code,
     new_code_verifier,
+    new_state,
+    redirect_eligible,
 )
 from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.persistence.connections import ConnectionRow, EncryptedCredentials
@@ -110,6 +113,109 @@ def test_the_authorize_url_asks_for_no_write_scope() -> None:
     )
 
     assert "files.content.write" not in query["scope"][0]
+
+
+# --- AC-24: which deployments Dropbox will redirect back to ------------------
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://arc.example.com/settings/dropbox/callback",
+        # A self-signed https on the LAN is still https, and Dropbox takes it.
+        "https://arc.local/settings/dropbox/callback",
+        "https://arc.example.com:8443/settings/dropbox/callback",
+        "http://localhost:3000/settings/dropbox/callback",
+        "http://127.0.0.1:3000/settings/dropbox/callback",
+        "http://[::1]:3000/settings/dropbox/callback",
+    ],
+)
+def test_dropbox_redirects_to_https_anywhere_and_to_http_on_the_loopback(
+    uri: str,
+) -> None:
+    assert redirect_eligible(uri) is True
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # The deployment this rule exists for: arc reached over plain HTTP by
+        # LAN address. Dropbox refuses to register it, so arc must not offer
+        # the redirect and must say why.
+        "http://192.168.1.50/settings/dropbox/callback",
+        "http://arc.local/settings/dropbox/callback",
+        "http://10.0.0.4:3000/settings/dropbox/callback",
+        # `localhost.evil.example` is not the loopback, and a prefix match
+        # would have said it was.
+        "http://localhost.evil.example/settings/dropbox/callback",
+        "http://127.0.0.1.evil.example/settings/dropbox/callback",
+        # Not a URL arc could ever be reached at.
+        "ftp://arc.example.com/callback",
+        "javascript:alert(1)",
+        "/settings/dropbox/callback",
+        "https:///settings/dropbox/callback",
+        "",
+    ],
+)
+def test_everything_else_is_ineligible_so_the_paste_flow_is_offered_instead(
+    uri: str,
+) -> None:
+    assert redirect_eligible(uri) is False
+
+
+def test_a_state_is_long_enough_to_be_a_nonce_and_never_repeats() -> None:
+    # AC-24 asks for at least 32 characters, and the CSRF value is worthless
+    # if two flows can be issued the same one.
+    states = {new_state() for _ in range(64)}
+
+    assert len(states) == 64
+    assert all(len(state) >= 32 for state in states)
+
+
+def test_the_authorize_url_carries_the_redirect_and_state_when_given_them() -> None:
+    query = parse_qs(
+        urlparse(
+            authorize_url(
+                app_key="k",
+                verifier=new_code_verifier(),
+                redirect_uri="https://arc.example.com/settings/dropbox/callback",
+                state="a-nonce",
+            )
+        ).query
+    )
+
+    assert query["redirect_uri"] == [
+        "https://arc.example.com/settings/dropbox/callback"
+    ]
+    assert query["state"] == ["a-nonce"]
+    # The paste flow is the same URL minus two parameters, not a second one.
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["token_access_type"] == ["offline"]
+
+
+async def test_the_exchange_repeats_the_redirect_uri_dropbox_was_given(
+    fake: FakeDropbox,
+) -> None:
+    await exchange_code(
+        app_key="k",
+        code="c",
+        verifier=new_code_verifier(),
+        redirect_uri="https://arc.example.com/settings/dropbox/callback",
+    )
+
+    # RFC 6749 s4.1.3: a code minted against a redirect URI is only redeemable
+    # by repeating it, and Dropbox enforces it — omitting it here is an
+    # `invalid_grant` the athlete would read as "the code expired".
+    form = fake.calls_to(TOKEN_PATH)[0].form
+    assert form["redirect_uri"] == "https://arc.example.com/settings/dropbox/callback"
+
+
+async def test_the_paste_exchange_still_sends_no_redirect_uri(
+    fake: FakeDropbox,
+) -> None:
+    await exchange_code(app_key="k", code="c", verifier=new_code_verifier())
+
+    assert "redirect_uri" not in fake.calls_to(TOKEN_PATH)[0].form
 
 
 # --- AC-4: one refresh, one retry --------------------------------------------

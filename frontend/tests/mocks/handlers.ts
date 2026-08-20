@@ -21,7 +21,6 @@ import {
   declarationRead,
   defaultZoneModel,
   discoverIntegrations,
-  dropboxAppKey,
   dropboxFolders,
   dropboxSetup,
   EXERCISES,
@@ -60,6 +59,7 @@ import {
   setDropboxAppKey,
   setFolderEnabled,
   setLocalDropScanInterval,
+  startDropboxAuthorization,
   statedBreakdown,
   statedRematch,
   statedScoring,
@@ -1554,33 +1554,33 @@ export const connectionHandlers = [
   http.get("/api/v1/connections", ({ response }) =>
     response(200).json({ items: connectionsState().connections }),
   ),
-  http.post("/api/v1/connections/dropbox/authorize", ({ response }) => {
-    const appKey = dropboxAppKey();
-    if (appKey === null) {
-      return response(422).json({
-        detail:
-          "arc has no Dropbox app key yet. Register an app at " +
-          "https://www.dropbox.com/developers/apps — Scoped access, access " +
-          "type Full Dropbox — and paste its app key into Settings, in the " +
-          "steps for adding an integration.",
-      });
-    }
-    connectionsState().authorizationStarted = true;
-    return response(200).json({
-      authorize_url:
-        // The key in force, not a constant: a flow that offered connect
-        // before one was set would otherwise get a working link back.
-        `https://www.dropbox.com/oauth2/authorize?client_id=${appKey}` +
-        "&response_type=code&token_access_type=offline" +
-        "&code_challenge=fake-challenge&code_challenge_method=S256" +
-        "&scope=account_info.read+files.content.read+files.metadata.read",
-      expires_at: "2026-08-16T09:45:00Z",
-    });
-  }),
+  http.post(
+    "/api/v1/connections/dropbox/authorize",
+    async ({ request, response }) => {
+      // The body is optional — an absent one is the paste flow — so it is
+      // read defensively rather than assumed. What the step *sent* is the
+      // whole question here: a redirect URI it did not send would produce a
+      // link Dropbox shows a code on.
+      const body = await request.text();
+      const parsed = body === "" ? {} : (JSON.parse(body) as unknown);
+      const redirectUri =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "redirect_uri" in parsed &&
+        typeof parsed.redirect_uri === "string"
+          ? parsed.redirect_uri
+          : null;
+      const result = startDropboxAuthorization(redirectUri);
+      return "detail" in result
+        ? response(422).json({ detail: result.detail })
+        : response(200).json(result);
+    },
+  ),
   http.post(
     "/api/v1/connections/dropbox/complete",
     async ({ request, response }) => {
-      const result = completeDropbox((await request.json()).code);
+      const body = await request.json();
+      const result = completeDropbox(body.code, body.state ?? null);
       return "detail" in result
         ? response(422).json({ detail: result.detail })
         : response(201).json(result.connection);
