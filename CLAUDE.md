@@ -183,14 +183,10 @@ rather than regenerating the committed types from an unpinned compiler.
    "found by Schemathesis" tests in `test_auth.py` and `test_athlete_api.py`).
    An endpoint that refuses schema-valid input by design (a 405, a domain-rule
    422) is narrowed per operation in `backend/schemathesis.toml`, never by
-   excluding a check globally. Reproduce locally: run the API against the
-   compose test database, log in for a cookie, then
-   `uvx --with 'jsonschema-rs<0.50' schemathesis==4.24.3 run
-   http://localhost:8000/openapi.json --max-examples 100
-   --header "Cookie: …" --exclude-checks negative_data_rejection,ignored_auth`
-   from `backend/` (the config is picked up from the working directory). Both
-   pins are the ones `api-fuzz.yml` runs with, and that file says why each is
-   there — an unpinned run reproduces the fuzzer's bugs, not arc's.
+   excluding a check globally. Reproduce locally with **`just fuzz`** (needs
+   Docker): it runs the fuzzer CI runs, from the lock, with the same flags —
+   a test fails if the two ever diverge. Extra arguments pass through, so
+   `just fuzz --max-examples 500` or `just fuzz -x` narrows a hunt.
 7. **Property tests** (hypothesis, backend unit): for pure domain code whose
    invariants are stated more usefully than its outputs are enumerated — see
    `test_domain_zones.py`.
