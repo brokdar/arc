@@ -185,9 +185,12 @@ rather than regenerating the committed types from an unpinned compiler.
    422) is narrowed per operation in `backend/schemathesis.toml`, never by
    excluding a check globally. Reproduce locally: run the API against the
    compose test database, log in for a cookie, then
-   `uvx schemathesis run http://localhost:8000/openapi.json --max-examples 100
+   `uvx --with 'jsonschema-rs<0.50' schemathesis==4.24.3 run
+   http://localhost:8000/openapi.json --max-examples 100
    --header "Cookie: …" --exclude-checks negative_data_rejection,ignored_auth`
-   from `backend/` (the config is picked up from the working directory).
+   from `backend/` (the config is picked up from the working directory). Both
+   pins are the ones `api-fuzz.yml` runs with, and that file says why each is
+   there — an unpinned run reproduces the fuzzer's bugs, not arc's.
 7. **Property tests** (hypothesis, backend unit): for pure domain code whose
    invariants are stated more usefully than its outputs are enumerated — see
    `test_domain_zones.py`.

@@ -139,6 +139,15 @@ jobs:
         # release, so CI behaviour could change with no commit — every action
         # above is pinned to a SHA for exactly that reason, and the fuzzer
         # deserves the same. Bump it deliberately.
+        #
+        # `jsonschema-rs` is pinned for the same reason, one level down, and
+        # the pin above did not reach it: schemathesis 4.24.3 requires
+        # `jsonschema-rs>=0.49.0` with no upper bound, so `uvx` resolves it
+        # fresh on every run. 0.50.0 dropped `CanonicalSchema.is_satisfiable`,
+        # which 4.24.3 calls, and the job went from green to 98 of 99
+        # operations erroring — on no commit at all, sixteen minutes after
+        # that release. Lift this the day schemathesis ships a version that
+        # supports 0.50; it is a bound on somebody else's break, not on ours.
         run: |
           # `|| st=$?` rather than a bare call: Actions runs this with
           # `bash -e`, so a non-zero exit would abort the script before the
@@ -146,7 +155,8 @@ jobs:
           echo "runner has $(nproc) vCPU; --workers auto takes one each"
           st=0
           timeout --signal=INT --kill-after=30s 8m \
-            uvx schemathesis==4.24.3 run http://localhost:8000/openapi.json \
+            uvx --with 'jsonschema-rs<0.50' \
+            schemathesis==4.24.3 run http://localhost:8000/openapi.json \
               --max-examples 100 \
               --workers auto \
               --exclude-path /api/v1/auth/logout \
