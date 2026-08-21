@@ -6,16 +6,18 @@ one bad day leaves **no** rows behind — and the cases that prove it are all
 """
 
 import datetime as dt
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import athlete_today
 from app.domain.wellness import MAX_BACKFILL_DAYS
 from app.persistence.audit import AuditLogEntry
-from app.persistence.wellness import WellnessDayRow
+from app.persistence.wellness import WellnessDayRow, WellnessRepository
 
 BACKFILL = "/api/v1/wellness/backfill"
 DAYS = "/api/v1/wellness/days"
@@ -281,3 +283,63 @@ async def test_a_batch_day_whose_last_value_is_cleared_is_retracted(
 
     assert response.json()["outcomes"] == {"retracted": 1}
     assert await count(db_session) == 0
+
+
+async def test_a_batch_whose_day_is_retracted_mid_write_retries_and_lands(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch is one transaction, so losing a race costs the whole batch.
+
+    `record_many` answers that by re-reading and attempting once more, and this
+    is the race that path exists for: an import whose range overlaps a day the
+    athlete clears from their phone while it is in flight. The first attempt's
+    UPDATE finds nothing and rolls the batch back; the retry reads the day as
+    absent and inserts it. What must not happen is the athlete's import failing
+    — or, worse, half landing, which the one-transaction rule already forbids.
+
+    A real race: a second session really deletes the day and the batch's own
+    flush really matches nothing (`test_db_write_failures.py`). Armed once, so
+    the retry runs against a settled database — a seam that fired on every read
+    would be testing an infinite loop instead.
+    """
+    cleared = (TODAY - dt.timedelta(days=5)).isoformat()
+    fresh = (TODAY - dt.timedelta(days=4)).isoformat()
+    await client.post(BACKFILL, json=as_payload([{"date": cleared, "fatigue": 3}]))
+    real_get_many = WellnessRepository.get_many
+    retracted = False
+    attempts = 0
+
+    async def get_many_then_retract(
+        self: WellnessRepository, dates: Sequence[dt.date]
+    ) -> Mapping[dt.date, WellnessDayRow]:
+        nonlocal retracted, attempts
+        attempts += 1
+        rows = await real_get_many(self, dates)
+        if rows and not retracted:
+            retracted = True
+            async with session_factory() as athlete:
+                for row in rows.values():
+                    doomed = await athlete.get(WellnessDayRow, row.id)
+                    assert doomed is not None
+                    await athlete.delete(doomed)
+                await athlete.commit()
+        return rows
+
+    monkeypatch.setattr(WellnessRepository, "get_many", get_many_then_retract)
+
+    response = await client.post(
+        BACKFILL,
+        json=as_payload(
+            [{"date": cleared, "fatigue": 4}, {"date": fresh, "fatigue": 2}]
+        ),
+    )
+
+    assert retracted, "the read the race is arranged around was never reached"
+    # Two attempts, not one: the count is what proves the first batch really
+    # lost — without it this test passes on a run where nothing raced at all.
+    assert attempts == 2
+    assert response.status_code == 200, response.text
+    assert await count(db_session) == 2
