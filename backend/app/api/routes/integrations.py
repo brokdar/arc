@@ -161,6 +161,7 @@ async def add_integration(
         transport=submitted.transport,
         connection_id=submitted.connection_id,
         remote_path=submitted.remote_path,
+        path_display=submitted.path_display,
         actor=actor,
     )
     response.status_code = (

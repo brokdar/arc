@@ -4575,6 +4575,15 @@ interface IntegrationsMockState {
   stored: Map<IntegrationKind, { id: string; folders: string[] }>;
   /** Folders the athlete has paused, by remote path. */
   paused: Set<string>;
+  /**
+   * The athlete's own spelling of a watched folder, by normalised path.
+   *
+   * The server learns this at watch time and stores it beside the path
+   * (`feeds.remote_path_display`), so the mock has to as well: a handler that
+   * echoed a canned display path could not fail when the flow stops sending
+   * one, and the card's fallback would be untested in both directions.
+   */
+  displays: Map<string, string>;
   scanIntervalSeconds: number;
   /** Whether the interval above was set in the app or read from `.env`. */
   scanIntervalStored: boolean;
@@ -4585,6 +4594,7 @@ function seedIntegrationsState(): IntegrationsMockState {
   return {
     stored: new Map(),
     paused: new Set<string>(),
+    displays: new Map<string, string>(),
     scanIntervalSeconds: 30,
     scanIntervalStored: false,
     minted: 0,
@@ -4672,6 +4682,7 @@ function integrationFolder(
     connection_id: connection?.id ?? DROPBOX_CONNECTION_ID,
     storage: "dropbox",
     remote_path: remotePath,
+    remote_path_display: integrationsState().displays.get(remotePath) ?? null,
     enabled: !integrationsState().paused.has(remotePath),
     state: integrationsState().paused.has(remotePath)
       ? "paused"
@@ -4795,6 +4806,7 @@ export function addIntegration(body: {
   transport: Schemas["TransportKind"];
   connection_id?: string;
   remote_path?: string;
+  path_display?: string;
 }):
   | { status: 200 | 201; integration: Integration }
   | { status: 404 | 409 | 422; detail: string } {
@@ -4826,19 +4838,30 @@ export function addIntegration(body: {
     };
   }
   const path = normaliseRemotePath(body.remote_path ?? WAHOO_PATH);
+  // The refusal names the folder as the **row holding it** spells it, never as
+  // the request spelled it: the server reads `feeds.remote_path_display`, and
+  // a mock that echoed the request back would agree with a flow that sent the
+  // wrong thing.
+  const held = state.displays.get(path) ?? path;
   for (const [kind, entry] of state.stored) {
     if (entry.folders.includes(path)) {
       return {
         status: 409,
-        detail: `${DISPLAY_NAMES[kind]} is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+        detail: `${DISPLAY_NAMES[kind]} is already collecting ${held || "the Dropbox root"} on this account. One folder feeds one integration.`,
       };
     }
   }
   if (connection.feeds.some((feed) => feed.remote_path === path)) {
     return {
       status: 409,
-      detail: `A folder arc has not classified yet is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+      detail: `A folder arc has not classified yet is already collecting ${held || "the Dropbox root"} on this account. One folder feeds one integration.`,
     };
+  }
+  // Stored only when it is a spelling of *this* folder, as the service does:
+  // the normalised path is the identity and the display path is a label, so a
+  // mismatched pair loses the label rather than renaming the folder.
+  if (body.path_display && normaliseRemotePath(body.path_display) === path) {
+    state.displays.set(path, body.path_display);
   }
   const existing = state.stored.get(body.kind);
   if (existing) {

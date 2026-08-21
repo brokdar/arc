@@ -54,6 +54,8 @@ from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.dropbox import (
+    ACCOUNT_NO_ACCESS,
+    DropboxAccessError,
     DropboxAuthError,
     DropboxChanges,
     DropboxClient,
@@ -555,6 +557,21 @@ def _listing_failure(exc: DropboxError, feed: FeedRow) -> str:
             f"Dropbox would not let arc read {where}. Reconnect the Dropbox "
             "account below to start collecting from it again."
         )
+    if isinstance(exc, DropboxAccessError):
+        # The one refusal on this row that names **no** remedy inside arc, and
+        # says so: Dropbox is describing the account, and the condition "may
+        # succeed on retry, but only after corresponding action on the
+        # account". So the sentence sends the athlete to dropbox.com, the
+        # connection is deliberately **not** flipped (see `_poll_feed` — only a
+        # scope refusal flips one), and every cycle asks again. A flip here
+        # would freeze the feed behind a reconnect that cannot clear a team
+        # policy, and `_due_feeds` would stop polling the folder that is going
+        # to start working by itself the moment the account changes.
+        #
+        # The path is not interpolated, unlike every branch around it: the
+        # condition is about the account, and naming one folder in it invites
+        # the athlete to go looking at that folder's sharing settings.
+        return ACCOUNT_NO_ACCESS
     if isinstance(exc, DropboxPathNotFoundError):
         return (
             f"There is no folder at {where} in your Dropbox any more. It may "
@@ -699,6 +716,21 @@ async def _take_batch(
                 "again at the next check.",
                 blames_batch=False,
             )
+        except DropboxAccessError as exc:
+            # Not the page's fault and not the credential's: Dropbox is
+            # describing the account, and the same download will succeed once
+            # the athlete has changed something at dropbox.com. So the batch is
+            # not blamed — blaming it would spend the give-up budget and then,
+            # past the threshold, advance the cursor past a ride that was never
+            # downloaded, which is the silent loss this whole accounting exists
+            # to prevent — and the connection is not flipped, because a
+            # reconnect cannot clear a team policy.
+            #
+            # The sentence is the *listing*'s, for the reason the scope clause
+            # above gives: one condition, one account of it, whichever call
+            # met it.
+            logger.warning("dropbox_download_refused", name=entry.name, error=str(exc))
+            return _BatchFailure(_listing_failure(exc, feed), blames_batch=False)
         except DropboxError as exc:
             # A file Dropbox refuses on every attempt is the case the give-up
             # budget is for: it is not going to start working, and the rides

@@ -116,11 +116,18 @@ class UpstreamError(AppError):
 
     502 rather than the 422 these used to be folded into, because a 4xx says
     the request was wrong and there is nothing wrong with asking Dropbox for a
-    folder listing while Dropbox is having a bad day. The distinction is not
-    pedantry: `frontend/lib/api-errors.ts` renders a 4xx body's `detail` as the
-    sentence on screen and keeps its own generic wording for 5xx, so the status
-    is what decides whether the athlete is shown a remedy they can act on or
-    told that something upstream is broken and it is not their doing.
+    folder listing while Dropbox is having a bad day.
+
+    **A 502 body is athlete-facing prose, and the frontend prints it.** That is
+    the split this status records, and it is the one place the rule lives:
+    502 is arc relaying what a *named* upstream said, in a sentence written for
+    somebody to read — "Dropbox says your account does not have access to
+    this…" — so `frontend/lib/api-errors.ts` renders its `detail` exactly as it
+    renders a 4xx's. 500 and every other 5xx are arc's own failure: the detail
+    is a stack trace's leftovers rather than something anybody wrote for a
+    reader, there is no remedy in it, and they keep the generic wording. So a
+    `detail` here is drafted like any other sentence the athlete meets, and a
+    diagnostic quoted into one reaches the screen.
 
     Distinguished from a *transport* failure, which stays a 422 saying arc
     could not reach the service at all — that one is the athlete's network or

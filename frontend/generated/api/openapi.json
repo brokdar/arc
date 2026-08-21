@@ -1676,7 +1676,7 @@
         "type": "object"
       },
       "ConnectionStatus": {
-        "description": "Whether arc can currently use the credential it is holding.\n\nThree states with three different remedies, which is why `error` is not\nfolded into `needs_reauth`:\n\n* ``connected`` \u2014 a scoped call to the provider succeeded, and\n  ``connections.last_verified_at`` says when. **An observation with a\n  timestamp, not the absence of bad news.** It used to mean \"nothing has\n  told arc otherwise\", which is a claim arc could go on making for weeks\n  after a console permission change killed the grant: nothing asks, so\n  nothing tells. The status and the stamp are read together \u2014 a status\n  with no stamp behind it is a connection nobody has checked yet, and the\n  panel says exactly that rather than inventing a time;\n* ``needs_reauth`` \u2014 Dropbox refused the credential, or refused a call for\n  want of a scope the grant does not carry. The athlete has to go through\n  the connect ritual again (after ticking the permission, where that is\n  what went wrong); nothing local will fix it. **Only a reconnect leaves\n  it** \u2014 disconnect, then connect, whose probe proves a scoped read before\n  a row is written. In particular a successful token refresh does not:\n  minting a token proves the credential is alive, not that the grant can\n  read a file, and a grant whose `files.metadata.read` was unticked in the\n  console does the first and not the second. Healing the row on a refresh\n  let a flip un-flip itself inside the very cycle that made it \u2014 see\n  `app.connectors.dropbox.DropboxClient._refresh`;\n* ``error`` \u2014 arc cannot *read* its own credential, which today means\n  `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The\n  remedy is to restore the key, and re-authorizing would only paper over a\n  configuration mistake that is also hiding every other secret.",
+        "description": "Whether arc can currently use the credential it is holding.\n\nThree states with three different remedies, which is why `error` is not\nfolded into `needs_reauth`:\n\n* ``connected`` \u2014 a scoped call to the provider succeeded, and\n  ``connections.last_verified_at`` says when. **An observation with a\n  timestamp, not the absence of bad news.** It used to mean \"nothing has\n  told arc otherwise\", which is a claim arc could go on making for weeks\n  after a console permission change killed the grant: nothing asks, so\n  nothing tells. The status and the stamp are read together \u2014 a status\n  with no stamp behind it is a connection nobody has checked yet, and the\n  panel says exactly that rather than inventing a time;\n* ``needs_reauth`` \u2014 Dropbox refused the credential, or refused a call for\n  want of a scope the grant does not carry. The athlete has to go through\n  the connect ritual again (after ticking the permission, where that is\n  what went wrong); nothing local will fix it. **Only a reconnect leaves\n  it** \u2014 disconnect, then connect, whose probe proves a scoped read before\n  a row is written. In particular a successful token refresh does not:\n  minting a token proves the credential is alive, not that the grant can\n  read a file, and a grant whose `files.metadata.read` was unticked in the\n  console does the first and not the second. Healing the row on a refresh\n  let a flip un-flip itself inside the very cycle that made it \u2014 see\n  `app.connectors.dropbox.DropboxClient._refresh`;\n* ``error`` \u2014 arc cannot *read* its own credential, which today means\n  `SECRETS__ENCRYPTION_KEY` has changed since the row was written.\n  Restoring the key makes the credential decryptable again \u2014 and **arc does\n  not currently re-check a row in this state**, so nothing turns the status\n  back. An `error` row is skipped by `app.ingest.feeds._due_feeds` and\n  refused by `ConnectionService._readable_client`, and neither ever asks a\n  second time, so the way back is disconnect and connect again \u2014 which\n  takes every feed on the account with it. That is a known sharp edge: the\n  honest remedy costs the athlete their folders over a configuration\n  mistake they may have already fixed, and a re-examination path is the\n  thing that would remove the cost. Restoring the key is still worth doing\n  first, because the same variable is hiding every other secret arc holds.",
         "enum": ["connected", "needs_reauth", "error"],
         "title": "ConnectionStatus",
         "type": "string"
@@ -2605,6 +2605,11 @@
           "kind": {
             "$ref": "#/components/schemas/IntegrationKind"
           },
+          "path_display": {
+            "maxLength": 1000,
+            "title": "Path Display",
+            "type": "string"
+          },
           "remote_path": {
             "maxLength": 1000,
             "title": "Remote Path",
@@ -2713,6 +2718,17 @@
             "title": "Remote Path",
             "type": "string"
           },
+          "remote_path_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote Path Display"
+          },
           "state": {
             "$ref": "#/components/schemas/FeedDeliveryState"
           },
@@ -2725,6 +2741,7 @@
           "connection_id",
           "storage",
           "remote_path",
+          "remote_path_display",
           "enabled",
           "state",
           "last_delivery_at",

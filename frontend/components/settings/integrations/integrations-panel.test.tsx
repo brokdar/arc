@@ -14,6 +14,7 @@ import {
   seedDropboxConnection,
   seedIntegration,
   WAHOO_PATH,
+  WAHOO_PATH_DISPLAY,
 } from "@/tests/mocks/fixtures";
 
 function renderPanel() {
@@ -109,6 +110,43 @@ describe("what the panel lists", () => {
     );
     // And it is its own entry — not folded into Wahoo, which was never added.
     expect(screen.queryByRole("region", { name: "Wahoo" })).toBeNull();
+  });
+
+  it("names a watched folder as the athlete's Dropbox spells it", async () => {
+    seedDropboxConnection();
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    // What the watch stored: the normalised path is the folder's identity,
+    // the display path is its name.
+    integrationsState().displays.set(WAHOO_PATH, WAHOO_PATH_DISPLAY);
+    renderPanel();
+
+    const wahoo = await entry("Wahoo");
+    const folder = within(wahoo).getByTestId("integration-folder");
+
+    // `remote_path` is `path_lower` and a lie about the folder's name;
+    // `/apps/wahoofitness` in front of somebody looking at
+    // `/Apps/WahooFitness` in Dropbox reads as a case bug in arc.
+    expect(folder).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(folder.textContent).not.toContain(WAHOO_PATH);
+    expect(
+      within(folder).getByRole("button", {
+        name: `Stop watching ${WAHOO_PATH_DISPLAY}`,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the stored path for a folder watched before spellings", async () => {
+    seedDropboxConnection();
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    renderPanel();
+
+    const wahoo = await entry("Wahoo");
+
+    // `null` is a state — arc never learned this folder's spelling — and the
+    // row shows what it has always shown rather than a guessed capitalisation.
+    expect(within(wahoo).getByTestId("integration-folder")).toHaveTextContent(
+      WAHOO_PATH,
+    );
   });
 
   it("offers the add flow as the remedy when nothing but the local drop exists", async () => {

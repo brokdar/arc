@@ -21,25 +21,30 @@ from app.connectors import dropbox
 from app.connectors.dropbox import (
     PERMISSION_LOST,
     READ_SCOPES,
+    DropboxAccessError,
     DropboxAuthError,
     DropboxClient,
     DropboxRateLimitedError,
     DropboxScopeError,
     DropboxUpstreamError,
     authorize_url,
+    current_account,
     exchange_code,
     new_code_verifier,
     new_state,
+    probe_readable,
     redirect_eligible,
 )
 from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.persistence.connections import ConnectionRow, EncryptedCredentials
 from tests.unit.dropbox_fake import (
+    ACCOUNT_PATH,
     LIST_FOLDER_PATH,
     TOKEN_PATH,
     FakeDropbox,
     expired_access_token,
     missing_scope,
+    no_access,
     rate_limited,
 )
 
@@ -420,29 +425,110 @@ async def test_a_403_naming_a_scope_is_a_scope_error_and_refreshes_nothing(
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
 
 
-async def test_a_403_about_anything_else_is_an_auth_failure_and_is_not_retried(
+async def test_a_403_about_anything_else_is_an_account_matter_and_is_not_retried(
     db_session: AsyncSession, fake: FakeDropbox
 ) -> None:
     """The asymmetry with 401, in the traffic: 403 never buys a refresh.
 
     A 401 is Dropbox refusing *this token*, which a fresh one can genuinely
-    fix — so it gets the one refresh-and-retry. A 403 is Dropbox refusing
-    *this app*, and no token arc can mint changes that answer: retrying would
-    spend a token request to be refused identically and then report an
-    unrecoverable condition as a dead credential.
+    fix — so it gets the one refresh-and-retry. A 403 naming no scope is
+    Dropbox describing the *account*: a team policy, a suspended member, a
+    folder somebody else owns. Retrying would spend a token request to be
+    refused identically.
+
+    And it is deliberately **not** a `DropboxAuthError`. That class means "the
+    credential is dead", every caller answers it with disconnect-and-connect,
+    and taking that advice here costs the athlete every feed on the account to
+    run a reconnect that meets the same 403.
     """
-    fake.script(
-        LIST_FOLDER_PATH,
-        httpx.Response(403, json={"error_summary": "access_denied/team_policy/"}),
+    fake.script(LIST_FOLDER_PATH, no_access())
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAccessError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert not isinstance(raised.value, DropboxAuthError)
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+    await db_session.refresh(row)
+    # The row is untouched: nothing about the credential was refused.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
+
+
+async def test_a_403_with_no_scope_on_a_download_is_an_account_matter(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The download path reads 403 the same way the RPC path does.
+
+    `_content_failure` classified only 401, so this shape fell through to
+    `DropboxUpstreamError` — which `app.ingest.feeds._take_batch` blames the
+    *page* for, spending the give-up budget on a condition that has nothing to
+    do with the page.
+    """
+    fake.download_failures["id:ride.fit"] = no_access()
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAccessError) as raised:
+        await client(db_session, row).download("id:ride.fit")
+
+    assert not isinstance(raised.value, DropboxAuthError)
+
+
+async def test_a_403_naming_a_scope_on_a_download_is_a_scope_error(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Dropbox spells `missing_scope` with 403 as well, and the download path
+    read only the 401 spelling.
+
+    The consequence was silent data loss, which is why this is pinned at the
+    connector rather than only through the poll: a 403 `missing_scope` became
+    a `DropboxUpstreamError`, `_take_batch` blamed the batch, and after
+    `max_batch_attempts` polls the cursor advanced past a page whose file had
+    never been downloaded — while the panel read "connected, last checked just
+    now".
+    """
+    fake.download_failures["id:ride.fit"] = missing_scope(
+        "files.content.read", status=403
     )
     row = await connection(db_session, expires_in=3_600)
 
-    with pytest.raises(DropboxAuthError) as raised:
-        await client(db_session, row).list_entries("")
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).download("id:ride.fit")
 
-    assert not isinstance(raised.value, DropboxScopeError)
-    assert fake.calls_to(TOKEN_PATH) == []
-    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+    assert raised.value.required_scope == "files.content.read"
+
+
+async def test_a_403_with_no_scope_during_the_probe_is_an_account_matter(
+    fake: FakeDropbox,
+) -> None:
+    """`probe_readable` makes the same three-way read `_call` makes.
+
+    It decides whether a connection row is written at all, so classifying an
+    account condition as a dead credential would refuse the connect with the
+    four console moves for a permission Dropbox never mentioned.
+    """
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    with pytest.raises(DropboxAccessError):
+        await probe_readable(access_token="access-token-1")
+
+
+async def test_the_account_endpoint_answering_200_with_no_json_is_an_upstream_failure(
+    fake: FakeDropbox,
+) -> None:
+    """A proxy's maintenance page carries a 200 and is not the account JSON.
+
+    Parsed unguarded, it raised a bare `ValueError` out of a hierarchy every
+    caller catches as `DropboxError` — a 500 to the athlete, and an escape from
+    the wrapper that deletes a flow whose code has already been spent.
+    """
+    fake.script(ACCOUNT_PATH, httpx.Response(200, text="<html>maintenance</html>"))
+
+    with pytest.raises(DropboxUpstreamError) as raised:
+        await current_account(access_token="access-token-1")
+
+    assert "get_current_account" in str(raised.value)
 
 
 async def test_a_401_arc_cannot_read_keeps_the_refresh_once_then_fail_path(

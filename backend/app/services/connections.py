@@ -18,8 +18,10 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.dropbox import (
+    ACCOUNT_NO_ACCESS,
     PERMISSION_LOST,
     READ_SCOPES,
+    DropboxAccessError,
     DropboxAuthError,
     DropboxClient,
     DropboxError,
@@ -39,7 +41,6 @@ from app.connectors.dropbox import (
 )
 from app.core.config import SettingSource, get_settings
 from app.core.exceptions import (
-    AppError,
     ConflictError,
     NotFoundError,
     RateLimitedError,
@@ -815,9 +816,10 @@ class ConnectionService:
         already been used". The athlete who reloads the callback page after a
         scope refusal reads *that* instead of the four console moves they had
         two seconds ago — arc replacing the sentence that names the remedy with
-        one about a mechanism. So every `AppError` raised after the exchange
-        returned deletes the pending authorization (:meth:`_end_flow`), and the
-        next attempt is told plainly to start again. The flag moves the instant
+        one about a mechanism. So **anything** that leaves this block after the
+        exchange returned — a refusal, a bug, a cancelled request — deletes the
+        pending authorization (:meth:`_end_flow`), and the next attempt is told
+        plainly to start again. The flag moves the instant
         the exchange answers, refusal included, and **not** before the call:
         a token request that timed out or met a 503 left the code untouched,
         and burning the flow there would cost the athlete a trip to dropbox.com
@@ -833,8 +835,9 @@ class ConnectionService:
             ConflictError: When a Dropbox connection already exists.
             ValidationError: When the flow was never started, has expired, the
                 state does not match, the code is spent, the grant carries no
-                refresh token, the grant cannot read the athlete's files, or
-                Dropbox could not be reached at all.
+                refresh token, the grant cannot read the athlete's files,
+                Dropbox says the account does not have access, or Dropbox could
+                not be reached at all.
             UpstreamError: When Dropbox answered one of the three calls with a
                 failure of its own. Its own status because there is nothing
                 wrong with the request, the setup or the code — see
@@ -951,6 +954,15 @@ class ConnectionService:
                             ),
                         )
                     ) from exc
+                except DropboxAccessError as exc:
+                    # Refused, and with no row stored: a connection arc has
+                    # already watched Dropbox refuse is one whose every folder
+                    # would fail on the first poll, and whose only offered
+                    # remedy would be the disconnect this sentence exists to
+                    # avoid. Not the scope checklist either — Dropbox named no
+                    # scope, and sending the athlete to tick permissions they
+                    # already granted is arc guessing out loud.
+                    raise ValidationError(ACCOUNT_NO_ACCESS) from exc
                 except DropboxError as exc:
                     # Every scope arc needs was granted and Dropbox simply did
                     # not answer. Logged rather than silent, because a
@@ -958,7 +970,23 @@ class ConnectionService:
                     # operator's problem.
                     logger.info("dropbox_connect_probe_unanswered", error=str(exc))
                     verification_note = VERIFICATION_DEFERRED
-        except AppError:
+        except BaseException:
+            # **Every** escape, not only the `AppError`s this use-case raises
+            # on purpose. The rule is about the *code*, which is spent once
+            # `offered` is true whatever happens next, so anything that leaves
+            # this block with the flow row alive leaves a row that can only
+            # ever answer "that authorization code has already been used". An
+            # `AppError` wrapper let two shapes through: a bug on the happy
+            # path — a `ValueError` from a body arc could not parse was the one
+            # that actually shipped — and `CancelledError`, which is what the
+            # athlete closing the tab mid-connect delivers. Neither is an
+            # `AppError`, and both left the athlete a flow they could only be
+            # refused from.
+            #
+            # `BaseException` rather than `Exception` precisely for that second
+            # one, and the bare `raise` is what keeps it honest: the deletion
+            # is a side effect, the exception is re-raised untouched, and
+            # nothing here can swallow a cancellation.
             if offered:
                 await self._end_flow()
             raise
@@ -1401,6 +1429,14 @@ def _dropbox_failures_translated() -> Iterator[None]:
     :class:`DropboxUnreachableError` a :class:`DropboxUpstreamError`, so a
     reordering would silently answer the precise case with the general
     sentence.
+
+    :class:`DropboxAccessError` sits outside that chain deliberately — it is a
+    plain :class:`app.connectors.dropbox.DropboxError` — and answers **502**
+    rather than the 409 an auth failure gets. 502 is the status the frontend
+    prints the detail of, which is the whole point: the sentence is the answer,
+    and the athlete has to read it. A 409 would have carried it too, but 409 is
+    arc saying the request conflicts with what it holds, and nothing arc holds
+    is wrong.
     """
     try:
         yield
@@ -1413,6 +1449,12 @@ def _dropbox_failures_translated() -> Iterator[None]:
         raise ConflictError(scope_refusal(exc.required_scope)) from exc
     except DropboxAuthError as exc:
         raise ConflictError(PERMISSION_LOST) from exc
+    except DropboxAccessError as exc:
+        # Never `PERMISSION_LOST`, and never the scope checklist: this is the
+        # one refusal on this path that "disconnect and connect again" makes
+        # worse — it costs the athlete every feed on the account and then meets
+        # the same 403.
+        raise UpstreamError(ACCOUNT_NO_ACCESS) from exc
     except DropboxRateLimitedError as exc:
         raise RateLimitedError(
             "Dropbox is rate-limiting arc. Try again in about "

@@ -54,9 +54,17 @@ class ConnectionStatus(StrEnum):
       let a flip un-flip itself inside the very cycle that made it — see
       `app.connectors.dropbox.DropboxClient._refresh`;
     * ``error`` — arc cannot *read* its own credential, which today means
-      `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
-      remedy is to restore the key, and re-authorizing would only paper over a
-      configuration mistake that is also hiding every other secret.
+      `SECRETS__ENCRYPTION_KEY` has changed since the row was written.
+      Restoring the key makes the credential decryptable again — and **arc does
+      not currently re-check a row in this state**, so nothing turns the status
+      back. An `error` row is skipped by `app.ingest.feeds._due_feeds` and
+      refused by `ConnectionService._readable_client`, and neither ever asks a
+      second time, so the way back is disconnect and connect again — which
+      takes every feed on the account with it. That is a known sharp edge: the
+      honest remedy costs the athlete their folders over a configuration
+      mistake they may have already fixed, and a re-examination path is the
+      thing that would remove the cost. Restoring the key is still worth doing
+      first, because the same variable is hiding every other secret arc holds.
     """
 
     CONNECTED = "connected"

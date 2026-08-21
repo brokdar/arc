@@ -283,6 +283,26 @@ class FeedRow(Base):
     #: Normalised by `app.domain.connections.normalise_remote_path`. The empty
     #: string is the Dropbox root, which is legal if unwise.
     remote_path: Mapped[str] = mapped_column(String(MAX_REMOTE_PATH_LENGTH))
+    #: The same folder as the athlete's Dropbox spells it, and the only
+    #: spelling that belongs on screen.
+    #:
+    #: Stored beside :attr:`remote_path` rather than derived from it, because
+    #: it cannot be derived: `path_lower` is a normalisation, and no rule
+    #: recovers `/Apps/WahooFitness` from `/apps/wahoofitness`. The picker and
+    #: the discovery road both hold Dropbox's `path_display` at the moment the
+    #: folder is chosen, so it is written then or never.
+    #:
+    #: **Nullable, and null is a state**: watched before this column existed.
+    #: There is no backfill — inventing a capitalisation would be arc asserting
+    #: a spelling Dropbox never gave it — so every reader falls back to
+    #: :attr:`remote_path`, which is what those rows have always shown.
+    #:
+    #: Never the identity. `uq_feeds_connection_id_remote_path` is written
+    #: against `remote_path` alone, and the folder-clash refusal compares the
+    #: normalised path, because two spellings of one folder are one folder.
+    remote_path_display: Mapped[str | None] = mapped_column(
+        String(MAX_REMOTE_PATH_LENGTH)
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Dropbox's `list_folder` cursor. Null until the first poll.
     cursor: Mapped[str | None] = mapped_column(Text)

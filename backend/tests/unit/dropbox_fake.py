@@ -430,6 +430,25 @@ def missing_scope(
     )
 
 
+def no_access(summary: str = "access_denied/team_policy/...") -> httpx.Response:
+    """Dropbox's 403 for a call the *account* is not allowed to make.
+
+    A 403 with no `missing_scope` in it, which is the other half of what
+    Dropbox sends on that status: a team policy, a suspended member, a shared
+    folder somebody else owns. The grant is intact and re-authorizing changes
+    nothing, so arc reads it as `DropboxAccessError` — the distinction this
+    body exists to exercise, because the same shape used to be reported as a
+    dead credential and answered with "disconnect".
+    """
+    return httpx.Response(
+        403,
+        json={
+            "error_summary": summary,
+            "error": {".tag": "access_denied", "access_error": {".tag": "team_policy"}},
+        },
+    )
+
+
 def reset_cursor() -> httpx.Response:
     """Dropbox's 409 for a cursor it will no longer continue from."""
     return httpx.Response(

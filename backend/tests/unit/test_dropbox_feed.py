@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
 from app.connectors import dropbox
-from app.connectors.dropbox import READ_SCOPES
+from app.connectors.dropbox import ACCOUNT_NO_ACCESS, READ_SCOPES
 from app.core.config import get_settings
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
@@ -75,6 +75,7 @@ from tests.unit.dropbox_fake import (
     file_entry,
     folder_entry,
     missing_scope,
+    no_access,
     page,
     path_not_found,
     rate_limited,
@@ -1706,6 +1707,104 @@ async def test_a_download_refused_for_a_scope_flips_the_connection(
     assert await rows_of(db_session, SessionRow) == []
 
 
+async def test_a_download_refused_with_a_403_scope_flips_and_keeps_the_cursor(
+    fake: FakeDropbox, db_session: AsyncSession, data_root: Path
+) -> None:
+    """Dropbox spells `missing_scope` with 403 too, and this path read only 401.
+
+    The consequence was silent data loss. Unclassified, the 403 fell through to
+    `DropboxUpstreamError`, `_take_batch` blamed the *page* for it, and after
+    `max_batch_attempts` polls the cursor advanced past a page whose file had
+    never been downloaded — the ride gone for good, while the panel read
+    "connected, last checked just now" because the listing before it had
+    stamped `last_verified_at`.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.download_failures[entry["id"]] = missing_scope(
+        "files.content.read", status=403
+    )
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert "files.content.read" in (stored.last_error or "")
+
+    refused = await reread(db_session, feed)
+    # The cursor did not move and no attempt was spent, so nothing is on the
+    # road to being skipped: the file is still there to be collected.
+    assert refused.cursor is None
+    assert refused.cursor_attempts == 0
+    assert await rows_of(db_session, SessionRow) == []
+
+
+async def test_a_download_the_account_is_refused_blames_neither_page_nor_row(
+    fake: FakeDropbox, db_session: AsyncSession, data_root: Path
+) -> None:
+    """A 403 naming no scope is the account, and neither remedy on offer fits.
+
+    Blaming the page would spend the give-up budget and eventually advance the
+    cursor past a ride that was never downloaded; flipping the row would offer
+    a reconnect that cannot clear a team policy and would cost every feed on
+    the account. The same download works the moment the athlete changes
+    something at dropbox.com, so arc says that and keeps asking.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.download_failures[entry["id"]] = no_access()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.CONNECTED
+    assert stored.last_error is None
+
+    refused = await reread(db_session, feed)
+    assert refused.last_error == ACCOUNT_NO_ACCESS
+    assert refused.cursor is None
+    assert refused.cursor_attempts == 0
+    assert await rows_of(db_session, SessionRow) == []
+
+
+async def test_a_listing_the_account_is_refused_keeps_asking_every_cycle(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """The listing half: same sentence, no flip, and the next cycle still polls.
+
+    A flip would be the expensive mistake here. `_due_feeds` skips a connection
+    that is not `connected`, so a row flipped over an account condition stops
+    being polled entirely — and the condition is one that clears without arc
+    being told, on an account arc cannot see. So the status holds, the folder
+    says where the answer is, and the poll asks again.
+    """
+    fake.list_failures[WATCHED] = no_access()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.CONNECTED
+    assert stored.last_error is None
+
+    refused = await reread(db_session, feed)
+    assert refused.last_error == ACCOUNT_NO_ACCESS
+    assert "Disconnect" not in refused.last_error
+    assert "Reconnect" not in refused.last_error
+    assert refused.cursor is None
+    assert refused.cursor_attempts == 0, "the page was never reached"
+
+    # And the next cycle asks again rather than going quiet.
+    spent = len(fake.calls_to(LIST_FOLDER_PATH))
+    await feeds.poll_feeds()
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == spent + 1
+
+
 async def test_the_connection_a_refused_download_flipped_is_not_polled_again(
     fake: FakeDropbox, db_session: AsyncSession, data_root: Path
 ) -> None:
@@ -1790,6 +1889,7 @@ async def test_no_failure_the_poll_records_names_a_token_or_the_api(
         "throttled": rate_limited("42"),
         "broken": server_error(),
         "gone": path_not_found(WATCHED),
+        "account": no_access(),
     }
     for name, response in failures.items():
         fake.calls.clear()

@@ -341,12 +341,15 @@ describe("what arc found in the athlete's Dropbox", () => {
     ).toBeInTheDocument();
     // Verbatim: the proposal's own kind, transport, connection and path, so
     // accepting and adding by hand are one write path with one set of refusals.
+    // Both spellings go — the normalised one is the folder's identity, and the
+    // display one is the only thing arc can put on screen afterwards.
     expect(postedIntegrations()).toEqual([
       {
         kind: "wahoo",
         transport: "cloud_folder",
         connection_id: DROPBOX_CONNECTION_ID,
         remote_path: WAHOO_PATH,
+        path_display: WAHOO_PATH_DISPLAY,
       },
     ]);
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
@@ -420,6 +423,7 @@ describe("what arc found in the athlete's Dropbox", () => {
         transport: "cloud_folder",
         connection_id: DROPBOX_CONNECTION_ID,
         remote_path: "/rides",
+        path_display: "/rides",
       },
     ]);
   });
@@ -776,7 +780,9 @@ describe("choosing the folder arc watches", () => {
     );
 
     // Display case is a rendering; `path_lower` is the identity the feed row
-    // and `uq_feeds_connection_id_remote_path` are written against.
+    // and `uq_feeds_connection_id_remote_path` are written against. Both are
+    // sent: the identity is what the write is keyed on, and the spelling is
+    // what the card and the already-held refusal read back.
     expect(
       await screen.findByRole("region", { name: "Wahoo" }),
     ).toBeInTheDocument();
@@ -786,11 +792,39 @@ describe("choosing the folder arc watches", () => {
         transport: "cloud_folder",
         connection_id: DROPBOX_CONNECTION_ID,
         remote_path: WAHOO_PATH,
+        path_display: WAHOO_PATH_DISPLAY,
       },
     ]);
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
       WAHOO_PATH,
     ]);
+  });
+
+  it("refuses a second watch naming the folder as the athlete spells it", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await watchWahooFolder(user, step);
+    const done = await screen.findByTestId("flow-complete");
+    await user.click(within(done).getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("add-integration-flow")).toBeNull(),
+    );
+
+    // Same folder, second time — through the flow again, so the refusal is
+    // about a row the *picker* wrote and therefore one arc has a spelling for.
+    const again = await openFlow(user);
+    await user.click(within(again).getByRole("button", { name: "Wahoo" }));
+    const reopened = await screen.findByTestId("folder-step");
+    await watchWahooFolder(user, reopened);
+
+    // The refusal prints directly under a breadcrumb reading
+    // `/Apps/WahooFitness`. Spelling the same folder `/apps/wahoofitness`
+    // there reads as arc talking about a different folder, or as a case bug.
+    const refusal = await screen.findByRole("alert");
+    expect(refusal).toHaveTextContent(
+      `Wahoo is already collecting ${WAHOO_PATH_DISPLAY}`,
+    );
+    expect(refusal.textContent).not.toContain(WAHOO_PATH);
   });
 
   it("ends on the folder as the athlete's Dropbox spells it", async () => {

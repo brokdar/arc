@@ -104,6 +104,29 @@ PERMISSION_LOST: Final = (
     "again to fix it."
 )
 
+#: What the athlete reads when Dropbox says the *account* is not allowed this.
+#:
+#: The remedy is on dropbox.com and it is not the connect ritual, which is the
+#: whole reason this sentence exists apart from :data:`PERMISSION_LOST`. A 403
+#: arc cannot read as a scope is Dropbox describing the account or the team —
+#: a team policy, a suspended member, a shared folder somebody else owns — and
+#: none of it changes when arc mints a new token. Sending the athlete to
+#: Disconnect over it costs them every feed and every integration on that
+#: account, and the reconnect then meets the same 403.
+#:
+#: "your account or team" rather than a mechanism, and "check your account at
+#: dropbox.com" rather than a console path: arc does not know which of the
+#: account conditions it is, so it names the place the answer is and stops
+#: there. One constant for the same reason :data:`PERMISSION_LOST` is one: it
+#: is written onto a feed row, answered to the browser, and refused with during
+#: a connect, and three spellings of one condition is three different accounts
+#: of it.
+ACCOUNT_NO_ACCESS: Final = (
+    "Dropbox says your account does not have access to this. That is a "
+    "setting on your Dropbox account or team, not something in arc — check "
+    "your account at dropbox.com, then try again here."
+)
+
 
 class DropboxError(Exception):
     """Anything that went wrong talking to Dropbox."""
@@ -141,6 +164,26 @@ class DropboxScopeError(DropboxAuthError):
         #: The scope Dropbox named, verbatim (`files.metadata.read`). ``""``
         #: when it named none, which the service reads as "all of them".
         self.required_scope = required_scope
+
+
+class DropboxAccessError(DropboxError):
+    """Dropbox answered that the account or team does not have access.
+
+    **Deliberately not a** :class:`DropboxAuthError`, which is the whole point
+    of the class. Dropbox documents 403 as an account/team access condition —
+    the request "may succeed on retry, but only after corresponding action on
+    the account" — so the credential is alive, the grant is intact, and the
+    remedy is on the athlete's Dropbox account rather than in arc. Inheriting
+    from :class:`DropboxAuthError` would put it back on every path that refuses
+    a dead credential: the connection would flip to `needs_reauth`, the panel
+    would offer Disconnect, and taking that offer would cascade away every feed
+    and integration on the account in order to run a reconnect that meets the
+    same 403 — with advice about scopes Dropbox never mentioned.
+
+    A 401 or a 403 whose body *names* a scope is still
+    :class:`DropboxScopeError`: Dropbox said which permission, and that is a
+    fact about the grant, not about the account. This is the rest of 403.
+    """
 
 
 class DropboxUpstreamError(DropboxError):
@@ -570,6 +613,10 @@ async def probe_readable(*, access_token: str) -> None:
         DropboxScopeError: Dropbox named the scope the grant is missing. The
             refusal the athlete can act on without guessing, so it is told
             apart from the rest even though the remedy overlaps.
+        DropboxAccessError: A 403 naming no scope — the account or the team
+            does not have access. Not a verdict on the credential, and its own
+            class because the remedy is on dropbox.com and re-authorizing is
+            not it.
         DropboxAuthError: Dropbox refused the credential for some other
             reason. Same remedy — fix the app registration, authorize again.
         DropboxUpstreamError: Dropbox was rate-limiting arc, broken, or not
@@ -589,6 +636,15 @@ async def probe_readable(*, access_token: str) -> None:
         if (scope := _missing_scope(body)) is not None:
             raise DropboxScopeError(scope)
         summary = str(body.get("error_summary", ""))
+        # The same three-way read `DropboxClient._call` makes, and it has to
+        # be: this probe decides whether a row is written at all, and a
+        # connect that refused an account condition as a dead credential
+        # would send the athlete back through the ritual that cannot fix it.
+        if response.status_code == 403:
+            raise DropboxAccessError(
+                f"Dropbox refused to list the root folder with 403: "
+                f"{summary or 'no reason given'}"
+            )
         raise DropboxAuthError(
             f"Dropbox refused to list the root folder: {summary or 'unauthorized'}"
         )
@@ -602,12 +658,28 @@ async def probe_readable(*, access_token: str) -> None:
 
 
 def _account_from(response: httpx.Response) -> DropboxAccount:
-    """Project `/2/users/get_current_account` onto the label arc stores."""
+    """Project `/2/users/get_current_account` onto the label arc stores.
+
+    **A 200 is not a promise that the body is JSON.** A proxy in front of
+    Dropbox — or in front of arc's own egress — answers a maintenance page with
+    200 and `text/html`, and parsing that with `response.json()` raised a bare
+    `ValueError` out of a `DropboxError` hierarchy every caller catches. It
+    reached the athlete mid-connect as a 500, and it escaped the wrapper in
+    `ConnectionService.complete_dropbox` that deletes a flow whose code has
+    already been spent — so the next attempt was told the code had been used.
+    An unreadable body is an upstream failure like any other, and it names the
+    endpoint because that is the only thing distinguishing it in a log.
+    """
     if response.status_code != 200:
         raise DropboxUpstreamError(
             f"Dropbox would not describe the account ({response.status_code})"
         )
-    body = response.json()
+    body = _json_or_empty(response)
+    if not body:
+        raise DropboxUpstreamError(
+            "Dropbox answered /2/users/get_current_account with 200 and a body "
+            "arc could not read as the account JSON"
+        )
     display = str((body.get("name") or {}).get("display_name") or "").strip()
     email = str(body.get("email") or "").strip()
     label = f"{display} ({email})" if display and email else display or email
@@ -769,8 +841,8 @@ class DropboxClient:
         Raises:
             DropboxPathNotFoundError: When the id no longer resolves — the
                 file was deleted between the listing and this call.
-            DropboxAuthError / DropboxRateLimitedError / DropboxUpstreamError:
-                As :meth:`_content_failure` classifies them.
+            DropboxAuthError / DropboxAccessError / DropboxRateLimitedError /
+            DropboxUpstreamError: As :meth:`_content_failure` classifies them.
         """
         token = await self._access_token()
         async with _client() as http:
@@ -795,6 +867,18 @@ class DropboxClient:
         here costs one replayed page and the refresh happens on the next
         listing. Retrying inside the download would double the bytes moved for
         a case the batch rule already covers.
+
+        **401 and 403 are read the same way**, exactly as :meth:`_call` and
+        :func:`probe_readable` read them. This classified only the 401 shape of
+        `missing_scope`, and Dropbox sends both: a `files.content.read`
+        withdrawn in the console answered 403 here, fell through to
+        :class:`DropboxUpstreamError`, and `app.ingest.feeds._take_batch` reads
+        that as the page's fault — so after `max_batch_attempts` polls the
+        cursor advanced past a page whose file was never downloaded. The ride
+        was gone, silently, while the panel said "connected, last checked just
+        now". A scope refusal is proof about the grant whichever status carries
+        it, and the rest of 403 is :class:`DropboxAccessError`, which blames
+        neither the page nor the credential.
         """
         if response.status_code == 429:
             return DropboxRateLimitedError(
@@ -805,9 +889,13 @@ class DropboxClient:
         # the tagged-error JSON in the body.
         body = _json_or_empty(response)
         summary = str(body.get("error_summary", ""))
-        if response.status_code == 401:
+        if response.status_code in {401, 403}:
             if (scope := _missing_scope(body)) is not None:
                 return DropboxScopeError(scope)
+            if response.status_code == 403:
+                return DropboxAccessError(
+                    f"403 downloading {file_id} ({summary or 'no reason given'})"
+                )
             return DropboxAuthError(
                 f"401 downloading {file_id} ({summary or 'no reason given'})"
             )
@@ -1013,6 +1101,16 @@ class DropboxClient:
             # advice that never comes true. `probe_readable` has always read
             # both codes; this is the same rule on the path every browse and
             # every poll takes.
+            #
+            # **A 403 naming no scope is not a dead credential either.** It was
+            # raised as :class:`DropboxAuthError`, which is the class every
+            # caller answers with "disconnect and connect again" — and Dropbox
+            # documents 403 as an account or team condition that "may succeed
+            # on retry, but only after corresponding action on the account".
+            # Re-authorizing cannot clear one, so the advice was destructive
+            # (disconnect cascades away the feeds and the integrations) and
+            # then failed on the same 403, with wording about scopes Dropbox
+            # never named. :class:`DropboxAccessError` says the true thing.
             body = _json_or_empty(response)
             if (scope := _missing_scope(body)) is not None:
                 logger.info(
@@ -1024,7 +1122,13 @@ class DropboxClient:
                 raise DropboxScopeError(scope)
             if response.status_code == 403:
                 summary = str(body.get("error_summary", ""))
-                raise DropboxAuthError(
+                logger.info(
+                    "dropbox_account_access_refused",
+                    connection_id=str(self._connection.id),
+                    endpoint=endpoint,
+                    error_summary=summary,
+                )
+                raise DropboxAccessError(
                     f"Dropbox refused {endpoint} with 403 "
                     f"({summary or 'no reason given'})"
                 )

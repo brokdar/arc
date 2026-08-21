@@ -162,6 +162,12 @@ export function Slot({
  * The delivery stamp is on the athlete's clock, not the server's: they read
  * "last checked" against *now* to tell a broken folder from a quiet one, and
  * in UTC a poll from ten minutes ago looks fourteen hours stale at UTC+14.
+ *
+ * The path is `remote_path_display` wherever arc has it: `remote_path` is
+ * `path_lower`, an identity rather than a name, and `/apps/wahoofitness` in
+ * front of somebody looking at `/Apps/WahooFitness` in Dropbox reads as a case
+ * bug in arc. `null` is a folder watched before arc stored the spelling, and
+ * those fall back to the stored path — the same thing they have always shown.
  */
 function FolderLine({
   folder,
@@ -187,6 +193,7 @@ function FolderLine({
     "/api/v1/integrations/{integration_id}/folders/{folder_id}",
     { onSuccess: invalidate },
   );
+  const shown = folder.remote_path_display ?? folder.remote_path;
 
   return (
     <li
@@ -196,7 +203,7 @@ function FolderLine({
       className={`flex flex-wrap items-baseline gap-x-2 ${folder.enabled ? "" : "opacity-60"}`}
     >
       <span className="font-mono text-ink-secondary text-sm">
-        {folder.remote_path === "" ? "/ (everything)" : folder.remote_path}
+        {shown === "" ? "/ (everything)" : shown}
       </span>
       {folder.enabled ? null : (
         <span className="text-ink-faint text-xs">paused</span>
@@ -236,7 +243,7 @@ function FolderLine({
         disabled={remove.isPending}
         onClick={() => remove.mutate({ params })}
       >
-        {`Stop watching ${folder.remote_path || "the root"}`}
+        {`Stop watching ${shown || "the root"}`}
       </Button>
       <Problems
         problems={[

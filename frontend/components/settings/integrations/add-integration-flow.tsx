@@ -233,6 +233,10 @@ function DiscoveredIntegrations({
         transport: proposal.transport,
         connection_id: proposal.connection_id,
         remote_path: proposal.path,
+        // Sent, not only shown: `remote_path` is stored normalised, and this
+        // is the only moment arc can learn the athlete's own spelling — the
+        // card and the already-held refusal both read it back off the row.
+        path_display: proposal.path_display,
       },
     });
   };
@@ -887,6 +891,12 @@ function FolderStep({
         transport: offer.kind,
         connection_id: connectionId,
         remote_path: target.lower,
+        // The other half of `Here`, and the reason it carries two spellings at
+        // all: the write stores `lower` as the folder's identity and `display`
+        // as its name, so the card and the already-held refusal can say
+        // `/Apps/WahooFitness` afterwards. Empty for the root, which Dropbox
+        // spells as the empty path in both.
+        path_display: target.display,
       },
     });
   };

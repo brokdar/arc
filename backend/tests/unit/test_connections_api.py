@@ -7,6 +7,7 @@ seen from a response body, that the refresh token never reaches a log line, is
 asserted with `structlog.testing.capture_logs`.
 """
 
+import asyncio
 import base64
 import datetime as dt
 import hashlib
@@ -16,6 +17,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -26,8 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
 from app.connectors import dropbox
-from app.connectors.dropbox import READ_SCOPES
+from app.connectors.dropbox import ACCOUNT_NO_ACCESS, READ_SCOPES
 from app.core.config import get_settings
+from app.domain.actor import Actor
 from app.domain.connections import ACTIVITY_EXTENSIONS, ConnectionStatus
 from app.persistence.audit import AuditLogEntry
 from app.persistence.connections import (
@@ -38,8 +41,11 @@ from app.persistence.connections import (
     OAuthAuthorizationRow,
     ProviderAppRow,
 )
+from app.persistence.db import session_scope
 from app.persistence.integrations import IntegrationRow
 from app.persistence.types import JSONColumn
+from app.services import connections as connections_service
+from app.services.connections import ConnectionService
 from tests.unit.dropbox_fake import (
     ACCOUNT_PATH,
     LIST_FOLDER_CONTINUE_PATH,
@@ -51,6 +57,7 @@ from tests.unit.dropbox_fake import (
     file_entry,
     folder_entry,
     missing_scope,
+    no_access,
     page,
     path_not_found,
     rate_limited,
@@ -993,6 +1000,83 @@ async def test_a_probe_refused_without_naming_a_scope_ends_the_flow_too(
     assert await count_of(db_session, OAuthAuthorizationRow) == 0
 
 
+async def test_a_probe_refused_by_the_account_refuses_the_connect_without_the_checklist(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A 403 naming no scope is the account, and neither remedy on offer fits.
+
+    Storing the connection would leave a row whose every folder fails on the
+    first poll and whose only offered remedy is Disconnect — which cascades
+    away the feeds and then meets the same 403. Refusing with the scope
+    checklist would send the athlete to tick permissions Dropbox never
+    mentioned. So: no row, and the sentence that names where the answer is.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail == ACCOUNT_NO_ACCESS
+    assert "dropbox.com" in detail
+    assert "Permissions" not in detail
+    assert "Disconnect" not in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_an_account_endpoint_answering_200_with_no_json_ends_the_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The escape the `except AppError` wrapper could not see.
+
+    A proxy's maintenance page carries a 200 and no JSON, and `_account_from`
+    parsed it unguarded: a bare `ValueError` reached the athlete as a 500 and
+    walked straight past the wrapper that deletes a flow whose code has already
+    been spent. The next attempt was then told the code had been used —
+    arc answering a question nobody asked about a flow it should have closed.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(ACCOUNT_PATH, httpx.Response(200, text="<html>maintenance</html>"))
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 502, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    # The whole point: the code is spent, so the flow may not survive it.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_cancelled_connect_does_not_leave_the_spent_codes_flow_alive(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The other shape the `except AppError` wrapper could not see.
+
+    A `CancelledError` is what the athlete closing the tab mid-connect
+    delivers, and it is not an `AppError` — so the flow survived a code that
+    had already been redeemed, and the only answer it could ever give was
+    "that authorization code has already been used". Driven through the
+    service rather than the API because cancellation is not something a
+    request body can ask for.
+    """
+    await client.post(AUTHORIZE)
+
+    async def cancelled(**_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    async with session_scope() as session:
+        service = ConnectionService.from_session(session)
+        with (
+            mock.patch.object(connections_service, "current_account", cancelled),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await service.complete_dropbox(code="pasted-code", actor=Actor.athlete())
+
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
 async def test_a_refused_connect_reloaded_says_start_again_not_code_reused(
     client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
 ) -> None:
@@ -1460,6 +1544,38 @@ async def test_a_missing_scope_while_browsing_names_the_scope_and_the_console(
     # spent to be told the same thing.
     assert fake.calls_to(TOKEN_PATH) == []
     assert "could not be reached" not in detail
+
+
+async def test_an_account_refusal_while_browsing_sends_the_athlete_to_dropbox(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A 403 naming no scope is neither a dead credential nor a bad minute.
+
+    It arrived as `DropboxAuthError`, so the browse answered 409 with
+    "Disconnect and connect again" — advice that costs the athlete every feed
+    and integration on the account and then fails on the same 403, with wording
+    about scopes Dropbox never named. 502 because the frontend prints a 502's
+    detail, and the detail is the whole answer.
+    """
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    assert detail == ACCOUNT_NO_ACCESS
+    assert "Disconnect" not in detail
+    assert "Permissions" not in detail
+    assert "try again in a few minutes" not in detail
+    # No refresh: no token arc can mint changes what the account is allowed.
+    assert fake.calls_to(TOKEN_PATH) == []
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    # The credential is fine, so the row says so — a flip here would freeze
+    # every folder on the account behind a reconnect that cannot clear it.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
 
 
 async def test_a_dead_credential_while_browsing_is_the_athletes_remedy(

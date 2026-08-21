@@ -376,6 +376,141 @@ async def test_adding_wahoo_creates_the_integration_and_the_folder_at_once(
     assert feed.integration_id is not None
 
 
+async def test_watching_a_folder_stores_both_of_its_spellings(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The identity is normalised; the name is kept as the athlete spells it.
+
+    Nothing recovers `/Apps/WahooFitness` from `/apps/wahoofitness`, so this is
+    the only moment arc can learn it — and two surfaces need it: the card's
+    folder line, and the already-held refusal the picker prints under a
+    breadcrumb spelled the athlete's way.
+    """
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/Apps/WahooFitness/",
+            "path_display": "/Apps/WahooFitness",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    folder = response.json()["folders"][0]
+    assert folder["remote_path"] == "/apps/wahoofitness"
+    assert folder["remote_path_display"] == "/Apps/WahooFitness"
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path == "/apps/wahoofitness"
+    assert feed.remote_path_display == "/Apps/WahooFitness"
+
+
+async def test_a_folder_watched_without_a_display_spelling_stores_none(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Null is a state — "arc never learned this folder's spelling".
+
+    A caller that does not know is not made to guess, and arc does not
+    manufacture a capitalisation of its own: the readers fall back to the
+    stored path, which is what those rows have always shown.
+    """
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["folders"][0]["remote_path_display"] is None
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path_display is None
+
+
+async def test_a_display_spelling_of_another_folder_is_dropped_not_stored(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The identity wins: a mismatched label would name the wrong folder for good."""
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+            "path_display": "/Photos/Holiday",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path == "/apps/wahoofitness"
+    assert feed.remote_path_display is None
+
+
+async def test_the_already_held_refusal_names_the_folder_as_the_athlete_spells_it(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The picker prints this sentence under a display-case breadcrumb.
+
+    Spelling the folder `/apps/wahoofitness` there reads as arc talking about
+    a different folder, or as a case bug in arc — which cost one real run an
+    hour. The spelling comes off the row already holding it, because the
+    sentence is about what arc has.
+    """
+    connection = await connect(client)
+    body = {
+        "kind": "wahoo",
+        "transport": "cloud_folder",
+        "connection_id": connection["id"],
+        "remote_path": "/apps/wahoofitness",
+        "path_display": "/Apps/WahooFitness",
+    }
+    assert (await client.post(INTEGRATIONS, json=body)).status_code == 201
+
+    response = await client.post(INTEGRATIONS, json=body)
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "/Apps/WahooFitness" in detail
+    assert "/apps/wahoofitness" not in detail
+    assert await count_of(db_session, FeedRow) == 1
+
+
+async def test_the_already_held_refusal_falls_back_for_a_folder_with_no_spelling(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A folder watched before the column existed still has to be named."""
+    connection = await connect(client)
+    await seed_feed(db_session, connection["id"], "/somewhere-else")
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/SOMEWHERE-ELSE/",
+            "path_display": "/Somewhere-Else",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    # The row's own spelling or nothing: arc will not repeat back a name the
+    # request supplied for a folder it is refusing.
+    assert "/somewhere-else" in response.json()["detail"]
+
+
 async def test_a_kind_the_catalogue_does_not_hold_is_refused_naming_the_kinds(
     data_root: Path, client: httpx.AsyncClient
 ) -> None:

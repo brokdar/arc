@@ -39,7 +39,14 @@ class IntegrationFolderRead(BaseModel):
     connection_id: uuid.UUID
     storage: StorageProvider
     #: Normalised: lower-cased, no trailing slash. `""` is the Dropbox root.
+    #: The folder's **identity** — what a poll requests and what the clash
+    #: refusal compares — and not a name to render.
     remote_path: str
+    #: The athlete's own capitalisation, and the one to put on screen. `null`
+    #: for a folder watched before arc stored one, where the client falls back
+    #: to `remote_path`: genuinely nullable, because "arc never learned this
+    #: folder's spelling" is a state and not an omission.
+    remote_path_display: str | None
     enabled: bool
     #: One word for how this folder is doing — see `FeedDeliveryState`. A
     #: folder that has never delivered is *not* reported as zero deliveries.
@@ -222,6 +229,16 @@ class IntegrationCreate(BaseModel):
     #: Any spelling; stored normalised. Omitted means the catalogue's default
     #: path for this transport.
     remote_path: (
+        Annotated[str, Field(max_length=MAX_REMOTE_PATH_LENGTH)] | SkipJsonSchema[None]
+    ) = None
+    #: The same folder as the provider spells it, which is the only spelling
+    #: that ever reaches a screen. Both roads in hold it — the picker from the
+    #: listing it is standing in, the discovery proposals from the candidate —
+    #: and this is the only moment arc can learn it, because `remote_path` is
+    #: stored normalised and nothing recovers the capitalisation afterwards.
+    #: Omitted means the client did not know, and the folder is stored without
+    #: one (`.claude/rules/api-nullability.md`: there is no "clear this").
+    path_display: (
         Annotated[str, Field(max_length=MAX_REMOTE_PATH_LENGTH)] | SkipJsonSchema[None]
     ) = None
 
