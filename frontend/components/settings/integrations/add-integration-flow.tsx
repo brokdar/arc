@@ -23,6 +23,7 @@ import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
 import { useAthleteTimezone } from "@/lib/clock";
 import { formatAthleteStamp } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type Schemas = components["schemas"];
 type CatalogueEntry = Schemas["CatalogueEntry"];
@@ -30,6 +31,12 @@ type TransportOffer = Schemas["TransportOffer"];
 type StorageStatus = Schemas["StorageStatusRead"];
 type Proposal = Schemas["IntegrationProposalRead"];
 type IntegrationKind = Schemas["IntegrationKind"];
+
+/** The folder arc was just told to watch, and the source it belongs to. */
+interface Watching {
+  readonly path: string;
+  readonly displayName: string;
+}
 
 /**
  * Adding a source: pick the integration, then pick how arc should collect it.
@@ -50,6 +57,12 @@ type IntegrationKind = Schemas["IntegrationKind"];
  * newest 16.08 20:12" — because the athlete came here to make their rides
  * appear, not to describe their filesystem. Picking from the catalogue is
  * still right there for the source arc could not find.
+ *
+ * **And it ends on a sentence.** Whichever road got here, the last thing the
+ * athlete did was tell arc to go and read a folder on a cadence; the flow used
+ * to acknowledge that by closing itself, which is the same signal a crash
+ * gives. `FlowComplete` says what arc will now do and how to stop it, and the
+ * athlete dismisses it.
  */
 export function AddIntegrationFlow({
   onDone,
@@ -73,6 +86,9 @@ export function AddIntegrationFlow({
   const [transport, setTransport] = useState<Schemas["TransportKind"] | null>(
     null,
   );
+  // Set the moment a folder is watched, by either road in. It is the flow's
+  // terminal state rather than a toast: the athlete reads it and closes it.
+  const [watching, setWatching] = useState<Watching | null>(null);
 
   const addable = (catalogue.data?.items ?? []).filter((item) => item.addable);
   const chosen = addable.find((item) => item.kind === kind) ?? null;
@@ -108,16 +124,20 @@ export function AddIntegrationFlow({
           {loadFailureMessage(catalogue.error, "what arc can collect")}
         </p>
       ) : chosen === null ? (
-        <>
-          {connectedStorage === null ? null : (
-            <DiscoveredIntegrations
-              connectionId={connectedStorage}
-              entries={addable}
-              onDone={onDone}
-            />
-          )}
-          <PickIntegration entries={addable} onPick={setKind} />
-        </>
+        watching !== null ? (
+          <FlowComplete watching={watching} onDone={onDone} />
+        ) : (
+          <>
+            {connectedStorage === null ? null : (
+              <DiscoveredIntegrations
+                connectionId={connectedStorage}
+                entries={addable}
+                onWatching={setWatching}
+              />
+            )}
+            <PickIntegration entries={addable} onPick={setKind} />
+          </>
+        )
       ) : activeTransport === null ? (
         <PickTransport offers={offers} onPick={setTransport} />
       ) : (
@@ -127,6 +147,8 @@ export function AddIntegrationFlow({
           storage={catalogue.data.storage}
           onRecheck={() => catalogue.refetch()}
           checking={catalogue.isFetching}
+          watching={watching}
+          onWatching={setWatching}
           onDone={onDone}
         />
       )}
@@ -146,11 +168,11 @@ export function AddIntegrationFlow({
 function DiscoveredIntegrations({
   connectionId,
   entries,
-  onDone,
+  onWatching,
 }: {
   readonly connectionId: string;
   readonly entries: readonly CatalogueEntry[];
-  readonly onDone: () => void;
+  readonly onWatching: (watching: Watching) => void;
 }) {
   const queryClient = useQueryClient();
   const discovery = $api.useQuery(
@@ -159,9 +181,16 @@ function DiscoveredIntegrations({
     { params: { path: { connection_id: connectionId } } },
   );
   const add = $api.useMutation("post", "/api/v1/integrations", {
-    onSuccess: () => {
+    // What was sent, not what was on screen: the proposal the athlete accepted
+    // is the only thing that says which folder arc is now watching.
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: integrationsKey });
-      onDone();
+      onWatching({
+        path: variables?.body?.remote_path ?? "",
+        displayName:
+          entries.find((entry) => entry.kind === variables?.body?.kind)
+            ?.display_name ?? "this source",
+      });
     },
   });
   // Only for a proposal arc could not name: the source the athlete chose, by
@@ -399,10 +428,30 @@ function PickTransport({
   );
 }
 
+/** Where a step of the map stands. Never carried by colour alone. */
+type StepState = "done" | "current" | "upcoming";
+
+/** What each marker is announced as, since a glyph has no accessible name. */
+const STEP_STATE_WORDS: Readonly<Record<StepState, string>> = {
+  done: "Done",
+  current: "Doing this now",
+  upcoming: "Still to come",
+};
+
 /**
- * The cloud-folder transport's remaining steps: app key, account, folder.
+ * The cloud-folder transport's steps — app key, account, folder — as a map.
  *
- * Rendered one at a time and only while unanswered — see the module docstring.
+ * Steps stay **derived, not counted** (see the module docstring): the same
+ * three predicates that used to choose which single step to render now choose
+ * each row's *state*, so the map and the flow cannot disagree and a stored
+ * answer is still never re-asked. What changed is that the derivation's output
+ * is visible. This flow spans two applications and an OAuth round trip, and
+ * rendering only the current step left the athlete unable to see how much
+ * remained, what had already worked, or that a step they finished had counted.
+ *
+ * A completed row summarises its answer rather than hiding it, and the current
+ * step's own content renders inside its row: a map that scrolls away from the
+ * work it describes is a second thing to keep track of.
  */
 function CloudFolderSteps({
   entry,
@@ -410,6 +459,8 @@ function CloudFolderSteps({
   storage,
   onRecheck,
   checking,
+  watching,
+  onWatching,
   onDone,
 }: {
   readonly entry: CatalogueEntry;
@@ -417,8 +468,18 @@ function CloudFolderSteps({
   readonly storage: readonly StorageStatus[];
   readonly onRecheck: () => void;
   readonly checking: boolean;
+  readonly watching: Watching | null;
+  readonly onWatching: (watching: Watching) => void;
   readonly onDone: () => void;
 }) {
+  // The key as the athlete typed it, for as long as this flow is open. arc
+  // can never read a stored key back — `GET /dropbox/setup` says whether one
+  // is set and from which source, not what it is — so the tail is shown for a
+  // key this flow watched go in, and the source is named for every other one.
+  // Inventing the missing characters would be the same pretence the rest of
+  // this feature exists to stop.
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  const setup = $api.useQuery("get", "/api/v1/connections/dropbox/setup");
   const provider =
     storage.find((row) => row.provider === offer.storage) ?? null;
 
@@ -429,24 +490,247 @@ function CloudFolderSteps({
       </p>
     );
   }
-  if (!provider.app_configured) {
-    return <DropboxAppKeyStep onRecheck={onRecheck} checking={checking} />;
-  }
-  if (provider.connection_id === null) {
+
+  const connectionId = provider.connection_id;
+  const appKeyState: StepState = provider.app_configured ? "done" : "current";
+  const accountState: StepState = !provider.app_configured
+    ? "upcoming"
+    : connectionId === null
+      ? "current"
+      : "done";
+  const folderState: StepState =
+    watching !== null
+      ? "done"
+      : accountState === "done"
+        ? "current"
+        : "upcoming";
+
+  return (
+    <div
+      data-testid="step-map"
+      className="flex w-full flex-col items-start gap-2"
+    >
+      {/* Named on every step, because the next two are about Dropbox and the
+          athlete came here to add a bike computer. */}
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        Adding{" "}
+        <strong className="font-medium text-ink-secondary">
+          {entry.display_name}
+        </strong>
+        . arc keeps each answer, so nothing here is asked twice.
+      </p>
+      <ol className="flex w-full flex-col">
+        <StepRow
+          id="app-key"
+          name="Register a Dropbox app"
+          state={appKeyState}
+          answer={
+            appKeyState === "done"
+              ? describeAppKey(savedKey, setup.data?.source ?? null)
+              : null
+          }
+        >
+          {appKeyState === "current" ? (
+            <DropboxAppKeyStep
+              onSaved={(appKey) => {
+                setSavedKey(appKey);
+                onRecheck();
+              }}
+              checking={checking}
+            />
+          ) : null}
+        </StepRow>
+
+        <StepRow
+          id="account"
+          name="Connect the Dropbox account"
+          state={accountState}
+          answer={
+            accountState === "done"
+              ? (provider.account_label ?? "an unnamed account")
+              : null
+          }
+        >
+          {accountState === "current" ? (
+            <DropboxConnectStep
+              onConnected={onRecheck}
+              integrationKind={entry.kind}
+            />
+          ) : null}
+        </StepRow>
+
+        <StepRow
+          id="folder"
+          name="Choose the folder arc watches"
+          state={folderState}
+          answer={
+            watching === null ? null : (
+              <span className="font-mono">
+                {watching.path || "the Dropbox root"}
+              </span>
+            )
+          }
+        >
+          {folderState === "current" && connectionId !== null ? (
+            <FolderStep
+              entry={entry}
+              offer={offer}
+              connectionId={connectionId}
+              onWatching={onWatching}
+            />
+          ) : watching !== null ? (
+            <FlowComplete watching={watching} onDone={onDone} />
+          ) : null}
+        </StepRow>
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * How a done app-key step names the answer it is holding.
+ *
+ * The tail of the key when this flow saw it entered — enough to recognise it
+ * by, not enough to be it — and otherwise the *source*, which is the only
+ * thing arc knows about a key it did not watch arrive and is the difference
+ * the athlete acts on: a stored key is replaced here, `DROPBOX__APP_KEY`
+ * needs an edit and a restart.
+ */
+function describeAppKey(
+  savedKey: string | null,
+  source: Schemas["SettingSource"] | null,
+): React.ReactNode {
+  if (savedKey !== null && source === "stored") {
     return (
-      <DropboxConnectStep
-        onConnected={onRecheck}
-        integrationKind={entry.kind}
-      />
+      <span className="font-mono">
+        {savedKey.length <= 4 ? "…" : `…${savedKey.slice(-4)}`}
+      </span>
     );
   }
+  if (source === "environment") {
+    return "key from DROPBOX__APP_KEY";
+  }
+  return source === "stored" ? "key saved in arc" : "app key set";
+}
+
+/**
+ * One step of the map: where it stands, what it answered, and its own work.
+ *
+ * Three channels say the state and none of them is colour on its own — a
+ * glyph (tick, filled dot, empty ring) carrying an accessible name, the
+ * weight of the step's name, and the ink it is drawn in.
+ */
+function StepRow({
+  id,
+  name,
+  state,
+  answer,
+  children,
+}: {
+  readonly id: string;
+  readonly name: string;
+  readonly state: StepState;
+  readonly answer?: React.ReactNode;
+  readonly children?: React.ReactNode;
+}) {
   return (
-    <FolderStep
-      entry={entry}
-      offer={offer}
-      connectionId={provider.connection_id}
-      onDone={onDone}
-    />
+    <li
+      data-testid={`step-${id}`}
+      data-state={state}
+      className="w-full border-hairline border-b py-2.5 first:pt-0 last:border-b-0 last:pb-0"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <StepMarker state={state} />
+        <span
+          className={cn(
+            "text-sm",
+            state === "current"
+              ? "font-semibold text-ink"
+              : state === "done"
+                ? "text-ink-secondary"
+                : "text-ink-faint",
+          )}
+        >
+          {name}
+        </span>
+        {answer === null || answer === undefined ? null : (
+          <span className="text-ink-muted text-sm">{answer}</span>
+        )}
+      </div>
+      {children ? <div className="mt-2 pl-5">{children}</div> : null}
+    </li>
+  );
+}
+
+/** The tick, dot or ring in a fixed-width slot so the names line up. */
+function StepMarker({ state }: { readonly state: StepState }) {
+  return (
+    <span
+      role="img"
+      aria-label={STEP_STATE_WORDS[state]}
+      className="inline-flex w-3 shrink-0 items-center justify-center"
+    >
+      {state === "done" ? (
+        <span
+          aria-hidden
+          className="text-status-completed text-sm leading-none"
+        >
+          ✓
+        </span>
+      ) : state === "current" ? (
+        <span aria-hidden className="size-2 rounded-full bg-accent" />
+      ) : (
+        <span
+          aria-hidden
+          className="size-2 rounded-full border border-hairline-strong"
+        />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The end of the flow: what arc will do from now on, and how to stop it.
+ *
+ * The flow used to close itself here, which is the signal a crash gives. The
+ * athlete has just told arc to read a folder on a cadence — a standing
+ * arrangement, not a one-off — so it is stated: when the first check happens,
+ * that nothing needs uploading afterwards, and where the two controls that
+ * undo it live. The athlete dismisses it.
+ */
+function FlowComplete({
+  watching,
+  onDone,
+}: {
+  readonly watching: Watching;
+  readonly onDone: () => void;
+}) {
+  return (
+    <div
+      data-testid="flow-complete"
+      role="status"
+      className="flex w-full flex-col items-start gap-2 rounded-card border border-hairline bg-inset px-3.5 py-3"
+    >
+      <p className="max-w-[62ch] text-sm">
+        arc is watching{" "}
+        <span className="font-mono text-ink-secondary">
+          {watching.path || "the whole of your Dropbox"}
+        </span>{" "}
+        for {watching.displayName}.
+      </p>
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        The first check runs in the next few minutes, and arc keeps looking
+        every few minutes after that. Rides appear here on their own — there is
+        nothing left to upload by hand.
+      </p>
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        Pause it or Stop watching it whenever you like: both controls are in
+        Settings, under {watching.displayName}.
+      </p>
+      <Button type="button" onClick={onDone}>
+        Done
+      </Button>
+    </div>
   );
 }
 
@@ -463,12 +747,12 @@ function FolderStep({
   entry,
   offer,
   connectionId,
-  onDone,
+  onWatching,
 }: {
   readonly entry: CatalogueEntry;
   readonly offer: TransportOffer;
   readonly connectionId: string;
-  readonly onDone: () => void;
+  readonly onWatching: (watching: Watching) => void;
 }) {
   const queryClient = useQueryClient();
   const [path, setPath] = useState("");
@@ -487,9 +771,14 @@ function FolderStep({
     { params: { path: { connection_id: connectionId }, query: { path } } },
   );
   const add = $api.useMutation("post", "/api/v1/integrations", {
-    onSuccess: () => {
+    // The folder that was *sent*, so the sentence the athlete reads at the end
+    // names what arc actually stored rather than what was last hovered.
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: integrationsKey });
-      onDone();
+      onWatching({
+        path: variables?.body?.remote_path ?? "",
+        displayName: entry.display_name,
+      });
     },
   });
 
@@ -513,7 +802,11 @@ function FolderStep({
     // would browse a Dropbox arc cannot see and conclude their rides are gone.
     return (
       <div data-testid="folder-step" className="flex w-full flex-col gap-2">
-        <SectionLabel>{`Which folder holds your ${entry.display_name} files?`}</SectionLabel>
+        {/* The step's name is on its row in the map; this is the question the
+            athlete is actually answering, in their own vocabulary. */}
+        <p className="max-w-[62ch] text-ink-secondary text-sm">
+          {`Which folder holds your ${entry.display_name} files?`}
+        </p>
         <AppFolderAlert />
       </div>
     );

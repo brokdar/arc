@@ -438,6 +438,240 @@ describe("what arc found in the athlete's Dropbox", () => {
   });
 });
 
+/**
+ * AC-12: the derivation that decides what to render, rendered.
+ *
+ * The steps stay derived — nothing here counts pages or re-asks a stored
+ * answer. What changes is that the derivation's *output* is on screen: the
+ * flow spans two applications and an OAuth round trip, and before this the
+ * athlete could not see how much of it remained.
+ */
+describe("the map of the flow", () => {
+  /** The three rows, by the state each one is in. */
+  function rowStates() {
+    return {
+      appKey: screen.getByTestId("step-app-key").dataset.state,
+      account: screen.getByTestId("step-account").dataset.state,
+      folder: screen.getByTestId("step-folder").dataset.state,
+    };
+  }
+
+  it("shows the stored app key done, the account open and the folder to come", async () => {
+    const user = userEvent.setup();
+    // The seeded instance holds `DROPBOX__APP_KEY` and no connection: the
+    // first step is answered, the second is owed.
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "current",
+      folder: "upcoming",
+    });
+    // All three in one render: the done one summarised, the current one
+    // expanded where it stands, the last one named.
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent(
+      /Register a Dropbox app/i,
+    );
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent(
+      /DROPBOX__APP_KEY/,
+    );
+    expect(
+      within(screen.getByTestId("step-account")).getByTestId("connect-step"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("step-folder")).toHaveTextContent(/folder/i);
+    expect(
+      within(screen.getByTestId("step-folder")).queryByTestId("folder-step"),
+    ).toBeNull();
+  });
+
+  it("names every step from the start, with the first one open", async () => {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    // Nothing is hidden at the start either: a flow whose length is unknown
+    // is one the athlete cannot decide to begin.
+    expect(rowStates()).toEqual({
+      appKey: "current",
+      account: "upcoming",
+      folder: "upcoming",
+    });
+    expect(screen.getByTestId("step-account")).toHaveTextContent(
+      /Connect the Dropbox account/i,
+    );
+  });
+
+  it("keeps the app key's last characters instead of asking for it again", async () => {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    await screen.findByTestId("app-key-step");
+
+    await user.type(
+      screen.getByLabelText(/Dropbox app key/i),
+      "abc123def456xyz",
+    );
+    await user.click(screen.getByRole("button", { name: "Save app key" }));
+
+    // The checkmark moves and the answer is summarised, never re-asked. The
+    // tail is enough to recognise the key by and not enough to be it.
+    expect(await screen.findByTestId("connect-step")).toBeInTheDocument();
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "current",
+      folder: "upcoming",
+    });
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent("6xyz");
+    expect(screen.queryByLabelText(/Dropbox app key/i)).toBeNull();
+  });
+
+  it("puts a connect that came back by redirect where a pasted one lands", async () => {
+    const user = userEvent.setup();
+    // The state the browser returns in after Dropbox redirected to arc's
+    // callback and the athlete read the confirmation there: an account is
+    // connected, and only the folder is still owed.
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "done",
+      folder: "current",
+    });
+    // The account row states which account, so the athlete does not have to
+    // remember which of their Dropboxes they authorised.
+    expect(screen.getByTestId("step-account")).toHaveTextContent(
+      "Ada Lovelace (ada@example.com)",
+    );
+    expect(
+      within(screen.getByTestId("step-folder")).getByTestId("folder-step"),
+    ).toBeInTheDocument();
+  });
+
+  it("puts a pasted connect on the same row the redirect one reaches", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await user.click(await screen.findByTestId("use-paste-flow"));
+    await user.type(
+      await screen.findByLabelText(/Authorisation code/i),
+      DROPBOX_CODE,
+    );
+    await user.click(screen.getByRole("button", { name: "Finish connecting" }));
+    // The confirmation is the connect step's own completed state, and it is
+    // still the current row until the athlete moves the flow on.
+    const confirmation = await screen.findByTestId("connect-confirmation");
+    expect(
+      within(screen.getByTestId("step-account")).getByTestId(
+        "connect-confirmation",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(confirmation).getByRole("button", { name: /Choose the folder/i }),
+    );
+
+    await screen.findByTestId("folder-step");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "done",
+      folder: "current",
+    });
+  });
+});
+
+/**
+ * AC-15: the flow ends on a statement rather than by vanishing.
+ *
+ * Every other confirmation in this feature exists for the same reason: a
+ * screen that disappears is indistinguishable from a screen that crashed, and
+ * the athlete has just told arc to go and read a folder on a cadence.
+ */
+describe("when the folder is chosen", () => {
+  it("says what arc will now do, and how to undo it", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+
+    await user.click(
+      within(folder).getByRole("button", { name: `Collect ${WAHOO_PATH}` }),
+    );
+
+    const done = await screen.findByTestId("flow-complete");
+    expect(done).toHaveTextContent(WAHOO_PATH);
+    // When the first check happens, in the athlete's terms — the folder is
+    // watched from now on, and nothing has arrived yet.
+    expect(done).toHaveTextContent(/first check/i);
+    // UI convention 3 applied to a commitment: the undo is named where it is
+    // made, not discovered later.
+    expect(done).toHaveTextContent(/Pause/);
+    expect(done).toHaveTextContent(/Stop watching/i);
+    expect(done).toHaveTextContent(/Settings/);
+    // The map is still there with the last row ticked, and the flow is still
+    // open: the athlete closes it, not the render.
+    expect(screen.getByTestId("step-folder").dataset.state).toBe("done");
+    expect(screen.getByTestId("add-integration-flow")).toBeInTheDocument();
+  });
+
+  it("closes only when the athlete says so", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+    await user.click(
+      within(folder).getByRole("button", { name: `Collect ${WAHOO_PATH}` }),
+    );
+    const done = await screen.findByTestId("flow-complete");
+
+    await user.click(within(done).getByRole("button", { name: "Done" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("add-integration-flow")).toBeNull(),
+    );
+    expect(
+      await screen.findByRole("region", { name: "Wahoo" }),
+    ).toBeInTheDocument();
+  });
+
+  it("states the same thing when arc found the folder itself", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    const proposal = await within(flow).findByTestId("proposal-wahoo");
+
+    await user.click(
+      within(proposal).getByRole("button", { name: "Add Wahoo" }),
+    );
+
+    // Accepting a proposal is the same commitment reached by a shorter road,
+    // so it ends on the same sentence rather than on a panel closing itself.
+    const done = await screen.findByTestId("flow-complete");
+    expect(done).toHaveTextContent(WAHOO_PATH);
+    expect(done).toHaveTextContent(/first check/i);
+  });
+});
+
 describe("when the Dropbox app cannot see the athlete's Dropbox", () => {
   it("diagnoses App-folder access instead of rendering an empty tree", async () => {
     const user = userEvent.setup();

@@ -77,7 +77,7 @@ afterEach(() => {
 describe("the app-key step", () => {
   it("carries the registration checklist and the paste field, no .env in it", async () => {
     seedDropboxAppKey(false);
-    renderStep(<DropboxAppKeyStep onRecheck={() => {}} checking={false} />);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
 
     const link = await screen.findByRole("link", { name: /developers\/apps/i });
     expect(link).toHaveAttribute(
@@ -105,7 +105,7 @@ describe("the app-key step", () => {
       value: { writeText: clipboard },
     });
     seedDropboxAppKey(false);
-    renderStep(<DropboxAppKeyStep onRecheck={() => {}} checking={false} />);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
 
     // As text, and not only behind a button: a browser that refuses clipboard
     // access must not leave the athlete unable to complete the step, and a
@@ -123,7 +123,7 @@ describe("the app-key step", () => {
   it("asks for no redirect URI where Dropbox would refuse one", async () => {
     atOrigin("http://192.168.1.50");
     seedDropboxAppKey(false);
-    renderStep(<DropboxAppKeyStep onRecheck={() => {}} checking={false} />);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
 
     // A step that cannot be completed is worse than one that is not there:
     // Dropbox refuses to register this URI at all, so the checklist says what
@@ -134,11 +134,11 @@ describe("the app-key step", () => {
     expect(screen.queryByTestId("redirect-uri")).toBeNull();
   });
 
-  it("stores the pasted key and asks the flow to recheck", async () => {
+  it("stores the pasted key and hands it back to the flow", async () => {
     const user = userEvent.setup();
-    const onRecheck = vi.fn();
+    const onSaved = vi.fn();
     seedDropboxAppKey(false);
-    renderStep(<DropboxAppKeyStep onRecheck={onRecheck} checking={false} />);
+    renderStep(<DropboxAppKeyStep onSaved={onSaved} checking={false} />);
 
     await user.type(
       await screen.findByLabelText(/Dropbox app key/i),
@@ -151,14 +151,14 @@ describe("the app-key step", () => {
     await waitFor(() =>
       expect(connectionsState().storedAppKey).toBe("abc123def456"),
     );
-    expect(onRecheck).toHaveBeenCalledTimes(1);
+    expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
   it("shows the server's refusal of a key it will not take", async () => {
     const user = userEvent.setup();
-    const onRecheck = vi.fn();
+    const onSaved = vi.fn();
     seedDropboxAppKey(false);
-    renderStep(<DropboxAppKeyStep onRecheck={onRecheck} checking={false} />);
+    renderStep(<DropboxAppKeyStep onSaved={onSaved} checking={false} />);
 
     // Longer than MAX_APP_KEY_LENGTH: a paste of the console page's URL, or
     // of the wrong field entirely. The form cannot judge it — the server
@@ -171,7 +171,145 @@ describe("the app-key step", () => {
       /at most 128 characters/i,
     );
     expect(connectionsState().storedAppKey).toBeNull();
-    expect(onRecheck).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AC-13: the checklist spans two applications, and says so on every line.
+ *
+ * The run-through this plan came from had the athlete looking for a Dropbox
+ * console field in arc's Settings. Nothing on the list said which side of the
+ * boundary an instruction belonged to, and one line was on both sides at once.
+ */
+describe("where each registration step happens", () => {
+  /** Every checklist row, with the side it says it belongs to. */
+  function checklistRows() {
+    return screen.getAllByRole("listitem").map((item) => ({
+      item,
+      where: within(item).getAllByTestId("where"),
+    }));
+  }
+
+  it("badges every checklist item with one side of the boundary", async () => {
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
+    await screen.findByRole("link", { name: /developers\/apps/i });
+
+    const rows = checklistRows();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // Exactly one: an item carrying two locations is the defect AC-13 names,
+      // and an item carrying none is the orientation gap it closes.
+      expect(row.where).toHaveLength(1);
+      expect(["on dropbox.com", "in arc"]).toContain(
+        row.where[0].textContent?.trim(),
+      );
+    }
+  });
+
+  it("splits copying the App key from pasting it into arc", async () => {
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
+    await screen.findByRole("link", { name: /developers\/apps/i });
+
+    const rows = checklistRows();
+    const copy = rows.filter((row) =>
+      /Copy the/i.test(row.item.textContent ?? ""),
+    );
+    const paste = rows.filter((row) =>
+      /Paste/i.test(row.item.textContent ?? ""),
+    );
+    expect(copy).toHaveLength(1);
+    expect(paste).toHaveLength(1);
+    // Copying is done on the console; pasting is done here. One item that said
+    // both was one item the athlete could only half finish where they stood.
+    expect(copy[0].where[0]).toHaveTextContent("on dropbox.com");
+    expect(copy[0].item).not.toHaveTextContent(/paste/i);
+    expect(paste[0].where[0]).toHaveTextContent("in arc");
+  });
+
+  it("badges the redirect-URI item too", async () => {
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
+
+    const uri = await screen.findByTestId("redirect-uri");
+    const item = uri.closest("li");
+    expect(item).not.toBeNull();
+    expect(within(item as HTMLElement).getByTestId("where")).toHaveTextContent(
+      "on dropbox.com",
+    );
+  });
+});
+
+/**
+ * AC-14: the form judges the *shape* of an app key and nothing more.
+ *
+ * arc cannot tell a real key from a plausible one without an OAuth round trip,
+ * so it never says a key looks right. It does catch the two paste accidents it
+ * can see — a value with whitespace in it, and the address of the console page
+ * the key was on — because both fail minutes later on somebody else's site.
+ */
+describe("what the app-key field will accept", () => {
+  async function pasteKey(value: string) {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
+    await user.click(await screen.findByLabelText(/Dropbox app key/i));
+    await user.paste(value);
+    return user;
+  }
+
+  it("refuses a key with a space in it and says what one looks like", async () => {
+    await pasteKey("abc123 def456");
+
+    expect(screen.getByRole("button", { name: "Save app key" })).toBeDisabled();
+    // Names the thing being asked for. It never claims the key is right —
+    // only arc's own failure at the next step could say that.
+    expect(screen.getByTestId("app-key-hint")).toHaveTextContent(
+      /letters and digits/i,
+    );
+    expect(screen.queryByText(/looks valid/i)).toBeNull();
+  });
+
+  it("refuses the console page's address, then takes the key off it", async () => {
+    const user = await pasteKey(
+      "https://www.dropbox.com/developers/apps/info/abc123def456",
+    );
+
+    expect(screen.getByRole("button", { name: "Save app key" })).toBeDisabled();
+    expect(screen.getByTestId("app-key-hint")).toHaveTextContent(/address/i);
+
+    await user.clear(screen.getByLabelText(/Dropbox app key/i));
+    await user.paste("abc123def456");
+
+    expect(screen.getByRole("button", { name: "Save app key" })).toBeEnabled();
+    expect(screen.queryByTestId("app-key-hint")).toBeNull();
+  });
+
+  it("says nothing about an empty field", async () => {
+    seedDropboxAppKey(false);
+    renderStep(<DropboxAppKeyStep onSaved={() => {}} checking={false} />);
+
+    // A hint on an untouched field is a refusal of something nobody typed.
+    await screen.findByLabelText(/Dropbox app key/i);
+    expect(screen.queryByTestId("app-key-hint")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save app key" })).toBeDisabled();
+  });
+
+  it("trims the spaces around a pasted key rather than refusing it", async () => {
+    const user = await pasteKey("  abc123def456  ");
+
+    // A key copied out of the console arrives with a newline more often than
+    // not; refusing it would be arc failing at the one thing it can check.
+    const save = screen.getByRole("button", { name: "Save app key" });
+    expect(save).toBeEnabled();
+    expect(screen.queryByTestId("app-key-hint")).toBeNull();
+
+    await user.click(save);
+    await waitFor(() =>
+      expect(connectionsState().storedAppKey).toBe("abc123def456"),
+    );
   });
 });
 

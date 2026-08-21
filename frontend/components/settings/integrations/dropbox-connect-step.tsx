@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { Field } from "@/components/design/field";
-import { SectionLabel } from "@/components/design/section-label";
 import { Problems } from "@/components/settings/integrations/integration-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +16,7 @@ import {
   rememberAddFlow,
   useBrowserOrigin,
 } from "@/lib/dropbox-redirect";
+import { cn } from "@/lib/utils";
 
 type IntegrationKind = components["schemas"]["IntegrationKind"];
 
@@ -45,7 +45,69 @@ const catalogueKey = $api.queryOptions(
  * works on that deployment, it is offered explicitly on every other one as
  * the way out when a redirect does not arrive, and it is what makes arc
  * connectable from a box nothing on the internet can reach.
+ *
+ * Neither step carries its own heading: both are rendered as rows of the add
+ * flow's step map (`CloudFolderSteps`), which names them there. A second
+ * heading under the row's own would read as a second step.
  */
+
+/**
+ * Which side of the dropbox.com/arc boundary an instruction belongs to.
+ *
+ * Copy, not decoration. This checklist is the only place in arc that asks the
+ * athlete to leave and do something in somebody else's application, and the
+ * run-through this work came from had them hunting arc's Settings for a field
+ * that lives in the Dropbox console. **No item may carry two locations** —
+ * "copy the App key and paste it below" was one instruction on both sites, and
+ * is two items now.
+ */
+type Where = "dropbox" | "arc";
+
+const WHERE_WORDS: Readonly<Record<Where, string>> = {
+  dropbox: "on dropbox.com",
+  arc: "in arc",
+};
+
+/** One instruction, with the side it happens on in a fixed right-hand slot. */
+function ChecklistItem({
+  where,
+  children,
+}: {
+  readonly where: Where;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <li className="text-ink-muted text-sm">
+      <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-2.5">
+        <span className="max-w-[62ch]">{children}</span>
+        <span
+          data-testid="where"
+          data-where={where}
+          className={cn(
+            "shrink-0 rounded-badge px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-[0.04em]",
+            where === "arc"
+              ? "bg-accent-wash text-accent-quiet"
+              : "bg-well text-ink-faint",
+          )}
+        >
+          {WHERE_WORDS[where]}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * What arc can honestly say about an app key before it has spent one.
+ *
+ * Shape only: a Dropbox App key is a short run of letters and digits, and the
+ * only thing that can tell a real one from a plausible one is an OAuth round
+ * trip. So the field catches the two paste accidents it can actually see — a
+ * value with whitespace in it, and the address of the console page the key was
+ * printed on — and it never tells the athlete a key looks right. Claiming a
+ * check that did not happen is the defect this whole feature exists to undo.
+ */
+const APP_KEY_SHAPE = /^[A-Za-z0-9]+$/;
 
 /**
  * Register a Dropbox app: the step that cannot be done inside arc.
@@ -57,40 +119,51 @@ const catalogueKey = $api.queryOptions(
  * carries it, with no restart. Shown only while arc holds no app key in
  * either source, and never re-entered once it does: a completed step re-asked
  * is a step the athlete cannot tell from a failure.
+ *
+ * The saved key is handed back to the flow rather than merely announced,
+ * because the flow's step map summarises this step once it is done and arc
+ * can never read a stored key back: `GET /dropbox/setup` answers whether one
+ * is set and from where, not what it is.
  */
 export function DropboxAppKeyStep({
-  onRecheck,
+  onSaved,
   checking,
 }: {
-  readonly onRecheck: () => void;
+  /** The key that was stored, so the flow can recheck and summarise it. */
+  readonly onSaved: (appKey: string) => void;
   readonly checking: boolean;
 }) {
   const base = useId();
   const queryClient = useQueryClient();
   const [appKey, setAppKey] = useState("");
   const save = $api.useMutation("put", "/api/v1/connections/dropbox/app", {
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       setAppKey("");
       queryClient.invalidateQueries({ queryKey: setupKey });
       // The catalogue's `app_configured` is what decides this step is done —
       // rechecking it is what moves the flow on to connecting the account.
-      onRecheck();
+      onSaved(variables?.body?.app_key ?? "");
     },
   });
+
+  const trimmed = appKey.trim();
+  const shaped = APP_KEY_SHAPE.test(trimmed);
+  // Silent on an untouched field: a hint under an empty input is a refusal of
+  // something nobody typed.
+  const hinting = trimmed !== "" && !shaped;
 
   return (
     <div
       data-testid="app-key-step"
       className="flex flex-col items-start gap-2.5"
     >
-      <SectionLabel>Register a Dropbox app</SectionLabel>
       <p className="max-w-[62ch] text-ink-muted text-sm">
         arc talks to your Dropbox as an app you own, so nothing about your files
         passes through anyone else&apos;s server. It is a three-minute job and
         it is done once.
       </p>
-      <ol className="flex list-decimal flex-col gap-1 pl-5 text-ink-muted text-sm">
-        <li>
+      <ol className="flex list-decimal flex-col gap-1.5 pl-5">
+        <ChecklistItem where="dropbox">
           Open{" "}
           <a
             className="text-accent underline underline-offset-2"
@@ -101,26 +174,28 @@ export function DropboxAppKeyStep({
             dropbox.com/developers/apps
           </a>{" "}
           and choose <strong>Create app</strong>.
-        </li>
-        <li>
+        </ChecklistItem>
+        <ChecklistItem where="dropbox">
           Pick <strong>Scoped access</strong>, then{" "}
           <strong>Full Dropbox</strong> — an App folder app can only see a
           directory it created itself, which is never the one your head unit
           already uploads to. Dropbox cannot change this afterwards; getting it
           wrong means registering another app.
-        </li>
-        <li>
+        </ChecklistItem>
+        <ChecklistItem where="dropbox">
           On the app&apos;s <strong>Permissions</strong> tab, tick{" "}
           <code className="font-mono">account_info.read</code>,{" "}
           <code className="font-mono">files.metadata.read</code> and{" "}
           <code className="font-mono">files.content.read</code>, then submit.
-        </li>
+        </ChecklistItem>
         <RedirectUriStep />
-        <li>
-          Copy the <strong>App key</strong> from the app&apos;s Settings tab and
-          paste it below. There is no app secret to copy: arc connects with
-          PKCE.
-        </li>
+        <ChecklistItem where="dropbox">
+          Copy the <strong>App key</strong> from the app&apos;s Settings tab.
+          There is no app secret to take with it: arc connects with PKCE.
+        </ChecklistItem>
+        <ChecklistItem where="arc">
+          Paste the App key into the field below, and save it.
+        </ChecklistItem>
       </ol>
       <form
         className="flex w-full flex-col items-start gap-2.5"
@@ -129,7 +204,7 @@ export function DropboxAppKeyStep({
           // The previous refusal described a key that is no longer in the
           // field; react-query holds it until the next `mutate()`.
           save.reset();
-          save.mutate({ body: { app_key: appKey } });
+          save.mutate({ body: { app_key: trimmed } });
         }}
       >
         <Field
@@ -142,13 +217,24 @@ export function DropboxAppKeyStep({
             className="font-mono"
             value={appKey}
             autoComplete="off"
+            aria-invalid={hinting || undefined}
+            aria-describedby={hinting ? `${base}-app-key-hint` : undefined}
             onChange={(event) => setAppKey(event.target.value)}
           />
+          {hinting ? (
+            <p
+              id={`${base}-app-key-hint`}
+              data-testid="app-key-hint"
+              className="max-w-[42ch] text-destructive text-xs"
+            >
+              That does not look like an App key. An App key is a short run of
+              letters and digits, on your app&apos;s Settings tab — a web
+              address pasted here is the page the key is printed on, not the
+              key.
+            </p>
+          ) : null}
         </Field>
-        <Button
-          type="submit"
-          disabled={save.isPending || checking || appKey.trim() === ""}
-        >
+        <Button type="submit" disabled={save.isPending || checking || !shaped}>
           {save.isPending || checking ? "Saving…" : "Save app key"}
         </Button>
       </form>
@@ -181,18 +267,20 @@ function RedirectUriStep() {
     return null;
   }
   if (!redirectEligible(origin)) {
+    // Still badged for the console: it is the answer to "what do I put under
+    // Redirect URIs?", asked while standing on that page.
     return (
-      <li>
-        There is no redirect URI to register. arc is reached at{" "}
+      <ChecklistItem where="dropbox">
+        Leave <strong>Redirect URIs</strong> empty. arc is reached at{" "}
         <code className="font-mono">{origin}</code>, and Dropbox only redirects
         to https addresses or to localhost — so it will show you a code to copy
         at the end instead of sending you back here.
-      </li>
+      </ChecklistItem>
     );
   }
   const uri = redirectUriFor(origin);
   return (
-    <li>
+    <ChecklistItem where="dropbox">
       On the same Settings tab, under <strong>Redirect URIs</strong>, add{" "}
       <code data-testid="redirect-uri" className="font-mono break-all">
         {uri}
@@ -210,7 +298,7 @@ function RedirectUriStep() {
       >
         {copied ? "Copied" : "Copy"}
       </Button>
-    </li>
+    </ChecklistItem>
   );
 }
 
@@ -405,7 +493,6 @@ export function DropboxConnectStep({
       data-testid="connect-step"
       className="flex flex-col items-start gap-2.5"
     >
-      <SectionLabel>Connect the Dropbox account</SectionLabel>
       {/* Everything that explains the step goes away once the step is done:
           an instruction still on screen beside its own confirmation reads as
           something the athlete has to do again. */}
