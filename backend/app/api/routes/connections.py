@@ -78,6 +78,15 @@ INVALID: Responses = {
 THROTTLED: Responses = {
     429: {"model": ErrorDetail, "description": "Dropbox is rate-limiting arc"}
 }
+#: Dropbox answered these calls with a failure of its own.
+#:
+#: Declared, and 502 rather than the 422 it used to be folded into: nothing
+#: about the request was wrong, and the frontend reads the status to decide
+#: whether the body's `detail` is a remedy worth printing (see
+#: `frontend/lib/api-errors.ts`). A 5xx is arc saying "not your doing".
+UPSTREAM: Responses = {
+    502: {"model": ErrorDetail, "description": "Dropbox answered with a failure"}
+}
 
 
 def get_service(session: SessionDep) -> ConnectionService:
@@ -190,7 +199,7 @@ async def start_dropbox_authorization(
 @router.post(
     "/dropbox/complete",
     status_code=status.HTTP_201_CREATED,
-    responses=BAD_BODY | INVALID | CONFLICT,
+    responses=BAD_BODY | INVALID | CONFLICT | UPSTREAM,
 )
 async def complete_dropbox_authorization(
     service: ServiceDep, actor: ActorDep, submitted: DropboxCodeSubmit
@@ -226,7 +235,7 @@ async def get_connection(
 
 @router.get(
     "/{connection_id}/folders",
-    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED,
+    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED | UPSTREAM,
 )
 async def list_folders(
     service: ServiceDep, connection_id: uuid.UUID, path: PathQuery = ""
@@ -247,7 +256,7 @@ async def list_folders(
 
 @router.get(
     "/{connection_id}/discover",
-    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED,
+    responses=NOT_FOUND | CONFLICT | INVALID | THROTTLED | UPSTREAM,
 )
 async def discover_integrations(
     integrations: IntegrationsDep, connection_id: uuid.UUID

@@ -111,6 +111,26 @@ class RateLimitedError(AppError):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
 
 
+class UpstreamError(AppError):
+    """A service arc depends on answered, and the answer was a failure.
+
+    502 rather than the 422 these used to be folded into, because a 4xx says
+    the request was wrong and there is nothing wrong with asking Dropbox for a
+    folder listing while Dropbox is having a bad day. The distinction is not
+    pedantry: `frontend/lib/api-errors.ts` renders a 4xx body's `detail` as the
+    sentence on screen and keeps its own generic wording for 5xx, so the status
+    is what decides whether the athlete is shown a remedy they can act on or
+    told that something upstream is broken and it is not their doing.
+
+    Distinguished from a *transport* failure, which stays a 422 saying arc
+    could not reach the service at all — that one is the athlete's network or
+    the operator's DNS, and it is the only case where "could not be reached"
+    is a true sentence.
+    """
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+
+
 class MethodNotAllowedError(AppError):
     """The resource exists but the method is refused on principle.
 

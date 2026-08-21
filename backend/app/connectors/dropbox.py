@@ -73,6 +73,24 @@ EXPIRY_SKEW_SECONDS: Final = 60
 #: How long arc waits on any one Dropbox request.
 REQUEST_TIMEOUT_SECONDS: Final = 30.0
 
+#: What the athlete reads when arc's permission to read their Dropbox is gone.
+#:
+#: **The athlete's situation, not the mechanism.** "token", "credential" and
+#: "the API" name things they cannot see, cannot check and cannot fix, and
+#: every failure behind this sentence — a refused refresh, a revoked grant, a
+#: 401 on a token minted seconds ago — has the same single remedy: remove the
+#: account from arc and add it again.
+#:
+#: One constant because it is written onto the row (`last_error`, which the
+#: settings panel renders) *and* answered to the browser
+#: (`app.services.connections._dropbox_failures_translated`). Two spellings of
+#: one remedy is how a flow ends up telling the athlete two different things
+#: about a single failure.
+PERMISSION_LOST: Final = (
+    "arc lost its permission to read your Dropbox. Disconnect and connect "
+    "again to fix it."
+)
+
 
 class DropboxError(Exception):
     """Anything that went wrong talking to Dropbox."""
@@ -87,8 +105,44 @@ class DropboxAuthError(DropboxError):
     """
 
 
+class DropboxScopeError(DropboxAuthError):
+    """Dropbox will not do this at all: the grant carries no scope for it.
+
+    A **subclass** of :class:`DropboxAuthError` rather than a branch of its
+    own, because every caller that already refuses on a dead credential must
+    refuse on this too — and a class of its own because the remedy differs in
+    kind. A dead credential is fixed by re-authorizing; a missing scope is
+    fixed on dropbox.com first, by ticking a permission and submitting it, and
+    only then by re-authorizing. Refreshing cannot mint a scope, which is why
+    :meth:`DropboxClient._call` raises this **without** its refresh-and-retry:
+    the retry would spend a token request to be told the same thing, and then
+    report it as "Dropbox rejected a freshly refreshed access token" — a
+    sentence about a credential that is perfectly alive.
+    """
+
+    def __init__(self, required_scope: str) -> None:
+        super().__init__(
+            f"Dropbox refused the call for want of the "
+            f"{required_scope or 'required'} scope"
+        )
+        #: The scope Dropbox named, verbatim (`files.metadata.read`). ``""``
+        #: when it named none, which the service reads as "all of them".
+        self.required_scope = required_scope
+
+
 class DropboxUpstreamError(DropboxError):
     """Dropbox answered, and the answer was a failure arc did not cause."""
+
+
+class DropboxUnreachableError(DropboxUpstreamError):
+    """Nothing answered at all: DNS, a refused connection, a timeout.
+
+    The one failure where "Dropbox could not be reached" is a true sentence,
+    and its own class so that nothing else can borrow it. Every *answered*
+    failure — a 409, a 503, a rate limit — was re-labelled as unreachability
+    before this existed, which sent an athlete to check their network over a
+    request Dropbox had replied to in full.
+    """
 
 
 class DropboxRateLimitedError(DropboxUpstreamError):
@@ -250,7 +304,7 @@ class _ReachableTransport(httpx.AsyncBaseTransport):
             # The class name is in the message because the three cases the
             # operator would act on differently — DNS, refused, timed out —
             # are otherwise indistinguishable in a log line.
-            raise DropboxUpstreamError(
+            raise DropboxUnreachableError(
                 f"{request.url.host} did not answer ({type(exc).__name__}: {exc})"
             ) from exc
 
@@ -479,10 +533,11 @@ async def probe_readable(*, access_token: str) -> None:
     of a Dropbox holding ten thousand files costs what an empty one costs.
 
     Raises:
-        DropboxAuthError: Dropbox refused the credential or the scope. Both
-            arrive as a 401 here and both have the same remedy — the athlete
-            fixing their app registration and authorizing again — so they are
-            not told apart at this seam.
+        DropboxScopeError: Dropbox named the scope the grant is missing. The
+            refusal the athlete can act on without guessing, so it is told
+            apart from the rest even though the remedy overlaps.
+        DropboxAuthError: Dropbox refused the credential for some other
+            reason. Same remedy — fix the app registration, authorize again.
         DropboxUpstreamError: Dropbox was rate-limiting arc, broken, or not
             there. Says nothing about the credential, and the caller must not
             read it as a verdict on one.
@@ -496,7 +551,10 @@ async def probe_readable(*, access_token: str) -> None:
     if response.status_code == 200:
         return
     if response.status_code in {401, 403}:
-        summary = str(_json_or_empty(response).get("error_summary", ""))
+        body = _json_or_empty(response)
+        if (scope := _missing_scope(body)) is not None:
+            raise DropboxScopeError(scope)
+        summary = str(body.get("error_summary", ""))
         raise DropboxAuthError(
             f"Dropbox refused to list the root folder: {summary or 'unauthorized'}"
         )
@@ -695,16 +753,22 @@ class DropboxClient:
             return DropboxRateLimitedError(
                 "Dropbox is rate-limiting arc", retry_after=_retry_after(response)
             )
-        if response.status_code == 401:
-            return DropboxAuthError("Dropbox rejected arc's access token")
         # `Dropbox-API-Result` carries the metadata JSON on a 200; on a
         # failure the content endpoint answers exactly like an RPC one, with
         # the tagged-error JSON in the body.
-        summary = str(_json_or_empty(response).get("error_summary", ""))
+        body = _json_or_empty(response)
+        summary = str(body.get("error_summary", ""))
+        if response.status_code == 401:
+            if (scope := _missing_scope(body)) is not None:
+                return DropboxScopeError(scope)
+            return DropboxAuthError(
+                f"401 downloading {file_id} ({summary or 'no reason given'})"
+            )
         if response.status_code == 409 and "not_found" in summary:
             return DropboxPathNotFoundError(file_id)
         return DropboxUpstreamError(
-            f"Dropbox answered {response.status_code} downloading {file_id}"
+            f"{response.status_code} downloading {file_id} "
+            f"({summary or 'no reason given'})"
         )
 
     async def revoke(self) -> None:
@@ -738,9 +802,7 @@ class DropboxClient:
             stored = self._credentials()
             refresh_token = stored.get("refresh_token")
             if not refresh_token:
-                await self._mark_needs_reauth(
-                    "arc holds no refresh token for this Dropbox account"
-                )
+                await self._mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "arc holds no refresh token for this Dropbox account; reconnect it"
                 )
@@ -757,10 +819,7 @@ class DropboxClient:
             if response.status_code != 200:
                 failure = _token_failure(response)
                 if isinstance(failure, DropboxAuthError):
-                    await self._mark_needs_reauth(
-                        "Dropbox refused arc's refresh token. Reconnect the "
-                        "account to authorize it again."
-                    )
+                    await self._mark_needs_reauth(PERMISSION_LOST)
                 raise failure
 
             grant = _grant_from(response.json())
@@ -778,7 +837,15 @@ class DropboxClient:
             return grant.access_token
 
     async def _mark_needs_reauth(self, detail: str) -> None:
-        """Record a dead credential on the row, so the panel can say so."""
+        """Record a dead credential on the row, so the panel can say so.
+
+        ``detail`` is athlete-facing — the settings panel renders
+        ``last_error`` verbatim — which is why every caller here passes
+        :data:`PERMISSION_LOST` rather than the diagnostic the exception
+        carries. The two are deliberately different texts: the exception is
+        read in a log by whoever is debugging, the row is read on screen by
+        somebody who needs to know which button to press.
+        """
         self._connection.status = ConnectionStatus.NEEDS_REAUTH
         self._connection.last_error = detail
         self._connection.access_token_expires_at = None
@@ -803,11 +870,26 @@ class DropboxClient:
                 retry_after=_retry_after(response),
             )
         if response.status_code == 401:
-            if retried:
-                await self._mark_needs_reauth(
-                    "Dropbox rejected a freshly refreshed access token. "
-                    "Reconnect the account."
+            # **The body is read before the retry counter is consulted.** A
+            # `missing_scope` 401 and an `expired_access_token` 401 are the
+            # same status code and different facts, and refreshing cannot mint
+            # a scope: retrying one would spend a token request to be refused
+            # identically, then report it as a dead credential. Classified by
+            # what Dropbox said, never by whether this is the first or the
+            # second 401 — a stale token refreshed into a grant that never
+            # carried the scope produces the pair, and the second one is still
+            # about the scope.
+            body = _json_or_empty(response)
+            if (scope := _missing_scope(body)) is not None:
+                logger.info(
+                    "dropbox_scope_refused",
+                    connection_id=str(self._connection.id),
+                    endpoint=endpoint,
+                    required_scope=scope,
                 )
+                raise DropboxScopeError(scope)
+            if retried:
+                await self._mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "Dropbox rejected a freshly refreshed access token"
                 )
@@ -815,8 +897,8 @@ class DropboxClient:
             # Forget the expiry so `_access_token` refreshes, then retry once.
             self._connection.access_token_expires_at = None
             return await self._call(endpoint, payload, path=path, retried=True)
+        summary = str(_json_or_empty(response).get("error_summary", ""))
         if response.status_code == 409:
-            summary = str(_json_or_empty(response).get("error_summary", ""))
             # `reset` before `not_found`: it is the one 409 with a local
             # remedy, and the caller must not confuse it with a missing folder.
             if summary.startswith("reset"):
@@ -825,10 +907,13 @@ class DropboxClient:
                 )
             if "not_found" in summary:
                 raise DropboxPathNotFoundError(path)
-            raise DropboxUpstreamError(f"Dropbox refused the request: {summary}")
         if response.status_code >= 400:
+            # Dropbox's own words, whatever it said them about. The service
+            # quotes this into the sentence the athlete reads, so a summary
+            # dropped here is a summary nobody ever sees.
             raise DropboxUpstreamError(
-                f"Dropbox answered {response.status_code} for {endpoint}"
+                f"{response.status_code} for {endpoint}"
+                f" ({summary or 'no reason given'})"
             )
         return _json_or_empty(response)
 
@@ -863,6 +948,21 @@ def _stamp(raw: Any) -> dt.datetime | None:
         if parsed.tzinfo is None
         else parsed.astimezone(dt.UTC)
     )
+
+
+def _missing_scope(body: dict[str, Any]) -> str | None:
+    """The scope Dropbox named as missing, or ``None`` if that is not why.
+
+    Dropbox's tagged-union error: ``{"error": {".tag": "missing_scope",
+    "required_scope": "files.metadata.read"}}``. ``None`` — not ``""`` — for
+    every other body, including one that could not be parsed at all, because
+    the caller branches on "is this a scope problem" and an empty string is a
+    scope problem with a nameless scope, which is a different answer.
+    """
+    error = body.get("error")
+    if not isinstance(error, dict) or error.get(".tag") != "missing_scope":
+        return None
+    return str(error.get("required_scope") or "")
 
 
 def _json_or_empty(response: httpx.Response) -> dict[str, Any]:

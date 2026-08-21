@@ -11713,6 +11713,16 @@
               }
             },
             "description": "The setup is incomplete, or Dropbox refused the code"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox answered with a failure"
           }
         },
         "security": [
@@ -11990,6 +12000,16 @@
               }
             },
             "description": "Dropbox is rate-limiting arc"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox answered with a failure"
           }
         },
         "security": [
@@ -12088,6 +12108,16 @@
               }
             },
             "description": "Dropbox is rate-limiting arc"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Dropbox answered with a failure"
           }
         },
         "security": [

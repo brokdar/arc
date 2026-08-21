@@ -84,9 +84,19 @@ describe("loadFailureMessage", () => {
     expect(loadFailureMessage(new TypeError("fetch failed"), "the queue")).toBe(
       "Could not load the queue. Is the API reachable?",
     );
+    // A 500 is the API failing to say anything useful about itself: its body
+    // is a stack trace's leftovers, not a sentence anyone can act on.
     expect(
       loadFailureMessage(answered(500, { detail: "boom" }), "the log"),
     ).toBe("Could not load the log. Is the API reachable?");
+    expect(
+      loadFailureMessage(
+        answered(502, {
+          detail: "Dropbox answered 503 for /2/files/list_folder",
+        }),
+        "that folder",
+      ),
+    ).toBe("Could not load that folder. Is the API reachable?");
   });
 
   it("names the remedy when the API answered that the session is gone", () => {
@@ -96,5 +106,45 @@ describe("loadFailureMessage", () => {
         "the queue",
       ),
     ).toBe("Your session has expired. Log in again to see the queue.");
+  });
+
+  it("prints what a 4xx said rather than a question it already answered", () => {
+    // The sentence the service wrote names the scope, the console tab and the
+    // remedy. Replacing it with "Is the API reachable?" is arc discarding the
+    // one thing the athlete needed and substituting a guess.
+    const refusal =
+      "arc lost its permission to read your Dropbox. Disconnect and connect again to fix it.";
+
+    expect(
+      loadFailureMessage(answered(409, { detail: refusal }), "that folder"),
+    ).toBe(refusal);
+    expect(
+      loadFailureMessage(
+        answered(404, { detail: "Dropbox has no folder at /nope" }),
+        "that folder",
+      ),
+    ).toBe("Dropbox has no folder at /nope");
+  });
+
+  it("falls back rather than printing a blank line", () => {
+    // A 422 whose detail is empty, or is FastAPI's per-field list: neither is
+    // a sentence about why a page could not load.
+    expect(
+      loadFailureMessage(answered(422, { detail: "" }), "that folder"),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(
+      loadFailureMessage(answered(422, { detail: "   " }), "that folder"),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(
+      loadFailureMessage(
+        answered(422, {
+          detail: [{ loc: ["query", "path"], msg: "too long" }],
+        }),
+        "that folder",
+      ),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(loadFailureMessage(answered(404, {}), "that folder")).toBe(
+      "Could not load that folder. Is the API reachable?",
+    );
   });
 });

@@ -20,6 +20,18 @@ import {
   WAHOO_NEWEST_AT,
   WAHOO_PATH,
 } from "@/tests/mocks/fixtures";
+import { http } from "@/tests/mocks/handlers";
+import { server } from "@/tests/mocks/server";
+
+/**
+ * What the API answers when arc's permission to read the Dropbox is gone.
+ *
+ * Spelled out rather than imported: it is the *backend's* sentence
+ * (`app.connectors.dropbox.PERMISSION_LOST`), and a test that built it from
+ * the same source as the code would pass while the two drifted apart.
+ */
+const PERMISSION_LOST =
+  "arc lost its permission to read your Dropbox. Disconnect and connect again to fix it.";
 
 /**
  * The flow is exercised through the panel that opens it, not in isolation.
@@ -248,6 +260,29 @@ describe("when it does not go through", () => {
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
       WAHOO_PATH,
     ]);
+  });
+
+  it("prints what the server said about a folder it could not list", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    // The API answered, and what it answered names the remedy. "Could not
+    // load that folder. Is the API reachable?" is the sentence that sent a
+    // real athlete hunting a folder-path problem that did not exist.
+    server.use(
+      http.get("/api/v1/connections/{connection_id}/folders", ({ response }) =>
+        response(409).json({ detail: PERMISSION_LOST }),
+      ),
+    );
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+
+    expect(await within(folder).findByRole("alert")).toHaveTextContent(
+      PERMISSION_LOST,
+    );
+    expect(within(folder).queryByText(/Is the API reachable/)).toBeNull();
   });
 });
 

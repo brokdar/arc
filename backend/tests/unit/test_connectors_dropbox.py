@@ -13,15 +13,18 @@ import datetime as dt
 from collections.abc import Iterator
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import dropbox
 from app.connectors.dropbox import (
+    PERMISSION_LOST,
     READ_SCOPES,
     DropboxAuthError,
     DropboxClient,
     DropboxRateLimitedError,
+    DropboxScopeError,
     DropboxUpstreamError,
     authorize_url,
     exchange_code,
@@ -36,6 +39,7 @@ from tests.unit.dropbox_fake import (
     TOKEN_PATH,
     FakeDropbox,
     expired_access_token,
+    missing_scope,
     rate_limited,
 )
 
@@ -340,3 +344,97 @@ async def test_a_429_raises_a_named_error_carrying_the_delay_and_refreshes_nothi
     assert raised.value.retry_after == pytest.approx(42.0)
     assert isinstance(raised.value, DropboxUpstreamError)
     assert fake.calls_to(TOKEN_PATH) == []
+
+
+# --- AC-4: a missing scope is not a stale token ------------------------------
+#
+# Both arrive as a 401 and Dropbox says which is which in the body. Reading
+# that body is the whole of this section: refreshing cannot mint a scope, so a
+# `missing_scope` answered with a refresh-and-retry costs a token request and
+# then reports the wrong thing — "Dropbox rejected a freshly refreshed access
+# token" for a credential that is perfectly alive and simply not allowed to
+# list folders.
+
+
+async def test_a_missing_scope_401_is_reported_as_scope_and_refreshes_nothing(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_folders("")
+
+    assert raised.value.required_scope == "files.metadata.read"
+    # No refresh and no retry: the traffic is where this rule is visible.
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_a_missing_scope_after_a_refresh_is_still_reported_as_scope(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The second 401 of a call is classified by its body, not by its position.
+
+    A genuinely stale token refreshed into a grant that never carried the
+    scope produces exactly this pair, and reporting the second one as "arc
+    lost its permission" would hide the console change that fixes it.
+    """
+    fake.script(
+        LIST_FOLDER_PATH, expired_access_token(), missing_scope("files.content.read")
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_folders("")
+
+    assert raised.value.required_scope == "files.content.read"
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
+    await db_session.refresh(row)
+    # Not marked dead: the credential works, and the athlete's app registration
+    # is what does not.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
+
+
+async def test_a_401_arc_cannot_read_keeps_the_refresh_once_then_fail_path(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Dropbox's 401 is not always JSON — a proxy in front of it answers HTML.
+    # An unreadable body says nothing about scope, so the pre-existing path
+    # (refresh once, retry once, then give up) is what it gets.
+    unreadable = httpx.Response(401, text="<html>unauthorized</html>")
+    fake.script(
+        LIST_FOLDER_PATH, unreadable, httpx.Response(401, text="<html>no</html>")
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAuthError) as raised:
+        await client(db_session, row).list_folders("")
+
+    assert not isinstance(raised.value, DropboxScopeError)
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
+
+
+# --- AC-7: what a dead credential writes on the row --------------------------
+
+
+async def test_a_dead_credential_records_the_athletes_remedy_not_the_mechanism(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.script(LIST_FOLDER_PATH, expired_access_token(), expired_access_token())
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAuthError):
+        await client(db_session, row).list_folders("")
+
+    await db_session.refresh(row)
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == PERMISSION_LOST
+    # `last_error` is rendered in Settings. "token" and "credential" name
+    # things the athlete cannot see, check or fix.
+    assert "token" not in row.last_error
+    assert "credential" not in row.last_error
+    assert "Disconnect and connect again" in row.last_error

@@ -46,13 +46,18 @@ export function apiErrorMessages(error: unknown): string[] {
  */
 export const HTTP_STATUS = Symbol.for("arc.api.httpStatus");
 
+/** The status a failure body was tagged with, or undefined for an untagged one. */
+function statusOf(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const status = (error as Record<symbol, unknown>)[HTTP_STATUS];
+  return typeof status === "number" ? status : undefined;
+}
+
 /** Whether a failure body carries the status it was tagged with. */
 function hasStatus(error: unknown, status: number): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as Record<symbol, unknown>)[HTTP_STATUS] === status
-  );
+  return statusOf(error) === status;
 }
 
 /** Whether a failure was the session guard's 401 rather than anything else. */
@@ -96,11 +101,36 @@ export function isConflict(error: unknown): boolean {
  * that expires *under* an open page leaves the guard's cached answer saying
  * yes until it refetches, and every query in the meantime is a 401. The remedy
  * for that is logging in, not checking the network.
+ *
+ * **Every other 4xx that carries a sentence prints that sentence.** A 4xx is
+ * the server having decided *about this request* and written down why: which
+ * Dropbox permission is missing and which console tab grants it, which folder
+ * is not there, how long a rate limit has left to run. Collapsing all of that
+ * into a question about the network was arc holding the answer and showing a
+ * guess instead — the audited failure this function is named in, where
+ * Dropbox had said "scope `files.metadata.read` missing" and the athlete was
+ * sent hunting a folder path.
+ *
+ * A **5xx keeps the generic sentence**, deliberately: it means the request was
+ * fine and something behind the API broke, so there is no remedy in it for the
+ * reader and its body is a stack trace's leftovers, not a sentence. Same for a
+ * thrown `Error` (the request never arrived), a body with no `detail`, one
+ * whose `detail` is blank, and FastAPI's per-field validation *list* — a list
+ * of field complaints belongs beside the fields, which is
+ * `apiErrorMessages`'s job, not a paragraph where a page should have been.
  */
 export function loadFailureMessage(error: unknown, subject: string): string {
-  return isUnauthorized(error)
-    ? `Your session has expired. Log in again to see ${subject}.`
-    : `Could not load ${subject}. Is the API reachable?`;
+  if (isUnauthorized(error)) {
+    return `Your session has expired. Log in again to see ${subject}.`;
+  }
+  const status = statusOf(error);
+  if (status !== undefined && status >= 400 && status < 500) {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim() !== "") {
+      return detail;
+    }
+  }
+  return `Could not load ${subject}. Is the API reachable?`;
 }
 
 /** One entry of FastAPI's validation list: `{loc, msg}` → `body.name: required`. */

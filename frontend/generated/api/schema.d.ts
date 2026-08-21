@@ -7988,6 +7988,15 @@ export interface operations {
           "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
+      /** @description Dropbox answered with a failure */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-read_dropbox_setup": {
@@ -8207,6 +8216,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description Dropbox answered with a failure */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-list_folders": {
@@ -8269,6 +8287,15 @@ export interface operations {
       };
       /** @description Dropbox is rate-limiting arc */
       429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Dropbox answered with a failure */
+      502: {
         headers: {
           [name: string]: unknown;
         };

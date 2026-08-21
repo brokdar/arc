@@ -552,8 +552,13 @@ async def _take_batch(
             # advance the cursor past a file that was never actually
             # downloaded — silent loss over a condition that, like a 429,
             # arc waits out rather than gives up on.
+            # Athlete words, and carefully hedged ones: `last_error` renders in
+            # Settings, and this failure is not yet evidence the connection is
+            # dead — see above. "arc lost its permission" belongs to the paths
+            # that have proved it (`app.connectors.dropbox.PERMISSION_LOST`).
             return _BatchFailure(
-                f"Dropbox rejected arc's credential fetching {entry.name}: {exc}",
+                f"Dropbox would not let arc fetch {entry.name}; arc tries "
+                f"again at the next check ({exc})",
                 blames_batch=False,
             )
         except DropboxError as exc:

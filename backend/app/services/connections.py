@@ -18,6 +18,7 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.dropbox import (
+    PERMISSION_LOST,
     READ_SCOPES,
     DropboxAuthError,
     DropboxClient,
@@ -26,6 +27,8 @@ from app.connectors.dropbox import (
     DropboxListing,
     DropboxPathNotFoundError,
     DropboxRateLimitedError,
+    DropboxScopeError,
+    DropboxUnreachableError,
     authorize_url,
     current_account,
     exchange_code,
@@ -39,6 +42,7 @@ from app.core.exceptions import (
     ConflictError,
     NotFoundError,
     RateLimitedError,
+    UpstreamError,
     ValidationError,
 )
 from app.core.logging import get_logger
@@ -141,7 +145,12 @@ VERIFICATION_DEFERRED = (
 )
 
 
-def _permission_refusal(missing: Sequence[str], *, opening: str) -> str:
+def _permission_refusal(
+    missing: Sequence[str],
+    *,
+    opening: str,
+    reconnect: str = "start the connection again",
+) -> str:
     """The refusal an athlete can act on without leaving the sentence.
 
     Every missing scope is named, not the first one: the remedy is a round
@@ -152,12 +161,19 @@ def _permission_refusal(missing: Sequence[str], *, opening: str) -> str:
     connect again — because the last one is the counter-intuitive half:
     Dropbox applies a newly-submitted scope only to a grant issued **after**
     it, so an athlete who ticks the box and reloads arc is still refused.
+
+    ``reconnect`` is that last move, and it differs by *where the athlete is
+    standing*. Mid-connect there is nothing stored, so the remedy is to start
+    again. Browsing folders on a connection arc already holds, "start the
+    connection again" is an instruction that fails: a second connect is
+    refused with a 409 until the first is removed, so this path says to
+    disconnect first. One refusal wording either way, one clause that moves.
     """
     return (
         f"{opening} Open your app at https://www.dropbox.com/developers/apps, "
         f"tick {', '.join(missing)} on its Permissions tab, choose Submit, "
-        "then start the connection again — Dropbox gives arc a newly ticked "
-        "permission only on a connection made after you submit it."
+        f"then {reconnect} — Dropbox gives arc a newly ticked permission only "
+        "on a connection made after you submit it."
     )
 
 
@@ -735,7 +751,12 @@ class ConnectionService:
             ConflictError: When a Dropbox connection already exists.
             ValidationError: When the flow was never started, has expired, the
                 state does not match, the code is spent, the grant carries no
-                refresh token, or the grant cannot read the athlete's files.
+                refresh token, the grant cannot read the athlete's files, or
+                Dropbox could not be reached at all.
+            UpstreamError: When Dropbox answered one of the three calls with a
+                failure of its own. Its own status because there is nothing
+                wrong with the request, the setup or the code — see
+                :func:`_dropbox_failures_translated`.
         """
         await check_write_cap(self._session, actor)
         existing = await self._repository.by_provider(ConnectionProvider.DROPBOX)
@@ -752,62 +773,84 @@ class ConnectionService:
         # `.strip()`: the code is copied off a web page into a form field, and
         # a trailing newline is what a paste normally carries. Refusing it
         # would be arc failing at the one manual step it asked for.
-        try:
-            grant = await exchange_code(
-                app_key=app_key,
-                code=code.strip(),
-                verifier=pending.code_verifier,
-                redirect_uri=pending.redirect_uri,
-            )
-        except DropboxAuthError as exc:
-            raise ValidationError(
-                "Dropbox refused that authorization code: it has already been "
-                "used, or it has expired. Start the connection again and paste "
-                "the new code."
-            ) from exc
-        except DropboxError as exc:
-            raise ValidationError(f"Dropbox could not be reached: {exc}") from exc
-
-        if not grant.refresh_token:
-            raise ValidationError(
-                "Dropbox granted access without a refresh token, so arc could "
-                "not renew it unattended. The authorization link must carry "
-                "token_access_type=offline — start the connection again."
-            )
-
-        granted = frozenset(grant.scopes)
-        # No fallback to `READ_SCOPES` for a grant that named nothing: an app
-        # with every permission unticked comes back with `scope: ""`, and
-        # reading that as "Dropbox did not say" recorded the scopes arc wanted
-        # as though they had been given.
-        if missing := sorted(READ_SCOPES - granted):
-            raise ValidationError(
-                _permission_refusal(
-                    missing,
-                    opening="Dropbox did not give arc permission to read your files.",
+        # Every leg that talks to Dropbox is inside one translation, so an
+        # outage at any of them — exchange, account, probe — is the same
+        # honest 422 rather than a 500 from whichever leg nobody wrapped. The
+        # `except` clauses below pre-empt it where this use-case has something
+        # more specific to say; an `AppError` raised in there is not a
+        # `DropboxError` and passes straight out.
+        with _dropbox_failures_translated():
+            try:
+                grant = await exchange_code(
+                    app_key=app_key,
+                    code=code.strip(),
+                    verifier=pending.code_verifier,
+                    redirect_uri=pending.redirect_uri,
                 )
-            )
+            except DropboxAuthError as exc:
+                raise ValidationError(
+                    "Dropbox refused that authorization code: it has already "
+                    "been used, or it has expired. Start the connection again "
+                    "and paste the new code."
+                ) from exc
 
-        account = await current_account(access_token=grant.access_token)
-        verification_note: str | None = None
-        try:
-            await probe_readable(access_token=grant.access_token)
-        except DropboxAuthError as exc:
-            raise ValidationError(
-                _permission_refusal(
-                    sorted(READ_SCOPES),
-                    opening=(
-                        "Dropbox would not let arc read your files, although the "
-                        "permission looked granted."
-                    ),
+            if not grant.refresh_token:
+                raise ValidationError(
+                    "Dropbox granted access without a refresh token, so arc "
+                    "could not renew it unattended. The authorization link must "
+                    "carry token_access_type=offline — start the connection "
+                    "again."
                 )
-            ) from exc
-        except DropboxError as exc:
-            # Every scope arc needs was granted and Dropbox simply did not
-            # answer. Logged rather than silent, because a deployment where
-            # this happens on every connect is an operator's problem.
-            logger.info("dropbox_connect_probe_unanswered", error=str(exc))
-            verification_note = VERIFICATION_DEFERRED
+
+            granted = frozenset(grant.scopes)
+            # No fallback to `READ_SCOPES` for a grant that named nothing: an
+            # app with every permission unticked comes back with `scope: ""`,
+            # and reading that as "Dropbox did not say" recorded the scopes arc
+            # wanted as though they had been given.
+            if missing := sorted(READ_SCOPES - granted):
+                raise ValidationError(
+                    _permission_refusal(
+                        missing,
+                        opening=(
+                            "Dropbox did not give arc permission to read your files."
+                        ),
+                    )
+                )
+
+            account = await current_account(access_token=grant.access_token)
+            verification_note: str | None = None
+            try:
+                await probe_readable(access_token=grant.access_token)
+            except DropboxScopeError as exc:
+                # Dropbox named one scope; naming the other two back would send
+                # the athlete to tick permissions they already granted.
+                raise ValidationError(
+                    _permission_refusal(
+                        [exc.required_scope]
+                        if exc.required_scope
+                        else sorted(READ_SCOPES),
+                        opening=(
+                            "Dropbox would not let arc read your files, although "
+                            "the permission looked granted."
+                        ),
+                    )
+                ) from exc
+            except DropboxAuthError as exc:
+                raise ValidationError(
+                    _permission_refusal(
+                        sorted(READ_SCOPES),
+                        opening=(
+                            "Dropbox would not let arc read your files, although "
+                            "the permission looked granted."
+                        ),
+                    )
+                ) from exc
+            except DropboxError as exc:
+                # Every scope arc needs was granted and Dropbox simply did not
+                # answer. Logged rather than silent, because a deployment where
+                # this happens on every connect is an operator's problem.
+                logger.info("dropbox_connect_probe_unanswered", error=str(exc))
+                verification_note = VERIFICATION_DEFERRED
 
         row = await self._repository.add(
             ConnectionRow(
@@ -989,13 +1032,16 @@ class ConnectionService:
             NotFoundError: When the connection, or the path, does not exist.
             ConflictError: When the credential needs re-authorizing — refused
                 locally, because spending a request to be told what the row
-                already says is a request the rate limit will want later.
+                already says is a request the rate limit will want later — or
+                when Dropbox refused the read for want of a scope.
             RateLimitedError: When Dropbox is throttling arc, carrying its own
                 stated delay. Translated rather than left to escape, because an
                 upstream 429 reaching the client as a 500 makes a transient
                 condition look like a broken feature.
+            UpstreamError: When Dropbox answered with a failure arc did not
+                cause.
             ValidationError: When arc cannot read its own credential, or
-                Dropbox failed in a way arc did not cause.
+                Dropbox could not be reached at all.
         """
         client = await self._readable_client(connection_id)
         with _dropbox_failures_translated():
@@ -1029,10 +1075,13 @@ class ConnectionService:
 
         Raises:
             NotFoundError: When the connection does not exist.
-            ConflictError: When the credential needs re-authorizing.
+            ConflictError: When the credential needs re-authorizing, or
+                Dropbox refused the read for want of a scope.
             RateLimitedError: When Dropbox is throttling arc.
+            UpstreamError: When Dropbox answered with a failure arc did not
+                cause.
             ValidationError: When arc cannot read its own credential, or
-                Dropbox failed in a way arc did not cause.
+                Dropbox could not be reached at all.
         """
         client = await self._readable_client(connection_id)
         with _dropbox_failures_translated():
@@ -1173,26 +1222,58 @@ def _dropbox_failures_translated() -> Iterator[None]:
     """Turn a Dropbox failure into the `AppError` the adapter can answer with.
 
     One place rather than one per read, because the mapping is the *contract*
-    the folder picker and discovery both publish: an upstream 429 reaching the
-    client as a 500 makes a transient condition look like a broken feature,
-    and a refused credential has to arrive as the one status the panel offers
-    a reconnect for.
+    the folder picker, discovery and the connect all publish: an upstream 429
+    reaching the client as a 500 makes a transient condition look like a broken
+    feature, and a refused credential has to arrive as the one status the panel
+    offers a reconnect for.
+
+    **"could not be reached" is reserved for a request nothing answered.**
+    Every other Dropbox failure used to be re-labelled with it — an answered
+    409, an answered 503, a missing scope — which is arc discarding what it was
+    told and substituting a guess about the network. The audited run-through
+    began exactly there: Dropbox had said which permission was missing and
+    which console tab fixes it, and the athlete was shown a question about
+    reachability. So a *transport* failure (:class:`DropboxUnreachableError`)
+    keeps that sentence and nothing else does; an answered failure quotes
+    Dropbox's own summary into a 502, whose status is what tells the frontend
+    this is not a refusal the athlete can act on
+    (`frontend/lib/api-errors.ts`).
+
+    The order of the clauses is the order of specificity, and it is load
+    bearing: :class:`DropboxScopeError` is a :class:`DropboxAuthError`, and
+    :class:`DropboxUnreachableError` a :class:`DropboxUpstreamError`, so a
+    reordering would silently answer the precise case with the general
+    sentence.
     """
     try:
         yield
     except DropboxPathNotFoundError as exc:
         raise NotFoundError(f"Dropbox has no folder at {exc.path or '/'}") from exc
-    except DropboxAuthError as exc:
+    except DropboxScopeError as exc:
+        # Dropbox named the permission. Naming it back — with the four console
+        # moves that grant it — is the difference between a refusal the
+        # athlete resolves in two minutes and one they file a bug about.
         raise ConflictError(
-            "Dropbox refused arc's credential. Reconnect the account."
+            _permission_refusal(
+                [exc.required_scope] if exc.required_scope else sorted(READ_SCOPES),
+                opening="Dropbox will not let arc read your files.",
+                reconnect="disconnect this Dropbox account here and connect it again",
+            )
         ) from exc
+    except DropboxAuthError as exc:
+        raise ConflictError(PERMISSION_LOST) from exc
     except DropboxRateLimitedError as exc:
         raise RateLimitedError(
             "Dropbox is rate-limiting arc. Try again in about "
             f"{int(exc.retry_after)} seconds."
         ) from exc
-    except DropboxError as exc:
+    except DropboxUnreachableError as exc:
         raise ValidationError(f"Dropbox could not be reached: {exc}") from exc
+    except DropboxError as exc:
+        raise UpstreamError(
+            f"Dropbox answered arc with an error it cannot fix ({exc}). "
+            "Nothing is wrong with your setup — try again in a few minutes."
+        ) from exc
 
 
 def _count_activity(path: str, listing: DropboxListing) -> FolderCandidate:

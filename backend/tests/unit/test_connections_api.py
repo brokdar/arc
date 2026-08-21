@@ -41,17 +41,20 @@ from app.persistence.connections import (
 from app.persistence.integrations import IntegrationRow
 from app.persistence.types import JSONColumn
 from tests.unit.dropbox_fake import (
+    ACCOUNT_PATH,
     LIST_FOLDER_CONTINUE_PATH,
     LIST_FOLDER_PATH,
     REVOKE_PATH,
     TOKEN_PATH,
     FakeDropbox,
+    expired_access_token,
     file_entry,
     folder_entry,
     missing_scope,
     page,
     path_not_found,
     rate_limited,
+    server_error,
 )
 
 pytestmark = pytest.mark.usefixtures("dropbox_env")
@@ -983,6 +986,26 @@ async def test_a_probe_that_never_reaches_dropbox_stores_the_connection_too(
     assert await count_of(db_session, ConnectionRow) == 1
 
 
+async def test_a_dropbox_that_goes_away_mid_connect_is_a_422_not_a_500(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Every leg of the connect answers the same way when nothing answers.
+
+    The account read sits between the exchange and the probe, and it was the
+    one leg with no translation over it: a total outage after the code was
+    redeemed escaped as an unhandled connector error and reached the athlete
+    as a 500 — the one shape of failure that names no remedy at all.
+    """
+    await client.post(AUTHORIZE)
+    fake.raises[ACCOUNT_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
 # --- AC-5: the folder picker -------------------------------------------------
 
 
@@ -1060,6 +1083,96 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     # Refused locally: no point spending a request on a credential arc knows
     # is dead.
     assert fake.calls_to(LIST_FOLDER_PATH) == []
+
+
+# --- AC-4, AC-5, AC-7: Dropbox's own words reach the athlete -----------------
+#
+# Four upstream failures, four sentences. What this section defends is the
+# distinction itself: a missing scope, a dead credential, a rate limit and a
+# network that is not there were one 422 saying "Dropbox could not be
+# reached", which is a true sentence for exactly one of them and sent the
+# athlete of the other three hunting a fault that was not there.
+
+
+async def test_a_missing_scope_while_browsing_names_the_scope_and_the_console(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    # Refreshing cannot mint a scope, so a token request here is a round trip
+    # spent to be told the same thing.
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert "could not be reached" not in detail
+
+
+async def test_a_dead_credential_while_browsing_is_the_athletes_remedy(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """AC-7: the second 401 is a sentence about arc, not about a token."""
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, expired_access_token(), expired_access_token())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "Disconnect and connect again" in detail
+    assert "token" not in detail
+    assert "credential" not in detail
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == detail
+
+
+async def test_a_path_dropbox_answered_about_is_never_reported_as_unreachable(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.script(LIST_FOLDER_PATH, path_not_found("/nope"))
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/nope")
+
+    assert response.status_code == 404, response.text
+    assert "/nope" in response.json()["detail"]
+    assert "could not be reached" not in response.json()["detail"]
+
+
+async def test_a_dropbox_that_answered_a_5xx_is_a_502_not_a_reachability_question(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.script(LIST_FOLDER_PATH, server_error())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    # Dropbox answered. Saying it could not be reached is arc guessing at a
+    # cause it was told.
+    assert "Dropbox answered" in detail
+    assert "could not be reached" not in detail
+
+
+async def test_only_a_network_that_never_answered_is_could_not_be_reached(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.raises[LIST_FOLDER_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
 
 
 # --- AC-10: `/feeds` is gone, and the integration owns its folders -----------
