@@ -63,6 +63,7 @@ from app.connectors.dropbox import (
     DropboxRateLimitedError,
 )
 from app.core.config import get_settings
+from app.core.exceptions import ConflictError
 from app.core.logging import get_logger
 from app.domain.activity import IngestOutcome, IngestSource
 from app.domain.actor import Actor
@@ -282,27 +283,69 @@ async def _due_feeds(session: AsyncSession) -> list[uuid.UUID]:
     silently stopped collecting is the failure this whole feature exists to
     make visible.
     """
+    # Read into plain values before anything writes. This loop is the only
+    # place in the sweep that commits while still enumerating, and a commit
+    # that loses a race rolls the session back — which expires *every*
+    # instance the session holds, ORM rows this loop has not reached yet
+    # included. Walking those rows afterwards raises `MissingGreenlet` on the
+    # first attribute read, so the conflict would end the cycle one connection
+    # later having been caught. Tuples cannot be expired.
+    connections = [
+        (
+            row.id,
+            row.status,
+            row.credentials,
+            [feed.id for feed in row.feeds if feed.enabled],
+        )
+        for row in await ConnectionRepository(session).list()
+    ]
     due: list[uuid.UUID] = []
-    for connection in await ConnectionRepository(session).list():
-        if connection.status is not ConnectionStatus.CONNECTED:
+    for connection_id, status, credentials, feed_ids in connections:
+        if status is not ConnectionStatus.CONNECTED:
             logger.info(
                 "dropbox_connection_not_usable",
-                connection_id=str(connection.id),
-                status=connection.status.value,
+                connection_id=str(connection_id),
+                status=status.value,
             )
             continue
         try:
-            EncryptedCredentials.unseal(connection.credentials)
+            EncryptedCredentials.unseal(credentials)
         except (CredentialDecryptionError, CredentialKeyError) as exc:
-            connection.status = ConnectionStatus.ERROR
-            connection.last_error = str(exc)[:MAX_ERROR_LENGTH]
-            await commit(session)
-            logger.warning(
-                "dropbox_credential_unreadable", connection_id=str(connection.id)
-            )
+            await _mark_unreadable(session, connection_id, exc)
             continue
-        due.extend(feed.id for feed in connection.feeds if feed.enabled)
+        due.extend(feed_ids)
     return due
+
+
+async def _mark_unreadable(
+    session: AsyncSession, connection_id: uuid.UUID, exc: Exception
+) -> None:
+    """Persist `error` on one connection, tolerating it having gone away.
+
+    Re-read rather than mutated through the row :func:`_due_feeds` already
+    holds, because by the time this is reached that row may be expired — see
+    the comment there — and because the athlete pressing Disconnect mid-sweep
+    is exactly the case this function exists to survive. A row that is gone has
+    nothing left to mark and no feeds left to poll, so it is a log line, not a
+    failure.
+
+    The commit is guarded for the same race one moment later: `ConflictError`
+    is what `app.persistence.db` turns a stale UPDATE into, and letting it out
+    of here would end the whole cycle — every connection, every feed — over one
+    row that moved, which is the opposite of what `poll_feeds` promises.
+    """
+    connection = await ConnectionRepository(session).get(connection_id)
+    if connection is None:
+        logger.info("dropbox_connection_vanished", connection_id=str(connection_id))
+        return
+    connection.status = ConnectionStatus.ERROR
+    connection.last_error = str(exc)[:MAX_ERROR_LENGTH]
+    try:
+        await commit(session)
+    except ConflictError:
+        logger.info("dropbox_connection_vanished", connection_id=str(connection_id))
+        return
+    logger.warning("dropbox_credential_unreadable", connection_id=str(connection_id))
 
 
 async def _poll_feed(feed_id: uuid.UUID) -> None:
