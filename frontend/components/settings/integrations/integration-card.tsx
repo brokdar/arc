@@ -110,7 +110,15 @@ export function IntegrationCard({
   );
 }
 
-/** What is left to do when the server has no prompt of its own. */
+/**
+ * What is left to do when the server has no prompt of its own.
+ *
+ * A broken account's own `connection_error` is preferred verbatim: it is the
+ * sentence the poll wrote, and it names what Dropbox refused and the console
+ * moves that fix it. The fallback runs only for a row that has no error text
+ * yet, and it still has to name an action — UI convention 3: an entry that
+ * says something is wrong and not what to do about it is a dead end.
+ */
 function describeSetup(integration: Integration): string {
   const count = integration.folders.length;
   const broken = integration.folders.find(
@@ -119,7 +127,8 @@ function describeSetup(integration: Integration): string {
   if (broken) {
     return (
       broken.connection_error ??
-      "The account this collects through needs attention before anything will arrive."
+      "Nothing is arriving through this source: the account below it has " +
+        "stopped working. Disconnect it there and connect it again."
     );
   }
   return count === 1

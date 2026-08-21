@@ -177,6 +177,34 @@ def _permission_refusal(
     )
 
 
+def scope_refusal(required_scope: str) -> str:
+    """The sentence a **stored** connection gets when Dropbox refuses a scope.
+
+    One function because two subsystems now write it: the folder browse, which
+    answers it to the screen (:func:`_dropbox_failures_translated`), and the
+    feed poll, which writes it onto `connections.last_error` where the settings
+    panel renders it (`app.ingest.feeds`). The athlete meets the same failure
+    from two directions and must not be given two different accounts of it —
+    especially not two different remedies, when the remedy is four console
+    moves they have to get exactly right.
+
+    Not shared with the *connect* refusal, which is a different sentence on
+    purpose: mid-connect nothing is stored, so the last move is "start again",
+    while here a second connect is refused with a 409 until the stored one is
+    removed. :func:`_permission_refusal` holds the part that is common.
+
+    Args:
+        required_scope: What Dropbox named, or ``""`` when it named nothing —
+            read as "all of them", because a grant that can name none is a
+            grant that carries none.
+    """
+    return _permission_refusal(
+        [required_scope] if required_scope else sorted(READ_SCOPES),
+        opening="Dropbox will not let arc read your files.",
+        reconnect="disconnect this Dropbox account here and connect it again",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DropboxConnected:
     """A stored Dropbox connection, and what arc could prove about it."""
@@ -819,8 +847,16 @@ class ConnectionService:
 
             account = await current_account(access_token=grant.access_token)
             verification_note: str | None = None
+            #: The connect probe **is** a `list_folder` call, so a probe that
+            #: succeeded is the first observation of this credential working
+            #: and the row is born with a stamp — see
+            #: `ConnectionRow.last_verified_at`. A connection stored under the
+            #: transient-probe rule below has none, which is the truth: nobody
+            #: has checked it yet, and the first poll is when somebody does.
+            verified_at: dt.datetime | None = None
             try:
                 await probe_readable(access_token=grant.access_token)
+                verified_at = dt.datetime.now(dt.UTC)
             except DropboxScopeError as exc:
                 # Dropbox named one scope; naming the other two back would send
                 # the athlete to tick permissions they already granted.
@@ -866,6 +902,7 @@ class ConnectionService:
                     }
                 ),
                 access_token_expires_at=grant.expires_at,
+                last_verified_at=verified_at,
             )
         )
         await self._repository.delete_authorization(pending)
@@ -1253,13 +1290,7 @@ def _dropbox_failures_translated() -> Iterator[None]:
         # Dropbox named the permission. Naming it back — with the four console
         # moves that grant it — is the difference between a refusal the
         # athlete resolves in two minutes and one they file a bug about.
-        raise ConflictError(
-            _permission_refusal(
-                [exc.required_scope] if exc.required_scope else sorted(READ_SCOPES),
-                opening="Dropbox will not let arc read your files.",
-                reconnect="disconnect this Dropbox account here and connect it again",
-            )
-        ) from exc
+        raise ConflictError(scope_refusal(exc.required_scope)) from exc
     except DropboxAuthError as exc:
         raise ConflictError(PERMISSION_LOST) from exc
     except DropboxRateLimitedError as exc:

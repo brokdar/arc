@@ -1629,6 +1629,18 @@
             ],
             "title": "Last Error"
           },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
+          },
           "provider": {
             "$ref": "#/components/schemas/ConnectionProvider"
           },
@@ -1655,6 +1667,7 @@
           "account_label",
           "scopes",
           "last_error",
+          "last_verified_at",
           "created_at",
           "updated_at",
           "feeds"
@@ -1663,7 +1676,7 @@
         "type": "object"
       },
       "ConnectionStatus": {
-        "description": "Whether arc can currently use the credential it is holding.\n\nThree states with three different remedies, which is why `error` is not\nfolded into `needs_reauth`:\n\n* ``connected`` \u2014 the credential works, or at least nothing has told arc\n  otherwise;\n* ``needs_reauth`` \u2014 Dropbox refused the refresh token. The athlete has to\n  go through the connect ritual again; nothing local will fix it;\n* ``error`` \u2014 arc cannot *read* its own credential, which today means\n  `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The\n  remedy is to restore the key, and re-authorizing would only paper over a\n  configuration mistake that is also hiding every other secret.",
+        "description": "Whether arc can currently use the credential it is holding.\n\nThree states with three different remedies, which is why `error` is not\nfolded into `needs_reauth`:\n\n* ``connected`` \u2014 a scoped call to the provider succeeded, and\n  ``connections.last_verified_at`` says when. **An observation with a\n  timestamp, not the absence of bad news.** It used to mean \"nothing has\n  told arc otherwise\", which is a claim arc could go on making for weeks\n  after a console permission change killed the grant: nothing asks, so\n  nothing tells. The status and the stamp are read together \u2014 a status\n  with no stamp behind it is a connection nobody has checked yet, and the\n  panel says exactly that rather than inventing a time;\n* ``needs_reauth`` \u2014 Dropbox refused the credential, or refused a call for\n  want of a scope the grant does not carry. The athlete has to go through\n  the connect ritual again (after ticking the permission, where that is\n  what went wrong); nothing local will fix it;\n* ``error`` \u2014 arc cannot *read* its own credential, which today means\n  `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The\n  remedy is to restore the key, and re-authorizing would only paper over a\n  configuration mistake that is also hiding every other secret.",
         "enum": ["connected", "needs_reauth", "error"],
         "title": "ConnectionStatus",
         "type": "string"
@@ -1891,6 +1904,18 @@
             ],
             "title": "Last Error"
           },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
+          },
           "provider": {
             "$ref": "#/components/schemas/ConnectionProvider"
           },
@@ -1928,6 +1953,7 @@
           "account_label",
           "scopes",
           "last_error",
+          "last_verified_at",
           "created_at",
           "updated_at",
           "feeds",

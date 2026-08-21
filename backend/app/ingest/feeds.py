@@ -60,7 +60,10 @@ from app.connectors.dropbox import (
     DropboxCursorResetError,
     DropboxError,
     DropboxFile,
+    DropboxPathNotFoundError,
     DropboxRateLimitedError,
+    DropboxScopeError,
+    DropboxUnreachableError,
 )
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError
@@ -92,7 +95,7 @@ from app.persistence.ingest_log import (
     IngestEventRepository,
 )
 from app.persistence.integrations import IntegrationRow
-from app.services.connections import ConnectionService
+from app.services.connections import ConnectionService, scope_refusal
 
 logger = get_logger(__name__)
 
@@ -416,6 +419,23 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
         try:
             changes = await _list_changes(client, feed)
         except DropboxError as exc:
+            # Dropbox's own words go to the log, where whoever is debugging
+            # wants them; `_listing_failure` decides what reaches the screen.
+            logger.warning(
+                "dropbox_listing_failed", feed_id=str(feed.id), error=str(exc)
+            )
+            if isinstance(exc, DropboxScopeError):
+                # **The flip happens here, on the first refusal.** A scope
+                # withdrawn in the Dropbox console breaks the credential
+                # silently: the athlete changed nothing in arc, and nothing in
+                # arc would ever say so, because a browse-time refusal is
+                # deliberately left as one screen's error (the athlete is
+                # standing in front of it) and the poll is the only thing that
+                # asks unprompted. So the poll is where the row learns. One
+                # cycle, not two: a second failure would buy no new evidence —
+                # refreshing cannot mint a scope, which is why
+                # `DropboxClient._call` raises this without its retry.
+                await client.mark_needs_reauth(scope_refusal(exc.required_scope))
             # No batch, so nothing to advance past: the listing itself failed.
             # It does not spend an attempt either — arc never got as far as a
             # page, so there is nothing here to give up on, and a counter that
@@ -424,10 +444,7 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
             await _record_failure(
                 session,
                 feed,
-                failure=_BatchFailure(
-                    f"Dropbox would not list {feed.remote_path or '/'}: {exc}",
-                    blames_batch=False,
-                ),
+                failure=_BatchFailure(_listing_failure(exc, feed), blames_batch=False),
                 advance_to=None,
             )
             return
@@ -441,8 +458,15 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
             failure = await _take_batch(session, client, feed, changes)
         except Exception as exc:  # noqa: BLE001 — a silent feed is the failure
             logger.exception("dropbox_batch_errored", feed_id=str(feed.id))
+            # The local fault *is* quoted, unlike the Dropbox ones: "No space
+            # left on device" names something on the athlete's own machine that
+            # they can go and fix, which is the test every sentence on this row
+            # has to pass.
             failure = _BatchFailure(
-                f"arc could not store this batch: {exc}", blames_batch=False
+                f"arc could not save what it downloaded from "
+                f"{feed.remote_path or '/'}: {exc}. Nothing was lost — it "
+                "tries again at the next check.",
+                blames_batch=False,
             )
         if failure is not None:
             await _record_failure(
@@ -466,6 +490,61 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
             entries=len(changes.entries),
             has_more=changes.has_more,
         )
+
+
+def _listing_failure(exc: DropboxError, feed: FeedRow) -> str:
+    """Why arc could not read a watched folder, in words the athlete can act on.
+
+    ``feed.last_error`` is rendered **verbatim** in Settings and in the coach's
+    `get_ingest_status`, so the connector's exception text may not be
+    interpolated into it. Those strings are diagnostics — endpoint paths,
+    status codes, "Dropbox rejected a freshly refreshed access token" — and
+    every noun in them names something the athlete cannot see, cannot check and
+    cannot fix. Interpolating them is how "Dropbox said your app is missing
+    files.metadata.read" reached the screen as a question about the network.
+
+    So the split is: Dropbox's own words to the log (:func:`_poll_feed` writes
+    them), the athlete's situation and what happens next to the row. Each
+    branch says which of the two things is true — arc will retry by itself, or
+    somebody has to do something — because a sentence that says neither leaves
+    an athlete watching a folder that will never recover.
+
+    The clause order is specificity, like `_dropbox_failures_translated`'s:
+    `DropboxScopeError` is a `DropboxAuthError` and `DropboxUnreachableError` a
+    `DropboxUpstreamError`, so reordering would answer the precise case with
+    the general sentence.
+    """
+    where = feed.remote_path or "/"
+    if isinstance(exc, DropboxScopeError):
+        return (
+            f"arc no longer has permission to read {where}. Reconnect the "
+            "Dropbox account below to start collecting from it again."
+        )
+    if isinstance(exc, DropboxAuthError):
+        return (
+            f"Dropbox would not let arc read {where}. Reconnect the Dropbox "
+            "account below to start collecting from it again."
+        )
+    if isinstance(exc, DropboxPathNotFoundError):
+        return (
+            f"There is no folder at {where} in your Dropbox any more. It may "
+            "have been renamed or moved — stop watching it here, and add "
+            "wherever the rides are being written now."
+        )
+    if isinstance(exc, DropboxRateLimitedError):
+        return (
+            f"Dropbox asked arc to wait about {int(exc.retry_after)} seconds "
+            f"before reading {where}. arc tries again at the next check."
+        )
+    if isinstance(exc, DropboxUnreachableError):
+        return (
+            f"arc could not reach Dropbox to read {where}. It tries again at "
+            "the next check."
+        )
+    return (
+        f"Dropbox answered with an error of its own when arc read {where}. "
+        "Nothing is wrong with your setup — arc tries again at the next check."
+    )
 
 
 async def _list_changes(client: DropboxClient, feed: FeedRow) -> DropboxChanges:
@@ -536,9 +615,9 @@ async def _take_batch(
             # entries after this one have not been tried even once, so giving
             # up on the page over it would discard rides arc never fetched.
             return _BatchFailure(
-                f"Dropbox asked arc to wait {int(exc.retry_after)} seconds before "
-                f"fetching {entry.name}; the rest of this batch waits for the "
-                "next poll",
+                f"Dropbox asked arc to wait about {int(exc.retry_after)} seconds "
+                f"before downloading {entry.name}. The rest of this folder waits "
+                "for the next check.",
                 blames_batch=False,
             )
         except DropboxAuthError as exc:
@@ -556,17 +635,23 @@ async def _take_batch(
             # Settings, and this failure is not yet evidence the connection is
             # dead — see above. "arc lost its permission" belongs to the paths
             # that have proved it (`app.connectors.dropbox.PERMISSION_LOST`).
+            # The exception is deliberately not quoted into it, for the reason
+            # :func:`_listing_failure` gives.
+            logger.warning("dropbox_download_refused", name=entry.name, error=str(exc))
             return _BatchFailure(
-                f"Dropbox would not let arc fetch {entry.name}; arc tries "
-                f"again at the next check ({exc})",
+                f"Dropbox would not let arc download {entry.name}. arc tries "
+                "again at the next check.",
                 blames_batch=False,
             )
         except DropboxError as exc:
             # A file Dropbox refuses on every attempt is the case the give-up
             # budget is for: it is not going to start working, and the rides
             # behind it must not queue for ever (AC-16).
+            logger.warning("dropbox_download_failed", name=entry.name, error=str(exc))
             return _BatchFailure(
-                f"{entry.name} could not be downloaded: {exc}", blames_batch=True
+                f"arc could not download {entry.name} from Dropbox. It tries "
+                "again at the next check, and moves on if it keeps failing.",
+                blames_batch=True,
             )
 
         await _deliver(feed_id=feed.id, entry=entry, content=content)
@@ -684,7 +769,10 @@ async def _record_failure(
     if advance_to is not None and attempts >= get_settings().dropbox.max_batch_attempts:
         feed.cursor = advance_to
         feed.cursor_attempts = 0
-        detail = f"gave up after {attempts} attempts and moved on — {detail}"
+        detail = (
+            f"arc tried {attempts} times and moved on, so newer rides are not "
+            f"held up behind this one — {detail}"
+        )
         logger.warning("dropbox_batch_abandoned", feed_id=str(feed.id), detail=detail)
     else:
         feed.cursor_attempts = attempts

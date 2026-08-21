@@ -2835,6 +2835,8 @@ export interface components {
       id: string;
       /** Last Error */
       last_error: string | null;
+      /** Last Verified At */
+      last_verified_at: string | null;
       provider: components["schemas"]["ConnectionProvider"];
       /** Scopes */
       scopes: string[];
@@ -2852,10 +2854,18 @@ export interface components {
      *     Three states with three different remedies, which is why `error` is not
      *     folded into `needs_reauth`:
      *
-     *     * ``connected`` — the credential works, or at least nothing has told arc
-     *       otherwise;
-     *     * ``needs_reauth`` — Dropbox refused the refresh token. The athlete has to
-     *       go through the connect ritual again; nothing local will fix it;
+     *     * ``connected`` — a scoped call to the provider succeeded, and
+     *       ``connections.last_verified_at`` says when. **An observation with a
+     *       timestamp, not the absence of bad news.** It used to mean "nothing has
+     *       told arc otherwise", which is a claim arc could go on making for weeks
+     *       after a console permission change killed the grant: nothing asks, so
+     *       nothing tells. The status and the stamp are read together — a status
+     *       with no stamp behind it is a connection nobody has checked yet, and the
+     *       panel says exactly that rather than inventing a time;
+     *     * ``needs_reauth`` — Dropbox refused the credential, or refused a call for
+     *       want of a scope the grant does not carry. The athlete has to go through
+     *       the connect ritual again (after ticking the permission, where that is
+     *       what went wrong); nothing local will fix it;
      *     * ``error`` — arc cannot *read* its own credential, which today means
      *       `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
      *       remedy is to restore the key, and re-authorizing would only paper over a
@@ -3035,6 +3045,8 @@ export interface components {
       id: string;
       /** Last Error */
       last_error: string | null;
+      /** Last Verified At */
+      last_verified_at: string | null;
       provider: components["schemas"]["ConnectionProvider"];
       /** Scopes */
       scopes: string[];

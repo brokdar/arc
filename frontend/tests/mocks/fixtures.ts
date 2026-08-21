@@ -4278,9 +4278,20 @@ export function dropboxConnection(
     last_error: null,
     created_at: "2026-08-16T09:30:00Z",
     updated_at: "2026-08-16T09:30:00Z",
+    // Computed, unlike every other stamp here, because this one is rendered
+    // *relative to now*: a frozen instant would age into "8 months ago" and
+    // then into a different sentence again, so a test asserting on the words
+    // would rot on a date rather than on a change to the code. Four minutes is
+    // the last poll of a healthy connection — the real API's ordinary answer.
+    last_verified_at: minutesAgo(4),
     feeds: [],
     ...overrides,
   };
+}
+
+/** An instant `minutes` before now, as the API would serve it. */
+export function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
 /** A watched folder, as the API reports it before anything has been delivered. */

@@ -367,3 +367,73 @@ def test_downgrading_0019_drops_the_table_and_keeps_everything_else(
     # The schema the models describe, again — a downgrade/upgrade round trip
     # that left a column behind would show up here and nowhere else.
     command.check(alembic_config)
+
+
+# --- 0020: the verification stamp -------------------------------------------------
+
+
+def test_head_carries_a_nullable_last_verified_at(alembic_config: Config) -> None:
+    command.upgrade(alembic_config, "head")
+
+    assert rows(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_name = 'connections' AND column_name = 'last_verified_at'"
+    ) == [("YES",)]
+
+
+def test_a_connection_that_predates_0020_reads_as_never_verified(
+    alembic_config: Config,
+) -> None:
+    """No backfill, deliberately.
+
+    `created_at` or `now()` in this column would manufacture a verification
+    that never happened — the reassurance-without-evidence the column exists to
+    remove. Null is the truthful answer for every row that already existed, and
+    the panel renders it as "not checked yet" rather than as a missing value.
+    """
+    at_revision(alembic_config, "0019")
+    connection_id = uuid.uuid7()
+    seed_connection(connection_id)
+
+    command.upgrade(alembic_config, "head")
+
+    assert rows(
+        "SELECT last_verified_at FROM connections WHERE id = :id", id=connection_id
+    ) == [(None,)]
+
+
+def test_downgrading_0020_keeps_the_connection_and_round_trips(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+    connection_id = uuid.uuid7()
+    seed_connection(connection_id)
+    run_sql(
+        [
+            (
+                "UPDATE connections SET last_verified_at = now() WHERE id = :id",
+                {"id": connection_id},
+            )
+        ]
+    )
+
+    command.downgrade(alembic_config, "0019")
+
+    assert rows("SELECT count(*) FROM connections") == [(1,)]
+    assert (
+        rows(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'connections' AND column_name = 'last_verified_at'"
+        )
+        == []
+    )
+
+    command.upgrade(alembic_config, "head")
+
+    # The stamp is gone with the column and the row is back to never-verified,
+    # which is what a downgrade honestly leaves behind. The schema the models
+    # describe, again — a round trip that left something behind shows up here.
+    assert rows(
+        "SELECT last_verified_at FROM connections WHERE id = :id", id=connection_id
+    ) == [(None,)]
+    command.check(alembic_config)

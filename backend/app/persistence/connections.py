@@ -195,6 +195,28 @@ class ConnectionRow(Base):
     access_token_expires_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime)
     #: Why the connection is not `connected`, in the athlete's words.
     last_error: Mapped[str | None] = mapped_column(String(MAX_ERROR_LENGTH))
+    #: When arc last saw this credential *work* — the moment the status stops
+    #: being a claim and becomes an observation (`ConnectionStatus`).
+    #:
+    #: Written only where Dropbox answered a **scoped** call successfully: the
+    #: `list_folder` family, which is what the feed poll, the folder picker and
+    #: the connect-time probe all issue. Deliberately **not**
+    #: `users/get_current_account`, which succeeds for a grant carrying no file
+    #: scopes at all — counting it as verification is how a connection that
+    #: cannot list a single folder came to be labelled `connected` in the first
+    #: place.
+    #:
+    #: No dedicated health-check job stamps it, and that is the whole design:
+    #: the poll already touches Dropbox every couple of minutes on behalf of
+    #: every watched folder, so verification is a by-product of work arc does
+    #: anyway rather than a second timer with its own failure modes.
+    #:
+    #: **Null means nobody has checked yet**, which is a real state and not a
+    #: missing value: a connection stored under the transient-probe rule
+    #: (`app.services.connections.VERIFICATION_DEFERRED`) has one until its
+    #: first poll. Every reader renders it as "not checked yet"; none of them
+    #: may substitute `created_at`.
+    last_verified_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime)
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )

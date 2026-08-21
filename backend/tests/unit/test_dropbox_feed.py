@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
@@ -72,7 +73,9 @@ from tests.unit.dropbox_fake import (
     expired_access_token,
     file_entry,
     folder_entry,
+    missing_scope,
     page,
+    path_not_found,
     rate_limited,
     server_error,
 )
@@ -1418,3 +1421,257 @@ async def test_a_wellness_feed_is_retried_rather_than_treated_as_finished(
     assert delivered.cursor == "cursor-1"
     assert delivered.last_error is None
     assert session_row.id is not None
+
+
+# --- AC-8/AC-9: the poll is what makes `connected` an observation -------------------
+#
+# `connected` used to mean "nothing has told arc otherwise", and nothing ever
+# asked. The poll already touches Dropbox every couple of minutes on behalf of
+# every watched folder, so these two facts are by-products of work arc does
+# anyway: a listing that succeeded stamps `last_verified_at`, and a listing
+# refused for want of a scope flips the row on the spot.
+
+
+async def reread_connection(
+    session: AsyncSession, connection: ConnectionRow
+) -> ConnectionRow:
+    """The connection as the database now has it."""
+    statement = (
+        select(ConnectionRow)
+        .where(ConnectionRow.id == connection.id)
+        .execution_options(populate_existing=True)
+    )
+    fetched = (await session.execute(statement)).scalars().first()
+    assert fetched is not None
+    return fetched
+
+
+async def test_a_poll_that_listed_the_folder_stamps_the_connection(
+    fake: FakeDropbox, db_session: AsyncSession, client: AsyncClient, data_root: Path
+) -> None:
+    """AC-8: a resolved poll is when arc last saw the credential work.
+
+    The window is bounded on both sides — a stamp inside `[before, after]`
+    could only have been written by this poll, where `is not None` would pass
+    for a value the connect wrote minutes earlier.
+    """
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.files[entry["id"]] = ride_bytes()
+    before = dt.datetime.now(dt.UTC)
+
+    await feeds.poll_feeds()
+    after = dt.datetime.now(dt.UTC)
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.last_verified_at is not None
+    assert before <= stored.last_verified_at <= after
+    assert stored.status is ConnectionStatus.CONNECTED
+
+    # And it reaches the panel: a stamp nobody can read verifies nothing.
+    response = await client.get(f"/api/v1/connections/{connection.id}")
+    assert response.status_code == 200, response.text
+    served = dt.datetime.fromisoformat(response.json()["last_verified_at"])
+    assert served == stored.last_verified_at
+
+
+async def test_a_poll_that_finds_nothing_new_still_stamps_the_connection(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-8 edge: the listing succeeded, which is the whole question.
+
+    A rest week must not read as an unverified credential — otherwise "last
+    checked" would go stale on a quiet folder and say the account is in doubt
+    when the only thing that stopped is the riding.
+    """
+    fake.by_cursor = {None: page(cursor="cursor-1")}
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    before = dt.datetime.now(dt.UTC)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.last_verified_at is not None
+    assert stored.last_verified_at >= before
+    assert await rows_of(db_session, SessionRow) == []
+
+
+async def test_a_download_that_fails_after_a_good_listing_still_stamps_it(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-8: the *listing* is the evidence, and it was answered.
+
+    A file arc could not fetch says something about that file; it says nothing
+    about whether the credential can read the athlete's Dropbox, which Dropbox
+    had already demonstrated one call earlier by answering the listing.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.download_failures[entry["id"]] = server_error()
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+    before = dt.datetime.now(dt.UTC)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.last_verified_at is not None
+    assert stored.last_verified_at >= before
+    assert (await reread(db_session, feed)).last_error is not None
+
+
+async def test_a_failed_listing_does_not_move_an_earlier_stamp(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-8 edge: "last checked" may only ever mean *checked, and it worked*.
+
+    A stamp that moved on a failure would make an account nobody has
+    successfully reached in a week read as freshly verified — the exact
+    reassurance-without-evidence this column exists to remove.
+    """
+    fake.list_failures[WATCHED] = server_error()
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    yesterday = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    stored = await reread_connection(db_session, connection)
+    stored.last_verified_at = yesterday
+    await db_session.commit()
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.last_verified_at == yesterday
+
+
+async def test_a_never_verified_connection_stays_null_through_a_failed_poll(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-8 edge: no stamp is a state, and a failure may not invent one."""
+    fake.list_failures[WATCHED] = server_error()
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    assert (await reread_connection(db_session, connection)).last_verified_at is None
+
+
+async def test_a_scope_refusal_in_the_poll_flips_the_row_in_one_cycle(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-9: a permission withdrawn behind arc's back surfaces on one poll.
+
+    Nothing in arc changed and nothing in arc would ever notice: a browse-time
+    refusal is left as one screen's error, because the athlete is standing in
+    front of it. The poll is the only thing that asks unprompted, so it is
+    where the row has to learn — and on the *first* refusal, because refreshing
+    cannot mint a scope and a second attempt would buy no new evidence.
+    """
+    fake.list_failures[WATCHED] = missing_scope("files.metadata.read")
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert stored.last_error is not None
+    # The four console moves, named: the athlete cannot guess that a newly
+    # ticked permission only reaches a grant made after Submit.
+    assert "files.metadata.read" in stored.last_error
+    assert "Permissions" in stored.last_error
+    assert "Submit" in stored.last_error
+    # And the folder says why nothing is arriving, without repeating the
+    # remedy the account line above it already carries.
+    refused = await reread(db_session, feed)
+    assert refused.last_error is not None
+    assert WATCHED in refused.last_error
+    assert refused.cursor_attempts == 0, "the page was never reached"
+
+
+async def test_the_flipped_connection_is_not_polled_again(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-9: one refusal is enough — the next cycle spends no request.
+
+    The rate limit is a shared budget, and asking a credential arc has already
+    watched Dropbox refuse is the request a genuine folder wants later.
+    """
+    fake.list_failures[WATCHED] = missing_scope("files.metadata.read")
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    await feeds.poll_feeds()
+    spent = len(fake.calls)
+
+    await feeds.poll_feeds()
+
+    assert len(fake.calls) == spent
+
+
+async def test_the_flip_keeps_the_stamp_of_when_it_last_worked(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-9: "it broke" and "nobody ever checked" are different sentences.
+
+    Clearing the stamp on the flip would replace a true "last worked at 14:02"
+    with "not checked yet", which reads as a connection nobody has looked at
+    rather than one that has just stopped working.
+    """
+    fake.list_failures[WATCHED] = missing_scope("files.metadata.read")
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    worked_at = dt.datetime.now(dt.UTC) - dt.timedelta(hours=2)
+    stored = await reread_connection(db_session, connection)
+    stored.last_verified_at = worked_at
+    await db_session.commit()
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert stored.last_verified_at == worked_at
+
+
+async def test_no_failure_the_poll_records_names_a_token_or_the_api(
+    fake: FakeDropbox, db_session: AsyncSession, data_root: Path
+) -> None:
+    """Every sentence this module stores is one an athlete can act on.
+
+    A sweep rather than one assertion per branch: `last_error` is rendered
+    verbatim in Settings, and the failure mode is a *new* branch quoting a
+    connector diagnostic into it — which no test of the existing branches would
+    catch. The four words are the ones the audited run-through produced;
+    Dropbox's own diagnostics still reach the log, which is where they help.
+    """
+    banned = ("token", "credential", "the API", "401")
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    failures: dict[str, Any] = {
+        "scope": missing_scope("files.metadata.read"),
+        "dead": expired_access_token(),
+        "throttled": rate_limited("42"),
+        "broken": server_error(),
+        "gone": path_not_found(WATCHED),
+    }
+    for name, response in failures.items():
+        fake.calls.clear()
+        fake.list_failures = {WATCHED: response}
+        fake.by_cursor = {None: page(entry, cursor=f"cursor-{name}")}
+        async with session_scope() as session:
+            for row in await rows_of(session, ConnectionRow):
+                await session.delete(row)
+            await session.commit()
+        connection = await connect(db_session)
+        feed = await watch(db_session, connection)
+
+        await feeds.poll_feeds()
+
+        stored = await reread(db_session, feed)
+        assert stored.last_error is not None, name
+        for word in banned:
+            assert word not in stored.last_error, f"{name}: {stored.last_error}"
+        refreshed = await reread_connection(db_session, connection)
+        for word in banned:
+            assert word not in (refreshed.last_error or ""), name

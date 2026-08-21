@@ -149,6 +149,12 @@ class ConnectionRead(BaseModel):
     #: What Dropbox **granted**, not what arc asked for.
     scopes: list[str]
     last_error: str | None
+    #: When arc last saw this credential actually read the athlete's files —
+    #: what makes `status` an observation rather than a claim. `null` means
+    #: **nobody has checked yet**, which is a state a client renders as such;
+    #: substituting `created_at` for it would report a verification that never
+    #: happened. See `app.persistence.connections.ConnectionRow`.
+    last_verified_at: dt.datetime | None
     created_at: dt.datetime
     updated_at: dt.datetime
     feeds: list[FeedRead]

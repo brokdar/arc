@@ -30,6 +30,7 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ConflictError
 from app.core.logging import get_logger
 from app.domain.connections import ConnectionStatus
 from app.persistence.connections import ConnectionRow, EncryptedCredentials
@@ -46,6 +47,18 @@ API_BASE: Final = "https://api.dropboxapi.com"
 #: Dropbox is strict about it: `/2/files/download` on `api.dropboxapi.com` is a
 #: 400. The argument travels in a header there, and the body is the file.
 CONTENT_BASE: Final = "https://content.dropboxapi.com"
+
+#: The endpoints whose success proves arc can still read the athlete's files.
+#:
+#: The `list_folder` family and nothing else. `users/get_current_account`
+#: answers 200 for a grant carrying no file scopes at all, so a credential
+#: verified by it can be verified and useless at the same time — the exact
+#: state the audited run-through found stored and labelled `connected`. Adding
+#: an endpoint here is a claim that its 200 means "the files are readable"; a
+#: revoke or a token call is not.
+VERIFYING_ENDPOINTS: Final = frozenset(
+    {"/2/files/list_folder", "/2/files/list_folder/continue"}
+)
 
 #: The scopes arc asks for when the athlete connects an account.
 #:
@@ -623,6 +636,12 @@ class DropboxClient:
         self._session = session
         self._connection = connection
         self._app_key = app_key
+        #: Whether this client has already stamped `last_verified_at`. One
+        #: write per client, not per call: a folder listing that follows
+        #: `has_more` through forty pages is one observation of one credential
+        #: working, and forty commits of the same fact would put a write on the
+        #: read path for every page of it. See :meth:`_record_verified`.
+        self._verified = False
 
     # --- public calls --------------------------------------------------------
 
@@ -802,7 +821,7 @@ class DropboxClient:
             stored = self._credentials()
             refresh_token = stored.get("refresh_token")
             if not refresh_token:
-                await self._mark_needs_reauth(PERMISSION_LOST)
+                await self.mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "arc holds no refresh token for this Dropbox account; reconnect it"
                 )
@@ -819,7 +838,7 @@ class DropboxClient:
             if response.status_code != 200:
                 failure = _token_failure(response)
                 if isinstance(failure, DropboxAuthError):
-                    await self._mark_needs_reauth(PERMISSION_LOST)
+                    await self.mark_needs_reauth(PERMISSION_LOST)
                 raise failure
 
             grant = _grant_from(response.json())
@@ -836,7 +855,7 @@ class DropboxClient:
             await commit(self._session)
             return grant.access_token
 
-    async def _mark_needs_reauth(self, detail: str) -> None:
+    async def mark_needs_reauth(self, detail: str) -> None:
         """Record a dead credential on the row, so the panel can say so.
 
         ``detail`` is athlete-facing — the settings panel renders
@@ -845,11 +864,64 @@ class DropboxClient:
         carries. The two are deliberately different texts: the exception is
         read in a log by whoever is debugging, the row is read on screen by
         somebody who needs to know which button to press.
+
+        Public, because the *feed poll* flips a row too: a listing refused for
+        want of a scope is proof arriving on a path this class does not raise
+        from (`app.ingest.feeds`), and a second spelling of the flip is how two
+        callers end up disagreeing about what `needs_reauth` leaves behind.
+
+        ``last_verified_at`` is deliberately **left where it is**. It records
+        when the credential last worked, and that moment did happen; clearing
+        it would replace a true "last checked at 14:02" with "never checked",
+        which reads as a connection nobody has looked at rather than one that
+        has just broken.
         """
         self._connection.status = ConnectionStatus.NEEDS_REAUTH
         self._connection.last_error = detail
         self._connection.access_token_expires_at = None
         await commit(self._session)
+
+    async def _record_verified(self) -> None:
+        """Stamp the row: Dropbox answered a scoped call, just now.
+
+        Called from :meth:`_call` on a 200 from the `list_folder` family and
+        from nowhere else. **Not from `get_current_account`**, which succeeds
+        for a grant carrying no file scopes whatsoever — treating any 200 as
+        verification is precisely how a credential that could not list a single
+        folder came to be stored and labelled `connected`. The question this
+        column answers is "can arc still read the athlete's files", and only a
+        call that reads files can answer it.
+
+        The write is committed here rather than left for the caller, for the
+        reason :meth:`_refresh` commits: the callers are a scheduled poll, a
+        folder browse and a discovery sweep, and two of the three are read
+        paths that would otherwise drop the fact on the floor.
+
+        Under the **refresh lock**, which is why that lock is named for the
+        connection rather than for refreshing: it is now what makes "one writer
+        per connection at a time" true. Two calls issued concurrently on one
+        client can both find a live token and both reach here, and an
+        `AsyncSession` answers two overlapping commits with
+        `IllegalStateChangeError` rather than serialising them.
+
+        A `ConflictError` is swallowed. The athlete disconnecting the account
+        while a listing is in flight is a race whose loser must be this
+        bookkeeping write, never the listing the athlete asked for.
+        """
+        if self._verified:
+            return
+        async with _lock_for(self._connection.id):
+            if self._verified:
+                return
+            self._verified = True
+            self._connection.last_verified_at = dt.datetime.now(dt.UTC)
+            try:
+                await commit(self._session)
+            except ConflictError:
+                logger.info(
+                    "dropbox_verification_not_stored",
+                    connection_id=str(self._connection.id),
+                )
 
     async def _call(
         self, endpoint: str, payload: Any, *, path: str = "", retried: bool = False
@@ -889,7 +961,7 @@ class DropboxClient:
                 )
                 raise DropboxScopeError(scope)
             if retried:
-                await self._mark_needs_reauth(PERMISSION_LOST)
+                await self.mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "Dropbox rejected a freshly refreshed access token"
                 )
@@ -915,6 +987,8 @@ class DropboxClient:
                 f"{response.status_code} for {endpoint}"
                 f" ({summary or 'no reason given'})"
             )
+        if endpoint in VERIFYING_ENDPOINTS:
+            await self._record_verified()
         return _json_or_empty(response)
 
 
