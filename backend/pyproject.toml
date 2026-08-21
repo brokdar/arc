@@ -11,21 +11,21 @@ dynamic = ["version"]
 # so it would be permanent noise in two places.
 dependencies = [
     "fastapi[standard]>=0.141.1",
-    "sqlalchemy[asyncio]>=2.0.51",
-    "alembic>=1.18.0",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "alembic>=1.19.1",
     "asyncpg>=0.31.0",
     "apscheduler>=3.11,<4",
-    "fastmcp>=3.4,<4",
+    "fastmcp>=3.4.7,<4",
     "pydantic>=2.13.0",
-    "pydantic-settings>=2.14.0",
+    "pydantic-settings>=2.15.0",
     "structlog>=25.5.0",
     "bcrypt>=5",
     "itsdangerous>=2.2",
-    "garmin-fit-sdk>=21.212.0",
+    "garmin-fit-sdk>=21.213.0",
     "fitdecode>=0.11.0",
     "gpxpy>=1.6.2",
     "tcxreader>=0.4.11",
-    "pyarrow>=25.0.0",
+    "pyarrow>=25.0.1",
     # The outbound half of the Dropbox connector. Already present transitively
     # (fastapi[standard] ships it, and the test client is built on it), named
     # here because `app.connectors` imports it directly: a transitive
@@ -44,10 +44,10 @@ dev = [
     "pytest-xdist>=3.8.0",
     "asgi-lifespan>=2.1.0",
     "aiosqlite>=0.21.0",
-    "ruff>=0.15.0",
+    "ruff>=0.16.3",
     "pyrefly>=1.1.0",
     "import-linter>=2.3",
-    "hypothesis>=6.165.1",
+    "hypothesis>=6.165.10",
     "fit-tool>=0.9.16",
     # The API fuzzer (`just fuzz`, `.github/workflows/api-fuzz.yml`). A locked
     # dependency rather than a `uvx` fetch so CI runs a tree this repo pins and
