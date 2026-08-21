@@ -208,10 +208,20 @@ class DropboxAccount:
 
 @dataclass(frozen=True, slots=True)
 class DropboxFolder:
-    """One folder in a listing."""
+    """One folder in a listing, in both of the spellings Dropbox keeps.
+
+    ``path_lower`` is the identity — case-insensitive, what a feed row stores
+    and what `uq_feeds_…` is written against. ``path_display`` is the athlete's
+    own capitalisation, and the only one that ever belongs on screen: a picker
+    showing `/apps/wahoofitness` matches nothing in the folder list the athlete
+    is looking at in Dropbox, which reads as a bug in arc rather than as a
+    normalisation.
+    """
 
     path_lower: str
     name: str
+    #: Empty only if Dropbox omitted it, which it does not do for a real entry.
+    path_display: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +263,17 @@ class DropboxListing:
 
     folders: tuple[DropboxFolder, ...]
     files: tuple[DropboxFile, ...]
+    #: The **listed folder itself**, spelled as the athlete spells it.
+    #:
+    #: `list_folder` says nothing about the directory it was asked for — only
+    #: about its contents — and `get_metadata` would be a second round trip on
+    #: every browse. Every entry's own `path_display` carries the parent's
+    #: spelling in front of its name, so this is read off the first entry
+    #: instead, folders and files alike, and costs nothing.
+    #:
+    #: A folder with no entries at all leaves nothing to read it from, and the
+    #: requested path is echoed rather than capitalised on a guess.
+    path_display: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -645,10 +666,6 @@ class DropboxClient:
 
     # --- public calls --------------------------------------------------------
 
-    async def list_folders(self, path: str) -> list[DropboxFolder]:
-        """Every folder directly under ``path`` (``""`` is the Dropbox root)."""
-        return list((await self.list_entries(path)).folders)
-
     async def list_entries(self, path: str) -> DropboxListing:
         """Everything directly under ``path``, folders and files alike.
 
@@ -657,9 +674,13 @@ class DropboxClient:
         folder the athlete is looking for — or, for a count, report a fraction
         of what is there as if it were the total. This returns everything or
         raises, never a truncated listing that looks complete.
+
+        The listed folder's own display path comes off the first entry seen —
+        see :attr:`DropboxListing.path_display`.
         """
         folders: list[DropboxFolder] = []
         files: list[DropboxFile] = []
+        here: str | None = None
         body = await self._call(
             "/2/files/list_folder",
             {"path": path, "recursive": False, "include_deleted": False},
@@ -667,17 +688,24 @@ class DropboxClient:
         )
         while True:
             for entry in body.get("entries", []):
+                if here is None:
+                    here = _parent_display(entry)
                 if entry.get(".tag") == "folder":
                     folders.append(
                         DropboxFolder(
                             path_lower=str(entry.get("path_lower") or ""),
                             name=str(entry.get("name") or ""),
+                            path_display=str(entry.get("path_display") or ""),
                         )
                     )
                 elif entry.get(".tag") == "file":
                     files.append(_file_from(entry))
             if not body.get("has_more"):
-                return DropboxListing(folders=tuple(folders), files=tuple(files))
+                return DropboxListing(
+                    folders=tuple(folders),
+                    files=tuple(files),
+                    path_display=path if here is None else here,
+                )
             body = await self._call(
                 "/2/files/list_folder/continue", {"cursor": body["cursor"]}, path=path
             )
@@ -1002,6 +1030,19 @@ def _file_from(entry: dict[str, Any]) -> DropboxFile:
         rev=str(entry.get("rev") or ""),
         client_modified=_stamp(entry.get("client_modified")),
     )
+
+
+def _parent_display(entry: dict[str, Any]) -> str:
+    """The listed folder's own display path, read off one of its children.
+
+    `/Apps/WahooFitness/ride.fit` is the child; `/Apps/WahooFitness` is the
+    folder that was listed. Dropbox builds `path_display` as the parent's
+    spelling plus the entry's own name, so cutting at the last separator is
+    exact rather than a heuristic — and a child directly under the root cuts
+    down to `""`, which is Dropbox's own spelling of it.
+    """
+    display = str(entry.get("path_display") or "")
+    return display.rpartition("/")[0]
 
 
 def _stamp(raw: Any) -> dt.datetime | None:

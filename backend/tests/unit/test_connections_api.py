@@ -28,7 +28,7 @@ from structlog.testing import capture_logs
 from app.connectors import dropbox
 from app.connectors.dropbox import READ_SCOPES
 from app.core.config import get_settings
-from app.domain.connections import ConnectionStatus
+from app.domain.connections import ACTIVITY_EXTENSIONS, ConnectionStatus
 from app.persistence.audit import AuditLogEntry
 from app.persistence.connections import (
     MAX_APP_KEY_LENGTH,
@@ -1018,8 +1018,8 @@ async def test_folders_lists_only_folders_with_their_path_and_name(
 
     assert response.status_code == 200, response.text
     assert response.json()["items"] == [
-        {"path_lower": "/apps", "name": "Apps"},
-        {"path_lower": "/photos", "name": "Photos"},
+        {"path_lower": "/apps", "path_display": "/apps", "name": "Apps"},
+        {"path_lower": "/photos", "path_display": "/photos", "name": "Photos"},
     ]
     # `path=""` is the Dropbox root, and Dropbox spells that as an empty path.
     assert fake.calls_to(LIST_FOLDER_PATH)[0].body["path"] == ""
@@ -1083,6 +1083,246 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     # Refused locally: no point spending a request on a credential arc knows
     # is dead.
     assert fake.calls_to(LIST_FOLDER_PATH) == []
+
+
+# --- AC-16, AC-17: the picker speaks the athlete's Dropbox -------------------
+#
+# Two facts the listing already held and threw away. Dropbox sends
+# `path_display` beside `path_lower` on every entry, and it sends the *file*
+# entries in the same response the folder entries come in — so the athlete's
+# own spelling and "what is actually in here" both cost nothing beyond
+# projecting them. A lowercased path matches nothing the athlete sees in
+# Dropbox, and it cost a real run an hour on a case-sensitivity diagnosis that
+# was never the problem.
+
+
+async def test_folders_carry_dropboxs_spelling_beside_the_path_arc_stores(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            folder_entry("Apps", "/apps", path_display="/Apps"),
+            folder_entry("WahooFitness", "/wahoofitness", path_display="/WahooFitness"),
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    # Both, and they are different things: `path_display` is what goes on
+    # screen, `path_lower` is what a feed row stores and what the unique
+    # constraint is written against.
+    assert [item["path_display"] for item in items] == ["/Apps", "/WahooFitness"]
+    assert [item["path_lower"] for item in items] == ["/apps", "/wahoofitness"]
+
+
+async def test_a_folder_named_only_differently_by_case_keeps_both_spellings(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """The edge the run-through tripped on: the leaf differs only in case.
+
+    `wahoofitness` and `WahooFitness` are the same folder to Dropbox, so a
+    reader that took `path_lower` for a display value produced a screen that
+    matched nothing in the athlete's Dropbox and no error to explain it.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            folder_entry(
+                "WahooFitness",
+                "/apps/wahoofitness",
+                path_display="/Apps/WahooFitness",
+            )
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    item = response.json()["items"][0]
+    assert item["path_display"] == "/Apps/WahooFitness"
+    assert item["path_lower"] == "/apps/wahoofitness"
+    assert item["name"] == "WahooFitness"
+
+
+async def test_the_current_folder_is_named_the_way_dropbox_spells_it(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """The breadcrumb's own path, derived from the children already in hand.
+
+    Dropbox's `list_folder` says nothing about the folder it was asked for,
+    and asking `get_metadata` for it would be a second round trip per browse.
+    Every entry's `path_display` carries the parent's spelling in front of its
+    own name, so the answer is already in the response.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            file_entry(
+                "ride.fit",
+                "/apps/wahoofitness/ride.fit",
+                path_display="/Apps/WahooFitness/ride.fit",
+            )
+        )
+    ]
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    assert response.json()["path_display"] == "/Apps/WahooFitness"
+
+
+async def test_an_empty_folder_echoes_the_path_it_was_asked_for(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """Nothing inside means nothing to derive a spelling from — say so plainly.
+
+    The echo is the requested path rather than an invented capitalisation: arc
+    does not know how the athlete spells a folder it has never seen an entry
+    from, and guessing would be the same pretence this whole change removes.
+    """
+    connection = await connect(client)
+    fake.pages = [page()]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    assert response.json()["path_display"] == "/apps"
+    assert response.json()["items"] == []
+
+
+async def test_the_root_names_itself_as_the_empty_path_dropbox_uses(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.pages = [page(folder_entry("Apps", "/apps", path_display="/Apps"))]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    # `""` is Dropbox's own spelling of the root, and the picker renders it as
+    # one non-navigating segment rather than a path.
+    assert response.json()["path_display"] == ""
+
+
+async def test_folders_count_the_files_here_and_the_ones_arc_can_read(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17: "14 files here, 12 arc can read", from the listing already made.
+
+    The screenshots and the CSV export are the difference between the two
+    numbers, and the athlete needs both to recognise the folder their head
+    unit writes to.
+    """
+    connection = await connect(client)
+    # Connecting proved the credential with a probe of its own; what this test
+    # counts is the requests the *browse* spends.
+    fake.calls.clear()
+    fake.pages = [
+        page(
+            folder_entry("Archive", "/apps/wahoofitness/archive"),
+            *(
+                file_entry(f"ride-{index}.fit", f"/apps/wahoofitness/ride-{index}.fit")
+                for index in range(12)
+            ),
+            file_entry("summary.csv", "/apps/wahoofitness/summary.csv"),
+            file_entry("screenshot.png", "/apps/wahoofitness/screenshot.png"),
+        )
+    ]
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    body = response.json()
+    assert body["file_count"] == 14
+    assert body["supported_file_count"] == 12
+    # Counts are about the current folder, never about a subfolder — that
+    # would be one Dropbox call per row.
+    assert [item["name"] for item in body["items"]] == ["Archive"]
+    # And no second listing was spent to learn any of it.
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_counts_cover_every_page_dropbox_serves_not_just_the_first(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17 edge: a folder Dropbox paginates still reports its whole contents.
+
+    The sentence on screen claims a total, so the response has to be able to
+    back one: `list_entries` follows `has_more` to the end and the counts are
+    taken after it, never per page.
+    """
+    connection = await connect(client)
+    fake.tree = {
+        "/apps/wahoofitness": [
+            folder_entry("Archive", "/apps/wahoofitness/archive"),
+            *(
+                file_entry(f"ride-{index}.fit", f"/apps/wahoofitness/ride-{index}.fit")
+                for index in range(5)
+            ),
+            file_entry("notes.txt", "/apps/wahoofitness/notes.txt"),
+        ]
+    }
+    fake.tree_page_size = 2
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    body = response.json()
+    assert body["file_count"] == 6
+    assert body["supported_file_count"] == 5
+    assert len(fake.calls_to(LIST_FOLDER_CONTINUE_PATH)) == 3
+
+
+async def test_a_truly_empty_folder_counts_nothing_rather_than_guessing(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17 edge: the state "Nothing but files in here" used to assert on.
+
+    The old copy claimed files the response never mentioned. Zero and zero is
+    a fact the picker can render as "this folder is empty" and mean it.
+    """
+    connection = await connect(client)
+    fake.pages = [page()]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    body = response.json()
+    assert body["items"] == []
+    assert body["file_count"] == 0
+    assert body["supported_file_count"] == 0
+
+
+async def test_the_readable_count_is_the_domains_one_list_of_extensions(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """What the picker promises is what the poll will actually take.
+
+    `ACTIVITY_EXTENSIONS` lives in `app.domain.connections` precisely so this
+    count and `app.ingest.feeds._should_take` cannot drift: a picker that
+    counted a `.csv` as readable would promise rides that never arrive, and
+    nothing downstream would report it.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            *(
+                file_entry(f"ride.{extension}", f"/apps/ride.{extension}")
+                for extension in sorted(ACTIVITY_EXTENSIONS)
+            ),
+            # Upper case is how a Garmin writes it, and it is readable.
+            file_entry("RIDE.FIT", "/apps/ride2.fit"),
+            file_entry("notes", "/apps/notes"),
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    body = response.json()
+    assert body["file_count"] == len(ACTIVITY_EXTENSIONS) + 2
+    assert body["supported_file_count"] == len(ACTIVITY_EXTENSIONS) + 1
 
 
 # --- AC-4, AC-5, AC-7: Dropbox's own words reach the athlete -----------------

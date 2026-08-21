@@ -230,7 +230,7 @@ async def test_an_expired_access_token_is_refreshed_once_then_the_call_is_made(
 ) -> None:
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     refreshes = fake.calls_to(TOKEN_PATH)
     assert len(refreshes) == 1
@@ -249,7 +249,7 @@ async def test_a_refreshed_token_is_re_encrypted_and_stored(
     fake.refresh_token = "rotated-refresh-token"
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     stored = EncryptedCredentials.unseal(row.credentials)
@@ -270,7 +270,7 @@ async def test_a_refresh_that_keeps_the_old_token_leaves_it_in_place(
     fake.refresh_token = None
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     assert EncryptedCredentials.unseal(row.credentials)["refresh_token"] == (
@@ -285,7 +285,7 @@ async def test_a_refresh_refused_as_invalid_grant_needs_reauth_and_does_not_retr
     row = await connection(db_session, expires_in=-60)
 
     with pytest.raises(DropboxAuthError):
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     assert row.status is ConnectionStatus.NEEDS_REAUTH
@@ -300,9 +300,9 @@ async def test_a_401_mid_call_triggers_one_refresh_and_one_retry(
     fake.script(LIST_FOLDER_PATH, expired_access_token())
     row = await connection(db_session, expires_in=3_600)
 
-    folders = await client(db_session, row).list_folders("")
+    listing = await client(db_session, row).list_entries("")
 
-    assert [folder.path_lower for folder in folders] == ["/apps", "/photos"]
+    assert [folder.path_lower for folder in listing.folders] == ["/apps", "/photos"]
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
 
@@ -314,7 +314,7 @@ async def test_a_second_401_after_refreshing_is_an_error_not_a_loop(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxAuthError):
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
@@ -326,7 +326,7 @@ async def test_two_concurrent_calls_on_one_connection_refresh_once(
     row = await connection(db_session, expires_in=-60)
     caller = client(db_session, row)
 
-    await asyncio.gather(caller.list_folders(""), caller.list_folders(""))
+    await asyncio.gather(caller.list_entries(""), caller.list_entries(""))
 
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
@@ -339,7 +339,7 @@ async def test_a_429_raises_a_named_error_carrying_the_delay_and_refreshes_nothi
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxRateLimitedError) as raised:
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert raised.value.retry_after == pytest.approx(42.0)
     assert isinstance(raised.value, DropboxUpstreamError)
@@ -363,7 +363,7 @@ async def test_a_missing_scope_401_is_reported_as_scope_and_refreshes_nothing(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxScopeError) as raised:
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert raised.value.required_scope == "files.metadata.read"
     # No refresh and no retry: the traffic is where this rule is visible.
@@ -386,7 +386,7 @@ async def test_a_missing_scope_after_a_refresh_is_still_reported_as_scope(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxScopeError) as raised:
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert raised.value.required_scope == "files.content.read"
     assert len(fake.calls_to(TOKEN_PATH)) == 1
@@ -411,7 +411,7 @@ async def test_a_401_arc_cannot_read_keeps_the_refresh_once_then_fail_path(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxAuthError) as raised:
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert not isinstance(raised.value, DropboxScopeError)
     assert len(fake.calls_to(TOKEN_PATH)) == 1
@@ -428,7 +428,7 @@ async def test_a_dead_credential_records_the_athletes_remedy_not_the_mechanism(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxAuthError):
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     assert row.status is ConnectionStatus.NEEDS_REAUTH

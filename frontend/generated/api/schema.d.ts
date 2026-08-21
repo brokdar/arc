@@ -491,11 +491,13 @@ export interface paths {
     };
     /**
      * List Folders
-     * @description The folders directly under ``path`` — the folder picker's data.
+     * @description What is directly under ``path`` — the folder picker's data.
      *
-     *     Folders only: the athlete is choosing a directory to watch, and the files
-     *     in it are what the poll will find, not what this answers. A folder holding
-     *     nothing but files is a 200 with an empty list.
+     *     Subfolders as rows, and the current folder's own contents as two numbers:
+     *     the athlete is choosing a directory to watch, and "what is in here" is the
+     *     fact that tells them whether this is the one their head unit writes to. A
+     *     folder holding nothing but files is a 200 with an empty list and a file
+     *     count that says so.
      */
     get: operations["connections-list_folders"];
     put?: never;
@@ -3265,23 +3267,45 @@ export interface components {
     };
     /**
      * FolderList
-     * @description The folders directly under one remote path.
+     * @description What is directly under one remote path: the subfolders, and the files.
      *
      *     Never a 404 for an empty folder: a directory holding only files is a
      *     legitimate answer with `items: []`, and the picker says so rather than
      *     drawing an empty box.
+     *
+     *     The counts describe the **current** folder only, and describe all of it —
+     *     `ConnectionService.folders` follows Dropbox's cursor to the end before
+     *     counting, so a client may render them as a total. Per-subfolder counts are
+     *     deliberately absent: they would cost one Dropbox call per row.
      */
     FolderList: {
+      /** File Count */
+      file_count: number;
       /** Items */
       items: components["schemas"]["FolderRead"][];
+      /** Path Display */
+      path_display: string;
+      /** Supported File Count */
+      supported_file_count: number;
     };
     /**
      * FolderRead
-     * @description One folder in a remote listing.
+     * @description One folder in a remote listing, in both spellings Dropbox keeps.
+     *
+     *     The two are not interchangeable and the difference is the whole point:
+     *     `path_lower` is the **identity** — what a feed row stores, what
+     *     `uq_feeds_connection_id_remote_path` is written against, and what a client
+     *     sends back to watch this folder — while `path_display` and `name` are the
+     *     only forms that belong on screen. A picker rendering `path_lower` shows
+     *     `/apps/wahoofitness` to an athlete looking at `/Apps/WahooFitness` in
+     *     Dropbox, which reads as a case bug in arc and once cost a real run an hour
+     *     chasing a case-sensitivity fault that did not exist.
      */
     FolderRead: {
       /** Name */
       name: string;
+      /** Path Display */
+      path_display: string;
       /** Path Lower */
       path_lower: string;
     };

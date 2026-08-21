@@ -4136,6 +4136,46 @@ type Connection = Schemas["ConnectionRead"];
 type CompletedConnection = Schemas["DropboxConnectionRead"];
 type Feed = Schemas["FeedRead"];
 type Folder = Schemas["FolderRead"];
+type FolderList = Schemas["FolderList"];
+
+/** The Wahoo folder, in the spelling arc stores. */
+export const WAHOO_PATH = "/apps/wahoofitness";
+
+/** The same folder, in the spelling the athlete's Dropbox shows them. */
+export const WAHOO_PATH_DISPLAY = "/Apps/WahooFitness";
+
+/**
+ * One folder of the fake Dropbox: its subfolders, and the files in it.
+ *
+ * Files are *names*, not counts, because the two numbers the API reports are
+ * derived from them by the same rule the backend applies
+ * (`app.domain.connections.is_activity_file`). A fixture that carried the
+ * counts directly could not fail when the picker rendered the wrong one — and
+ * a folder whose `supported_file_count` exceeded its `file_count` is a payload
+ * the real API cannot produce.
+ */
+export interface DropboxFolderContents {
+  /** The folder itself, as the athlete capitalised it. `""` is the root. */
+  readonly path_display: string;
+  readonly folders: readonly Folder[];
+  readonly files: readonly string[];
+}
+
+/**
+ * The extensions arc can read, as `app.domain.connections` holds them.
+ *
+ * Restated rather than imported, for the reason `normaliseRemotePath` is: the
+ * counts on screen are a promise about what the poll will take, and a mock
+ * that derived them from the same source as the code could not catch the two
+ * drifting apart.
+ */
+const ACTIVITY_EXTENSIONS = new Set(["fit", "gpx", "tcx"]);
+
+/** Whether the poll would spend a download on this name. Case-insensitive. */
+function isActivityFile(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && ACTIVITY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
 
 /** The connection id every seeded fixture uses. */
 export const DROPBOX_CONNECTION_ID = "0199b000-0000-7000-8000-00000000c001";
@@ -4188,8 +4228,8 @@ interface ConnectionsMockState {
   storedAppKey: string | null;
   /** `DROPBOX__APP_KEY`, the config-as-code seed the store overrides. */
   envAppKey: string | null;
-  /** Remote path → the folders directly under it. */
-  folders: Map<string, Folder[]>;
+  /** Remote path (as arc stores it) → everything directly under it. */
+  folders: Map<string, DropboxFolderContents>;
   /**
    * What the next completion says about proving the credential.
    *
@@ -4212,18 +4252,53 @@ function seedConnectionsState(): ConnectionsMockState {
     // the registration checklist clears it with `seedDropboxAppKey(false)`.
     storedAppKey: null,
     envAppKey: "test-app-key",
-    folders: new Map<string, Folder[]>([
+    folders: new Map<string, DropboxFolderContents>([
       [
         "",
-        [
-          { path_lower: "/apps", name: "Apps" },
-          { path_lower: "/photos", name: "Photos" },
-        ],
+        {
+          path_display: "",
+          folders: [
+            { path_lower: "/apps", path_display: "/Apps", name: "Apps" },
+            { path_lower: "/photos", path_display: "/Photos", name: "Photos" },
+          ],
+          // The file every Dropbox is created with, and one arc cannot read:
+          // the root is the folder where the two counts differ most.
+          files: ["Get Started with Dropbox.pdf"],
+        },
       ],
-      ["/apps", [{ path_lower: "/apps/wahoofitness", name: "WahooFitness" }]],
-      // A folder holding only files: Dropbox answers 200 with no entries, and
-      // the picker has to say so rather than draw an empty box.
-      ["/apps/wahoofitness", []],
+      [
+        "/apps",
+        {
+          path_display: "/Apps",
+          folders: [
+            {
+              path_lower: WAHOO_PATH,
+              path_display: "/Apps/WahooFitness",
+              name: "WahooFitness",
+            },
+          ],
+          files: [],
+        },
+      ],
+      [
+        // A folder holding only files: Dropbox answers with no folder entries,
+        // and the picker says what is in it rather than drawing an empty box.
+        // Three rides, which is what discovery reports for the same folder.
+        WAHOO_PATH,
+        {
+          path_display: "/Apps/WahooFitness",
+          folders: [],
+          files: [
+            "2026-08-16-090000.fit",
+            "2026-08-15-063000.fit",
+            "2026-08-13-171500.fit",
+            "summary.csv",
+            "elevation.png",
+          ],
+        },
+      ],
+      // Nothing at all in it: the state the old copy asserted files into.
+      ["/photos", { path_display: "/Photos", folders: [], files: [] }],
     ]),
     verificationNote: null,
     minted: 0,
@@ -4460,9 +4535,24 @@ export function createDropboxFeed(
   return { feed };
 }
 
-/** The folders directly under a path, or null when the path is unknown. */
-export function dropboxFolders(path: string): Folder[] | null {
-  return connectionsState().folders.get(normaliseRemotePath(path)) ?? null;
+/**
+ * `GET /connections/{id}/folders` — what is under a path, or null if unknown.
+ *
+ * The counts are computed here rather than seeded, so a folder can never
+ * report more readable files than files, and a test that changes what is in
+ * the folder changes the sentence on screen without touching a number.
+ */
+export function dropboxFolderPage(path: string): FolderList | null {
+  const here = connectionsState().folders.get(normaliseRemotePath(path));
+  if (here === undefined) {
+    return null;
+  }
+  return {
+    path_display: here.path_display,
+    items: [...here.folders],
+    file_count: here.files.length,
+    supported_file_count: here.files.filter(isActivityFile).length,
+  };
 }
 
 // ============================================================================
@@ -4476,9 +4566,6 @@ type IntegrationKind = Schemas["IntegrationKind"];
 
 /** Where the local drop looks, as a real deployment would report it. */
 export const INBOX_PATH = "/srv/arc/data/inbox";
-
-/** The Wahoo folder, in the spelling arc stores. */
-export const WAHOO_PATH = "/apps/wahoofitness";
 
 interface IntegrationsMockState {
   /** `kind` → the folders that integration is collected through. */

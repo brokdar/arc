@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SectionLabel } from "@/components/design/section-label";
 import {
@@ -34,8 +34,22 @@ type IntegrationKind = Schemas["IntegrationKind"];
 
 /** The folder arc was just told to watch, and the source it belongs to. */
 interface Watching {
+  /** What arc stored: Dropbox's `path_lower`, the feed row's identity. */
   readonly path: string;
+  /**
+   * The same folder as the athlete's Dropbox capitalises it.
+   *
+   * `""` when nothing on the road in knew it — discovery reports one path per
+   * proposal and it is the stored one — and the completion then names the
+   * folder as arc stored it rather than inventing a capitalisation.
+   */
+  readonly displayPath: string;
   readonly displayName: string;
+}
+
+/** The folder a completed flow names on screen. Display case wherever known. */
+function watchedPath(watching: Watching): string {
+  return watching.displayPath || watching.path;
 }
 
 /**
@@ -187,6 +201,9 @@ function DiscoveredIntegrations({
       queryClient.invalidateQueries({ queryKey: integrationsKey });
       onWatching({
         path: variables?.body?.remote_path ?? "",
+        // Discovery reports the stored path and nothing else, so there is no
+        // display spelling to carry here — `watchedPath` falls back to it.
+        displayPath: "",
         displayName:
           entries.find((entry) => entry.kind === variables?.body?.kind)
             ?.display_name ?? "this source",
@@ -566,7 +583,7 @@ function CloudFolderSteps({
           answer={
             watching === null ? null : (
               <span className="font-mono">
-                {watching.path || "the Dropbox root"}
+                {watchedPath(watching) || "the Dropbox root"}
               </span>
             )
           }
@@ -714,7 +731,7 @@ function FlowComplete({
       <p className="max-w-[62ch] text-sm">
         arc is watching{" "}
         <span className="font-mono text-ink-secondary">
-          {watching.path || "the whole of your Dropbox"}
+          {watchedPath(watching) || "the whole of your Dropbox"}
         </span>{" "}
         for {watching.displayName}.
       </p>
@@ -735,13 +752,49 @@ function FlowComplete({
 }
 
 /**
+ * Where the picker is standing, in both of the spellings a folder has.
+ *
+ * `lower` is Dropbox's `path_lower`: what the listing is requested by, what a
+ * feed row stores, and what `uq_feeds_connection_id_remote_path` is written
+ * against. `display` is the athlete's own capitalisation, and the only one
+ * that ever reaches the screen. Carrying both is what lets the breadcrumb read
+ * `/Apps/WahooFitness` while the write still stores `/apps/wahoofitness`.
+ */
+interface Here {
+  readonly lower: string;
+  readonly display: string;
+}
+
+/** The Dropbox root, which Dropbox itself spells as the empty path. */
+const DROPBOX_ROOT: Here = { lower: "", display: "" };
+
+/** The listing on screen: which folder it describes, and what it said. */
+interface Shown {
+  readonly at: Here;
+  readonly page: Schemas["FolderList"];
+}
+
+/**
  * The last step: which folder, and the write that creates the integration.
  *
- * The catalogue's default path leads, because it is right almost every time
- * and nobody remembers how `/Apps/WahooFitness` is spelled. The tree is there
- * for the athlete whose head unit uploads somewhere else — and a typed path is
- * not offered at all, because a typo produces a folder that polls nothing and
- * reports nothing wrong.
+ * **One decision, one action.** Every row used to carry a commit button beside
+ * an open button, so the screen offered as many irreversible actions as there
+ * were folders and named none of them in the athlete's vocabulary ("Collect").
+ * Now a row does one thing — it opens — and watching is a single action scoped
+ * to the folder the athlete is *standing in*, with what it means and how to
+ * undo it beside it. The place is stated by the breadcrumb and by the contents
+ * line above it, so the action never has to be read to know what it applies to.
+ *
+ * **Nothing on this screen is spelled the way arc stores it.** `path_lower` is
+ * the identity of a folder and a lie about its name; showing it cost a real
+ * run an hour chasing a case-sensitivity fault that did not exist.
+ *
+ * The catalogue's default path still leads, because it is right almost every
+ * time and nobody remembers how `/Apps/WahooFitness` is spelled — but it
+ * *navigates* there rather than committing, so the same contents line proves
+ * the guess before the athlete acts on it. A typed path is not offered at all,
+ * because a typo produces a folder that polls nothing and reports nothing
+ * wrong.
  */
 function FolderStep({
   entry,
@@ -755,7 +808,15 @@ function FolderStep({
   readonly onWatching: (watching: Watching) => void;
 }) {
   const queryClient = useQueryClient();
-  const [path, setPath] = useState("");
+  const [here, setHere] = useState<Here>(DROPBOX_ROOT);
+  // The last listing that came back, kept so a failed one does not take the
+  // screen with it: the athlete stays where they were, with the tree they can
+  // still click, and the failure is one line under the breadcrumb.
+  const [shown, setShown] = useState<Shown | null>(null);
+  // The folder the pending write is about. A ref rather than state because it
+  // is read only by the success handler, and it is set immediately before
+  // `mutate` — so it is by construction the folder that was sent.
+  const wanted = useRef<Here>(DROPBOX_ROOT);
   // The same read the proposals came from, so it costs nothing: react-query
   // serves both from one request. Here it answers a different question —
   // whether a tree with nothing in it means the athlete has nothing, or that
@@ -768,7 +829,12 @@ function FolderStep({
   const folders = $api.useQuery(
     "get",
     "/api/v1/connections/{connection_id}/folders",
-    { params: { path: { connection_id: connectionId }, query: { path } } },
+    {
+      params: {
+        path: { connection_id: connectionId },
+        query: { path: here.lower },
+      },
+    },
   );
   const add = $api.useMutation("post", "/api/v1/integrations", {
     // The folder that was *sent*, so the sentence the athlete reads at the end
@@ -777,12 +843,28 @@ function FolderStep({
       queryClient.invalidateQueries({ queryKey: integrationsKey });
       onWatching({
         path: variables?.body?.remote_path ?? "",
+        displayPath: wanted.current.display,
         displayName: entry.display_name,
       });
     },
   });
 
-  const collect = (remote_path: string) => {
+  const page = folders.data;
+  useEffect(() => {
+    if (page !== undefined) {
+      setShown({
+        // The athlete's own spelling wins when the road in knew it — a row
+        // click carries it. The server's is the fallback, for a jump made by
+        // path alone: it derives the folder's display name from the entries
+        // in it, and echoes the request only for a folder with nothing in it.
+        at: { lower: here.lower, display: here.display || page.path_display },
+        page,
+      });
+    }
+  }, [page, here]);
+
+  const watch = (target: Here) => {
+    wanted.current = target;
     // Reset first: react-query holds the previous refusal until the next
     // `mutate()`, and a 409 about a folder the athlete has moved on from
     // would sit under the one they just picked.
@@ -792,7 +874,7 @@ function FolderStep({
         kind: entry.kind,
         transport: offer.kind,
         connection_id: connectionId,
-        remote_path,
+        remote_path: target.lower,
       },
     });
   };
@@ -811,88 +893,244 @@ function FolderStep({
       </div>
     );
   }
+
+  const at = shown?.at ?? DROPBOX_ROOT;
+  const listing = shown?.page ?? null;
+
   return (
-    <div data-testid="folder-step" className="flex w-full flex-col gap-2">
+    <div data-testid="folder-step" className="flex w-full flex-col gap-3">
       <SectionLabel>{`Which folder holds your ${entry.display_name} files?`}</SectionLabel>
+
       {offer.default_path === null ? null : (
-        <div className="flex flex-wrap items-baseline gap-2">
+        // AC-21: the shortcut and the tree are one sentence, not two
+        // unexplained controls. The rationale used to live in this component's
+        // docstring, where the athlete could not read it.
+        <div className="flex flex-col items-start gap-1.5">
+          <p className="max-w-[62ch] text-ink-muted text-sm">
+            {`${entry.display_name} usually writes to one folder — go straight ` +
+              "there. Browse below instead if your head unit files somewhere " +
+              "else."}
+          </p>
           <Button
             type="button"
             size="sm"
-            disabled={add.isPending}
-            onClick={() => collect(offer.default_path ?? "")}
+            variant="secondary"
+            onClick={() =>
+              setHere({ lower: offer.default_path ?? "", display: "" })
+            }
           >
-            {`Collect ${offer.default_path}`}
+            {`Go to ${entry.display_name}'s folder`}
           </Button>
-          <span className="text-ink-muted text-sm">
-            {`where ${entry.display_name} usually writes`}
-          </span>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-auto font-mono text-ink-secondary text-sm">
-          {path === "" ? "/" : path}
-        </span>
-        {path === "" ? null : (
+      <FolderBreadcrumb at={at} onNavigate={setHere} />
+
+      {folders.isError ? (
+        <div
+          role="alert"
+          className="flex max-w-[62ch] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-card border border-danger-border bg-danger-surface px-3 py-2 text-destructive text-sm"
+        >
+          <span className="mr-auto">
+            {loadFailureMessage(folders.error, "that folder")}
+          </span>
           <Button
             type="button"
             size="xs"
             variant="secondary"
-            onClick={() => setPath(parentOf(path))}
+            disabled={folders.isFetching}
+            onClick={() => folders.refetch()}
           >
-            Up one folder
+            Try again
           </Button>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      {folders.isPending ? (
+      {listing === null ? (
         <p className="text-ink-muted text-sm">Reading your folders…</p>
-      ) : !folders.data ? (
-        <p role="alert" className="text-destructive text-sm">
-          {loadFailureMessage(folders.error, "that folder")}
-        </p>
-      ) : folders.data.items.length === 0 ? (
-        <p className="max-w-[62ch] text-ink-muted text-sm">
-          Nothing but files in here. Collect this folder, or go back up.
-        </p>
       ) : (
-        <ul data-testid="folder-tree" className="flex w-full flex-col gap-1">
-          {folders.data.items.map((folder) => (
-            <li
-              key={folder.path_lower}
-              className="flex flex-wrap items-center gap-2"
+        <div
+          // Dimmed while the folder the athlete just clicked is still being
+          // read: what is on screen describes the folder they came *from*, and
+          // a tree that looks live while it answers for somewhere else is how
+          // a slow Dropbox turns into a click on the wrong row.
+          className={cn(
+            "flex w-full flex-col gap-3",
+            at.lower === here.lower ? null : "opacity-60",
+          )}
+        >
+          <FolderContents listing={listing} />
+
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <Button
+              type="button"
+              size="sm"
+              disabled={add.isPending}
+              onClick={() => watch(at)}
             >
-              <span className="mr-auto font-mono text-ink-secondary text-sm">
-                {folder.name}
-              </span>
-              <Button
-                type="button"
-                size="xs"
-                variant="secondary"
-                onClick={() => setPath(folder.path_lower)}
-              >
-                {`Open ${folder.name}`}
-              </Button>
-              <Button
-                type="button"
-                size="xs"
-                disabled={add.isPending}
-                onClick={() => collect(folder.path_lower)}
-              >
-                {`Collect ${folder.path_lower}`}
-              </Button>
-            </li>
-          ))}
-        </ul>
+              Watch this folder
+            </Button>
+            <span className="max-w-[52ch] text-ink-muted text-sm">
+              arc checks it every few minutes for new rides. Pause or stop
+              watching any time in Settings.
+            </span>
+          </div>
+
+          {listing.items.length === 0 ? null : (
+            <ul
+              data-testid="folder-tree"
+              className="flex w-full flex-col border-hairline border-t pt-2"
+            >
+              {listing.items.map((folder) => (
+                <li key={folder.path_lower} className="w-full">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-card border border-transparent px-2 py-1.5 text-left text-ink-secondary text-sm hover:border-hairline hover:bg-inset focus-visible:border-hairline focus-visible:bg-inset"
+                    onClick={() =>
+                      setHere({
+                        lower: folder.path_lower,
+                        display: folder.path_display,
+                      })
+                    }
+                  >
+                    <span className="mr-auto">{folder.name}</span>
+                    <span aria-hidden className="text-ink-faint">
+                      ›
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       <Problems problems={apiErrorMessages(add.error)} />
     </div>
   );
 }
 
-/** The folder one level up; `""` is the root and has no parent. */
-function parentOf(path: string): string {
-  const cut = path.lastIndexOf("/");
-  return cut <= 0 ? "" : path.slice(0, cut);
+/**
+ * Where the athlete is, one navigable segment per folder.
+ *
+ * Replaces a flat monospace `path_lower` and a lone `Up one folder` button:
+ * one told the athlete where they were in a spelling that matched nothing they
+ * could see in Dropbox, and the other could only undo the last step, so
+ * getting back to the root from four levels down was four clicks and no way to
+ * see how far down four was.
+ *
+ * The **current** folder is never a button — there is nowhere for it to go,
+ * and at the root that leaves exactly one plain segment.
+ */
+function FolderBreadcrumb({
+  at,
+  onNavigate,
+}: {
+  readonly at: Here;
+  readonly onNavigate: (here: Here) => void;
+}) {
+  const lower = at.lower.split("/").filter(Boolean);
+  const display = at.display.split("/").filter(Boolean);
+  const segments = lower.map((_, index) => ({
+    name: display[index] ?? lower[index],
+    here: {
+      lower: `/${lower.slice(0, index + 1).join("/")}`,
+      display: `/${display.slice(0, index + 1).join("/")}`,
+    },
+  }));
+
+  return (
+    <nav aria-label="Folder path" className="w-full">
+      <ol className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm">
+        <BreadcrumbSegment
+          name="Dropbox"
+          current={segments.length === 0}
+          onNavigate={() => onNavigate(DROPBOX_ROOT)}
+        />
+        {segments.map((segment, index) => (
+          <BreadcrumbSegment
+            key={segment.here.lower}
+            name={segment.name}
+            current={index === segments.length - 1}
+            onNavigate={() => onNavigate(segment.here)}
+          />
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
+/** One segment, and the separator that precedes every one but the first. */
+function BreadcrumbSegment({
+  name,
+  current,
+  onNavigate,
+}: {
+  readonly name: string;
+  readonly current: boolean;
+  readonly onNavigate: () => void;
+}) {
+  return (
+    <li className="flex items-center gap-1">
+      {name === "Dropbox" ? null : (
+        <span aria-hidden className="text-ink-faint">
+          /
+        </span>
+      )}
+      {current ? (
+        <span aria-current="page" className="font-medium text-ink">
+          {name}
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="rounded-sm text-ink-muted underline decoration-hairline-strong underline-offset-2 hover:text-ink-secondary focus-visible:text-ink-secondary"
+          onClick={onNavigate}
+        >
+          {name}
+        </button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * What is in the folder the athlete is standing in, as two counts and a claim.
+ *
+ * Replaces "Nothing but files in here", which the old response could not
+ * support: it listed folders only, so an empty list meant "no subfolders" and
+ * the sentence asserted files nobody had counted. The gap between the two
+ * numbers is the screenshots and the CSV exports, and it is how an athlete
+ * recognises the folder their head unit actually writes to.
+ */
+function FolderContents({
+  listing,
+}: {
+  readonly listing: Schemas["FolderList"];
+}) {
+  const folders = listing.items.length;
+  const files = listing.file_count;
+  const readable = listing.supported_file_count;
+
+  return (
+    <p className="max-w-[62ch] text-ink-muted text-sm">
+      {folders === 0 && files === 0 ? (
+        "This folder is empty — no subfolders and no files."
+      ) : files === 0 ? (
+        "No files here yet, only subfolders."
+      ) : (
+        <>
+          {folders === 0 ? "No subfolders. " : null}
+          <span className="font-mono">{files}</span>
+          {files === 1 ? " file here, " : " files here, "}
+          {readable === 0 ? (
+            "none arc can read."
+          ) : (
+            <>
+              <span className="font-mono">{readable}</span> arc can read.
+            </>
+          )}
+        </>
+      )}
+    </p>
+  );
 }

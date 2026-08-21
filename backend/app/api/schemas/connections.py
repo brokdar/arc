@@ -190,20 +190,47 @@ class ConnectionList(BaseModel):
 
 
 class FolderRead(BaseModel):
-    """One folder in a remote listing."""
+    """One folder in a remote listing, in both spellings Dropbox keeps.
+
+    The two are not interchangeable and the difference is the whole point:
+    `path_lower` is the **identity** — what a feed row stores, what
+    `uq_feeds_connection_id_remote_path` is written against, and what a client
+    sends back to watch this folder — while `path_display` and `name` are the
+    only forms that belong on screen. A picker rendering `path_lower` shows
+    `/apps/wahoofitness` to an athlete looking at `/Apps/WahooFitness` in
+    Dropbox, which reads as a case bug in arc and once cost a real run an hour
+    chasing a case-sensitivity fault that did not exist.
+    """
 
     #: Dropbox's own canonical spelling, and what a feed stores.
     path_lower: str
+    #: The same folder as the athlete capitalised it.
+    path_display: str
     #: What to show the athlete — the folder as they named it.
     name: str
 
 
 class FolderList(BaseModel):
-    """The folders directly under one remote path.
+    """What is directly under one remote path: the subfolders, and the files.
 
     Never a 404 for an empty folder: a directory holding only files is a
     legitimate answer with `items: []`, and the picker says so rather than
     drawing an empty box.
+
+    The counts describe the **current** folder only, and describe all of it —
+    `ConnectionService.folders` follows Dropbox's cursor to the end before
+    counting, so a client may render them as a total. Per-subfolder counts are
+    deliberately absent: they would cost one Dropbox call per row.
     """
 
+    #: The listed folder itself, in the athlete's capitalisation, for a
+    #: breadcrumb. `""` is the Dropbox root. Derived from the entries in the
+    #: same listing, so an **empty** folder echoes the requested path back
+    #: rather than arc inventing a capitalisation for it.
+    path_display: str
     items: list[FolderRead]
+    #: Every file directly in this folder, whatever kind it is.
+    file_count: int
+    #: How many of those arc can read as a ride. The gap between the two is
+    #: what the athlete recognises their own folder by.
+    supported_file_count: int

@@ -227,6 +227,30 @@ class DropboxSetup:
 
 
 @dataclass(frozen=True, slots=True)
+class FolderListing:
+    """One folder as the picker needs it: what is under it, and what is in it.
+
+    The counts are about **this** folder and no other. Per-subfolder counts
+    would read better on a row and cost one Dropbox call each, so a folder with
+    thirty subfolders would spend thirty round trips to draw one screen — see
+    :meth:`ConnectionService.folders`.
+    """
+
+    #: The listed folder in the athlete's own capitalisation, for the
+    #: breadcrumb. `""` is the Dropbox root.
+    path_display: str
+    #: The subfolders directly under it, in the order Dropbox listed them.
+    folders: tuple[DropboxFolder, ...]
+    #: Every file directly in it, whatever it is.
+    file_count: int
+    #: How many of those arc could actually turn into a ride
+    #: (:data:`app.domain.connections.ACTIVITY_EXTENSIONS`). The gap between
+    #: the two numbers is the screenshots and the CSV exports, and the athlete
+    #: recognises their own folder by it.
+    supported_file_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class FolderCandidate:
     """A folder discovery thinks the athlete's rides are already in."""
 
@@ -1060,10 +1084,30 @@ class ConnectionService:
 
     # --- browsing ------------------------------------------------------------
 
-    async def folders(
-        self, connection_id: uuid.UUID, *, path: str
-    ) -> Sequence[DropboxFolder]:
-        """List the folders directly under ``path`` on a connection.
+    async def folders(self, connection_id: uuid.UUID, *, path: str) -> FolderListing:
+        """List what is directly under ``path`` on a connection.
+
+        **The counts are complete, not per-page.** Dropbox serves a large
+        folder in pages behind a cursor, and `DropboxClient.list_entries`
+        follows `has_more` to the end before returning — so both halves of the
+        answer describe the whole folder, and a subfolder on page four is on
+        screen beside a file count that already includes page four's files.
+        Counting page by page and returning the first page's subfolders was the
+        alternative, and it is the one shape this endpoint must not have: the
+        sentence the picker renders claims a total ("14 files here, 12 arc can
+        read"), and a total the response cannot back is the same class of
+        untruth as the "Nothing but files in here" copy it replaced.
+
+        The cost is stated rather than hidden: browsing a folder of *n* entries
+        spends ceil(n / Dropbox's page size) requests, paid once per folder the
+        athlete opens. That is affordable because a folder is opened by a
+        person, one at a time, and unaffordable per **row** — which is why the
+        counts are for the current folder only and no row carries its own.
+
+        The readable count is `app.domain.connections.is_activity_file`, the
+        same predicate `app.ingest.feeds` refuses a download on. Two lists
+        would eventually disagree and the failure would be silent: the picker
+        would promise rides the poll then ignores.
 
         Raises:
             NotFoundError: When the connection, or the path, does not exist.
@@ -1082,7 +1126,15 @@ class ConnectionService:
         """
         client = await self._readable_client(connection_id)
         with _dropbox_failures_translated():
-            return await client.list_folders(path)
+            listing = await client.list_entries(path)
+        return FolderListing(
+            path_display=listing.path_display,
+            folders=listing.folders,
+            file_count=len(listing.files),
+            supported_file_count=sum(
+                1 for file in listing.files if is_activity_file(file.name)
+            ),
+        )
 
     async def discover_folders(self, connection_id: uuid.UUID) -> FolderDiscovery:
         """Name the folders the athlete's activity files are already in.

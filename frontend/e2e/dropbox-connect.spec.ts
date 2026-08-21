@@ -19,6 +19,43 @@ import { expect, type Page, test } from "@playwright/test";
 
 const CONNECTION_ID = "0199b000-0000-7000-8000-0000000000c1";
 const WAHOO_PATH = "/apps/wahoofitness";
+const WAHOO_PATH_DISPLAY = "/Apps/WahooFitness";
+
+/** The fake Dropbox the picker browses, keyed by the path arc stores. */
+const DROPBOX: Record<
+  string,
+  {
+    path_display: string;
+    items: { path_lower: string; path_display: string; name: string }[];
+    file_count: number;
+    supported_file_count: number;
+  }
+> = {
+  "": {
+    path_display: "",
+    items: [{ path_lower: "/apps", path_display: "/Apps", name: "Apps" }],
+    file_count: 1,
+    supported_file_count: 0,
+  },
+  "/apps": {
+    path_display: "/Apps",
+    items: [
+      {
+        path_lower: WAHOO_PATH,
+        path_display: WAHOO_PATH_DISPLAY,
+        name: "WahooFitness",
+      },
+    ],
+    file_count: 0,
+    supported_file_count: 0,
+  },
+  [WAHOO_PATH]: {
+    path_display: WAHOO_PATH_DISPLAY,
+    items: [],
+    file_count: 4,
+    supported_file_count: 3,
+  },
+};
 const TIMEZONE = "Pacific/Kiritimati";
 const ISO_TODAY = new Intl.DateTimeFormat("en-CA", {
   timeZone: TIMEZONE,
@@ -211,7 +248,17 @@ async function mockApi(page: Page): Promise<FakeState> {
       return route.fulfill(json({ proposals: [], access_type_suspect: null }));
     }
     if (path.endsWith("/folders")) {
-      return route.fulfill(json({ items: [] }));
+      // The picker's data, in the shape the real endpoint answers with: the
+      // athlete's own capitalisation for everything on screen, `path_lower`
+      // for the identity a feed row stores, and the current folder's contents
+      // as two counts it can actually back.
+      const asked = new URL(request.url()).searchParams.get("path") ?? "";
+      const here = DROPBOX[asked.toLowerCase()];
+      return here === undefined
+        ? route.fulfill(
+            json({ detail: `Dropbox has no folder at ${asked}` }, 404),
+          )
+        : route.fulfill(json(here));
     }
     if (path.endsWith("/integrations/local-drop/settings")) {
       return route.fulfill(
@@ -270,9 +317,20 @@ test.describe("connecting Dropbox by redirect", () => {
     await page.getByRole("button", { name: /Choose the folder/i }).click();
     // Resumed where it left off: the account is connected, so the only thing
     // still owed is which folder.
-    await expect(page.getByTestId("folder-step")).toContainText(
-      /Which folder holds your Wahoo files/i,
-    );
+    const picker = page.getByTestId("folder-step");
+    await expect(picker).toContainText(/Which folder holds your Wahoo files/i);
+
+    // And the picker the athlete lands on speaks their Dropbox: the shortcut
+    // takes them to the folder, the breadcrumb names it as Dropbox spells it,
+    // and there is one action to take, about the folder they are standing in.
+    await picker.getByRole("button", { name: "Go to Wahoo's folder" }).click();
+    await expect(
+      picker.getByRole("navigation", { name: "Folder path" }),
+    ).toContainText("WahooFitness");
+    await expect(picker).toContainText("4 files here, 3 arc can read.");
+    await expect(picker.getByRole("button", { name: /watch/i })).toHaveCount(1);
+    expect(await picker.textContent()).not.toContain(WAHOO_PATH);
+
     expect(new URL(page.url()).pathname).toBe("/settings");
     // The browser said where it was, and arc asked Dropbox to come back there.
     expect(state.redirectUri).toBe(

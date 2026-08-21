@@ -2298,25 +2298,46 @@
         "type": "object"
       },
       "FolderList": {
-        "description": "The folders directly under one remote path.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.",
+        "description": "What is directly under one remote path: the subfolders, and the files.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.\n\nThe counts describe the **current** folder only, and describe all of it \u2014\n`ConnectionService.folders` follows Dropbox's cursor to the end before\ncounting, so a client may render them as a total. Per-subfolder counts are\ndeliberately absent: they would cost one Dropbox call per row.",
         "properties": {
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/FolderRead"
             },
             "title": "Items",
             "type": "array"
+          },
+          "path_display": {
+            "title": "Path Display",
+            "type": "string"
+          },
+          "supported_file_count": {
+            "title": "Supported File Count",
+            "type": "integer"
           }
         },
-        "required": ["items"],
+        "required": [
+          "path_display",
+          "items",
+          "file_count",
+          "supported_file_count"
+        ],
         "title": "FolderList",
         "type": "object"
       },
       "FolderRead": {
-        "description": "One folder in a remote listing.",
+        "description": "One folder in a remote listing, in both spellings Dropbox keeps.\n\nThe two are not interchangeable and the difference is the whole point:\n`path_lower` is the **identity** \u2014 what a feed row stores, what\n`uq_feeds_connection_id_remote_path` is written against, and what a client\nsends back to watch this folder \u2014 while `path_display` and `name` are the\nonly forms that belong on screen. A picker rendering `path_lower` shows\n`/apps/wahoofitness` to an athlete looking at `/Apps/WahooFitness` in\nDropbox, which reads as a case bug in arc and once cost a real run an hour\nchasing a case-sensitivity fault that did not exist.",
         "properties": {
           "name": {
             "title": "Name",
+            "type": "string"
+          },
+          "path_display": {
+            "title": "Path Display",
             "type": "string"
           },
           "path_lower": {
@@ -2324,7 +2345,7 @@
             "type": "string"
           }
         },
-        "required": ["path_lower", "name"],
+        "required": ["path_lower", "path_display", "name"],
         "title": "FolderRead",
         "type": "object"
       },
@@ -12049,7 +12070,7 @@
     },
     "/api/v1/connections/{connection_id}/folders": {
       "get": {
-        "description": "The folders directly under ``path`` \u2014 the folder picker's data.\n\nFolders only: the athlete is choosing a directory to watch, and the files\nin it are what the poll will find, not what this answers. A folder holding\nnothing but files is a 200 with an empty list.",
+        "description": "What is directly under ``path`` \u2014 the folder picker's data.\n\nSubfolders as rows, and the current folder's own contents as two numbers:\nthe athlete is choosing a directory to watch, and \"what is in here\" is the\nfact that tells them whether this is the one their head unit writes to. A\nfolder holding nothing but files is a 200 with an empty list and a file\ncount that says so.",
         "operationId": "connections-list_folders",
         "parameters": [
           {

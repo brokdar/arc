@@ -240,17 +240,27 @@ async def get_connection(
 async def list_folders(
     service: ServiceDep, connection_id: uuid.UUID, path: PathQuery = ""
 ) -> FolderList:
-    """The folders directly under ``path`` — the folder picker's data.
+    """What is directly under ``path`` — the folder picker's data.
 
-    Folders only: the athlete is choosing a directory to watch, and the files
-    in it are what the poll will find, not what this answers. A folder holding
-    nothing but files is a 200 with an empty list.
+    Subfolders as rows, and the current folder's own contents as two numbers:
+    the athlete is choosing a directory to watch, and "what is in here" is the
+    fact that tells them whether this is the one their head unit writes to. A
+    folder holding nothing but files is a 200 with an empty list and a file
+    count that says so.
     """
+    listing = await service.folders(connection_id, path=path)
     return FolderList(
+        path_display=listing.path_display,
         items=[
-            FolderRead(path_lower=folder.path_lower, name=folder.name)
-            for folder in await service.folders(connection_id, path=path)
-        ]
+            FolderRead(
+                path_lower=folder.path_lower,
+                path_display=folder.path_display,
+                name=folder.name,
+            )
+            for folder in listing.folders
+        ],
+        file_count=listing.file_count,
+        supported_file_count=listing.supported_file_count,
     )
 
 

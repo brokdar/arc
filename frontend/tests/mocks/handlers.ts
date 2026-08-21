@@ -21,7 +21,7 @@ import {
   declarationRead,
   defaultZoneModel,
   discoverIntegrations,
-  dropboxFolders,
+  dropboxFolderPage,
   dropboxSetup,
   EXERCISES,
   ingestedSessionFixture,
@@ -1606,10 +1606,10 @@ export const connectionHandlers = [
         });
       }
       const path = query.get("path") ?? "";
-      const folders = dropboxFolders(path);
-      return folders === null
+      const listing = dropboxFolderPage(path);
+      return listing === null
         ? response(404).json({ detail: `Dropbox has no folder at ${path}` })
-        : response(200).json({ items: folders });
+        : response(200).json(listing);
     },
   ),
   http.delete("/api/v1/connections/{connection_id}", ({ params, response }) => {

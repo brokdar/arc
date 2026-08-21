@@ -43,13 +43,21 @@ class Call:
     headers: httpx.Headers
 
 
-def folder_entry(name: str, path_lower: str) -> dict[str, Any]:
-    """A `folder` entry as `list_folder` returns it."""
+def folder_entry(
+    name: str, path_lower: str, *, path_display: str | None = None
+) -> dict[str, Any]:
+    """A `folder` entry as `list_folder` returns it.
+
+    ``path_display`` defaults to ``path_lower`` because most tests here are
+    not about casing and an all-lowercase Dropbox is a real one. A test that
+    *is* about casing passes the athlete's own spelling, which is the only
+    way to catch a reader that projected the wrong field.
+    """
     return {
         ".tag": "folder",
         "name": name,
         "path_lower": path_lower,
-        "path_display": path_lower,
+        "path_display": path_display if path_display is not None else path_lower,
         "id": f"id:{name}",
     }
 
@@ -69,12 +77,14 @@ def file_entry(
     entry_id: str | None = None,
     rev: str = "0123456789abcdef",
     client_modified: str = DEFAULT_CLIENT_MODIFIED,
+    path_display: str | None = None,
 ) -> dict[str, Any]:
     """A `file` entry as `list_folder` returns it."""
     return {
         ".tag": "file",
         "name": name,
         "path_lower": path_lower,
+        "path_display": path_display if path_display is not None else path_lower,
         "id": entry_id or f"id:{name}",
         "size": size,
         "rev": rev,
