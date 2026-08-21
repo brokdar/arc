@@ -18,6 +18,6 @@
 # left to rot, and the PR that raises zizmor runs the job zizmor gates.
 
 zizmor==1.29.0     # audits .github/workflows: the pre-push hook and the Workflow Security job
-prek==0.4.13       # installs and runs the git hooks, so it gates every commit and push
+prek==0.4.14       # installs and runs the git hooks, so it gates every commit and push
 rust-just==1.58.0  # the task runner every justfile recipe goes through
 git-cliff==2.13.1  # drafts CHANGELOG entries (`just changelog`)
