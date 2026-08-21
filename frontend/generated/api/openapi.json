@@ -1849,6 +1849,93 @@
         "title": "DropboxCodeSubmit",
         "type": "object"
       },
+      "DropboxConnectionRead": {
+        "description": "The connection a completion just stored, and what arc proved about it.\n\nA subclass rather than a field on `ConnectionRead`: the note is about one\ncompletion, not a property of the connection. A later `GET` has nothing to\nsay about a check that ran once, minutes ago, and a nullable field on\nevery connection read would invite the panel to render a stale answer as\nthe current one.",
+        "properties": {
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "feeds": {
+            "items": {
+              "$ref": "#/components/schemas/FeedRead"
+            },
+            "title": "Feeds",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectionStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "verification_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Note"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "status",
+          "account_label",
+          "scopes",
+          "last_error",
+          "created_at",
+          "updated_at",
+          "feeds",
+          "verification_note"
+        ],
+        "title": "DropboxConnectionRead",
+        "type": "object"
+      },
       "DropboxSetupRead": {
         "description": "Whether Dropbox can be connected yet, and on whose app key.\n\nNullable `source` is load-bearing rather than an omission: `null` is a\nstate the add-integration flow renders \u2014 the registration checklist \u2014 and\nnot the absence of an answer.",
         "properties": {
@@ -11564,7 +11651,7 @@
     },
     "/api/v1/connections/dropbox/complete": {
       "post": {
-        "description": "Finish connecting Dropbox with the code that came back.\n\nCalled by the athlete's own browser either way: by the form they pasted\ninto, or by the callback page at `/settings/dropbox/callback` reading its\nown query string. The `state` is forwarded verbatim when there is one \u2014\nthe service, not this route, decides whether it matches.",
+        "description": "Finish connecting Dropbox with the code that came back.\n\nCalled by the athlete's own browser either way: by the form they pasted\ninto, or by the callback page at `/settings/dropbox/callback` reading its\nown query string. The `state` is forwarded verbatim when there is one \u2014\nthe service, not this route, decides whether it matches.\n\nA 201 here means arc has read the athlete's Dropbox with the credential it\njust stored, unless `verification_note` says why it could not \u2014 see\n`ConnectionService.complete_dropbox`. A grant that cannot read is a 422 and\nno connection at all.",
         "operationId": "connections-complete_dropbox_authorization",
         "requestBody": {
           "content": {
@@ -11581,7 +11668,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConnectionRead"
+                  "$ref": "#/components/schemas/DropboxConnectionRead"
                 }
               }
             },

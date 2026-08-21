@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ import { takeAddFlow } from "@/lib/dropbox-redirect";
 import {
   connectionsState,
   DROPBOX_CODE,
+  DROPBOX_VERIFICATION_DEFERRED,
   MAX_APP_KEY_LENGTH,
   seedDropboxAppKey,
 } from "@/tests/mocks/fixtures";
@@ -259,6 +260,71 @@ describe("connecting where Dropbox will not redirect back", () => {
     await waitFor(() => expect(connectionsState().connections).toHaveLength(1));
     expect(connectionsState().authorizationRedirectUri).toBeNull();
     expect(navigated).not.toHaveBeenCalled();
+  });
+});
+
+describe("the confirmation a connect ends on", () => {
+  /** Connect through the paste flow, and stop on whatever it renders next. */
+  async function connectByPaste(onConnected: () => void) {
+    const user = userEvent.setup();
+    renderStep(<DropboxConnectStep onConnected={onConnected} />);
+
+    await user.click(await screen.findByTestId("use-paste-flow"));
+    await user.type(
+      await screen.findByLabelText(/Authorisation code/i),
+      DROPBOX_CODE,
+    );
+    await user.click(screen.getByRole("button", { name: "Finish connecting" }));
+    return user;
+  }
+
+  it("names the account before the flow is allowed to move on", async () => {
+    const onConnected = vi.fn();
+
+    const user = await connectByPaste(onConnected);
+
+    // Success is stated, not implied by a screen vanishing. Every other step
+    // of this flow confirms itself; the one that leaves the application and
+    // comes back used to confirm itself by disappearing.
+    const confirmation = await screen.findByTestId("connect-confirmation");
+    expect(confirmation).toHaveTextContent(
+      "Connected as Ada Lovelace (ada@example.com)",
+    );
+    expect(onConnected).not.toHaveBeenCalled();
+
+    await user.click(
+      within(confirmation).getByRole("button", { name: /Choose the folder/i }),
+    );
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("says arc has read the Dropbox it just connected", async () => {
+    await connectByPaste(() => {});
+
+    // The connection is proven, not merely stored: the server listed the
+    // athlete's Dropbox with the credential before writing the row, and the
+    // confirmation is where that becomes something they were told.
+    expect(await screen.findByTestId("connect-confirmation")).toHaveTextContent(
+      /read your Dropbox/i,
+    );
+  });
+
+  it("says what is still owed when Dropbox could not answer the check", async () => {
+    // A 429 or a dead socket during the connect: the authorization code is
+    // spent either way, so the server stores the connection unproven rather
+    // than sending the athlete back to dropbox.com — and says so.
+    connectionsState().verificationNote = DROPBOX_VERIFICATION_DEFERRED;
+
+    await connectByPaste(() => {});
+
+    const confirmation = await screen.findByTestId("connect-confirmation");
+    expect(confirmation).toHaveTextContent(
+      /first time it looks for new rides/i,
+    );
+    // Not both sentences at once: the connection either has been read or has
+    // not, and claiming the check passed beside a note saying it did not run
+    // is worse than saying nothing.
+    expect(confirmation).not.toHaveTextContent(/and it does/i);
   });
 });
 

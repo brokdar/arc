@@ -48,8 +48,10 @@ from tests.unit.dropbox_fake import (
     FakeDropbox,
     file_entry,
     folder_entry,
+    missing_scope,
     page,
     path_not_found,
+    rate_limited,
 )
 
 pytestmark = pytest.mark.usefixtures("dropbox_env")
@@ -827,6 +829,160 @@ async def test_a_grant_without_a_refresh_token_names_offline_access(
     assert await count_of(db_session, ConnectionRow) == 0
 
 
+# --- AC-1, AC-2: connecting proves the credential before it is stored --------
+#
+# `get_current_account` answers 200 for a grant carrying no file scopes at
+# all, so the connect used to store a credential that could not list a single
+# folder and label it `connected`. The athlete then met the failure two screens
+# later, on the folder picker, as a sentence about a folder path. The proof is
+# two checks: the scopes the grant claims, and one real read.
+
+
+async def test_completing_lists_one_entry_of_the_root_before_storing_anything(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The proof is a scoped call, and it is made with the fresh token."""
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    probe = fake.calls_to(LIST_FOLDER_PATH)
+    assert len(probe) == 1, "the credential is proved exactly once"
+    # The root, and one entry of it: nothing about the *contents* is wanted,
+    # so a folder holding ten thousand files costs the same as an empty one.
+    assert probe[0].body["path"] == ""
+    assert probe[0].body["limit"] == 1
+    assert probe[0].headers["Authorization"] == f"Bearer {fake.access_token}"
+    # Proved, so there is nothing to say about a check that has not happened.
+    assert response.json()["verification_note"] is None
+
+
+async def test_a_grant_missing_a_read_scope_names_it_and_the_console_steps(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.granted_scopes = ("account_info.read", "files.content.read")
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    # The remedy is four moves on a page arc cannot reach, so all four are in
+    # the sentence: the Permissions tab, the tick, Submit, and connecting
+    # again — Dropbox applies a newly-ticked scope only to a later grant.
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    assert "connection again" in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    # Refused on the grant alone: a scope arc was never given is not worth a
+    # request to find out about.
+    assert fake.calls_to(LIST_FOLDER_PATH) == []
+
+
+async def test_a_grant_carrying_no_scopes_at_all_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # `scope: ""` — the shape a grant takes when the app has nothing ticked.
+    # It used to be read as "Dropbox did not say", and arc stored READ_SCOPES
+    # as if they had been granted.
+    fake.granted_scopes = ()
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "files.metadata.read" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_every_missing_scope_is_named_not_only_the_first(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    # A refusal naming one of three sends the athlete back to the Permissions
+    # tab three times, and each round trip is a re-authorization.
+    fake.granted_scopes = ("sharing.read",)
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    for scope in READ_SCOPES:
+        assert scope in detail, f"{scope} was not named"
+
+
+async def test_a_grant_with_a_scope_beyond_what_arc_asked_for_is_accepted(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The check is a superset test, not equality: an athlete who ticked an
+    # extra permission on their own app has given arc more than it asked for,
+    # which is theirs to do and not a reason to refuse the connection.
+    fake.granted_scopes = (*sorted(READ_SCOPES), "sharing.read")
+
+    connection = await connect(client)
+
+    assert connection["scopes"] == sorted([*READ_SCOPES, "sharing.read"])
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.scopes == sorted([*READ_SCOPES, "sharing.read"])
+
+
+async def test_a_probe_refused_for_scope_stores_nothing_and_names_the_steps(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A grant can claim a scope the app does not carry; the read cannot."""
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_rate_limited_probe_stores_the_connection_and_says_so(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A bad minute upstream must not cost the athlete the whole connection.
+
+    The authorization code is already spent by the time the probe runs, so
+    refusing here would mean starting again from dropbox.com over a failure
+    that says nothing about the credential.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, rate_limited())
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "connected"
+    assert "first time it looks for new rides" in body["verification_note"]
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.status is ConnectionStatus.CONNECTED
+    # The connection is stored unproven, not stored broken: nothing about a
+    # 429 is evidence against the credential.
+    assert row.last_error is None
+
+
+async def test_a_probe_that_never_reaches_dropbox_stores_the_connection_too(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    await client.post(AUTHORIZE)
+    fake.raises[LIST_FOLDER_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    assert "first time it looks for new rides" in response.json()["verification_note"]
+    assert await count_of(db_session, ConnectionRow) == 1
+
+
 # --- AC-5: the folder picker -------------------------------------------------
 
 
@@ -893,6 +1049,9 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     row = (await db_session.execute(select(ConnectionRow))).scalars().one()
     row.status = ConnectionStatus.NEEDS_REAUTH
     await db_session.commit()
+    # Connecting proved the credential, which is a request of its own. What
+    # this test is about is every request made *after* the status flipped.
+    fake.calls.clear()
 
     response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
 

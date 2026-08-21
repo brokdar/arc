@@ -85,6 +85,16 @@ def file_entry(
     }
 
 
+def _is_probe(call: Call) -> bool:
+    """Whether a call is `complete`'s read probe rather than a real listing.
+
+    `limit` is what tells them apart, and only the probe sends it: arc's
+    folder listings ask for everything under a path and follow `has_more` to
+    the end, while the probe asks for one entry and ignores the rest.
+    """
+    return call.path == LIST_FOLDER_PATH and (call.body or {}).get("limit") is not None
+
+
 def deleted_entry(name: str, path_lower: str) -> dict[str, Any]:
     """A `deleted` entry, which is what a change list says about a removal."""
     return {".tag": "deleted", "name": name, "path_lower": path_lower}
@@ -240,6 +250,8 @@ class FakeDropbox:
         )
 
     def _list_folder(self, call: Call) -> httpx.Response:
+        if _is_probe(call):
+            return self._probe()
         if call.path == LIST_FOLDER_PATH:
             wanted = str((call.body or {}).get("path", ""))
             failure = self.list_failures.get(wanted) or self.list_failures.get(
@@ -260,13 +272,35 @@ class FakeDropbox:
                 return reset_cursor()
             return httpx.Response(200, json=answer)
         pages = self.pages if self.pages is not None else [_DEFAULT_PAGE]
-        index = min(
-            len(self.calls_to(LIST_FOLDER_CONTINUE_PATH))
-            + len(self.calls_to(LIST_FOLDER_PATH))
-            - 1,
-            len(pages) - 1,
-        )
+        # Probes are excluded from the walk, not just from the answer: the
+        # index counts calls, so leaving `complete`'s probe in it would serve
+        # every test that connects and then lists one page too far.
+        index = min(len(self._listings()) - 1, len(pages) - 1)
         return httpx.Response(200, json=pages[index])
+
+    def _listings(self) -> list[Call]:
+        """Recorded calls that walk a folder, probes excluded."""
+        return [
+            call
+            for call in self.calls
+            if call.path in {LIST_FOLDER_PATH, LIST_FOLDER_CONTINUE_PATH}
+            and not _is_probe(call)
+        ]
+
+    def _probe(self) -> httpx.Response:
+        """Answer `complete`'s `limit=1` probe without moving the listing on.
+
+        Its own branch because a probe is not a listing. It asks for one entry
+        of the root only to find out whether a scoped call succeeds at all,
+        and serving it out of :attr:`pages` or :attr:`tree` would spend the
+        page the *next* call is written against — every test that connects and
+        then lists would read one page too far. Overridden the same way any
+        other answer is, with `script(LIST_FOLDER_PATH, ...)` or
+        :attr:`raises`, which is how a refused or unanswered probe is written.
+        """
+        return httpx.Response(
+            200, json=page(folder_entry("Apps", "/apps"), has_more=True)
+        )
 
     def _from_tree(self, call: Call) -> httpx.Response:
         """Serve one page of :attr:`tree`, paginating like Dropbox does.
@@ -357,6 +391,23 @@ def expired_access_token() -> httpx.Response:
         json={
             "error_summary": "expired_access_token/",
             "error": {".tag": "expired_access_token"},
+        },
+    )
+
+
+def missing_scope(required_scope: str = "files.metadata.read") -> httpx.Response:
+    """Dropbox's 401 for a call the grant carries no scope for.
+
+    The same status code as a dead access token, and a different body — which
+    is the whole reason this exists as its own answer: a grant that lists no
+    file scopes reaches every read endpoint and is refused here, not at the
+    token exchange.
+    """
+    return httpx.Response(
+        401,
+        json={
+            "error_summary": f"missing_scope/{required_scope}",
+            "error": {".tag": "missing_scope", "required_scope": required_scope},
         },
     )
 

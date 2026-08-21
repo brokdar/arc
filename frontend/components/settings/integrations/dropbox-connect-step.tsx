@@ -262,6 +262,55 @@ function AppKeyInForce({
 }
 
 /**
+ * What a finished connect says: the account, and that arc has read it.
+ *
+ * Rendered by both flows and worded identically — the paste flow inline in
+ * the step below, the redirect flow on the callback page — because which one
+ * a deployment can offer is arc's problem and not something the athlete
+ * should be able to read off a success screen.
+ *
+ * It exists at all because success used to be signalled by the connect step
+ * disappearing. Every other step of the add flow confirms itself; the one
+ * that leaves the application, spends two minutes on dropbox.com and comes
+ * back was the one that did not — and it is also the one where a stored
+ * credential nobody had proved would surface two screens later as a sentence
+ * about a folder path.
+ *
+ * The athlete moves the flow on, not the render: a confirmation that
+ * dismisses itself is the vanishing screen again.
+ */
+export function DropboxConnected({
+  connection,
+  onContinue,
+}: {
+  readonly connection: components["schemas"]["DropboxConnectionRead"];
+  readonly onContinue: () => void;
+}) {
+  return (
+    <div
+      data-testid="connect-confirmation"
+      role="status"
+      className="flex flex-col items-start gap-2.5 rounded-card border border-hairline bg-inset px-3.5 py-3"
+    >
+      <p className="max-w-[62ch] text-sm">
+        Connected as{" "}
+        <strong>{connection.account_label || "your Dropbox account"}</strong>.
+      </p>
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        {/* The server's sentence when it has one: a connection it stored
+            without being able to prove is a fact only the server knows, and
+            paraphrasing it here would put the same copy in two places. */}
+        {connection.verification_note ??
+          "arc read your Dropbox to check the permission works, and it does."}
+      </p>
+      <Button type="button" onClick={onContinue}>
+        Choose the folder
+      </Button>
+    </div>
+  );
+}
+
+/**
  * The connect ritual: hand the browser to Dropbox and take what comes back.
  *
  * **Where the browser is decides which flow runs**, and the browser is the
@@ -321,14 +370,20 @@ export function DropboxConnectStep({
       },
     },
   );
+  // The completed connection, held until the athlete has read it. Nothing is
+  // invalidated on success: the flow decides which step is owed from the
+  // catalogue, so refetching it here would replace this step with the folder
+  // picker before the confirmation had been on screen for a frame.
+  const [connected, setConnected] = useState<
+    components["schemas"]["DropboxConnectionRead"] | null
+  >(null);
   const complete = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/complete",
     {
-      onSuccess: () => {
+      onSuccess: (data) => {
         setCode("");
-        queryClient.invalidateQueries();
-        onConnected();
+        setConnected(data);
       },
     },
   );
@@ -351,15 +406,30 @@ export function DropboxConnectStep({
       className="flex flex-col items-start gap-2.5"
     >
       <SectionLabel>Connect the Dropbox account</SectionLabel>
-      <p className="max-w-[62ch] text-ink-muted text-sm">
-        arc reads the folder your head unit already uploads to, so a ride never
-        has to be uploaded by hand.
-      </p>
-      {setup.data?.app_key_set ? (
-        <AppKeyInForce source={setup.data.source} />
+      {/* Everything that explains the step goes away once the step is done:
+          an instruction still on screen beside its own confirmation reads as
+          something the athlete has to do again. */}
+      {connected === null ? (
+        <>
+          <p className="max-w-[62ch] text-ink-muted text-sm">
+            arc reads the folder your head unit already uploads to, so a ride
+            never has to be uploaded by hand.
+          </p>
+          {setup.data?.app_key_set ? (
+            <AppKeyInForce source={setup.data.source} />
+          ) : null}
+        </>
       ) : null}
 
-      {canRedirect && !pasting ? (
+      {connected !== null ? (
+        <DropboxConnected
+          connection={connected}
+          onContinue={() => {
+            queryClient.invalidateQueries();
+            onConnected();
+          }}
+        />
+      ) : canRedirect && !pasting ? (
         <div className="flex flex-col items-start gap-2.5">
           <p className="max-w-[62ch] text-ink-muted text-sm">
             Dropbox will ask you to allow arc to read your files, then send you

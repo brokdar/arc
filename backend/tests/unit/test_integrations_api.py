@@ -918,6 +918,9 @@ async def test_discovery_on_a_connection_needing_reauth_is_a_409(
     row = (await db_session.execute(select(ConnectionRow))).scalars().one()
     row.status = ConnectionStatus.NEEDS_REAUTH
     await db_session.commit()
+    # Connecting proved the credential, which is a request of its own. What
+    # this test is about is every request made *after* the status flipped.
+    fake.calls.clear()
 
     response = await client.get(discover_url(connection))
 

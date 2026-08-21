@@ -38,6 +38,7 @@ from app.api.schemas.connections import (
     DropboxAuthorizationRead,
     DropboxAuthorizationStart,
     DropboxCodeSubmit,
+    DropboxConnectionRead,
     DropboxSetupRead,
     FolderList,
     FolderRead,
@@ -193,18 +194,25 @@ async def start_dropbox_authorization(
 )
 async def complete_dropbox_authorization(
     service: ServiceDep, actor: ActorDep, submitted: DropboxCodeSubmit
-) -> ConnectionRead:
+) -> DropboxConnectionRead:
     """Finish connecting Dropbox with the code that came back.
 
     Called by the athlete's own browser either way: by the form they pasted
     into, or by the callback page at `/settings/dropbox/callback` reading its
     own query string. The `state` is forwarded verbatim when there is one —
     the service, not this route, decides whether it matches.
+
+    A 201 here means arc has read the athlete's Dropbox with the credential it
+    just stored, unless `verification_note` says why it could not — see
+    `ConnectionService.complete_dropbox`. A grant that cannot read is a 422 and
+    no connection at all.
     """
-    return ConnectionRead.model_validate(
-        await service.complete_dropbox(
-            code=submitted.code, state=submitted.state, actor=actor
-        )
+    completed = await service.complete_dropbox(
+        code=submitted.code, state=submitted.state, actor=actor
+    )
+    return DropboxConnectionRead(
+        **ConnectionRead.model_validate(completed.connection).model_dump(),
+        verification_note=completed.verification_note,
     )
 
 

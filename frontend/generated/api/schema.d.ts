@@ -385,6 +385,11 @@ export interface paths {
      *     into, or by the callback page at `/settings/dropbox/callback` reading its
      *     own query string. The `state` is forwarded verbatim when there is one —
      *     the service, not this route, decides whether it matches.
+     *
+     *     A 201 here means arc has read the athlete's Dropbox with the credential it
+     *     just stored, unless `verification_note` says why it could not — see
+     *     `ConnectionService.complete_dropbox`. A grant that cannot read is a 422 and
+     *     no connection at all.
      */
     post: operations["connections-complete_dropbox_authorization"];
     delete?: never;
@@ -3002,6 +3007,45 @@ export interface components {
       code: string;
       /** State */
       state?: string;
+    };
+    /**
+     * DropboxConnectionRead
+     * @description The connection a completion just stored, and what arc proved about it.
+     *
+     *     A subclass rather than a field on `ConnectionRead`: the note is about one
+     *     completion, not a property of the connection. A later `GET` has nothing to
+     *     say about a check that ran once, minutes ago, and a nullable field on
+     *     every connection read would invite the panel to render a stale answer as
+     *     the current one.
+     */
+    DropboxConnectionRead: {
+      /** Account Label */
+      account_label: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Feeds */
+      feeds: components["schemas"]["FeedRead"][];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Error */
+      last_error: string | null;
+      provider: components["schemas"]["ConnectionProvider"];
+      /** Scopes */
+      scopes: string[];
+      status: components["schemas"]["ConnectionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Verification Note */
+      verification_note: string | null;
     };
     /**
      * DropboxSetupRead
@@ -7905,7 +7949,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["ConnectionRead"];
+          "application/json": components["schemas"]["DropboxConnectionRead"];
         };
       };
       /** @description Malformed body */

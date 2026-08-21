@@ -154,6 +154,24 @@ class ConnectionRead(BaseModel):
     feeds: list[FeedRead]
 
 
+class DropboxConnectionRead(ConnectionRead):
+    """The connection a completion just stored, and what arc proved about it.
+
+    A subclass rather than a field on `ConnectionRead`: the note is about one
+    completion, not a property of the connection. A later `GET` has nothing to
+    say about a check that ran once, minutes ago, and a nullable field on
+    every connection read would invite the panel to render a stale answer as
+    the current one.
+    """
+
+    #: `null` when arc listed the athlete's Dropbox during the connect and it
+    #: worked — the ordinary case, and the one the confirmation is written
+    #: for. A sentence when Dropbox could not answer that check at all: the
+    #: authorization code was already spent, so the connection is stored
+    #: unproven rather than thrown away, and this is what says so.
+    verification_note: str | None
+
+
 class ConnectionList(BaseModel):
     """Every connection arc holds.
 

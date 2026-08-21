@@ -4133,6 +4133,7 @@ function daysBetween(from: string, to: string): number {
 // ============================================================================
 
 type Connection = Schemas["ConnectionRead"];
+type CompletedConnection = Schemas["DropboxConnectionRead"];
 type Feed = Schemas["FeedRead"];
 type Folder = Schemas["FolderRead"];
 
@@ -4155,6 +4156,19 @@ export const DROPBOX_READ_SCOPES = [
   "files.metadata.read",
 ];
 
+/**
+ * `VERIFICATION_DEFERRED` in `app/services/connections.py`, word for word.
+ *
+ * Copied rather than paraphrased: it is the sentence the athlete reads when
+ * arc stored a connection it could not prove, and a test written against an
+ * invented one would pass against a component that renders nothing the server
+ * ever sends.
+ */
+export const DROPBOX_VERIFICATION_DEFERRED =
+  "Dropbox did not answer when arc checked that it can read your files. The " +
+  "account is connected, and arc checks again the first time it looks for " +
+  "new rides.";
+
 interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
@@ -4176,6 +4190,14 @@ interface ConnectionsMockState {
   envAppKey: string | null;
   /** Remote path → the folders directly under it. */
   folders: Map<string, Folder[]>;
+  /**
+   * What the next completion says about proving the credential.
+   *
+   * `null` is the ordinary case: arc read the athlete's Dropbox during the
+   * connect and it worked. A sentence is the connection the server stored
+   * without being able to prove it, because Dropbox did not answer the check.
+   */
+  verificationNote: string | null;
   minted: number;
 }
 
@@ -4203,6 +4225,7 @@ function seedConnectionsState(): ConnectionsMockState {
       // the picker has to say so rather than draw an empty box.
       ["/apps/wahoofitness", []],
     ]),
+    verificationNote: null,
     minted: 0,
   };
 }
@@ -4289,7 +4312,7 @@ export function seedDropboxConnection(
 export function completeDropbox(
   code: string,
   nonce: string | null = null,
-): { connection: Connection } | { detail: string } {
+): { completed: CompletedConnection } | { detail: string } {
   const state = connectionsState();
   if (!state.authorizationStarted) {
     return {
@@ -4330,7 +4353,12 @@ export function completeDropbox(
   state.authorizationRedirectUri = null;
   const connection = dropboxConnection();
   state.connections = [connection];
-  return { connection };
+  // The completion carries one field the stored connection does not: what arc
+  // could prove about the credential at the moment it was stored. A later
+  // `GET /connections` has nothing to say about a check that ran once.
+  return {
+    completed: { ...connection, verification_note: state.verificationNote },
+  };
 }
 
 /**

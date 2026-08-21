@@ -461,6 +461,54 @@ async def current_account(*, access_token: str) -> DropboxAccount:
     return _account_from(response)
 
 
+async def probe_readable(*, access_token: str) -> None:
+    """Prove a fresh grant can actually read the athlete's Dropbox.
+
+    A module function beside :func:`current_account`, and for the same reason:
+    this runs during `complete`, before there is a connection row to hang a
+    :class:`DropboxClient` off — and its answer decides whether that row is
+    written at all.
+
+    **`list_folder`, not `get_current_account`.** The account read succeeds for
+    a grant carrying no file scopes whatsoever, so it proves the credential
+    exists and nothing about the thing arc is here to do. This asks the API
+    the feed poll will ask, with the token the connect just obtained.
+
+    `limit=1` because nothing about the contents is wanted, and `has_more` is
+    ignored: the question is only whether a scoped call succeeds, so the root
+    of a Dropbox holding ten thousand files costs what an empty one costs.
+
+    Raises:
+        DropboxAuthError: Dropbox refused the credential or the scope. Both
+            arrive as a 401 here and both have the same remedy — the athlete
+            fixing their app registration and authorizing again — so they are
+            not told apart at this seam.
+        DropboxUpstreamError: Dropbox was rate-limiting arc, broken, or not
+            there. Says nothing about the credential, and the caller must not
+            read it as a verdict on one.
+    """
+    async with _client() as http:
+        response = await http.post(
+            f"{API_BASE}/2/files/list_folder",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"path": "", "recursive": False, "limit": 1},
+        )
+    if response.status_code == 200:
+        return
+    if response.status_code in {401, 403}:
+        summary = str(_json_or_empty(response).get("error_summary", ""))
+        raise DropboxAuthError(
+            f"Dropbox refused to list the root folder: {summary or 'unauthorized'}"
+        )
+    if response.status_code == 429:
+        raise DropboxRateLimitedError(
+            "Dropbox is rate-limiting arc", retry_after=_retry_after(response)
+        )
+    raise DropboxUpstreamError(
+        f"Dropbox answered {response.status_code} listing the root folder"
+    )
+
+
 def _account_from(response: httpx.Response) -> DropboxAccount:
     """Project `/2/users/get_current_account` onto the label arc stores."""
     if response.status_code != 200:

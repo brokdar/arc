@@ -31,6 +31,7 @@ from app.connectors.dropbox import (
     exchange_code,
     new_code_verifier,
     new_state,
+    probe_readable,
     redirect_eligible,
 )
 from app.core.config import SettingSource, get_settings
@@ -123,6 +124,52 @@ REGISTER_APP_REMEDY = (
     "Scoped access, access type Full Dropbox — and paste its app key into "
     "Settings, in the steps for adding an integration."
 )
+
+
+#: What the athlete reads when arc could not prove the connection at all.
+#:
+#: The connection **is** stored in this case, and the sentence says so rather
+#: than apologising: the authorization code was spent redeeming the grant, so
+#: throwing the connection away over a Dropbox that did not answer would cost
+#: the athlete the whole trip to dropbox.com for a failure that says nothing
+#: about their credential. What it owes them instead is the knowledge that the
+#: check is still outstanding, and when it happens.
+VERIFICATION_DEFERRED = (
+    "Dropbox did not answer when arc checked that it can read your files. The "
+    "account is connected, and arc checks again the first time it looks for "
+    "new rides."
+)
+
+
+def _permission_refusal(missing: Sequence[str], *, opening: str) -> str:
+    """The refusal an athlete can act on without leaving the sentence.
+
+    Every missing scope is named, not the first one: the remedy is a round
+    trip to dropbox.com and back through the whole authorize flow, and a
+    refusal naming one of three costs three of them.
+
+    The four console moves are spelled out — Permissions tab, tick, Submit,
+    connect again — because the last one is the counter-intuitive half:
+    Dropbox applies a newly-submitted scope only to a grant issued **after**
+    it, so an athlete who ticks the box and reloads arc is still refused.
+    """
+    return (
+        f"{opening} Open your app at https://www.dropbox.com/developers/apps, "
+        f"tick {', '.join(missing)} on its Permissions tab, choose Submit, "
+        "then start the connection again — Dropbox gives arc a newly ticked "
+        "permission only on a connection made after you submit it."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DropboxConnected:
+    """A stored Dropbox connection, and what arc could prove about it."""
+
+    connection: ConnectionRow
+    #: ``None`` when arc read the athlete's Dropbox during the connect and it
+    #: worked. A sentence when Dropbox could not answer that read at all —
+    #: see :data:`VERIFICATION_DEFERRED`.
+    verification_note: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,8 +678,32 @@ class ConnectionService:
 
     async def complete_dropbox(
         self, *, code: str, actor: Actor, state: str | None = None
-    ) -> ConnectionRow:
-        """Redeem the code — pasted or redirected — and store the connection.
+    ) -> DropboxConnected:
+        """Redeem the code — pasted or redirected — and store a proven connection.
+
+        **Nothing is stored until arc has read the athlete's Dropbox.** The
+        proof is two checks, in this order. First the grant's own scope string
+        must cover :data:`READ_SCOPES`; second, a `limit=1` `list_folder("")`
+        with the fresh access token must succeed. Neither is redundant: the
+        scope string is what Dropbox says it gave, and it is free to check,
+        while the read is what arc will actually do — a grant can name a scope
+        the app registration no longer carries. What this displaces is a
+        connect that asked `get_current_account` and nothing else, an endpoint
+        that answers 200 for a grant holding no file scopes at all, so a
+        credential unable to list a single folder was stored and labelled
+        `connected`. The athlete met the consequence two screens later, on the
+        folder picker, as a sentence about a folder path.
+
+        **A scope-shaped refusal is fatal; an unanswered probe is not.** A 401
+        or a 403 means the athlete has to change their app registration and
+        authorize again regardless, so the connection is refused and no row is
+        written — storing one would only mean disconnecting it first. A 429, a
+        5xx or a dead socket says nothing about the credential, and the
+        authorization code has already been spent by then: refusing there
+        would burn the whole trip to dropbox.com over a bad minute upstream.
+        Those store the connection and return
+        :data:`VERIFICATION_DEFERRED` for the caller to show, so an unproven
+        connection is one the athlete knows is unproven.
 
         **One connection per provider.** A second connect is a 409 naming
         disconnect as the remedy rather than a silent replacement: the existing
@@ -663,8 +734,8 @@ class ConnectionService:
         Raises:
             ConflictError: When a Dropbox connection already exists.
             ValidationError: When the flow was never started, has expired, the
-                state does not match, the code is spent, or the grant carries
-                no refresh token.
+                state does not match, the code is spent, the grant carries no
+                refresh token, or the grant cannot read the athlete's files.
         """
         await check_write_cap(self._session, actor)
         existing = await self._repository.by_provider(ConnectionProvider.DROPBOX)
@@ -704,13 +775,46 @@ class ConnectionService:
                 "token_access_type=offline — start the connection again."
             )
 
+        granted = frozenset(grant.scopes)
+        # No fallback to `READ_SCOPES` for a grant that named nothing: an app
+        # with every permission unticked comes back with `scope: ""`, and
+        # reading that as "Dropbox did not say" recorded the scopes arc wanted
+        # as though they had been given.
+        if missing := sorted(READ_SCOPES - granted):
+            raise ValidationError(
+                _permission_refusal(
+                    missing,
+                    opening="Dropbox did not give arc permission to read your files.",
+                )
+            )
+
         account = await current_account(access_token=grant.access_token)
+        verification_note: str | None = None
+        try:
+            await probe_readable(access_token=grant.access_token)
+        except DropboxAuthError as exc:
+            raise ValidationError(
+                _permission_refusal(
+                    sorted(READ_SCOPES),
+                    opening=(
+                        "Dropbox would not let arc read your files, although the "
+                        "permission looked granted."
+                    ),
+                )
+            ) from exc
+        except DropboxError as exc:
+            # Every scope arc needs was granted and Dropbox simply did not
+            # answer. Logged rather than silent, because a deployment where
+            # this happens on every connect is an operator's problem.
+            logger.info("dropbox_connect_probe_unanswered", error=str(exc))
+            verification_note = VERIFICATION_DEFERRED
+
         row = await self._repository.add(
             ConnectionRow(
                 provider=ConnectionProvider.DROPBOX,
                 status=ConnectionStatus.CONNECTED,
                 account_label=account.label,
-                scopes=sorted(grant.scopes or READ_SCOPES),
+                scopes=sorted(granted),
                 credentials=EncryptedCredentials.seal(
                     {
                         "access_token": grant.access_token,
@@ -736,7 +840,7 @@ class ConnectionService:
             },
         )
         await commit(self._session)
-        return row
+        return DropboxConnected(connection=row, verification_note=verification_note)
 
     async def _check_state(
         self, pending: OAuthAuthorizationRow, supplied: str | None

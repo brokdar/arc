@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
 
+import { DropboxConnected } from "@/components/settings/integrations/dropbox-connect-step";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
@@ -26,8 +27,15 @@ import { keepAddFlowOpen } from "@/lib/dropbox-redirect";
  * Four ways it can be opened, and none of them may render a blank page or a
  * spinner that never resolves: with a code (complete it), with an `error`
  * (Dropbox or the athlete said no), with neither (a bookmark, a reload after
- * the code was spent), and with a code the server then refuses (a stale nonce
- * — the server's sentence is what the athlete reads).
+ * the code was spent), and with a code the server then refuses (a stale
+ * nonce, or a grant that cannot read the athlete's files — the server's
+ * sentence is what the athlete reads).
+ *
+ * A completed connection stops here on the same confirmation the paste flow
+ * ends on rather than replacing straight to Settings. The athlete has just
+ * spent two minutes on somebody else's site; landing back on a page that
+ * silently moved on is how a connect that stored an unusable credential went
+ * unnoticed until the folder step failed.
  */
 export function DropboxCallback() {
   const router = useRouter();
@@ -43,10 +51,6 @@ export function DropboxCallback() {
     {
       onSuccess: () => {
         queryClient.invalidateQueries();
-        // The account is connected; the folder is still owed. Landing on a
-        // bare Settings page would leave the athlete to work that out.
-        keepAddFlowOpen();
-        router.replace("/settings");
       },
     },
   );
@@ -115,6 +119,22 @@ export function DropboxCallback() {
           </p>
         ))}
         <BackToSettings />
+      </CallbackFrame>
+    );
+  }
+
+  if (complete.data) {
+    return (
+      <CallbackFrame>
+        <DropboxConnected
+          connection={complete.data}
+          onContinue={() => {
+            // The account is connected; the folder is still owed. Landing on
+            // a bare Settings page would leave the athlete to work that out.
+            keepAddFlowOpen();
+            router.replace("/settings");
+          }}
+        />
       </CallbackFrame>
     );
   }

@@ -184,6 +184,15 @@ describe("the Dropbox transport's steps", () => {
     );
     await user.click(screen.getByRole("button", { name: "Finish connecting" }));
 
+    // The connect confirms itself before the flow moves on: the folder step
+    // does not exist until the athlete has read which account was connected.
+    await user.click(
+      within(await screen.findByTestId("connect-confirmation")).getByRole(
+        "button",
+        { name: /Choose the folder/i },
+      ),
+    );
+
     // The connect step is done, so the flow moves on rather than asking again.
     const folder = await screen.findByTestId("folder-step");
     await user.click(

@@ -192,7 +192,12 @@ async function mockApi(page: Page): Promise<FakeState> {
       }
       state.connected = true;
       state.state = null;
-      return route.fulfill(json(connection(), 201));
+      // `verification_note` is null: the server proved the credential by
+      // listing the athlete's Dropbox before it stored anything, which is the
+      // ordinary answer and the one the confirmation is written for.
+      return route.fulfill(
+        json({ ...connection(), verification_note: null }, 201),
+      );
     }
     if (path.endsWith("/connections")) {
       return route.fulfill(
@@ -255,6 +260,14 @@ test.describe("connecting Dropbox by redirect", () => {
     // `/settings` and ends there, so waiting for that URL alone would pass
     // without a round trip having happened at all.
     await page.waitForURL("**/settings/dropbox/callback?*");
+    // The connect states its own success before anything else renders. This
+    // is the whole point of coming back to a page rather than replacing
+    // straight through to Settings: the athlete is told which account is
+    // connected and that arc has read it.
+    await expect(page.getByTestId("connect-confirmation")).toContainText(
+      "Connected as Ada Lovelace (ada@example.com)",
+    );
+    await page.getByRole("button", { name: /Choose the folder/i }).click();
     // Resumed where it left off: the account is connected, so the only thing
     // still owed is which folder.
     await expect(page.getByTestId("folder-step")).toContainText(

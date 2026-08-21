@@ -1583,7 +1583,7 @@ export const connectionHandlers = [
       const result = completeDropbox(body.code, body.state ?? null);
       return "detail" in result
         ? response(422).json({ detail: result.detail })
-        : response(201).json(result.connection);
+        : response(201).json(result.completed);
     },
   ),
   http.get("/api/v1/connections/{connection_id}", ({ params, response }) => {
