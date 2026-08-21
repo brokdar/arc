@@ -1,9 +1,13 @@
 """Session-cookie auth: login, logout, the guard, and what stays open."""
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from unittest import mock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from itsdangerous import TimestampSigner
 
 from app.api.deps import DOCUMENTED_COOKIE_NAME
 from app.core.config import get_settings
@@ -132,6 +136,111 @@ async def test_cookie_signed_with_another_key_is_rejected(
     async with AsyncClient(transport=transport, base_url="http://test") as other:
         other.cookies.set(DOCUMENTED_COOKIE_NAME, stolen)
         response = await other.get(PROTECTED)
+
+    assert response.status_code == 401
+
+
+#: An arbitrary fixed wall-second. The clock-step tests pin both the signing
+#: and the verifying instant so the outcome cannot depend on which side of a
+#: second boundary the test happens to run on.
+SIGNED_AT = 1_700_000_000
+
+
+@contextmanager
+def wall_clock_reads(second: int) -> Iterator[None]:
+    """Freeze the session signer's wall clock at `second`.
+
+    Patched on the class, not an instance: `SessionMiddleware` builds its own
+    signer and never hands it out, so the class attribute is the only reachable
+    seam.
+    """
+    with mock.patch.object(TimestampSigner, "get_timestamp", return_value=second):
+        yield
+
+
+async def test_session_survives_a_wall_clock_that_steps_backwards(
+    anon_client: AsyncClient,
+) -> None:
+    """Issue #61: a backwards clock step used to log the athlete out mid-flow.
+
+    The cookie is signed at one wall-second and verified one second earlier —
+    exactly what a host time sync does when its step crosses a second boundary.
+    itsdangerous calls that a `SignatureExpired` of age -1; the athlete saw a
+    401 on a cookie signed at login with the whole 14 days still ahead of it.
+    """
+    with wall_clock_reads(SIGNED_AT):
+        assert (
+            await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
+        ).status_code == 204
+
+    with wall_clock_reads(SIGNED_AT - 1):
+        response = await anon_client.get(PROTECTED)
+
+    assert response.status_code == 200
+
+
+async def test_session_older_than_max_age_is_still_rejected(
+    anon_client: AsyncClient,
+) -> None:
+    """Tolerating future timestamps must not loosen the 14-day expiry.
+
+    The old side of the window: the clock only moves forward here. Its future
+    side is `test_cookie_signed_beyond_the_clock_step_tolerance_is_rejected`.
+    """
+    with wall_clock_reads(SIGNED_AT):
+        await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
+
+    max_age = get_settings().auth.session.max_age_seconds
+    with wall_clock_reads(SIGNED_AT + max_age + 1):
+        response = await anon_client.get(PROTECTED)
+
+    assert response.status_code == 401
+
+
+async def test_cookie_signed_beyond_the_clock_step_tolerance_is_rejected(
+    anon_client: AsyncClient,
+) -> None:
+    """The tolerance is a window, not an escape hatch from `max_age`.
+
+    An unbounded version of it would be one: the age check is skipped for
+    *every* outstanding cookie whenever the verifier's clock sits behind the
+    signing instant, so a host whose clock went back far enough — a restored
+    snapshot, a dead RTC — would accept a cookie that expired weeks ago. Here
+    the cookie is signed a full `max_age` ahead of the clock reading it, which
+    is that host, and the answer must still be 401.
+    """
+    max_age = get_settings().auth.session.max_age_seconds
+    with wall_clock_reads(SIGNED_AT + max_age):
+        await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
+
+    with wall_clock_reads(SIGNED_AT):
+        response = await anon_client.get(PROTECTED)
+
+    assert response.status_code == 401
+
+
+async def test_cookie_tampered_after_signing_is_still_rejected(
+    anon_client: AsyncClient,
+) -> None:
+    """A forged payload carrying an intact-looking timestamp gets no tolerance.
+
+    Distinct from the garbage-cookie test above: this one keeps a well-formed
+    timestamp, so it gets all the way to where itsdangerous splits value from
+    timestamp — and still raises `BadTimeSignature`, not `SignatureExpired`
+    (`itsdangerous/timed.py`: a signature error is re-raised before the age
+    arithmetic is ever reached). The clock-step tolerance hangs off
+    `SignatureExpired` alone, so no clock, forwards or backwards, can put a
+    tampered cookie anywhere near it.
+    """
+    await anon_client.post(LOGIN, json={"password": TEST_PASSWORD})
+    payload, timestamp, signature = anon_client.cookies[DOCUMENTED_COOKIE_NAME].split(
+        "."
+    )
+    anon_client.cookies.set(
+        DOCUMENTED_COOKIE_NAME, f"{payload[:-1]}x.{timestamp}.{signature}"
+    )
+
+    response = await anon_client.get(PROTECTED)
 
     assert response.status_code == 401
 
