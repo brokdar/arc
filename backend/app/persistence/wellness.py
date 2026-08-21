@@ -28,7 +28,7 @@ from app.domain.wellness import (
     WellnessProvenance,
     WellnessSource,
 )
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 
@@ -250,7 +250,7 @@ class WellnessRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete(self, row: WellnessDayRow) -> None:

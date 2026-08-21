@@ -25,7 +25,7 @@ from app.domain.agent_notes import (
     DisputeRating,
     NoteKind,
 )
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Width of the stored actor string (`app.domain.actor.Actor`), as everywhere
@@ -109,7 +109,7 @@ class AgentNoteRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def get(self, note_id: uuid.UUID) -> AgentNoteRow | None:

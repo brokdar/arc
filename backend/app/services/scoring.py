@@ -102,7 +102,7 @@ from app.persistence.activity import (
     session_duration_s,
 )
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit, session_scope
+from app.persistence.db import commit, refresh, session_scope
 from app.persistence.matching import (
     EveningPromptRepository,
     EveningPromptRow,
@@ -386,7 +386,7 @@ class ScoringService:
         row = await self._score(session_id, actor=actor, reason=reason)
         if row is not None:
             await commit(self._session)
-            await self._session.refresh(row)
+            await refresh(self._session, row)
         return row
 
     async def recompute(
@@ -741,7 +741,7 @@ class ScoringService:
         )
         await self._score(session_id, actor=actor, reason=REASON_OFFSET_CHANGED)
         await commit(self._session)
-        await self._session.refresh(alignment_row)
+        await refresh(self._session, alignment_row)
         return alignment_row
 
     # --- testimony (WP-7.2, WP-7.3) ------------------------------------------
@@ -834,7 +834,7 @@ class ScoringService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(held)
+        await refresh(self._session, held)
         return held
 
     async def revise_reasons(
@@ -874,7 +874,7 @@ class ScoringService:
             revision_reason=revision_reason or "revised by the athlete",
         )
         await commit(self._session)
-        await self._session.refresh(appended)
+        await refresh(self._session, appended)
         return appended
 
     async def answer_prompt(
@@ -927,7 +927,7 @@ class ScoringService:
                 },
             )
         await commit(self._session)
-        await self._session.refresh(appended)
+        await refresh(self._session, appended)
         return appended
 
     async def _append_reasons(

@@ -84,7 +84,7 @@ from app.domain.workout import (
 )
 from app.domain.workout import referenced_anchor_types as body_anchors
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit
+from app.persistence.db import commit, refresh
 from app.persistence.matching import SessionMatchRepository
 from app.persistence.planned_sessions import (
     PlannedSessionIntentRow,
@@ -617,7 +617,7 @@ class PlannedSessionService:
             success_criteria=success_criteria,
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def stage_create(
@@ -696,7 +696,7 @@ class PlannedSessionService:
         """
         row = await self.stage_update(planned_session_id, updates, actor=actor)
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def stage_update(
@@ -781,7 +781,7 @@ class PlannedSessionService:
         """
         row = await self.stage_move(planned_session_id, date=date, actor=actor)
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def stage_move(
@@ -888,7 +888,7 @@ class PlannedSessionService:
             | {"copied_from": str(source.id)},
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete(self, planned_session_id: uuid.UUID, *, actor: Actor) -> None:

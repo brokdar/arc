@@ -45,7 +45,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.versioning import current_version
 from app.domain.zones import ZoneModel
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest a recompute reason may be. The same bound the intent chain uses.
@@ -202,5 +202,5 @@ class SessionMetricsRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row

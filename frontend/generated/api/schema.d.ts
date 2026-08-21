@@ -6908,6 +6908,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The subject is not exactly one, or the week is not a Monday */
       422: {
         headers: {
@@ -6979,6 +6988,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The subject is not exactly one, or the week is not a Monday */
       422: {
         headers: {
@@ -7015,6 +7033,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7073,6 +7100,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Version violates a schema or domain rule */
       422: {
         headers: {
@@ -7116,6 +7152,15 @@ export interface operations {
       };
       /** @description Anchor version not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7172,6 +7217,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -7205,6 +7259,15 @@ export interface operations {
       };
       /** @description Anchor history is append-only */
       405: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7252,6 +7315,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -7285,6 +7357,15 @@ export interface operations {
       };
       /** @description Anchor history is append-only */
       405: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7344,6 +7425,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description No zone model derives from this anchor type */
       422: {
         headers: {
@@ -7375,6 +7465,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7417,6 +7516,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7549,6 +7657,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-list_connections": {
@@ -7571,6 +7688,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7665,6 +7791,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-start_dropbox_authorization": {
@@ -7687,6 +7822,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7792,6 +7936,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-get_connection": {
@@ -7825,6 +7978,15 @@ export interface operations {
       };
       /** @description No such connection, feed or folder */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -7872,6 +8034,15 @@ export interface operations {
       };
       /** @description No such connection, feed or folder */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8060,6 +8231,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8109,6 +8289,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8150,6 +8339,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8184,6 +8382,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8358,6 +8565,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The upload is unusable */
       422: {
         headers: {
@@ -8396,6 +8612,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "integrations-list_integrations": {
@@ -8418,6 +8643,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8532,6 +8766,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "integrations-set_local_drop_settings": {
@@ -8567,6 +8810,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8621,6 +8873,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8662,6 +8923,15 @@ export interface operations {
       };
       /** @description No such integration or folder */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8732,6 +9002,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8792,6 +9071,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The session violates a schema or domain rule */
       422: {
         headers: {
@@ -8828,6 +9116,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -8953,6 +9250,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -8995,6 +9301,15 @@ export interface operations {
       };
       /** @description No such match */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9230,6 +9545,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -9270,6 +9594,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9337,6 +9670,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Session violates a schema or domain rule */
       422: {
         headers: {
@@ -9386,6 +9728,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -9426,6 +9777,15 @@ export interface operations {
       };
       /** @description No such planned session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9495,6 +9855,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Session violates a schema or domain rule */
       422: {
         headers: {
@@ -9557,6 +9926,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Session violates a schema or domain rule */
       422: {
         headers: {
@@ -9599,6 +9977,15 @@ export interface operations {
       };
       /** @description No such planned session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9649,6 +10036,15 @@ export interface operations {
       };
       /** @description No such planned session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9718,6 +10114,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Session violates a schema or domain rule */
       422: {
         headers: {
@@ -9760,6 +10165,15 @@ export interface operations {
       };
       /** @description No such planned session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9838,6 +10252,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The request violates a schema or domain rule */
       422: {
         headers: {
@@ -9874,6 +10297,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -9923,6 +10355,15 @@ export interface operations {
       };
       /** @description No such proposal */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10097,6 +10538,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "purposes-get_purpose": {
@@ -10121,6 +10571,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10175,6 +10634,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -10217,6 +10685,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10286,6 +10763,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The session violates a schema or domain rule */
       422: {
         headers: {
@@ -10328,6 +10814,15 @@ export interface operations {
       };
       /** @description No such session, or nothing scored */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10397,6 +10892,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The request violates a schema or domain rule */
       422: {
         headers: {
@@ -10452,6 +10956,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10521,6 +11034,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -10563,6 +11085,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10619,6 +11150,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -10661,6 +11201,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10730,6 +11279,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The request violates a schema or domain rule */
       422: {
         headers: {
@@ -10772,6 +11330,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -10886,6 +11453,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -10950,6 +11526,15 @@ export interface operations {
       };
       /** @description No such session */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11028,6 +11613,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The request violates a schema or domain rule */
       422: {
         headers: {
@@ -11072,6 +11666,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11124,6 +11727,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The day violates a schema or domain rule */
       422: {
         headers: {
@@ -11166,6 +11778,15 @@ export interface operations {
       };
       /** @description Nothing recorded for that date */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11226,6 +11847,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The prompt already expired */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The day violates a schema or domain rule */
       422: {
         headers: {
@@ -11264,6 +11894,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "wellness-get_wellness_prompt": {
@@ -11288,6 +11927,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11400,6 +12048,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description The day violates a schema or domain rule */
       422: {
         headers: {
@@ -11450,6 +12107,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -11481,6 +12147,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11521,6 +12196,15 @@ export interface operations {
       };
       /** @description No valid session */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11579,6 +12263,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Workout violates a schema or domain rule */
       422: {
         headers: {
@@ -11628,6 +12321,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -11668,6 +12370,15 @@ export interface operations {
       };
       /** @description No such workout */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -11737,6 +12448,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
       /** @description Workout violates a schema or domain rule */
       422: {
         headers: {
@@ -11782,6 +12502,15 @@ export interface operations {
       };
       /** @description No such anchor version, or none in force */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
         headers: {
           [name: string]: unknown;
         };

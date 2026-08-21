@@ -44,7 +44,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
 from app.core.config import get_settings
 from app.domain.connections import ConnectionProvider, ConnectionStatus
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle broken for the annotation
@@ -376,7 +376,7 @@ class ConnectionRepository:
         else:
             row.app_key = app_key
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete_provider_app(self, row: ProviderAppRow) -> None:
@@ -422,7 +422,7 @@ class ConnectionRepository:
         """Persist a connection and refresh it."""
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row, ["feeds"])
+        await refresh(self._session, row, ["feeds"])
         return row
 
     async def delete(self, row: ConnectionRow) -> None:
@@ -452,7 +452,7 @@ class ConnectionRepository:
         """Persist a feed and refresh it."""
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def delete_feed(self, row: FeedRow) -> None:
@@ -475,7 +475,7 @@ class ConnectionRepository:
             await self._session.delete(existing)
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     async def authorizations(

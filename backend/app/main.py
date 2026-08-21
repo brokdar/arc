@@ -156,13 +156,24 @@ def create_app() -> FastAPI:
 
     # Everything else is behind the session cookie. Mount new routers here
     # unless they have a deliberate reason to be public.
-    unauthorized: dict[int | str, dict[str, Any]] = {
-        401: {"model": ErrorDetail, "description": "No valid session"}
+    # Declared once here rather than on each route, the way 401 already is:
+    # both are properties of the router, not of any one endpoint. Any write can
+    # lose a race — a uniqueness pre-check overtaken, or a row deleted between
+    # the read and the flush of a read-modify-write — and
+    # `app.persistence.db` answers all of them 409, so every operation mounted
+    # here can produce one. `test_api_contract.py` pins that the mutating ones
+    # publish it.
+    shared: dict[int | str, dict[str, Any]] = {
+        401: {"model": ErrorDetail, "description": "No valid session"},
+        409: {
+            "model": ErrorDetail,
+            "description": "The write lost a race against a concurrent one",
+        },
     }
     api = APIRouter(
         prefix=settings.api_path,
         dependencies=[Depends(require_session)],
-        responses=unauthorized,
+        responses=shared,
     )
     api.include_router(athlete_router)
     api.include_router(clock_router)

@@ -10331,6 +10331,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10428,6 +10438,16 @@
             },
             "description": "No such note"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10509,6 +10529,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10571,6 +10601,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -10639,6 +10679,16 @@
             },
             "description": "Anchor version not found"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10694,6 +10744,16 @@
               }
             },
             "description": "Anchor history is append-only"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -10760,6 +10820,16 @@
             },
             "description": "Anchor version not found"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10814,6 +10884,16 @@
             },
             "description": "Anchor history is append-only"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10867,6 +10947,16 @@
               }
             },
             "description": "Anchor history is append-only"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -10945,6 +11035,16 @@
             },
             "description": "No such anchor version, or none in force"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -10989,6 +11089,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -11042,6 +11152,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -11173,6 +11293,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -11208,6 +11338,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -11236,6 +11376,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -11344,6 +11494,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -11464,6 +11624,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -11514,6 +11684,16 @@
               }
             },
             "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -11579,6 +11759,16 @@
               }
             },
             "description": "No such connection, feed or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -11859,6 +12049,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11924,6 +12124,16 @@
               }
             },
             "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -11996,6 +12206,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -12066,6 +12286,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -12286,6 +12516,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -12330,6 +12570,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -12365,6 +12615,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -12493,6 +12753,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -12546,6 +12816,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -12605,6 +12885,16 @@
               }
             },
             "description": "No such integration or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -12674,6 +12964,16 @@
               }
             },
             "description": "No such integration or folder"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -12769,6 +13069,16 @@
             },
             "description": "No such integration or folder"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -12843,6 +13153,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -12924,6 +13244,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -13075,6 +13405,16 @@
             },
             "description": "No such match"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -13139,6 +13479,16 @@
               }
             },
             "description": "No such match"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -13448,6 +13798,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -13553,6 +13913,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -13626,6 +13996,16 @@
             },
             "description": "No such planned session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -13685,6 +14065,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -13750,6 +14140,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -13835,6 +14235,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -13923,6 +14333,16 @@
             },
             "description": "No such planned session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -13989,6 +14409,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14065,6 +14495,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14153,6 +14593,16 @@
             },
             "description": "No such planned session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -14219,6 +14669,16 @@
               }
             },
             "description": "No such planned session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14315,6 +14775,16 @@
             },
             "description": "No such planned session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -14396,6 +14866,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -14462,6 +14942,16 @@
               }
             },
             "description": "No such proposal"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14681,6 +15171,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -14726,6 +15226,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14832,6 +15342,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -14898,6 +15418,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -14984,6 +15514,16 @@
             },
             "description": "No such session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15050,6 +15590,16 @@
               }
             },
             "description": "No such session, or nothing scored"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15135,6 +15685,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15222,6 +15782,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15317,6 +15887,16 @@
             },
             "description": "No such session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15384,6 +15964,16 @@
             },
             "description": "No such session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15450,6 +16040,16 @@
               }
             },
             "description": "No such session, or nothing scored"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15521,6 +16121,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15616,6 +16226,16 @@
             },
             "description": "No such session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15682,6 +16302,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -15827,6 +16457,16 @@
             },
             "description": "No such session, or nothing scored"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15921,6 +16561,16 @@
               }
             },
             "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -16019,6 +16669,16 @@
             },
             "description": "No such session, or nothing scored"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16083,6 +16743,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -16179,6 +16849,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16245,6 +16925,16 @@
               }
             },
             "description": "Nothing recorded for that date"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -16329,6 +17019,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The prompt already expired"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16373,6 +17073,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -16416,6 +17126,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -16575,6 +17295,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16644,6 +17374,16 @@
             },
             "description": "Nothing recorded for that date"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16688,6 +17428,16 @@
               }
             },
             "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           }
         },
         "security": [
@@ -16799,6 +17549,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16862,6 +17622,16 @@
             },
             "description": "No valid session"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16921,6 +17691,16 @@
               }
             },
             "description": "No such workout"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -16986,6 +17766,16 @@
               }
             },
             "description": "No such workout"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {
@@ -17072,6 +17862,16 @@
             },
             "description": "No such workout"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -17148,6 +17948,16 @@
               }
             },
             "description": "No such anchor version, or none in force"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
           },
           "422": {
             "content": {

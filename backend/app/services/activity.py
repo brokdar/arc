@@ -47,7 +47,7 @@ from app.persistence.activity import (
     SessionRow,
 )
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit
+from app.persistence.db import commit, refresh
 from app.services.exercises import ExerciseService
 from app.services.guardrails import check_write_cap
 from app.services.matching import MatchingService
@@ -295,7 +295,7 @@ class SessionService:
             payload=changed | {"changed": sorted(changed)},
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         # A discipline correction changes which load model is preferred
         # (A5.2), so the artefact is stale the moment it is applied. A
         # timezone correction does not touch a single metric input, and a
@@ -449,7 +449,7 @@ class SessionService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         row = await self._recompute_strength(row, actor=actor, reason=None)
         # Matching first, then the proposals: a link is one of the two things
         # that resolve a pending proposal, and WP-6 links a recording

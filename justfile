@@ -101,6 +101,10 @@ test:
 test-int:
 	bash scripts/run-integration-tests.sh
 
+# Fuzz the API from its OpenAPI schema, as CI does (needs Docker for Postgres)
+fuzz *args:
+	bash scripts/run-fuzz.sh {{args}}
+
 # Production build of the frontend (catches what `tsgo --noEmit` cannot)
 build:
 	cd frontend && bun run build

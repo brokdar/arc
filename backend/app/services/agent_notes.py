@@ -39,7 +39,7 @@ from app.domain.agent_notes import (
 )
 from app.persistence.agent_notes import AgentNoteRepository, AgentNoteRow
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit
+from app.persistence.db import commit, refresh
 from app.services.activity import SessionService
 from app.services.guardrails import check_write_cap, is_agent
 
@@ -211,7 +211,7 @@ class AgentNoteService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
     # --- answering one --------------------------------------------------------
@@ -267,7 +267,7 @@ class AgentNoteService:
             },
         )
         await commit(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row
 
 

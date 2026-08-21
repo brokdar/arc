@@ -41,7 +41,7 @@ from app.domain.proposals import (
     MAX_RESOLUTION_NOTE_CHARS,
     ProposalStatus,
 )
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest actor string stored on a proposal. Matches `audit_log.actor`: it is
@@ -173,5 +173,5 @@ class PlanProposalRepository:
         """
         self._session.add(row)
         await flush(self._session)
-        await self._session.refresh(row)
+        await refresh(self._session, row)
         return row

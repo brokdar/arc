@@ -49,6 +49,15 @@ dev = [
     "import-linter>=2.3",
     "hypothesis>=6.165.1",
     "fit-tool>=0.9.16",
+    # The API fuzzer (`just fuzz`, `.github/workflows/api-fuzz.yml`). A locked
+    # dependency rather than a `uvx` fetch so CI runs a tree this repo pins and
+    # Dependabot maintains — neither is true of a version inside a `run:` block.
+    "schemathesis>=4.24.3",
+    # Nothing imports this: it bounds schemathesis's own dependency, which is
+    # unbounded upstream. schemathesis 4.24.3 calls
+    # `CanonicalSchema.is_satisfiable`, removed in jsonschema-rs 0.50. Delete
+    # the line to lift it — the Dependabot PR that raises it runs the fuzz job.
+    "jsonschema-rs<0.50",
 ]
 
 [build-system]

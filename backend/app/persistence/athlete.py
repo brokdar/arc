@@ -25,7 +25,7 @@ from app.domain.athlete import (
     Sex,
 )
 from app.domain.plan import PlanState
-from app.persistence.db import Base, flush
+from app.persistence.db import Base, flush, refresh
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Primary key of the one and only athlete row.
@@ -114,5 +114,5 @@ class AthleteRepository:
         """
         self._session.add(athlete)
         await flush(self._session)
-        await self._session.refresh(athlete)
+        await refresh(self._session, athlete)
         return athlete

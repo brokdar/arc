@@ -452,7 +452,7 @@ async def get_wellness_day(service: ServiceDep, local_date: dt.date) -> Wellness
     return to_read(row, subjective_recalled=service.is_recalled(row))
 
 
-@router.patch("/days/{local_date}", responses=BAD_BODY | INVALID)
+@router.patch("/days/{local_date}", responses=BAD_BODY | INVALID | CONFLICT)
 async def record_wellness_day(
     service: ServiceDep,
     actor: ActorDep,
@@ -487,7 +487,14 @@ async def record_wellness_day(
     )
     if result.day is None:
         return None
-    row = await service.get(local_date)
+    try:
+        row = await service.get(local_date)
+    except NotFoundError:
+        # The write landed, and a concurrent retraction removed the day before
+        # this read. `null` is what this endpoint already says for "there is
+        # nothing here now", so answering it keeps one contract for one state
+        # rather than a 404 on a PATCH that succeeded.
+        return None
     return to_read(row, subjective_recalled=service.is_recalled(row))
 
 
