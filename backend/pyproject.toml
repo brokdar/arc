@@ -53,6 +53,11 @@ dev = [
     # dependency rather than a `uvx` fetch so CI runs a tree this repo pins and
     # Dependabot maintains — neither is true of a version inside a `run:` block.
     "schemathesis>=4.24.3",
+    # The application never parses YAML; the guards over this repo's config do
+    # (`tests/unit/test_zizmor_invocation.py`), and comparing two invocations by
+    # regex would break on a reflow that changes nothing about what runs. Named
+    # here because it currently arrives transitively, one `uv lock` from gone.
+    "pyyaml>=6.0.3",
     # Nothing imports this: it bounds schemathesis's own dependency, which is
     # unbounded upstream. schemathesis 4.24.3 calls
     # `CanonicalSchema.is_satisfiable`, removed in jsonschema-rs 0.50. Delete

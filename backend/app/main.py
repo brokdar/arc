@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
-from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.deps import require_session
 from app.api.routes.activity import manual_router as manual_sessions_router
@@ -35,6 +34,7 @@ from app.api.routes.wellness import router as wellness_router
 from app.api.routes.workouts import labels_router as workout_labels_router
 from app.api.routes.workouts import router as workouts_router
 from app.api.routes.zones import router as zones_router
+from app.api.session import ClockStepTolerantSessionMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import ErrorDetail, register_exception_handlers
 from app.core.logging import configure_logging, get_logger
@@ -129,8 +129,12 @@ def create_app() -> FastAPI:
     # headers the browser needs to read it, and `allow_credentials=True` lets
     # the cross-origin dev setup (localhost:3000 -> localhost:8000) send the
     # cookie at all. Behind Caddy everything is same-origin and CORS is moot.
+    #
+    # Stock `SessionMiddleware` except for its signer, which is swapped for one
+    # that survives a wall clock stepping backwards — see `app.api.session` for
+    # why that is not a weakening of the cookie (issue #61).
     app.add_middleware(
-        SessionMiddleware,
+        ClockStepTolerantSessionMiddleware,
         secret_key=settings.auth.session.secret_key.get_secret_value(),
         session_cookie=settings.auth.session.cookie_name,
         max_age=settings.auth.session.max_age_seconds,

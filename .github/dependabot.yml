@@ -57,3 +57,66 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+
+  # The standalone tools in tools/requirements.txt — zizmor, prek, just,
+  # git-cliff. A requirements file is what Dependabot calls the `pip` ecosystem;
+  # uv is what actually reads it (`uvx --constraints`,
+  # `uv tool install --constraints`). Without this entry those pins are numbers
+  # nobody raises, which is how a pinned tool rots instead of breaking.
+  - package-ecosystem: "pip"
+    directory: "/tools"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      tools:
+        patterns: ["*"]
+
+  # Base images. Minors and patches flow automatically — some tags already float
+  # (`postgres:18-alpine` picks up 18.x on its own) and some do not
+  # (`caddy:2.11-alpine` sits inside 2.11, so 2.12 arrives as a PR) — and either
+  # way a rebuild is the whole change.
+  #
+  # Majors are taken by hand, because here they are migrations wearing a version
+  # number and CI is structurally unable to say so: postgres 18 → 19 needs
+  # `pg_upgrade`, but integration tests build an empty database, so the bump goes
+  # green and then refuses to boot on the athlete's populated volume with
+  # "database files are incompatible with server". `node:24-alpine` → 25 leaves
+  # the LTS line. Neither is a review comment; both are a decision with a
+  # migration attached.
+  - package-ecosystem: "docker"
+    directories:
+      - "/backend"
+      - "/frontend"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      docker-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Same images, different parser: `docker` reads Dockerfiles only, so postgres,
+  # caddy and alpine in the compose files need their own ecosystem — and the
+  # same hands-off rule on majors, for the same reason.
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/backend"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      compose-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

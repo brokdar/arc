@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import athlete_today
 from app.core.exceptions import NotFoundError
@@ -26,7 +26,7 @@ from app.domain.wellness import (
     WRITABLE_FIELDS,
     Confounder,
 )
-from app.persistence.wellness import WellnessDayRow
+from app.persistence.wellness import WellnessDayRow, WellnessRepository
 from app.persistence.wellness_prompt import WellnessPromptRow
 from app.services.wellness import WellnessService
 
@@ -182,6 +182,55 @@ async def test_a_day_retracted_between_the_write_and_the_read_back_answers_null(
 
     assert response.status_code == 200, response.text
     assert response.json() is None
+
+
+async def test_a_day_retracted_under_the_write_itself_answers_409(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of the same gap: retracted before the write, not after.
+
+    `WellnessService._write_one` already swallows one `ConflictError` — the
+    create race, where two writes for a day that does not exist yet both INSERT
+    and the loser re-reads instead of failing. This race arrives at the same
+    `except` clause and must come out of it: the row *was* there, so the loser
+    has nothing to re-read and a 200 would tell the athlete their edit landed
+    when it did not.
+
+    A real race, not a simulation: a second session really deletes the day and
+    the request's own UPDATE really matches nothing
+    (`test_db_write_failures.py`). Only the moment the retraction lands is
+    forced, by standing in the gap between the service's read and its flush —
+    which is the gap, and the only place a single-threaded request can be
+    interrupted at all.
+    """
+    await record(client, resting_hr_bpm=46)
+    real_get = WellnessRepository.get
+    retracted = False
+
+    async def get_then_retract(
+        self: WellnessRepository, local_date: dt.date
+    ) -> WellnessDayRow | None:
+        nonlocal retracted
+        row = await real_get(self, local_date)
+        if row is not None and not retracted:
+            retracted = True
+            async with session_factory() as other:
+                doomed = await other.get(WellnessDayRow, row.id)
+                assert doomed is not None
+                await other.delete(doomed)
+                await other.commit()
+        return row
+
+    monkeypatch.setattr(WellnessRepository, "get", get_then_retract)
+
+    response = await client.patch(
+        f"{DAYS}/{TODAY.isoformat()}", json={"resting_hr_bpm": 48}
+    )
+
+    assert retracted, "the read the race is arranged around was never reached"
+    assert response.status_code == 409, response.text
 
 
 async def test_an_empty_write_to_a_day_that_never_existed_is_still_refused(

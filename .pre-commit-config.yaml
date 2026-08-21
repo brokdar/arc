@@ -238,15 +238,18 @@ repos:
   # ============================================================================
   # Workflow security
   # ============================================================================
-  # Mirrors zizmor.yml. Workflow files change rarely, so this almost never runs
-  # — but when it does, a lint discovered in CI costs a whole run to learn
-  # something `uvx` answers in seconds. Needs network for the first `uvx` fetch;
-  # if you are offline, SKIP=zizmor and let CI have it.
+  # Mirrors zizmor.yml — including the `--constraints` file, which is the point:
+  # both sides take the version from tools/requirements.txt, so a hook that
+  # passes cannot be running an older or newer set of audits than CI. Workflow
+  # files change rarely, so this almost never runs — but when it does, a lint
+  # discovered in CI costs a whole run to learn something `uvx` answers in
+  # seconds. Needs network for the first `uvx` fetch; if you are offline,
+  # SKIP=zizmor and let CI have it.
   - repo: local
     hooks:
       - id: zizmor
         name: zizmor
-        entry: ./scripts/run-if-changed.sh '^\.github/workflows/.*\.ya?ml$' -- uvx zizmor .github/workflows/
+        entry: ./scripts/run-if-changed.sh '^(\.github/workflows/.*\.ya?ml|tools/requirements\.txt)$' -- uvx --constraints tools/requirements.txt zizmor .github/workflows/
         pass_filenames: false
         language: script
         always_run: true

@@ -26,6 +26,7 @@ from app.ingest.inbox import forget_seen_files
 from app.main import DATA_SUBDIRECTORIES, create_app
 from app.persistence import load_models
 from app.persistence.db import Base, get_session, set_session_factory
+from app.services.scoring import set_stream_loader
 
 #: The password every authenticated fixture logs in with.
 TEST_PASSWORD = "test-password"
@@ -50,6 +51,26 @@ def _auth_env(password_hash: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[N
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_stream_loader() -> Iterator[None]:
+    """Put `app.services.scoring`'s loader seam back after every test.
+
+    `create_app()` installs the real parquet reader into a *module-level*
+    pointer (`app.ingest.scoring.install_stream_loader`) and nothing takes it
+    out again, so within one xdist worker the first test that builds an app
+    changes what every later test sees: before it, sessions have no streams;
+    after it, they are read through whatever `DATA__ROOT` then points at —
+    usually a `tmp_path` another test has already deleted. That is
+    order-dependent global state, which is what made issue #61 hard to read.
+
+    Autouse rather than a teardown on the `app` fixture: `create_app()` is also
+    called directly (`test_scheduler.py`, `test_data_dirs.py`,
+    `test_proposals_api.py`), and those installs leak just as far.
+    """
+    yield
+    set_stream_loader(None)
 
 
 @pytest.fixture

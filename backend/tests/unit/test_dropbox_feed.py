@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
 from app.connectors import dropbox
@@ -1070,6 +1070,69 @@ async def test_an_unreadable_credential_is_marked_and_other_feeds_still_poll(
     assert refreshed.status is ConnectionStatus.ERROR
     assert refreshed.last_error is not None
     assert fake.calls == [], "arc cannot open the credential, so it asks nothing"
+
+
+async def test_a_connection_disconnected_mid_sweep_does_not_end_the_sweep(
+    fake: FakeDropbox,
+    db_session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one write `_due_feeds` makes while still enumerating can lose a race.
+
+    Marking an unreadable credential `error` commits mid-enumeration, and since
+    `app.persistence.db` learned to translate a stale UPDATE, losing that race
+    raises `ConflictError` — which uncaught would abort the whole cycle, every
+    connection and every feed, because the athlete pressed Disconnect while the
+    sweep was running.
+
+    A real race: a second session really deletes the row and the sweep's UPDATE
+    really goes stale. Only the *moment* the athlete acts is forced, by
+    standing in front of the commit, because a race left to chance is a test
+    that passes for the wrong reason. Nothing raises the exception on the
+    sweep's behalf — the point is that SQLAlchemy raises what this layer claims
+    to catch (`test_db_write_failures.py`).
+
+    Asserted through the sweep completing rather than through a surviving
+    connection: `uq_connections_provider` plus a one-member `ConnectionProvider`
+    means there is at most one connection to enumerate today, so "it carries on
+    to the next one" has nothing to show yet. What is observable is the
+    difference that matters — the cycle ends normally instead of in a
+    traceback.
+    """
+    stranger = Fernet(Fernet.generate_key())
+    broken = await connect(
+        db_session, credentials=stranger.encrypt(b'{"access_token":"x"}')
+    )
+    await watch(db_session, broken, remote_path="/broken")
+    connection_id = broken.id
+    real_commit = feeds.commit
+    disconnected = False
+
+    async def disconnect_then_commit(session: AsyncSession) -> None:
+        nonlocal disconnected
+        if not disconnected:
+            disconnected = True
+            async with session_factory() as athlete:
+                row = await athlete.get(ConnectionRow, connection_id)
+                assert row is not None
+                await athlete.delete(row)
+                await athlete.commit()
+        await real_commit(session)
+
+    monkeypatch.setattr(feeds, "commit", disconnect_then_commit)
+
+    with capture_logs() as logs:
+        await feeds.run_feed_poll_job()
+
+    assert disconnected, "the commit the race is arranged around was never reached"
+    assert await rows_of(db_session, ConnectionRow) == [], "the athlete's delete won"
+    events = [entry["event"] for entry in logs]
+    assert "dropbox_connection_vanished" in events
+    assert "dropbox_feed_poll_job_failed" not in events, (
+        "one disconnected connection ended the whole sweep"
+    )
+    assert fake.calls == []
 
 
 async def test_one_feeds_failure_does_not_stop_the_next_feed(
