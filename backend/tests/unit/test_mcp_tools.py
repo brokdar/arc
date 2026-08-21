@@ -3440,6 +3440,34 @@ async def test_get_ingest_status_names_the_source_behind_the_folder(
     assert folder["deliveries_7d"] == 0
     assert folder["last_error"] is None
     assert folder["connection_status"] == "connected"
+    # Null, not absent: this connection has never been verified, and "nobody
+    # has checked" is an answer the coach needs to be able to read.
+    assert folder["last_verified_at"] is None
+
+
+async def test_get_ingest_status_says_when_the_credential_was_last_proved(
+    dropbox_env: None, session_factory: Any, db_session: AsyncSession
+) -> None:
+    """AC-8 for the coach: `connected` travels with the time it was observed.
+
+    The bare word is the claim this feature demoted — "nothing has told arc
+    otherwise", which arc could go on saying for weeks after a console
+    permission change killed the grant. A coach reading a thin week and a
+    `connected` folder needs the same fact the settings panel gives the
+    athlete: when arc last watched that credential read a file.
+    """
+    connection = await seed_dropbox(db_session)
+    verified_at = dt.datetime(2026, 8, 16, 9, 14, tzinfo=dt.UTC)
+    connection.last_verified_at = verified_at
+    await db_session.commit()
+    await seed_integration(db_session, connection, "/apps/wahoofitness")
+
+    data = await call(READER, "get_ingest_status")
+
+    [_local, wahoo] = data["integrations"]
+    [folder] = wahoo["folders"]
+    assert folder["connection_status"] == "connected"
+    assert dt.datetime.fromisoformat(folder["last_verified_at"]) == verified_at
 
 
 async def test_a_connected_dropbox_with_no_integrations_is_not_local_inbox_only(

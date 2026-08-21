@@ -4298,7 +4298,10 @@ function seedConnectionsState(): ConnectionsMockState {
         },
       ],
       // Nothing at all in it: the state the old copy asserted files into.
-      ["/photos", { path_display: "/Photos", folders: [], files: [] }],
+      // `path_display` echoes the *requested* path, lower case and all,
+      // because that is what the API can answer with — it derives a listing's
+      // display path from its first entry, and an empty folder has none.
+      ["/photos", { path_display: "/photos", folders: [], files: [] }],
     ]),
     verificationNote: null,
     minted: 0,
@@ -5092,12 +5095,20 @@ export function discoverIntegrations(connectionId: string): Discovery | null {
       const path = normaliseRemotePath(folder.path);
       const kind =
         classified.get(path) ?? (path === WAHOO_PATH ? "wahoo" : null);
+      // Dropbox's own spelling, taken from the same folder tree the browser
+      // reads: the service derives it from the listing's entries, so the two
+      // surfaces describe one Dropbox and cannot disagree about its casing.
+      const pathDisplay =
+        connectionsState().folders.get(path)?.path_display ?? path;
       return {
         kind,
-        display_name: kind ? DISPLAY_NAMES[kind] : path || "the Dropbox root",
+        display_name: kind
+          ? DISPLAY_NAMES[kind]
+          : pathDisplay || path || "the Dropbox root",
         connection_id: connectionId,
         transport: "cloud_folder" as const,
         path,
+        path_display: pathDisplay,
         activity_files: folder.activityFiles,
         newest_at: folder.newestAt,
         configured: held.has(path),

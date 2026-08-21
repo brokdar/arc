@@ -234,7 +234,7 @@ include-name = "POST /api/v1/wellness/prompt"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
-# The Dropbox connect surface refuses three things a JSON schema cannot state,
+# The Dropbox connect surface refuses four things a JSON schema cannot state,
 # each pinned by a unit test (`test_connections_api.py`):
 #
 #   * starting a connection needs `DROPBOX__APP_KEY`, and without it the answer

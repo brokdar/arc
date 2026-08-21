@@ -398,6 +398,53 @@ async def test_a_missing_scope_after_a_refresh_is_still_reported_as_scope(
     assert row.last_error is None
 
 
+async def test_a_403_naming_a_scope_is_a_scope_error_and_refreshes_nothing(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Dropbox says "missing scope" with both status codes; arc reads both.
+
+    `probe_readable` has always parsed 401 and 403 alike, and `_call` — the
+    path every browse and every poll takes — read only 401. So the same
+    withdrawn permission was a named scope during the connect and a generic
+    upstream failure five minutes later, which reached the athlete as a 502's
+    "try again in a few minutes" for a condition no waiting fixes.
+    """
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read", status=403))
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert raised.value.required_scope == "files.metadata.read"
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_a_403_about_anything_else_is_an_auth_failure_and_is_not_retried(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The asymmetry with 401, in the traffic: 403 never buys a refresh.
+
+    A 401 is Dropbox refusing *this token*, which a fresh one can genuinely
+    fix — so it gets the one refresh-and-retry. A 403 is Dropbox refusing
+    *this app*, and no token arc can mint changes that answer: retrying would
+    spend a token request to be refused identically and then report an
+    unrecoverable condition as a dead credential.
+    """
+    fake.script(
+        LIST_FOLDER_PATH,
+        httpx.Response(403, json={"error_summary": "access_denied/team_policy/"}),
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAuthError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert not isinstance(raised.value, DropboxScopeError)
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
 async def test_a_401_arc_cannot_read_keeps_the_refresh_once_then_fail_path(
     db_session: AsyncSession, fake: FakeDropbox
 ) -> None:
@@ -438,3 +485,59 @@ async def test_a_dead_credential_records_the_athletes_remedy_not_the_mechanism(
     assert "token" not in row.last_error
     assert "credential" not in row.last_error
     assert "Disconnect and connect again" in row.last_error
+
+
+async def test_a_successful_refresh_does_not_put_a_flipped_row_back_to_connected(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A refresh proves the credential is alive, not that arc can read files.
+
+    The two claims came apart in one poll cycle. `mark_needs_reauth` clears
+    the token expiry, so the next call on a just-flipped connection refreshes
+    first — and a refresh that healed the status wrote `connected` over the
+    scope refusal that had *just* been proved. If the call after it then failed
+    with anything but another scope refusal, the cycle ended `connected` with
+    no error on the row at all: the zombie state the whole feature exists to
+    kill, restored by arc itself.
+
+    A grant whose `files.metadata.read` was unticked in the Dropbox console
+    refreshes perfectly for ever. The row leaves `needs_reauth` through a
+    reconnect and nothing else.
+    """
+    row = await connection(
+        db_session, expires_in=3_600, status=ConnectionStatus.NEEDS_REAUTH
+    )
+    # Exactly what `mark_needs_reauth` leaves behind.
+    row.last_error = PERMISSION_LOST
+    row.access_token_expires_at = None
+    await db_session.commit()
+
+    listing = await client(db_session, row).list_entries("")
+
+    # The refresh happened and the call went through on the new token …
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert listing.folders
+    # … and the row still says what the poll proved about it.
+    await db_session.refresh(row)
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == PERMISSION_LOST
+
+
+# --- what counts as proof that arc can read the athlete's files --------------
+
+
+def test_only_the_list_folder_family_verifies_a_credential() -> None:
+    """Pinned as an exact set, because widening it is silent and cheap.
+
+    Every member is a claim that a 200 from that endpoint means "arc can still
+    read the athlete's files". `users/get_current_account` answers 200 for a
+    grant carrying no file scopes whatsoever, so adding it would restore
+    exactly the defect `last_verified_at` was introduced to end: a connection
+    that cannot list a single folder, stamped and labelled `connected`. A
+    revoke and a token call say nothing about files either.
+    """
+    assert set(dropbox.VERIFYING_ENDPOINTS) == {
+        "/2/files/list_folder",
+        "/2/files/list_folder/continue",
+    }
+    assert "/2/users/get_current_account" not in dropbox.VERIFYING_ENDPOINTS

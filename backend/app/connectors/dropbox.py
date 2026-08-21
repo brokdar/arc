@@ -840,6 +840,26 @@ class DropboxClient:
         Under a per-connection lock, and re-checking the expiry after
         acquiring it: the caller that waited for the lock wants the token the
         holder just stored, not a second refresh that would invalidate it.
+
+        **A refresh that works does not make the connection `connected`
+        again.** It stores the new token and nothing else: no status, no
+        cleared ``last_error``. What a 200 here proves is that the *credential*
+        can still mint tokens, which is a strictly smaller claim than "arc can
+        read the athlete's files" — a grant whose `files.metadata.read` was
+        unticked in the Dropbox console refreshes perfectly and lists nothing.
+        Healing the row here is how a `needs_reauth` flip un-flipped itself
+        inside the poll cycle that made it: `mark_needs_reauth` clears
+        ``access_token_expires_at``, so the very next call on that connection
+        refreshes, and the refresh wrote `connected` over the refusal that had
+        just been proved. If the call after it then failed with anything but a
+        scope refusal — a 429, a 5xx, a folder that moved — the cycle ended
+        `connected` with no error at all, which is the zombie state
+        :class:`ConnectionStatus` exists to make impossible.
+
+        The row goes back to `connected` through **reconnect** only:
+        disconnect, then connect, whose probe
+        (`app.services.connections.complete_dropbox`) proves a scoped read
+        before a row is written at all.
         """
         async with _lock_for(self._connection.id):
             expires_at = self._connection.access_token_expires_at
@@ -878,8 +898,7 @@ class DropboxClient:
                 stored["refresh_token"] = grant.refresh_token
             self._connection.credentials = EncryptedCredentials.seal(stored)
             self._connection.access_token_expires_at = grant.expires_at
-            self._connection.status = ConnectionStatus.CONNECTED
-            self._connection.last_error = None
+            # Status and `last_error` are deliberately untouched — see above.
             await commit(self._session)
             return grant.access_token
 
@@ -969,7 +988,7 @@ class DropboxClient:
                 "Dropbox is rate-limiting arc",
                 retry_after=_retry_after(response),
             )
-        if response.status_code == 401:
+        if response.status_code in {401, 403}:
             # **The body is read before the retry counter is consulted.** A
             # `missing_scope` 401 and an `expired_access_token` 401 are the
             # same status code and different facts, and refreshing cannot mint
@@ -979,6 +998,21 @@ class DropboxClient:
             # second 401 — a stale token refreshed into a grant that never
             # carried the scope produces the pair, and the second one is still
             # about the scope.
+            #
+            # **403 is read the same way and retried in neither shape**, which
+            # is the asymmetry with 401 worth stating: 401 is Dropbox saying
+            # *this token* will not do, which a refresh can genuinely fix, so
+            # it gets the one refresh-and-retry. 403 is Dropbox saying *this
+            # app* will not do — a scope the grant does not carry, an account
+            # that cannot be reached this way — and no token arc can mint
+            # changes that answer. Retrying it would spend a token request to
+            # be refused identically, and (`retried` now true) report an
+            # unrecoverable condition as a dead credential. Left unclassified,
+            # a 403 fell through to :class:`DropboxUpstreamError` and reached
+            # the athlete as a 502's "try again in a few minutes", which is
+            # advice that never comes true. `probe_readable` has always read
+            # both codes; this is the same rule on the path every browse and
+            # every poll takes.
             body = _json_or_empty(response)
             if (scope := _missing_scope(body)) is not None:
                 logger.info(
@@ -988,6 +1022,12 @@ class DropboxClient:
                     required_scope=scope,
                 )
                 raise DropboxScopeError(scope)
+            if response.status_code == 403:
+                summary = str(body.get("error_summary", ""))
+                raise DropboxAuthError(
+                    f"Dropbox refused {endpoint} with 403 "
+                    f"({summary or 'no reason given'})"
+                )
             if retried:
                 await self.mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(

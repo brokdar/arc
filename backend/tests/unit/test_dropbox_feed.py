@@ -68,6 +68,7 @@ from tests.unit.dropbox_fake import (
     DOWNLOAD_PATH,
     LIST_FOLDER_CONTINUE_PATH,
     LIST_FOLDER_PATH,
+    TOKEN_PATH,
     FakeDropbox,
     deleted_entry,
     expired_access_token,
@@ -85,6 +86,14 @@ pytestmark = pytest.mark.usefixtures("dropbox_env", "data_root", "session_factor
 
 #: The folder every feed here watches.
 WATCHED = "/apps/wahoofitness"
+
+#: A second folder on the same connection, polled **before** :data:`WATCHED`.
+#:
+#: `ConnectionRow.feeds` is ordered by `remote_path`, so "h" before "w" is what
+#: makes "the first feed of the cycle" a fact rather than a coincidence — the
+#: two-feed tests below are entirely about what the *second* one does after the
+#: first has flipped the row.
+ALSO_WATCHED = "/apps/healthfit"
 
 
 @pytest.fixture(autouse=True)
@@ -1590,6 +1599,133 @@ async def test_a_scope_refusal_in_the_poll_flips_the_row_in_one_cycle(
     assert refused.last_error is not None
     assert WATCHED in refused.last_error
     assert refused.cursor_attempts == 0, "the page was never reached"
+
+
+async def test_a_flip_stops_the_rest_of_the_same_cycle_dead(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-9: the flip takes effect on the feed after it, not on the next cycle.
+
+    Two folders, one credential. The first is refused for want of a scope and
+    flips the row; the second is now being polled with a credential arc has
+    just watched Dropbox refuse. It must not ask — and specifically must not
+    ask the *token* endpoint, because `mark_needs_reauth` clears the expiry, so
+    a second feed that built a client would refresh before its listing. That
+    refresh used to heal the row back to `connected`, and if the listing behind
+    it then failed with anything that is not a scope refusal the cycle ended
+    `connected` with no error at all: an account arc had proved was broken,
+    reported as working, for ever.
+    """
+    fake.list_failures[ALSO_WATCHED] = missing_scope("files.metadata.read")
+    fake.by_cursor = {None: page(cursor="cursor-1")}
+    connection = await connect(db_session)
+    refused = await watch(db_session, connection, remote_path=ALSO_WATCHED)
+    untouched = await watch(db_session, connection, remote_path=WATCHED)
+
+    await feeds.poll_feeds()
+
+    # One listing — the refused one — and no token request behind it.
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+    assert fake.calls_to(LIST_FOLDER_PATH)[0].body["path"] == ALSO_WATCHED
+    assert fake.calls_to(TOKEN_PATH) == []
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert stored.last_error is not None
+    # The scope sentence survives the rest of the cycle intact.
+    assert "files.metadata.read" in stored.last_error
+    assert "Permissions" in stored.last_error
+    assert "Submit" in stored.last_error
+
+    assert (await reread(db_session, refused)).last_error is not None
+    # The second folder is not at fault and is not blamed: it was never asked.
+    second = await reread(db_session, untouched)
+    assert second.last_error is None
+    assert second.cursor_attempts == 0
+
+
+async def test_a_second_feed_failing_transiently_cannot_undo_the_flip(
+    fake: FakeDropbox, db_session: AsyncSession
+) -> None:
+    """AC-9: the zombie, written as the cycle that used to produce it.
+
+    Scope refusal on the first folder, a 429 on the second. Every step of the
+    old path was individually defensible — refresh a token whose expiry was
+    cleared, treat a 200 from the token endpoint as the connection working,
+    treat a 429 as transient — and together they left the row `connected` with
+    `last_error` null, describing a Dropbox arc could not read.
+    """
+    fake.list_failures[ALSO_WATCHED] = missing_scope("files.metadata.read")
+    fake.list_failures[WATCHED] = rate_limited("42")
+    connection = await connect(db_session)
+    await watch(db_session, connection, remote_path=ALSO_WATCHED)
+    await watch(db_session, connection, remote_path=WATCHED)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert "files.metadata.read" in (stored.last_error or "")
+    # The 429 was never even collected: the second feed made no request.
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
+async def test_a_download_refused_for_a_scope_flips_the_connection(
+    fake: FakeDropbox, db_session: AsyncSession, data_root: Path
+) -> None:
+    """AC-9: a revoked `files.content.read` is only ever visible here.
+
+    The listing that precedes the download needs `files.metadata.read` and
+    succeeds — stamping `last_verified_at` on the way past — so treating the
+    download refusal as transient left the panel saying "connected, last
+    checked just now" over a feed that would never download another ride
+    again. Dropbox named the scope, which is proof, not a hedge.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.download_failures[entry["id"]] = missing_scope("files.content.read")
+    connection = await connect(db_session)
+    feed = await watch(db_session, connection)
+
+    await feeds.poll_feeds()
+
+    stored = await reread_connection(db_session, connection)
+    assert stored.status is ConnectionStatus.NEEDS_REAUTH
+    assert stored.last_error is not None
+    assert "files.content.read" in stored.last_error
+    assert "Permissions" in stored.last_error
+    assert "Submit" in stored.last_error
+
+    # The page is not blamed and the cursor stays put: nothing was taken.
+    refused = await reread(db_session, feed)
+    assert refused.cursor is None
+    assert refused.cursor_attempts == 0
+    assert refused.last_error is not None
+    assert WATCHED in refused.last_error
+    assert await rows_of(db_session, SessionRow) == []
+
+
+async def test_the_connection_a_refused_download_flipped_is_not_polled_again(
+    fake: FakeDropbox, db_session: AsyncSession, data_root: Path
+) -> None:
+    """AC-9: one refusal is enough, whichever call met it.
+
+    The old behaviour recorded "arc tries again at the next check" and then did
+    exactly that, every two minutes, for ever — against a permission only the
+    athlete can restore.
+    """
+    entry = file_entry("ride.fit", f"{WATCHED}/ride.fit")
+    fake.by_cursor = {None: page(entry, cursor="cursor-1")}
+    fake.download_failures[entry["id"]] = missing_scope("files.content.read")
+    connection = await connect(db_session)
+    await watch(db_session, connection)
+    await feeds.poll_feeds()
+    spent = len(fake.calls)
+
+    await feeds.poll_feeds()
+
+    assert len(fake.calls) == spent
 
 
 async def test_the_flipped_connection_is_not_polled_again(

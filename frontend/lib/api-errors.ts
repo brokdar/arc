@@ -111,20 +111,30 @@ export function isConflict(error: unknown): boolean {
  * Dropbox had said "scope `files.metadata.read` missing" and the athlete was
  * sent hunting a folder path.
  *
- * A **5xx keeps the generic sentence**, deliberately: it means the request was
- * fine and something behind the API broke, so there is no remedy in it for the
- * reader and its body is a stack trace's leftovers, not a sentence. Same for a
- * thrown `Error` (the request never arrived), a body with no `detail`, one
- * whose `detail` is blank, and FastAPI's per-field validation *list* — a list
- * of field complaints belongs beside the fields, which is
- * `apiErrorMessages`'s job, not a paragraph where a page should have been.
+ * **A 502 prints its sentence too, and it is the only 5xx that does.** In arc
+ * a 502 is `UpstreamError` and nothing else: a *named* upstream answered arc,
+ * arc could not fix what it said, and the body is a sentence written for the
+ * athlete — "Dropbox answered arc with an error it cannot fix (…). Nothing is
+ * wrong with your setup — try again in a few minutes." Discarding it put
+ * "Could not load that folder. Is the API reachable?" back on screen for every
+ * answered Dropbox 5xx, which is the exact sentence this function exists to
+ * delete. A 500 is different in kind — it is arc's *own* failure, its detail
+ * is a stack trace's leftovers rather than prose anybody wrote for a reader,
+ * and there is no remedy in it. So 500 and every other 5xx keep the generic
+ * sentence, along with a thrown `Error` (the request never arrived), a body
+ * with no `detail`, one whose `detail` is blank, and FastAPI's per-field
+ * validation *list* — a list of field complaints belongs beside the fields,
+ * which is `apiErrorMessages`'s job, not a paragraph where a page should
+ * have been.
  */
 export function loadFailureMessage(error: unknown, subject: string): string {
   if (isUnauthorized(error)) {
     return `Your session has expired. Log in again to see ${subject}.`;
   }
   const status = statusOf(error);
-  if (status !== undefined && status >= 400 && status < 500) {
+  const answeredForAReader =
+    status !== undefined && ((status >= 400 && status < 500) || status === 502);
+  if (answeredForAReader) {
     const detail = (error as { detail?: unknown }).detail;
     if (typeof detail === "string" && detail.trim() !== "") {
       return detail;

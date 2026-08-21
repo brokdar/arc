@@ -39,9 +39,11 @@ interface Watching {
   /**
    * The same folder as the athlete's Dropbox capitalises it.
    *
-   * `""` when nothing on the road in knew it — discovery reports one path per
-   * proposal and it is the stored one — and the completion then names the
-   * folder as arc stored it rather than inventing a capitalisation.
+   * Both roads in carry it: the picker takes it off the row the athlete
+   * clicked, discovery off the proposal they accepted. `""` only for a
+   * folder Dropbox itself spells with nothing — the root — and the
+   * completion then names it as arc stored it rather than inventing a
+   * capitalisation.
    */
   readonly displayPath: string;
   readonly displayName: string;
@@ -194,6 +196,10 @@ function DiscoveredIntegrations({
     "/api/v1/connections/{connection_id}/discover",
     { params: { path: { connection_id: connectionId } } },
   );
+  // The proposal the pending write is about. A ref for the reason `FolderStep`
+  // keeps one: it is read only by the success handler and set immediately
+  // before `mutate`, so it is by construction the folder that was sent.
+  const wanted = useRef<Proposal | null>(null);
   const add = $api.useMutation("post", "/api/v1/integrations", {
     // What was sent, not what was on screen: the proposal the athlete accepted
     // is the only thing that says which folder arc is now watching.
@@ -201,9 +207,10 @@ function DiscoveredIntegrations({
       queryClient.invalidateQueries({ queryKey: integrationsKey });
       onWatching({
         path: variables?.body?.remote_path ?? "",
-        // Discovery reports the stored path and nothing else, so there is no
-        // display spelling to carry here — `watchedPath` falls back to it.
-        displayPath: "",
+        // Discovery publishes both spellings, so the road in through the
+        // proposals ends on the same sentence the folder picker's road does —
+        // the athlete's own capitalisation, never the stored path.
+        displayPath: wanted.current?.path_display ?? "",
         displayName:
           entries.find((entry) => entry.kind === variables?.body?.kind)
             ?.display_name ?? "this source",
@@ -215,6 +222,7 @@ function DiscoveredIntegrations({
   const [named, setNamed] = useState<Record<string, IntegrationKind>>({});
 
   const accept = (proposal: Proposal, kind: IntegrationKind) => {
+    wanted.current = proposal;
     // Reset first: react-query holds the previous refusal until the next
     // `mutate()`, and a 409 about a folder the athlete has moved on from
     // would sit under the one they just picked.
@@ -317,7 +325,11 @@ function ProposalRow({
         </span>
       )}
       <span className="mr-auto font-mono text-ink-muted text-sm">
-        {proposal.path || "the Dropbox root"}
+        {/* Dropbox's own capitalisation, never `path` — that one is the
+            identity a feed row is written against, and showing it here put
+            `/apps/wahoofitness` in front of an athlete looking at
+            `/Apps/WahooFitness` in Dropbox. */}
+        {proposal.path_display || proposal.path || "the Dropbox root"}
       </span>
       {proposal.configured ? (
         <span className="text-ink-muted text-sm">
@@ -327,7 +339,7 @@ function ProposalRow({
         <>
           <NativeSelect
             size="sm"
-            aria-label={`Which source writes to ${proposal.path || "the Dropbox root"}?`}
+            aria-label={`Which source writes to ${proposal.path_display || proposal.path || "the Dropbox root"}?`}
             value={named ?? ""}
             onChange={(event) => onName(event.target.value as IntegrationKind)}
           >
@@ -947,7 +959,15 @@ function FolderStep({
       ) : null}
 
       {listing === null ? (
-        <p className="text-ink-muted text-sm">Reading your folders…</p>
+        // Nothing at all when the *first* listing failed: the alert above is
+        // the whole state, and "Reading your folders…" underneath it is a
+        // sentence that never comes true — there is no request in flight and
+        // nothing left to arrive. It stays for a listing that failed with a
+        // tree already on screen, because there the athlete really is still
+        // standing in a folder they can read.
+        folders.isError ? null : (
+          <p className="text-ink-muted text-sm">Reading your folders…</p>
+        )
       ) : (
         <div
           // Dimmed while the folder the athlete just clicked is still being

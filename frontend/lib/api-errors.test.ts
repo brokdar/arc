@@ -89,14 +89,29 @@ describe("loadFailureMessage", () => {
     expect(
       loadFailureMessage(answered(500, { detail: "boom" }), "the log"),
     ).toBe("Could not load the log. Is the API reachable?");
+    // And every other 5xx with it: only 502 is a named upstream's answer.
     expect(
-      loadFailureMessage(
-        answered(502, {
-          detail: "Dropbox answered 503 for /2/files/list_folder",
-        }),
-        "that folder",
-      ),
-    ).toBe("Could not load that folder. Is the API reachable?");
+      loadFailureMessage(answered(503, { detail: "unavailable" }), "the log"),
+    ).toBe("Could not load the log. Is the API reachable?");
+  });
+
+  it("prints the sentence a named upstream answered with", () => {
+    // A 502 is `UpstreamError` and nothing else: Dropbox answered, arc could
+    // not fix what it said, and the body is prose written for the athlete.
+    // Discarding it put "Is the API reachable?" back on screen for every
+    // answered Dropbox 5xx — the sentence the whole flow exists to delete.
+    const upstream =
+      "Dropbox answered arc with an error it cannot fix (503 for " +
+      "/2/files/list_folder). Nothing is wrong with your setup — try again " +
+      "in a few minutes.";
+
+    expect(
+      loadFailureMessage(answered(502, { detail: upstream }), "that folder"),
+    ).toBe(upstream);
+    // A 502 with nothing in it is still not a sentence.
+    expect(loadFailureMessage(answered(502, {}), "that folder")).toBe(
+      "Could not load that folder. Is the API reachable?",
+    );
   });
 
   it("names the remedy when the API answered that the session is gone", () => {

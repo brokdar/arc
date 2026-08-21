@@ -371,6 +371,11 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
     The session opened here is the *control* session: it holds the feed row,
     the connection whose token the client may refresh, and the refusal log.
 
+    **The connection's status is re-read here, not trusted from the sweep.**
+    `poll_feeds` enumerated the due feeds once; this function is what can flip
+    a connection mid-enumeration, so the remaining folders on a connection this
+    cycle has already seen refused are skipped without a request.
+
     **The destination is settled first** (:func:`_undeliverable`). A feed whose
     integration provides something a folder cannot deliver never reaches the
     client at all, so "never passed to `IngestPipeline`" is true by the shape
@@ -403,6 +408,25 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
             return
         connection = await repository.get(feed.connection_id)
         if connection is None:  # pragma: no cover — cascade removes the feed
+            return
+        if connection.status is not ConnectionStatus.CONNECTED:
+            # `_due_feeds` asked the same question, once, before the sweep
+            # began — and the answer can change *during* it, because this
+            # function is what changes it. A scope refusal on the first folder
+            # of a connection flips the row, and every remaining folder on that
+            # connection is now being polled with a credential arc has already
+            # watched Dropbox refuse. Re-reading here is what makes the flip
+            # take effect on the same cycle rather than the next one: no
+            # listing request, and no token request either — which matters
+            # more than it looks, because `mark_needs_reauth` clears the token
+            # expiry, so the next call on this connection would refresh first
+            # and spend a request on a credential nobody is going to use.
+            logger.info(
+                "dropbox_connection_not_usable",
+                connection_id=str(connection.id),
+                feed_id=str(feed.id),
+                status=connection.status.value,
+            )
             return
         # The app key comes from `ConnectionService`, not from settings: the
         # athlete may have stored it in Settings rather than in `.env`, and a
@@ -495,6 +519,12 @@ async def _poll_feed(feed_id: uuid.UUID) -> None:
 def _listing_failure(exc: DropboxError, feed: FeedRow) -> str:
     """Why arc could not read a watched folder, in words the athlete can act on.
 
+    Named for the listing because that is where most of these arise, but the
+    scope branch also serves :func:`_take_batch`: a download refused for want
+    of `files.content.read` is the same permission fault the same folder would
+    hit on a listing, and giving it a second sentence of its own would tell one
+    athlete two things about one problem.
+
     ``feed.last_error`` is rendered **verbatim** in Settings and in the coach's
     `get_ingest_status`, so the connector's exception text may not be
     interpolated into it. Those strings are diagnostics — endpoint paths,
@@ -586,6 +616,11 @@ async def _take_batch(
     :class:`_BatchFailure`). Stopping at the first failure rather than carrying
     on is what makes the batch rule meaningful: the cursor is not going to
     advance either way, so pulling the rest would be bytes moved twice.
+
+    One failure here does more than record itself: a download Dropbox refuses
+    for want of a scope flips the connection to `needs_reauth`, because it is
+    the only place a revoked `files.content.read` can ever be observed — the
+    listing that precedes it needs `files.metadata.read` and succeeds.
     """
     events = IngestEventRepository(session)
     for entry in changes.entries:
@@ -620,6 +655,27 @@ async def _take_batch(
                 "for the next check.",
                 blames_batch=False,
             )
+        except DropboxScopeError as exc:
+            # **Before the `DropboxAuthError` clause below, which it is a
+            # subclass of** — the clause order is specificity, as
+            # :func:`_listing_failure` documents. A revoked
+            # `files.content.read` reaches arc *only* here: the listing still
+            # succeeds (that is `files.metadata.read`), so it stamps
+            # `last_verified_at` on the way past, and treating this download
+            # refusal as transient left the panel saying "connected, last
+            # checked just now" over a feed that would never download another
+            # ride. Dropbox named the scope, which is proof, not a hedge — so
+            # the row flips exactly as a refused listing flips it, through the
+            # one function that owns the wording (`scope_refusal`).
+            logger.warning("dropbox_download_refused", name=entry.name, error=str(exc))
+            await client.mark_needs_reauth(scope_refusal(exc.required_scope))
+            # The feed's own sentence is the one a refused *listing* writes,
+            # deliberately: it is the same fault met by a different call, the
+            # remedy is identical, and the account line directly above it in
+            # Settings now carries the four console moves. Two spellings of one
+            # permission problem is how an athlete ends up believing they have
+            # two.
+            return _BatchFailure(_listing_failure(exc, feed), blames_batch=False)
         except DropboxAuthError as exc:
             # Not the page's fault, and not (yet) proof the credential is
             # dead: `DropboxClient._content_failure` deliberately does not

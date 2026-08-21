@@ -211,6 +211,15 @@ class ConnectionRow(Base):
     #: every watched folder, so verification is a by-product of work arc does
     #: anyway rather than a second timer with its own failure modes.
     #:
+    #: The cost of that design, seen and accepted: **a connection with no
+    #: watched folder is never re-verified on its own.** Nothing polls it, so
+    #: the only thing that stamps it is the athlete browsing folders, and a
+    #: permission revoked in the Dropbox console on an account somebody
+    #: abandoned mid-flow stays invisible until they come back to the picker.
+    #: Nothing is being collected through such a connection, so nothing is
+    #: silently lost; a health-check timer for it would be a second scheduled
+    #: job whose only subject is a connection doing no work.
+    #:
     #: **Null means nobody has checked yet**, which is a real state and not a
     #: missing value: a connection stored under the transient-probe rule
     #: (`app.services.connections.VERIFICATION_DEFERRED`) has one until its

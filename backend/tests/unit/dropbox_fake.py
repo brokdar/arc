@@ -405,16 +405,24 @@ def expired_access_token() -> httpx.Response:
     )
 
 
-def missing_scope(required_scope: str = "files.metadata.read") -> httpx.Response:
+def missing_scope(
+    required_scope: str = "files.metadata.read", *, status: int = 401
+) -> httpx.Response:
     """Dropbox's 401 for a call the grant carries no scope for.
 
     The same status code as a dead access token, and a different body — which
     is the whole reason this exists as its own answer: a grant that lists no
     file scopes reaches every read endpoint and is refused here, not at the
     token exchange.
+
+    ``status`` because Dropbox says it both ways: `probe_readable` has always
+    read 401 **and** 403, and a 403 carrying this body is the same fact about
+    the same grant. A test passing 403 is testing the code path, not a
+    hypothetical — a 403 arc failed to classify reached the athlete as "try
+    again in a few minutes" for a condition no amount of waiting fixes.
     """
     return httpx.Response(
-        401,
+        status,
         json={
             "error_summary": f"missing_scope/{required_scope}",
             "error": {".tag": "missing_scope", "required_scope": required_scope},

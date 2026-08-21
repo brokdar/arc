@@ -90,6 +90,10 @@ async function mockApi(page: Page): Promise<FakeState> {
     account_label: "Ada Lovelace (ada@example.com)",
     scopes: ["account_info.read", "files.content.read", "files.metadata.read"],
     last_error: null,
+    // The connect proved the credential with a `list_folder` before storing
+    // it, so a connection the API hands back has a stamp. Omitting it drew
+    // "last checked —" on the panel, a state the real API cannot produce.
+    last_verified_at: "2026-08-16T09:30:00Z",
     created_at: "2026-08-16T09:30:00Z",
     updated_at: "2026-08-16T09:30:00Z",
     feeds: [],

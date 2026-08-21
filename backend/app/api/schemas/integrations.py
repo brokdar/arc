@@ -173,7 +173,12 @@ class IntegrationProposalRead(BaseModel):
     connection_id: uuid.UUID
     transport: TransportKind
     #: Normalised — the spelling arc stores and the clash refusal compares.
+    #: Posted back verbatim; never rendered.
     path: str
+    #: The same folder as the athlete's Dropbox spells it, and the only one
+    #: that belongs on screen — see `FolderRead` for why both are published.
+    #: `""` is the Dropbox root, which the panel names in words.
+    path_display: str
     activity_files: int
     #: When the newest of them was written by the device, `null` when Dropbox
     #: reported no stamp arc could read.

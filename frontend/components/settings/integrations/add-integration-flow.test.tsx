@@ -305,6 +305,11 @@ describe("when it does not go through", () => {
       PERMISSION_LOST,
     );
     expect(within(folder).queryByText(/Is the API reachable/)).toBeNull();
+    // And nothing underneath it. The first listing failed, so there is no
+    // tree to fall back to and no request in flight — "Reading your folders…"
+    // there is a promise that never comes true, and it used to stay on screen
+    // under the alert for ever.
+    expect(within(folder).queryByText(/Reading your folders/)).toBeNull();
   });
 });
 
@@ -347,6 +352,22 @@ describe("what arc found in the athlete's Dropbox", () => {
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
       WAHOO_PATH,
     ]);
+  });
+
+  it("names the folder as Dropbox spells it, never as arc stores it", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+
+    const proposal = await within(flow).findByTestId("proposal-wahoo");
+
+    // Same rule as the picker's, on the road that reaches a decision fastest:
+    // `path_lower` is the identity a feed row is written against, and putting
+    // it on screen shows `/apps/wahoofitness` to an athlete looking at
+    // `/Apps/WahooFitness` in Dropbox — which reads as a case bug in arc.
+    expect(proposal).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(proposal.textContent).not.toContain(WAHOO_PATH);
   });
 
   it("renders the newest stamp on the athlete's clock, not in UTC", async () => {
@@ -686,9 +707,13 @@ describe("when the folder is chosen", () => {
     );
 
     // Accepting a proposal is the same commitment reached by a shorter road,
-    // so it ends on the same sentence rather than on a panel closing itself.
+    // so it ends on the same sentence rather than on a panel closing itself —
+    // including the folder's spelling. Discovery used to publish only the
+    // stored path, so this road ended on `/apps/wahoofitness` while the
+    // picker's road ended on `/Apps/WahooFitness`.
     const done = await screen.findByTestId("flow-complete");
-    expect(done).toHaveTextContent(WAHOO_PATH);
+    expect(done).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(done.textContent).not.toContain(WAHOO_PATH);
     expect(done).toHaveTextContent(/first check/i);
   });
 });

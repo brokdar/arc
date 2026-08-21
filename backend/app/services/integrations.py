@@ -156,6 +156,13 @@ class IntegrationProposal:
     #: Normalised, so accepting stores the same spelling the folder-clash
     #: refusal compares against.
     path: str
+    #: The same folder as the athlete's Dropbox spells it, and the only
+    #: spelling the panel renders. Carried beside :attr:`path` rather than
+    #: instead of it for the reason `FolderRead` gives: one of the two is an
+    #: identity and the other is a name, and a screen showing
+    #: `/apps/wahoofitness` to somebody looking at `/Apps/WahooFitness` reads
+    #: as a case bug in arc.
+    path_display: str
     activity_files: int
     newest_at: dt.datetime | None
     #: ``True`` when arc is already collecting this folder on this account.
@@ -306,11 +313,15 @@ class IntegrationService:
                     display_name=(
                         CATALOGUE[kind].display_name
                         if kind is not None
-                        else (path or "the Dropbox root")
+                        # The folder is the only true name arc has for it, so
+                        # it is the folder as the athlete spells it — the
+                        # stored spelling is an identity, not a name.
+                        else (candidate.path_display or path or "the Dropbox root")
                     ),
                     connection_id=connection_id,
                     transport=TransportKind.CLOUD_FOLDER,
                     path=path,
+                    path_display=candidate.path_display,
                     activity_files=candidate.activity_files,
                     newest_at=candidate.newest_at,
                     configured=feed is not None,

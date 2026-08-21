@@ -2867,7 +2867,14 @@ export interface components {
      *     * ``needs_reauth`` — Dropbox refused the credential, or refused a call for
      *       want of a scope the grant does not carry. The athlete has to go through
      *       the connect ritual again (after ticking the permission, where that is
-     *       what went wrong); nothing local will fix it;
+     *       what went wrong); nothing local will fix it. **Only a reconnect leaves
+     *       it** — disconnect, then connect, whose probe proves a scoped read before
+     *       a row is written. In particular a successful token refresh does not:
+     *       minting a token proves the credential is alive, not that the grant can
+     *       read a file, and a grant whose `files.metadata.read` was unticked in the
+     *       console does the first and not the second. Healing the row on a refresh
+     *       let a flip un-flip itself inside the very cycle that made it — see
+     *       `app.connectors.dropbox.DropboxClient._refresh`;
      *     * ``error`` — arc cannot *read* its own credential, which today means
      *       `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
      *       remedy is to restore the key, and re-authorizing would only paper over a
@@ -3551,6 +3558,8 @@ export interface components {
       newest_at: string | null;
       /** Path */
       path: string;
+      /** Path Display */
+      path_display: string;
       transport: components["schemas"]["TransportKind"];
     };
     /**

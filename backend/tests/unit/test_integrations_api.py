@@ -705,11 +705,55 @@ async def test_discovery_names_the_integration_behind_the_folder_it_finds(
             "connection_id": connection["id"],
             "transport": "cloud_folder",
             "path": "/apps/wahoofitness",
+            "path_display": "/apps/wahoofitness",
             "activity_files": 3,
             "newest_at": "2026-08-16T06:12:00Z",
             "configured": False,
         }
     ]
+
+
+async def test_a_proposal_carries_dropboxs_spelling_beside_the_path_arc_stores(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-21: the discovery road shows the folder, not the identity.
+
+    `path` is what a feed row is written against and what the clash refusal
+    compares; it is lower-cased, and a panel rendering it put
+    `/apps/wahoofitness` in front of an athlete looking at
+    `/Apps/WahooFitness` in Dropbox. The two spellings are published side by
+    side for the reason `FolderRead` publishes them: one is a name and the
+    other is an identity, and only one of them belongs on screen.
+
+    The display path is read off the *entries* of the listing, exactly as
+    `DropboxListing.path_display` is — so a Dropbox that capitalises produces
+    a proposal that capitalises, with no second source of truth.
+    """
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps", path_display="/Apps")],
+        apps=[
+            folder_entry(
+                "WahooFitness", "/apps/wahoofitness", path_display="/Apps/WahooFitness"
+            )
+        ],
+        apps_wahoofitness=[
+            file_entry(
+                "2026-08-16-ride.fit",
+                "/apps/wahoofitness/2026-08-16-ride.fit",
+                path_display="/Apps/WahooFitness/2026-08-16-ride.fit",
+                client_modified="2026-08-16T06:12:00Z",
+            )
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    [proposal] = body["proposals"]
+    assert proposal["path_display"] == "/Apps/WahooFitness"
+    # And the identity is untouched: accepting still stores the normalised
+    # spelling `uq_feeds_connection_id_remote_path` is written against.
+    assert proposal["path"] == "/apps/wahoofitness"
 
 
 async def test_a_folder_holding_no_activity_files_is_absent_not_zero(
@@ -892,6 +936,7 @@ async def test_the_probed_app_container_is_listed_once_and_counted_once(
             "connection_id": connection["id"],
             "transport": "cloud_folder",
             "path": "/apps",
+            "path_display": "/apps",
             "activity_files": 1,
             "newest_at": "2026-01-01T00:00:00Z",
             "configured": False,
