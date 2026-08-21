@@ -4,10 +4,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      # The pin this job runs from. Without it a Dependabot bump of zizmor
+      # would land without ever running zizmor.
+      - "tools/requirements.txt"
   push:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      - "tools/requirements.txt"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,6 +31,11 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Audit workflows with zizmor
-        run: uvx zizmor .github/workflows/
+        # The version is in tools/requirements.txt, not in this line: the
+        # pre-push hook constrains against the same file, so a local pass and a
+        # CI pass mean the same thing. Dependabot raises that pin, and this
+        # workflow triggers on the file, so the bump audits the workflows with
+        # the version it is proposing.
+        run: uvx --constraints tools/requirements.txt zizmor .github/workflows/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

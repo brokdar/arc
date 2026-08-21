@@ -1,0 +1,23 @@
+# Standalone tools this repo RUNS and never imports, pinned in one place so no
+# release upstream can change what a build does without a commit here. That is
+# the failure this file exists to stop: `uvx schemathesis==4.24.3` pinned the
+# tool and re-resolved its dependencies from PyPI on every run, and jsonschema-rs
+# 0.50 broke the fuzz job overnight. These four have no dependencies of their
+# own, so an `==` pin is the whole tree.
+#
+# Callers constrain against this file instead of naming a version of their own:
+#   .pre-commit-config.yaml and .github/workflows/zizmor.yml
+#       uvx --constraints tools/requirements.txt zizmor .github/workflows/
+#       — the identical line in both, so the hook and CI cannot disagree.
+#   .devcontainer/startup.sh
+#       uv tool install --constraints tools/requirements.txt <tool>
+#
+# A requirements file rather than a uv project because none of these is a
+# dependency of anything here, and because Dependabot's `pip` ecosystem watches
+# this directory (.github/dependabot.yml) — so the pins are raised rather than
+# left to rot, and the PR that raises zizmor runs the job zizmor gates.
+
+zizmor==1.29.0     # audits .github/workflows: the pre-push hook and the Workflow Security job
+prek==0.4.13       # installs and runs the git hooks, so it gates every commit and push
+rust-just==1.58.0  # the task runner every justfile recipe goes through
+git-cliff==2.13.1  # drafts CHANGELOG entries (`just changelog`)

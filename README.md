@@ -16,8 +16,9 @@ built out increment by increment.
 
 ## Quick start
 
-Needs Docker and [just](https://just.systems) (`uv tool install rust-just`);
-the devcontainer installs both.
+Needs Docker and [just](https://just.systems)
+(`uv tool install --constraints tools/requirements.txt rust-just`, the version
+this repo pins); the devcontainer installs both.
 
 ```bash
 git clone <this repo> arc && cd arc
