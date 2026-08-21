@@ -151,6 +151,13 @@ afterEach(() => {
   // uploaded hash stays known), so resetting the handlers is not enough:
   // without this, the second test in a file inherits the first one's queue.
   resetMockState();
+  // The *browser's* storage is stateful too, and jsdom keeps one window for
+  // the whole file. The Dropbox connect step parks where the add flow was in
+  // `sessionStorage` before handing the tab to dropbox.com, so without this a
+  // test that started a connect leaves the next one's Settings panel opening
+  // straight into the add flow.
+  window.sessionStorage.clear();
+  window.localStorage.clear();
   cleanup();
 });
 afterAll(() => server.close());

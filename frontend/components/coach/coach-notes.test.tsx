@@ -106,7 +106,7 @@ describe("a coach note", () => {
     });
   });
 
-  it("says a failed load was a failure, not a silence", async () => {
+  it("says a failed load was a failure, in the server's own words", async () => {
     server.use(
       http.get("/api/v1/agent-notes", ({ response }) =>
         response(422).json({ detail: "Give exactly one subject." }),
@@ -114,8 +114,12 @@ describe("a coach note", () => {
     );
     renderWith(<SessionCoachNotes sessionId={ACTIVITY_IDS.outdoorRide} />);
 
+    // An empty panel is how "no notes" renders, so a failed load has to be
+    // visible or it reads as silence. What is visible is what the API said:
+    // it answered, so "Is the API reachable?" is a question it already
+    // answered — see `loadFailureMessage`.
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Could not load this session's coach notes/,
+      "Give exactly one subject.",
     );
   });
 });

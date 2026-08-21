@@ -165,3 +165,44 @@ async def test_a_sealed_credential_is_not_readable_without_the_key() -> None:
 
     assert REFRESH_TOKEN.encode() not in blob
     assert Fernet(KEY).decrypt(blob)
+
+
+async def test_the_verification_stamp_round_trips_as_aware_utc() -> None:
+    """AC-10: `last_verified_at` is an instant, on both dialects.
+
+    `UtcDateTime` is what keeps a `TIMESTAMPTZ` coming back aware, and a naive
+    value here would compare against `now()` without complaint and render the
+    panel's "last checked" wrong by the server's offset — the class of bug
+    SQLite cannot show, because it has no timezone-aware column type of its own.
+    """
+    verified_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=4)
+    connection_id = await _connection()
+    async with _session() as session:
+        stored = await session.get(ConnectionRow, connection_id)
+        assert stored is not None
+        stored.last_verified_at = verified_at
+        await session.commit()
+
+    async with _session() as session:
+        reread = await session.get(ConnectionRow, connection_id)
+        assert reread is not None
+        assert reread.last_verified_at is not None
+        assert reread.last_verified_at.tzinfo is not None
+        assert reread.last_verified_at == verified_at
+
+
+async def test_a_connection_nobody_has_checked_serves_a_null_stamp(
+    client: AsyncClient,
+) -> None:
+    """A row written before `0020` reads as never verified, all the way out.
+
+    Not a Postgres detail on its own — the point is that the whole chain, from
+    the nullable column through the ORM to the response body, carries "nobody
+    has checked yet" rather than substituting `created_at` somewhere on the way.
+    """
+    await _connection()
+
+    response = await client.get("/api/v1/connections")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["last_verified_at"] is None

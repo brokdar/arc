@@ -1327,5 +1327,12 @@ def _feed_status(feed: FeedStatus) -> dict[str, Any]:
         "deliveries_7d": feed.deliveries,
         "last_error": feed.last_error,
         "connection_status": feed.connection_status.value,
+        # The status and its stamp travel together, here as everywhere: the
+        # bare word `connected` is the claim this feature demoted, and a coach
+        # given it without "and arc last read a file through it at 09:14" is
+        # back to reading an absence of bad news as good news.
+        "last_verified_at": (
+            feed.last_verified_at.isoformat() if feed.last_verified_at else None
+        ),
         "account_label": feed.account_label,
     }

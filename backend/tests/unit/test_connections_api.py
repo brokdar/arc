@@ -7,14 +7,17 @@ seen from a response body, that the refresh token never reaches a log line, is
 asserted with `structlog.testing.capture_logs`.
 """
 
+import asyncio
 import base64
 import datetime as dt
 import hashlib
 import json
+import unicodedata
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -25,28 +28,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
 from app.connectors import dropbox
-from app.connectors.dropbox import READ_SCOPES
+from app.connectors.dropbox import ACCOUNT_NO_ACCESS, READ_SCOPES
 from app.core.config import get_settings
-from app.domain.connections import ConnectionStatus
+from app.domain.actor import Actor
+from app.domain.connections import ACTIVITY_EXTENSIONS, ConnectionStatus
+from app.persistence.audit import AuditLogEntry
 from app.persistence.connections import (
     MAX_APP_KEY_LENGTH,
+    MAX_STATE_LENGTH,
     ConnectionRow,
     FeedRow,
     OAuthAuthorizationRow,
     ProviderAppRow,
 )
+from app.persistence.db import session_scope
 from app.persistence.integrations import IntegrationRow
 from app.persistence.types import JSONColumn
+from app.services import connections as connections_service
+from app.services.connections import ConnectionService
 from tests.unit.dropbox_fake import (
+    ACCOUNT_PATH,
     LIST_FOLDER_CONTINUE_PATH,
     LIST_FOLDER_PATH,
     REVOKE_PATH,
     TOKEN_PATH,
     FakeDropbox,
+    expired_access_token,
     file_entry,
     folder_entry,
+    missing_scope,
+    no_access,
     page,
     path_not_found,
+    rate_limited,
+    server_error,
 )
 
 pytestmark = pytest.mark.usefixtures("dropbox_env")
@@ -364,6 +379,343 @@ async def test_an_authorization_older_than_fifteen_minutes_is_refused_and_remove
     assert fake.calls_to(TOKEN_PATH) == []
 
 
+# --- AC-24 and AC-25: the redirect flow --------------------------------------
+#
+# The browser tells arc where it is, and arc decides whether Dropbox will
+# redirect there — every assertion below is on the query string arc renders or
+# on the `oauth_authorizations` row it wrote, never on a helper's return value.
+
+#: The origin the athlete reaches arc at, as their browser reports it.
+REDIRECT_URI = "https://arc.example.com/settings/dropbox/callback"
+
+
+async def authorization_row(session: AsyncSession) -> OAuthAuthorizationRow:
+    """The one pending flow, so "one row" is provable rather than assumed."""
+    rows = (await session.execute(select(OAuthAuthorizationRow))).scalars().all()
+    assert len(rows) == 1, f"expected one authorization row, found {len(rows)}"
+    return rows[0]
+
+
+async def test_a_redirect_start_carries_the_uri_and_a_state_and_stores_both(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    assert response.status_code == 200, response.text
+    query = query_of(response.json()["authorize_url"])
+    assert query["redirect_uri"] == [REDIRECT_URI]
+    state = query["state"][0]
+    # Long enough to be a nonce rather than a guess. The value itself is
+    # arbitrary; its length and its unguessability are the contract.
+    assert len(state) >= 32
+    row = await authorization_row(db_session)
+    assert row.state == state
+    assert row.redirect_uri == REDIRECT_URI
+    # The PKCE half is unchanged: the redirect adds a CSRF nonce, it does not
+    # replace the thing that makes the code useless to anyone else.
+    assert query["code_challenge"] == [challenge_for(row.code_verifier)]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://localhost:3000/settings/dropbox/callback",
+        "http://127.0.0.1:3000/settings/dropbox/callback",
+    ],
+)
+async def test_a_loopback_http_origin_still_gets_the_redirect_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, uri: str
+) -> None:
+    # The developer's laptop, and the athlete running arc on the machine in
+    # front of them. Dropbox exempts the loopback from its https rule, so
+    # falling back to the paste here would be arc being stricter than Dropbox.
+    response = await client.post(AUTHORIZE, json={"redirect_uri": uri})
+
+    assert response.status_code == 200, response.text
+    assert query_of(response.json()["authorize_url"])["redirect_uri"] == [uri]
+    assert (await authorization_row(db_session)).redirect_uri == uri
+
+
+async def test_a_plain_http_lan_origin_is_refused_naming_https_and_the_paste(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(
+        AUTHORIZE,
+        json={"redirect_uri": "http://192.168.1.50/settings/dropbox/callback"},
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "https" in detail
+    # The remedy, not just the refusal: this deployment connects by paste, and
+    # the athlete has to be told that rather than left at a dead end.
+    assert "paste" in detail.lower()
+    # Nothing was started: a flow the athlete cannot finish is worse than none.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_omitting_the_redirect_uri_leaves_the_paste_flow_exactly_as_it_was(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The fallback the whole feature rests on. A body-less start is what the
+    # step sends on a plain-HTTP LAN deployment, and it must still produce the
+    # link Dropbox shows a code on.
+    response = await client.post(AUTHORIZE)
+
+    assert response.status_code == 200, response.text
+    query = query_of(response.json()["authorize_url"])
+    assert "redirect_uri" not in query
+    assert "state" not in query
+    row = await authorization_row(db_session)
+    assert row.state is None
+    assert row.redirect_uri is None
+
+    completed = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert completed.status_code == 201, completed.text
+    assert "redirect_uri" not in fake.calls_to(TOKEN_PATH)[0].form
+
+
+async def test_a_second_redirect_start_supersedes_the_first_state(
+    client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    first = (await authorization_row(db_session)).state
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    # One row, not two: an abandoned tab must not leave a second redeemable
+    # flow behind it.
+    second = await authorization_row(db_session)
+    assert second.state != first
+
+    response = await client.post(COMPLETE, json={"code": "code", "state": first})
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_redirect_flow_completes_and_repeats_the_uri_to_dropbox(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert response.status_code == 201, response.text
+    # RFC 6749 s4.1.3: the exchange repeats the redirect URI the code was
+    # minted against, or Dropbox answers `invalid_grant`.
+    assert fake.calls_to(TOKEN_PATH)[0].form["redirect_uri"] == REDIRECT_URI
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_mismatched_state_is_refused_and_the_flow_is_deleted(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": "not-the-state"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    # "No connection is created" in the record as well as in the table: a
+    # `connection.connected` audit row would say arc believed it had one.
+    assert await count_of(db_session, AuditLogEntry) == 0
+    # Not offered to Dropbox at all: a code arriving with the wrong nonce is
+    # not arc's code, and redeeming it is the attack this guards against.
+    assert fake.calls_to(TOKEN_PATH) == []
+    # Deleted, not merely refused. Leaving the row redeemable would let the
+    # attacker who guessed wrong once simply try again.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+    retry = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert retry.status_code == 422, retry.text
+    assert "No Dropbox connection is waiting to be finished" in retry.json()["detail"]
+    # And the way out is named without naming a mechanism: the redirect flow
+    # never shows the athlete a code, so "paste the code Dropbox shows you" was
+    # an instruction they could not follow.
+    assert "Start the connection again from Settings" in retry.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        # Not ASCII, and `secrets.compare_digest` refuses a `str` that is not:
+        # the nonce arrives from a query string, so it is whatever the athlete's
+        # browser was pointed at, not something arc minted.
+        "nøt-the-state",
+        # ASCII apart from its last character: what breaks the comparison is
+        # one byte being outside ASCII, not the value looking exotic.
+        "not-the-statė",
+    ],
+)
+async def test_a_non_ascii_state_is_a_mismatch_and_still_deletes_the_flow(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+    supplied: str,
+) -> None:
+    # The comparison is over bytes, not characters. Comparing `str` here would
+    # raise inside `secrets.compare_digest` and turn a wrong nonce — the exact
+    # thing AC-25 is about — into a 500 that leaves the flow redeemable, so an
+    # attacker could deny arc the deletion simply by sending one accented
+    # character.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": supplied}
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    # The deletion is the half a crash would have skipped.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_lone_surrogate_state_is_a_mismatch_and_still_deletes_the_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Sent as raw bytes because no JSON encoder will emit one from a Python
+    # string, and a browser's `JSON.stringify` will: a lone surrogate escapes
+    # to ASCII on the way out and comes back a surrogate here. It has no plain
+    # UTF-8 form, so the comparison has to say what it does with one instead of
+    # raising on it.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE,
+        content=rb'{"code": "pasted-code", "state": "\ud800"}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_state_equal_only_after_unicode_normalisation_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # A nonce is compared as the bytes arc issued, never as text. This value
+    # is the real state with one character swapped for its fullwidth twin, so
+    # it normalises straight back to the state and is still a different value
+    # — encoding first is what keeps it one, and any folding on the way in
+    # would quietly widen what counts as a match.
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+    #: Every character `token_urlsafe` emits is ASCII punctuation-to-tilde,
+    #: which is exactly the range with a fullwidth form 0xFEE0 above it.
+    folded = chr(ord(state[0]) + 0xFEE0) + state[1:]
+    assert folded != state
+    assert unicodedata.normalize("NFKC", folded) == state
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": folded}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+@pytest.mark.parametrize(
+    ("label", "supplied"),
+    [
+        # Longer than any nonce arc mints. A bound in the request schema would
+        # refuse this before the service ever saw it — 422, but with the flow
+        # still sitting there redeemable.
+        ("over-long", "x" * (MAX_STATE_LENGTH + 1)),
+        # The empty string is a value the caller supplied, not an omission:
+        # `state=` in the callback's query string arrives as one.
+        ("empty", ""),
+    ],
+)
+async def test_a_state_the_schema_could_have_rejected_still_deletes_the_flow(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeDropbox,
+    label: str,
+    supplied: str,
+) -> None:
+    # AC-25's two halves are one rule: a wrong nonce is refused *and* ends the
+    # flow. A shape the request schema turns away is refused without ending
+    # anything, which leaves the attacker who sent it free to keep guessing —
+    # so the verdict on `state` belongs to the service, not to a length bound.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": supplied}
+    )
+
+    assert response.status_code == 422, response.text
+    assert "could not verify" in response.json()["detail"], label
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_redirect_flow_completed_without_a_state_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # A code lifted out of a browser history and pasted into the form: it has
+    # the code and not the nonce, and that is exactly what `state` is for.
+    await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
+async def test_a_paste_flow_completed_with_a_state_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The other direction, and the reason the comparison is not "if the row
+    # has a state": a flow arc started with no redirect has nothing to
+    # round-trip, so a `state` arriving against it came from somewhere else.
+    await client.post(AUTHORIZE)
+
+    response = await client.post(
+        COMPLETE, json={"code": "pasted-code", "state": "invented"}
+    )
+
+    assert response.status_code == 422, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
+async def test_an_expired_redirect_flow_says_it_expired_not_that_the_state_is_wrong(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Ordering, asserted: an athlete who left the Dropbox tab open over lunch
+    # gets "start again", not a sentence about a security token. The state is
+    # correct here; only the clock is against them.
+    started = await client.post(AUTHORIZE, json={"redirect_uri": REDIRECT_URI})
+    state = query_of(started.json()["authorize_url"])["state"][0]
+    row = await authorization_row(db_session)
+    row.expires_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    await db_session.commit()
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code", "state": state})
+
+    assert response.status_code == 422, response.text
+    assert "expired" in response.json()["detail"]
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+    assert fake.calls_to(TOKEN_PATH) == []
+
+
 # --- AC-3: exchanging the pasted code ----------------------------------------
 
 
@@ -388,11 +740,16 @@ async def test_completing_posts_the_pkce_exchange_and_stores_one_connection(
     assert row.status is ConnectionStatus.CONNECTED
     assert row.account_label == "Ada Lovelace (ada@example.com)"
     assert set(row.scopes) == set(READ_SCOPES)
+    # The probe **is** a `list_folder`, so a proven connect is born stamped:
+    # the status starts life as an observation with a time behind it, which is
+    # the whole difference between this and the connect it replaced.
+    assert row.last_verified_at is not None
     body = response.json()
     assert body["status"] == "connected"
     assert body["account_label"] == "Ada Lovelace (ada@example.com)"
     assert sorted(body["scopes"]) == sorted(READ_SCOPES)
     assert body["feeds"] == []
+    assert body["last_verified_at"] is not None
     # The one-time authorization is spent.
     assert await count_of(db_session, OAuthAuthorizationRow) == 0
 
@@ -437,6 +794,13 @@ async def test_an_invalid_grant_is_a_422_and_writes_no_row(
     assert "already been used" in detail
     assert "expired" in detail
     assert await count_of(db_session, ConnectionRow) == 0
+    # **The pending flow goes with it.** The code was offered to Dropbox and
+    # refused, so it is spent; a row left behind can only ever produce this
+    # same sentence on the next attempt, which is arc answering a question
+    # nobody asked instead of the one they did. Asserted on every refusal
+    # branch past the exchange, because the flow is what carries the athlete
+    # from a refusal to the fix.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
 
 
 async def test_a_token_exchange_that_never_reaches_dropbox_is_a_422(
@@ -460,6 +824,11 @@ async def test_a_token_exchange_that_never_reaches_dropbox_is_a_422(
     assert response.status_code == 422, response.text
     assert "could not be reached" in response.json()["detail"]
     assert await count_of(db_session, ConnectionRow) == 0
+    # **The flow survives, deliberately** — the one refusal that leaves it
+    # standing. The request never left the machine, so the code is untouched
+    # and the same one works on the retry; ending the flow here would cost the
+    # athlete a trip back to dropbox.com over a bad minute upstream.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 1
 
 
 async def test_a_second_connection_is_a_409_naming_disconnect(
@@ -489,6 +858,314 @@ async def test_a_grant_without_a_refresh_token_names_offline_access(
     assert response.status_code == 422, response.text
     assert "token_access_type=offline" in response.json()["detail"]
     assert await count_of(db_session, ConnectionRow) == 0
+    # The exchange succeeded, so the code is spent — the flow ends here.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+# --- AC-1, AC-2: connecting proves the credential before it is stored --------
+#
+# `get_current_account` answers 200 for a grant carrying no file scopes at
+# all, so the connect used to store a credential that could not list a single
+# folder and label it `connected`. The athlete then met the failure two screens
+# later, on the folder picker, as a sentence about a folder path. The proof is
+# two checks: the scopes the grant claims, and one real read.
+
+
+async def test_completing_lists_one_entry_of_the_root_before_storing_anything(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The proof is a scoped call, and it is made with the fresh token."""
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    probe = fake.calls_to(LIST_FOLDER_PATH)
+    assert len(probe) == 1, "the credential is proved exactly once"
+    # The root, and one entry of it: nothing about the *contents* is wanted,
+    # so a folder holding ten thousand files costs the same as an empty one.
+    assert probe[0].body["path"] == ""
+    assert probe[0].body["limit"] == 1
+    assert probe[0].headers["Authorization"] == f"Bearer {fake.access_token}"
+    # Proved, so there is nothing to say about a check that has not happened.
+    assert response.json()["verification_note"] is None
+
+
+async def test_a_grant_missing_a_read_scope_names_it_and_the_console_steps(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.granted_scopes = ("account_info.read", "files.content.read")
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    # The remedy is four moves on a page arc cannot reach, so all four are in
+    # the sentence: the Permissions tab, the tick, Submit, and connecting
+    # again — Dropbox applies a newly-ticked scope only to a later grant.
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    assert "connection again" in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    # Refused on the grant alone: a scope arc was never given is not worth a
+    # request to find out about.
+    assert fake.calls_to(LIST_FOLDER_PATH) == []
+    # The code is spent all the same — the grant came back from redeeming it.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_grant_carrying_no_scopes_at_all_is_refused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # `scope: ""` — the shape a grant takes when the app has nothing ticked.
+    # It used to be read as "Dropbox did not say", and arc stored READ_SCOPES
+    # as if they had been granted.
+    fake.granted_scopes = ()
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "files.metadata.read" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_every_missing_scope_is_named_not_only_the_first(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    # A refusal naming one of three sends the athlete back to the Permissions
+    # tab three times, and each round trip is a re-authorization.
+    fake.granted_scopes = ("sharing.read",)
+    await client.post(AUTHORIZE)
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    for scope in READ_SCOPES:
+        assert scope in detail, f"{scope} was not named"
+
+
+async def test_a_grant_with_a_scope_beyond_what_arc_asked_for_is_accepted(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # The check is a superset test, not equality: an athlete who ticked an
+    # extra permission on their own app has given arc more than it asked for,
+    # which is theirs to do and not a reason to refuse the connection.
+    fake.granted_scopes = (*sorted(READ_SCOPES), "sharing.read")
+
+    connection = await connect(client)
+
+    assert connection["scopes"] == sorted([*READ_SCOPES, "sharing.read"])
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.scopes == sorted([*READ_SCOPES, "sharing.read"])
+
+
+async def test_a_probe_refused_for_scope_stores_nothing_and_names_the_steps(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A grant can claim a scope the app does not carry; the read cannot."""
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_probe_refused_without_naming_a_scope_ends_the_flow_too(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The other half of a refused probe: a 401 that names nothing.
+
+    Same remedy, same spent code, same ending — and the branch is written
+    separately from the scope one, so it is asserted separately.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, httpx.Response(401, text="<html>no</html>"))
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "Permissions" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_probe_refused_by_the_account_refuses_the_connect_without_the_checklist(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A 403 naming no scope is the account, and neither remedy on offer fits.
+
+    Storing the connection would leave a row whose every folder fails on the
+    first poll and whose only offered remedy is Disconnect — which cascades
+    away the feeds and then meets the same 403. Refusing with the scope
+    checklist would send the athlete to tick permissions Dropbox never
+    mentioned. So: no row, and the sentence that names where the answer is.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail == ACCOUNT_NO_ACCESS
+    assert "dropbox.com" in detail
+    assert "Permissions" not in detail
+    assert "Disconnect" not in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_an_account_endpoint_answering_200_with_no_json_ends_the_flow(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The escape the `except AppError` wrapper could not see.
+
+    A proxy's maintenance page carries a 200 and no JSON, and `_account_from`
+    parsed it unguarded: a bare `ValueError` reached the athlete as a 500 and
+    walked straight past the wrapper that deletes a flow whose code has already
+    been spent. The next attempt was then told the code had been used —
+    arc answering a question nobody asked about a flow it should have closed.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(ACCOUNT_PATH, httpx.Response(200, text="<html>maintenance</html>"))
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 502, response.text
+    assert await count_of(db_session, ConnectionRow) == 0
+    # The whole point: the code is spent, so the flow may not survive it.
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_cancelled_connect_does_not_leave_the_spent_codes_flow_alive(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The other shape the `except AppError` wrapper could not see.
+
+    A `CancelledError` is what the athlete closing the tab mid-connect
+    delivers, and it is not an `AppError` — so the flow survived a code that
+    had already been redeemed, and the only answer it could ever give was
+    "that authorization code has already been used". Driven through the
+    service rather than the API because cancellation is not something a
+    request body can ask for.
+    """
+    await client.post(AUTHORIZE)
+
+    async def cancelled(**_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    async with session_scope() as session:
+        service = ConnectionService.from_session(session)
+        with (
+            mock.patch.object(connections_service, "current_account", cancelled),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await service.complete_dropbox(code="pasted-code", actor=Actor.athlete())
+
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
+async def test_a_refused_connect_reloaded_says_start_again_not_code_reused(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The reload that used to swallow the only sentence that helped.
+
+    A scope refusal arrives on the callback page, which is a URL: reloading it
+    re-posts the same code and state. With the pending row still alive, the
+    second answer was "Dropbox refused that authorization code: it has already
+    been used" — arc replacing four console moves the athlete could act on with
+    a sentence about a mechanism they cannot see. Now the flow is over, and the
+    second answer says the one thing left to do.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+    refused = await client.post(COMPLETE, json={"code": "pasted-code"})
+    assert refused.status_code == 422, refused.text
+    assert "files.metadata.read" in refused.json()["detail"]
+
+    replay = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert replay.status_code == 422, replay.text
+    detail = replay.json()["detail"]
+    assert "No Dropbox connection is waiting to be finished" in detail
+    assert "Start the connection again from Settings" in detail
+    assert "already been used" not in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+
+
+async def test_a_rate_limited_probe_stores_the_connection_and_says_so(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A bad minute upstream must not cost the athlete the whole connection.
+
+    The authorization code is already spent by the time the probe runs, so
+    refusing here would mean starting again from dropbox.com over a failure
+    that says nothing about the credential.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, rate_limited())
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "connected"
+    assert "first time it looks for new rides" in body["verification_note"]
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.status is ConnectionStatus.CONNECTED
+    # The connection is stored unproven, not stored broken: nothing about a
+    # 429 is evidence against the credential.
+    assert row.last_error is None
+    # And unstamped, which is the true answer: nobody has checked it. `null`
+    # is a state every reader renders as "not checked yet" — substituting
+    # `created_at` would report a verification that never ran.
+    assert row.last_verified_at is None
+    assert body["last_verified_at"] is None
+
+
+async def test_a_probe_that_never_reaches_dropbox_stores_the_connection_too(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    await client.post(AUTHORIZE)
+    fake.raises[LIST_FOLDER_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 201, response.text
+    assert "first time it looks for new rides" in response.json()["verification_note"]
+    assert await count_of(db_session, ConnectionRow) == 1
+
+
+async def test_a_dropbox_that_goes_away_mid_connect_is_a_422_not_a_500(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Every leg of the connect answers the same way when nothing answers.
+
+    The account read sits between the exchange and the probe, and it was the
+    one leg with no translation over it: a total outage after the code was
+    redeemed escaped as an unhandled connector error and reached the athlete
+    as a 500 — the one shape of failure that names no remedy at all.
+    """
+    await client.post(AUTHORIZE)
+    fake.raises[ACCOUNT_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.post(COMPLETE, json={"code": "pasted-code"})
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
+    assert await count_of(db_session, ConnectionRow) == 0
 
 
 # --- AC-5: the folder picker -------------------------------------------------
@@ -503,8 +1180,8 @@ async def test_folders_lists_only_folders_with_their_path_and_name(
 
     assert response.status_code == 200, response.text
     assert response.json()["items"] == [
-        {"path_lower": "/apps", "name": "Apps"},
-        {"path_lower": "/photos", "name": "Photos"},
+        {"path_lower": "/apps", "path_display": "/apps", "name": "Apps"},
+        {"path_lower": "/photos", "path_display": "/photos", "name": "Photos"},
     ]
     # `path=""` is the Dropbox root, and Dropbox spells that as an empty path.
     assert fake.calls_to(LIST_FOLDER_PATH)[0].body["path"] == ""
@@ -520,6 +1197,36 @@ async def test_a_folder_holding_only_files_is_an_empty_list_not_a_404(
 
     assert response.status_code == 200, response.text
     assert response.json()["items"] == []
+
+
+async def test_browsing_a_folder_stamps_a_connection_nobody_had_checked(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """AC-8: a browse is a scoped read, so it verifies like a poll does.
+
+    The connection here was stored under the transient-probe rule — Dropbox
+    was rate-limiting arc when the connect tried to prove it — so it starts
+    with no stamp at all. Browsing is the athlete's own `list_folder`, and it
+    is the only thing that verifies a connection with **no** watched folder
+    yet, which is precisely the state this one is in. The window is bounded on
+    both sides: a stamp between `before` and `after` could only have been
+    written by this request.
+    """
+    await client.post(AUTHORIZE)
+    fake.script(LIST_FOLDER_PATH, rate_limited())
+    completed = await client.post(COMPLETE, json={"code": "pasted-code"})
+    assert completed.status_code == 201, completed.text
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.last_verified_at is None
+    before = dt.datetime.now(dt.UTC)
+
+    response = await client.get(f"{CONNECTIONS}/{completed.json()['id']}/folders?path=")
+
+    assert response.status_code == 200, response.text
+    after = dt.datetime.now(dt.UTC)
+    await db_session.refresh(row)
+    assert row.last_verified_at is not None
+    assert before <= row.last_verified_at <= after
 
 
 async def test_folders_follows_the_cursor_until_dropbox_is_exhausted(
@@ -557,6 +1264,9 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     row = (await db_session.execute(select(ConnectionRow))).scalars().one()
     row.status = ConnectionStatus.NEEDS_REAUTH
     await db_session.commit()
+    # Connecting proved the credential, which is a request of its own. What
+    # this test is about is every request made *after* the status flipped.
+    fake.calls.clear()
 
     response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
 
@@ -565,6 +1275,368 @@ async def test_folders_on_a_connection_needing_reauth_is_a_409(
     # Refused locally: no point spending a request on a credential arc knows
     # is dead.
     assert fake.calls_to(LIST_FOLDER_PATH) == []
+
+
+# --- AC-16, AC-17: the picker speaks the athlete's Dropbox -------------------
+#
+# Two facts the listing already held and threw away. Dropbox sends
+# `path_display` beside `path_lower` on every entry, and it sends the *file*
+# entries in the same response the folder entries come in — so the athlete's
+# own spelling and "what is actually in here" both cost nothing beyond
+# projecting them. A lowercased path matches nothing the athlete sees in
+# Dropbox, and it cost a real run an hour on a case-sensitivity diagnosis that
+# was never the problem.
+
+
+async def test_folders_carry_dropboxs_spelling_beside_the_path_arc_stores(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            folder_entry("Apps", "/apps", path_display="/Apps"),
+            folder_entry("WahooFitness", "/wahoofitness", path_display="/WahooFitness"),
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    # Both, and they are different things: `path_display` is what goes on
+    # screen, `path_lower` is what a feed row stores and what the unique
+    # constraint is written against.
+    assert [item["path_display"] for item in items] == ["/Apps", "/WahooFitness"]
+    assert [item["path_lower"] for item in items] == ["/apps", "/wahoofitness"]
+
+
+async def test_a_folder_named_only_differently_by_case_keeps_both_spellings(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """The edge the run-through tripped on: the leaf differs only in case.
+
+    `wahoofitness` and `WahooFitness` are the same folder to Dropbox, so a
+    reader that took `path_lower` for a display value produced a screen that
+    matched nothing in the athlete's Dropbox and no error to explain it.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            folder_entry(
+                "WahooFitness",
+                "/apps/wahoofitness",
+                path_display="/Apps/WahooFitness",
+            )
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    item = response.json()["items"][0]
+    assert item["path_display"] == "/Apps/WahooFitness"
+    assert item["path_lower"] == "/apps/wahoofitness"
+    assert item["name"] == "WahooFitness"
+
+
+async def test_the_current_folder_is_named_the_way_dropbox_spells_it(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """The breadcrumb's own path, derived from the children already in hand.
+
+    Dropbox's `list_folder` says nothing about the folder it was asked for,
+    and asking `get_metadata` for it would be a second round trip per browse.
+    Every entry's `path_display` carries the parent's spelling in front of its
+    own name, so the answer is already in the response.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            file_entry(
+                "ride.fit",
+                "/apps/wahoofitness/ride.fit",
+                path_display="/Apps/WahooFitness/ride.fit",
+            )
+        )
+    ]
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    assert response.json()["path_display"] == "/Apps/WahooFitness"
+
+
+async def test_an_empty_folder_echoes_the_path_it_was_asked_for(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """Nothing inside means nothing to derive a spelling from — say so plainly.
+
+    The echo is the requested path rather than an invented capitalisation: arc
+    does not know how the athlete spells a folder it has never seen an entry
+    from, and guessing would be the same pretence this whole change removes.
+    """
+    connection = await connect(client)
+    fake.pages = [page()]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    assert response.json()["path_display"] == "/apps"
+    assert response.json()["items"] == []
+
+
+async def test_the_root_names_itself_as_the_empty_path_dropbox_uses(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.pages = [page(folder_entry("Apps", "/apps", path_display="/Apps"))]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    # `""` is Dropbox's own spelling of the root, and the picker renders it as
+    # one non-navigating segment rather than a path.
+    assert response.json()["path_display"] == ""
+
+
+async def test_folders_count_the_files_here_and_the_ones_arc_can_read(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17: "14 files here, 12 arc can read", from the listing already made.
+
+    The screenshots and the CSV export are the difference between the two
+    numbers, and the athlete needs both to recognise the folder their head
+    unit writes to.
+    """
+    connection = await connect(client)
+    # Connecting proved the credential with a probe of its own; what this test
+    # counts is the requests the *browse* spends.
+    fake.calls.clear()
+    fake.pages = [
+        page(
+            folder_entry("Archive", "/apps/wahoofitness/archive"),
+            *(
+                file_entry(f"ride-{index}.fit", f"/apps/wahoofitness/ride-{index}.fit")
+                for index in range(12)
+            ),
+            file_entry("summary.csv", "/apps/wahoofitness/summary.csv"),
+            file_entry("screenshot.png", "/apps/wahoofitness/screenshot.png"),
+        )
+    ]
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    body = response.json()
+    assert body["file_count"] == 14
+    assert body["supported_file_count"] == 12
+    # Counts are about the current folder, never about a subfolder — that
+    # would be one Dropbox call per row.
+    assert [item["name"] for item in body["items"]] == ["Archive"]
+    # And no second listing was spent to learn any of it.
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_counts_cover_every_page_dropbox_serves_not_just_the_first(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17 edge: a folder Dropbox paginates still reports its whole contents.
+
+    The sentence on screen claims a total, so the response has to be able to
+    back one: `list_entries` follows `has_more` to the end and the counts are
+    taken after it, never per page.
+    """
+    connection = await connect(client)
+    fake.tree = {
+        "/apps/wahoofitness": [
+            folder_entry("Archive", "/apps/wahoofitness/archive"),
+            *(
+                file_entry(f"ride-{index}.fit", f"/apps/wahoofitness/ride-{index}.fit")
+                for index in range(5)
+            ),
+            file_entry("notes.txt", "/apps/wahoofitness/notes.txt"),
+        ]
+    }
+    fake.tree_page_size = 2
+
+    response = await client.get(
+        f"{CONNECTIONS}/{connection['id']}/folders?path=/apps/wahoofitness"
+    )
+
+    body = response.json()
+    assert body["file_count"] == 6
+    assert body["supported_file_count"] == 5
+    assert len(fake.calls_to(LIST_FOLDER_CONTINUE_PATH)) == 3
+
+
+async def test_a_truly_empty_folder_counts_nothing_rather_than_guessing(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-17 edge: the state "Nothing but files in here" used to assert on.
+
+    The old copy claimed files the response never mentioned. Zero and zero is
+    a fact the picker can render as "this folder is empty" and mean it.
+    """
+    connection = await connect(client)
+    fake.pages = [page()]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    body = response.json()
+    assert body["items"] == []
+    assert body["file_count"] == 0
+    assert body["supported_file_count"] == 0
+
+
+async def test_the_readable_count_is_the_domains_one_list_of_extensions(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """What the picker promises is what the poll will actually take.
+
+    `ACTIVITY_EXTENSIONS` lives in `app.domain.connections` precisely so this
+    count and `app.ingest.feeds._should_take` cannot drift: a picker that
+    counted a `.csv` as readable would promise rides that never arrive, and
+    nothing downstream would report it.
+    """
+    connection = await connect(client)
+    fake.pages = [
+        page(
+            *(
+                file_entry(f"ride.{extension}", f"/apps/ride.{extension}")
+                for extension in sorted(ACTIVITY_EXTENSIONS)
+            ),
+            # Upper case is how a Garmin writes it, and it is readable.
+            file_entry("RIDE.FIT", "/apps/ride2.fit"),
+            file_entry("notes", "/apps/notes"),
+        )
+    ]
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/apps")
+
+    body = response.json()
+    assert body["file_count"] == len(ACTIVITY_EXTENSIONS) + 2
+    assert body["supported_file_count"] == len(ACTIVITY_EXTENSIONS) + 1
+
+
+# --- AC-4, AC-5, AC-7: Dropbox's own words reach the athlete -----------------
+#
+# Four upstream failures, four sentences. What this section defends is the
+# distinction itself: a missing scope, a dead credential, a rate limit and a
+# network that is not there were one 422 saying "Dropbox could not be
+# reached", which is a true sentence for exactly one of them and sent the
+# athlete of the other three hunting a fault that was not there.
+
+
+async def test_a_missing_scope_while_browsing_names_the_scope_and_the_console(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "files.metadata.read" in detail
+    assert "Permissions" in detail
+    assert "Submit" in detail
+    # Refreshing cannot mint a scope, so a token request here is a round trip
+    # spent to be told the same thing.
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert "could not be reached" not in detail
+
+
+async def test_an_account_refusal_while_browsing_sends_the_athlete_to_dropbox(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A 403 naming no scope is neither a dead credential nor a bad minute.
+
+    It arrived as `DropboxAuthError`, so the browse answered 409 with
+    "Disconnect and connect again" — advice that costs the athlete every feed
+    and integration on the account and then fails on the same 403, with wording
+    about scopes Dropbox never named. 502 because the frontend prints a 502's
+    detail, and the detail is the whole answer.
+    """
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    assert detail == ACCOUNT_NO_ACCESS
+    assert "Disconnect" not in detail
+    assert "Permissions" not in detail
+    assert "try again in a few minutes" not in detail
+    # No refresh: no token arc can mint changes what the account is allowed.
+    assert fake.calls_to(TOKEN_PATH) == []
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    # The credential is fine, so the row says so — a flip here would freeze
+    # every folder on the account behind a reconnect that cannot clear it.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
+
+
+async def test_a_dead_credential_while_browsing_is_the_athletes_remedy(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """AC-7: the second 401 is a sentence about arc, not about a token."""
+    connection = await connect(client)
+    fake.calls.clear()
+    fake.script(LIST_FOLDER_PATH, expired_access_token(), expired_access_token())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "Disconnect and connect again" in detail
+    assert "token" not in detail
+    assert "credential" not in detail
+    row = (await db_session.execute(select(ConnectionRow))).scalars().one()
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == detail
+
+
+async def test_a_path_dropbox_answered_about_is_never_reported_as_unreachable(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.script(LIST_FOLDER_PATH, path_not_found("/nope"))
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=/nope")
+
+    assert response.status_code == 404, response.text
+    assert "/nope" in response.json()["detail"]
+    assert "could not be reached" not in response.json()["detail"]
+
+
+async def test_a_dropbox_that_answered_a_5xx_is_a_502_not_a_reachability_question(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.script(LIST_FOLDER_PATH, server_error())
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    # Dropbox answered. Saying it could not be reached is arc guessing at a
+    # cause it was told.
+    assert "Dropbox answered" in detail
+    assert "could not be reached" not in detail
+
+
+async def test_only_a_network_that_never_answered_is_could_not_be_reached(
+    client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    connection = await connect(client)
+    fake.raises[LIST_FOLDER_PATH] = httpx.ConnectError("dropbox is unreachable")
+
+    response = await client.get(f"{CONNECTIONS}/{connection['id']}/folders?path=")
+
+    assert response.status_code == 422, response.text
+    assert "could not be reached" in response.json()["detail"]
 
 
 # --- AC-10: `/feeds` is gone, and the integration owns its folders -----------

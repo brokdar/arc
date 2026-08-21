@@ -84,9 +84,34 @@ describe("loadFailureMessage", () => {
     expect(loadFailureMessage(new TypeError("fetch failed"), "the queue")).toBe(
       "Could not load the queue. Is the API reachable?",
     );
+    // A 500 is the API failing to say anything useful about itself: its body
+    // is a stack trace's leftovers, not a sentence anyone can act on.
     expect(
       loadFailureMessage(answered(500, { detail: "boom" }), "the log"),
     ).toBe("Could not load the log. Is the API reachable?");
+    // And every other 5xx with it: only 502 is a named upstream's answer.
+    expect(
+      loadFailureMessage(answered(503, { detail: "unavailable" }), "the log"),
+    ).toBe("Could not load the log. Is the API reachable?");
+  });
+
+  it("prints the sentence a named upstream answered with", () => {
+    // A 502 is `UpstreamError` and nothing else: Dropbox answered, arc could
+    // not fix what it said, and the body is prose written for the athlete.
+    // Discarding it put "Is the API reachable?" back on screen for every
+    // answered Dropbox 5xx — the sentence the whole flow exists to delete.
+    const upstream =
+      "Dropbox answered arc with an error it cannot fix (503 for " +
+      "/2/files/list_folder). Nothing is wrong with your setup — try again " +
+      "in a few minutes.";
+
+    expect(
+      loadFailureMessage(answered(502, { detail: upstream }), "that folder"),
+    ).toBe(upstream);
+    // A 502 with nothing in it is still not a sentence.
+    expect(loadFailureMessage(answered(502, {}), "that folder")).toBe(
+      "Could not load that folder. Is the API reachable?",
+    );
   });
 
   it("names the remedy when the API answered that the session is gone", () => {
@@ -96,5 +121,45 @@ describe("loadFailureMessage", () => {
         "the queue",
       ),
     ).toBe("Your session has expired. Log in again to see the queue.");
+  });
+
+  it("prints what a 4xx said rather than a question it already answered", () => {
+    // The sentence the service wrote names the scope, the console tab and the
+    // remedy. Replacing it with "Is the API reachable?" is arc discarding the
+    // one thing the athlete needed and substituting a guess.
+    const refusal =
+      "arc lost its permission to read your Dropbox. Disconnect and connect again to fix it.";
+
+    expect(
+      loadFailureMessage(answered(409, { detail: refusal }), "that folder"),
+    ).toBe(refusal);
+    expect(
+      loadFailureMessage(
+        answered(404, { detail: "Dropbox has no folder at /nope" }),
+        "that folder",
+      ),
+    ).toBe("Dropbox has no folder at /nope");
+  });
+
+  it("falls back rather than printing a blank line", () => {
+    // A 422 whose detail is empty, or is FastAPI's per-field list: neither is
+    // a sentence about why a page could not load.
+    expect(
+      loadFailureMessage(answered(422, { detail: "" }), "that folder"),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(
+      loadFailureMessage(answered(422, { detail: "   " }), "that folder"),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(
+      loadFailureMessage(
+        answered(422, {
+          detail: [{ loc: ["query", "path"], msg: "too long" }],
+        }),
+        "that folder",
+      ),
+    ).toBe("Could not load that folder. Is the API reachable?");
+    expect(loadFailureMessage(answered(404, {}), "that folder")).toBe(
+      "Could not load that folder. Is the API reachable?",
+    );
   });
 });

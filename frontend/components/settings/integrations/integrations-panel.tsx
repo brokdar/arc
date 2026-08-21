@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { InlineConfirm } from "@/components/design/confirm";
 import { Panel } from "@/components/design/panel";
@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
+import { type AddFlowResume, takeAddFlow } from "@/lib/dropbox-redirect";
+import { formatRelativeTime } from "@/lib/format";
 
 type Connection = components["schemas"]["ConnectionRead"];
 
@@ -47,6 +49,25 @@ export function IntegrationsPanel({
 }) {
   const integrations = $api.useQuery("get", "/api/v1/integrations");
   const [adding, setAdding] = useState(false);
+  const [resumed, setResumed] = useState<AddFlowResume | null>(null);
+
+  // Connecting Dropbox by redirect hands this tab to dropbox.com and gets it
+  // back on `/settings`, so the flow the athlete was in the middle of is gone
+  // — React state does not survive a navigation. `DropboxConnectStep` writes
+  // where it was before leaving, and this reads it back once, on mount:
+  // landing on a bare Settings page with a freshly connected account would
+  // leave the athlete to work out that the folder step is still owed.
+  //
+  // In an effect rather than a lazy `useState`, because the panel is
+  // prerendered: reading `sessionStorage` during render would hydrate to a
+  // different tree than the server produced.
+  useEffect(() => {
+    const resume = takeAddFlow();
+    if (resume !== null) {
+      setResumed(resume);
+      setAdding(true);
+    }
+  }, []);
 
   return (
     <Panel className={className} data-testid="integrations-panel">
@@ -76,7 +97,13 @@ export function IntegrationsPanel({
         )}
 
         {adding ? (
-          <AddIntegrationFlow onDone={() => setAdding(false)} />
+          <AddIntegrationFlow
+            initialKind={resumed?.kind ?? null}
+            onDone={() => {
+              setAdding(false);
+              setResumed(null);
+            }}
+          />
         ) : (
           <Button
             type="button"
@@ -137,7 +164,22 @@ function StorageAccounts({
   );
 }
 
-/** One account: who it is, what state it is in, and the way to forget it. */
+/**
+ * One account: who it is, what state it is in, and the way to forget it.
+ *
+ * **The healthy state is words.** This line used to render nothing at all when
+ * a connection was `connected` — health was the absence of red text — so a
+ * working account and one whose grant had been revoked in the Dropbox console
+ * looked identical until an unrelated screen failed. It now states what arc
+ * observed and when: `last_verified_at` is the moment a scoped call to Dropbox
+ * last succeeded, so "last checked 4 minutes ago" is a fact from the poll
+ * rather than a claim about a row.
+ *
+ * A null stamp renders "not checked yet" and never a time. That state is real
+ * — a connection stored when Dropbox could not answer the connect-time probe
+ * has one until its first poll — and `created_at` is the tempting substitute
+ * that would report a check that never ran.
+ */
 function AccountLine({
   connection,
   integrations,
@@ -159,12 +201,12 @@ function AccountLine({
     },
   );
 
+  const label = connection.account_label ?? "an unnamed account";
+
   return (
     <div className="flex flex-col items-start gap-2">
       <div className="flex w-full flex-wrap items-baseline gap-2">
-        <span className="mr-auto text-ink-secondary text-sm">
-          Dropbox — {connection.account_label ?? "an unnamed account"}
-        </span>
+        <span className="mr-auto text-ink-secondary text-sm">Dropbox</span>
         {asking ? null : (
           <Button
             type="button"
@@ -176,8 +218,20 @@ function AccountLine({
           </Button>
         )}
       </div>
-      {connection.status === "connected" ? null : (
-        <p role="status" className="max-w-[62ch] text-destructive text-sm">
+      {connection.status === "connected" ? (
+        <p
+          data-testid="account-health"
+          className="max-w-[62ch] text-ink-secondary text-sm"
+        >
+          Connected as {label} · <LastChecked connection={connection} />
+        </p>
+      ) : (
+        <p
+          role="status"
+          data-testid="account-health"
+          className="max-w-[62ch] text-destructive text-sm"
+        >
+          {label} —{" "}
           {connection.last_error ??
             "arc cannot use this account, so nothing is being collected through it."}
         </p>
@@ -201,6 +255,28 @@ function AccountLine({
       ) : null}
       <Problems problems={apiErrorMessages(disconnect.error)} />
     </div>
+  );
+}
+
+/**
+ * When arc last watched this credential work, or that nobody has yet.
+ *
+ * Relative rather than a clock reading (`formatRelativeTime`): the question
+ * this answers is "is the account working *now*", and `21.08 14:32` makes the
+ * reader subtract against a clock they have to go and find. The numeral is
+ * mono, as every numeral in arc is (UI convention 5).
+ */
+function LastChecked({ connection }: { readonly connection: Connection }) {
+  if (connection.last_verified_at === null) {
+    return <span className="text-ink-faint">not checked yet</span>;
+  }
+  return (
+    <>
+      last checked{" "}
+      <span className="font-mono">
+        {formatRelativeTime(connection.last_verified_at)}
+      </span>
+    </>
   );
 }
 

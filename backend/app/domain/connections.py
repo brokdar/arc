@@ -34,14 +34,37 @@ class ConnectionStatus(StrEnum):
     Three states with three different remedies, which is why `error` is not
     folded into `needs_reauth`:
 
-    * ``connected`` — the credential works, or at least nothing has told arc
-      otherwise;
-    * ``needs_reauth`` — Dropbox refused the refresh token. The athlete has to
-      go through the connect ritual again; nothing local will fix it;
+    * ``connected`` — a scoped call to the provider succeeded, and
+      ``connections.last_verified_at`` says when. **An observation with a
+      timestamp, not the absence of bad news.** It used to mean "nothing has
+      told arc otherwise", which is a claim arc could go on making for weeks
+      after a console permission change killed the grant: nothing asks, so
+      nothing tells. The status and the stamp are read together — a status
+      with no stamp behind it is a connection nobody has checked yet, and the
+      panel says exactly that rather than inventing a time;
+    * ``needs_reauth`` — Dropbox refused the credential, or refused a call for
+      want of a scope the grant does not carry. The athlete has to go through
+      the connect ritual again (after ticking the permission, where that is
+      what went wrong); nothing local will fix it. **Only a reconnect leaves
+      it** — disconnect, then connect, whose probe proves a scoped read before
+      a row is written. In particular a successful token refresh does not:
+      minting a token proves the credential is alive, not that the grant can
+      read a file, and a grant whose `files.metadata.read` was unticked in the
+      console does the first and not the second. Healing the row on a refresh
+      let a flip un-flip itself inside the very cycle that made it — see
+      `app.connectors.dropbox.DropboxClient._refresh`;
     * ``error`` — arc cannot *read* its own credential, which today means
-      `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
-      remedy is to restore the key, and re-authorizing would only paper over a
-      configuration mistake that is also hiding every other secret.
+      `SECRETS__ENCRYPTION_KEY` has changed since the row was written.
+      Restoring the key makes the credential decryptable again — and **arc does
+      not currently re-check a row in this state**, so nothing turns the status
+      back. An `error` row is skipped by `app.ingest.feeds._due_feeds` and
+      refused by `ConnectionService._readable_client`, and neither ever asks a
+      second time, so the way back is disconnect and connect again — which
+      takes every feed on the account with it. That is a known sharp edge: the
+      honest remedy costs the athlete their folders over a configuration
+      mistake they may have already fixed, and a re-examination path is the
+      thing that would remove the cost. Restoring the key is still worth doing
+      first, because the same variable is hiding every other secret arc holds.
     """
 
     CONNECTED = "connected"

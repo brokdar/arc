@@ -376,6 +376,141 @@ async def test_adding_wahoo_creates_the_integration_and_the_folder_at_once(
     assert feed.integration_id is not None
 
 
+async def test_watching_a_folder_stores_both_of_its_spellings(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The identity is normalised; the name is kept as the athlete spells it.
+
+    Nothing recovers `/Apps/WahooFitness` from `/apps/wahoofitness`, so this is
+    the only moment arc can learn it — and two surfaces need it: the card's
+    folder line, and the already-held refusal the picker prints under a
+    breadcrumb spelled the athlete's way.
+    """
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/Apps/WahooFitness/",
+            "path_display": "/Apps/WahooFitness",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    folder = response.json()["folders"][0]
+    assert folder["remote_path"] == "/apps/wahoofitness"
+    assert folder["remote_path_display"] == "/Apps/WahooFitness"
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path == "/apps/wahoofitness"
+    assert feed.remote_path_display == "/Apps/WahooFitness"
+
+
+async def test_a_folder_watched_without_a_display_spelling_stores_none(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Null is a state — "arc never learned this folder's spelling".
+
+    A caller that does not know is not made to guess, and arc does not
+    manufacture a capitalisation of its own: the readers fall back to the
+    stored path, which is what those rows have always shown.
+    """
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["folders"][0]["remote_path_display"] is None
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path_display is None
+
+
+async def test_a_display_spelling_of_another_folder_is_dropped_not_stored(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The identity wins: a mismatched label would name the wrong folder for good."""
+    connection = await connect(client)
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/apps/wahoofitness",
+            "path_display": "/Photos/Holiday",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    feed = (await db_session.execute(select(FeedRow))).scalars().one()
+    assert feed.remote_path == "/apps/wahoofitness"
+    assert feed.remote_path_display is None
+
+
+async def test_the_already_held_refusal_names_the_folder_as_the_athlete_spells_it(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """The picker prints this sentence under a display-case breadcrumb.
+
+    Spelling the folder `/apps/wahoofitness` there reads as arc talking about
+    a different folder, or as a case bug in arc — which cost one real run an
+    hour. The spelling comes off the row already holding it, because the
+    sentence is about what arc has.
+    """
+    connection = await connect(client)
+    body = {
+        "kind": "wahoo",
+        "transport": "cloud_folder",
+        "connection_id": connection["id"],
+        "remote_path": "/apps/wahoofitness",
+        "path_display": "/Apps/WahooFitness",
+    }
+    assert (await client.post(INTEGRATIONS, json=body)).status_code == 201
+
+    response = await client.post(INTEGRATIONS, json=body)
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert "/Apps/WahooFitness" in detail
+    assert "/apps/wahoofitness" not in detail
+    assert await count_of(db_session, FeedRow) == 1
+
+
+async def test_the_already_held_refusal_falls_back_for_a_folder_with_no_spelling(
+    data_root: Path, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A folder watched before the column existed still has to be named."""
+    connection = await connect(client)
+    await seed_feed(db_session, connection["id"], "/somewhere-else")
+
+    response = await client.post(
+        INTEGRATIONS,
+        json={
+            "kind": "wahoo",
+            "transport": "cloud_folder",
+            "connection_id": connection["id"],
+            "remote_path": "/SOMEWHERE-ELSE/",
+            "path_display": "/Somewhere-Else",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    # The row's own spelling or nothing: arc will not repeat back a name the
+    # request supplied for a folder it is refusing.
+    assert "/somewhere-else" in response.json()["detail"]
+
+
 async def test_a_kind_the_catalogue_does_not_hold_is_refused_naming_the_kinds(
     data_root: Path, client: httpx.AsyncClient
 ) -> None:
@@ -705,11 +840,55 @@ async def test_discovery_names_the_integration_behind_the_folder_it_finds(
             "connection_id": connection["id"],
             "transport": "cloud_folder",
             "path": "/apps/wahoofitness",
+            "path_display": "/apps/wahoofitness",
             "activity_files": 3,
             "newest_at": "2026-08-16T06:12:00Z",
             "configured": False,
         }
     ]
+
+
+async def test_a_proposal_carries_dropboxs_spelling_beside_the_path_arc_stores(
+    data_root: Path, client: httpx.AsyncClient, fake: FakeDropbox
+) -> None:
+    """AC-21: the discovery road shows the folder, not the identity.
+
+    `path` is what a feed row is written against and what the clash refusal
+    compares; it is lower-cased, and a panel rendering it put
+    `/apps/wahoofitness` in front of an athlete looking at
+    `/Apps/WahooFitness` in Dropbox. The two spellings are published side by
+    side for the reason `FolderRead` publishes them: one is a name and the
+    other is an identity, and only one of them belongs on screen.
+
+    The display path is read off the *entries* of the listing, exactly as
+    `DropboxListing.path_display` is — so a Dropbox that capitalises produces
+    a proposal that capitalises, with no second source of truth.
+    """
+    connection = await connect(client)
+    fake.tree = tree(
+        root=[folder_entry("Apps", "/apps", path_display="/Apps")],
+        apps=[
+            folder_entry(
+                "WahooFitness", "/apps/wahoofitness", path_display="/Apps/WahooFitness"
+            )
+        ],
+        apps_wahoofitness=[
+            file_entry(
+                "2026-08-16-ride.fit",
+                "/apps/wahoofitness/2026-08-16-ride.fit",
+                path_display="/Apps/WahooFitness/2026-08-16-ride.fit",
+                client_modified="2026-08-16T06:12:00Z",
+            )
+        ],
+    )
+
+    body = (await client.get(discover_url(connection))).json()
+
+    [proposal] = body["proposals"]
+    assert proposal["path_display"] == "/Apps/WahooFitness"
+    # And the identity is untouched: accepting still stores the normalised
+    # spelling `uq_feeds_connection_id_remote_path` is written against.
+    assert proposal["path"] == "/apps/wahoofitness"
 
 
 async def test_a_folder_holding_no_activity_files_is_absent_not_zero(
@@ -892,6 +1071,7 @@ async def test_the_probed_app_container_is_listed_once_and_counted_once(
             "connection_id": connection["id"],
             "transport": "cloud_folder",
             "path": "/apps",
+            "path_display": "/apps",
             "activity_files": 1,
             "newest_at": "2026-01-01T00:00:00Z",
             "configured": False,
@@ -918,6 +1098,9 @@ async def test_discovery_on_a_connection_needing_reauth_is_a_409(
     row = (await db_session.execute(select(ConnectionRow))).scalars().one()
     row.status = ConnectionStatus.NEEDS_REAUTH
     await db_session.commit()
+    # Connecting proved the credential, which is a request of its own. What
+    # this test is about is every request made *after* the status flipped.
+    fake.calls.clear()
 
     response = await client.get(discover_url(connection))
 

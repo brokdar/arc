@@ -351,10 +351,15 @@ export interface paths {
      * Start Dropbox Authorization
      * @description Begin connecting Dropbox: get the link the athlete opens.
      *
-     *     The link carries a PKCE challenge and **no redirect URI** — Dropbox shows
-     *     the athlete a code, which they paste into `POST /connections/dropbox/complete`.
-     *     That is what lets arc connect a cloud account from behind a home router
-     *     without registering a redirect or being reachable from the internet.
+     *     The body is optional and carries one field. With a `redirect_uri` the link
+     *     carries it and a `state`, and Dropbox sends the athlete back to that page
+     *     with the code in its query string. Without one — an empty body, which is
+     *     what the step sends when the browser's origin is not one Dropbox will
+     *     redirect to — the link is the pre-existing paste URL and Dropbox shows the
+     *     code on screen.
+     *
+     *     The URI is the *browser's*, not a header's, and the service decides
+     *     whether Dropbox will accept it before anything is stored.
      */
     post: operations["connections-start_dropbox_authorization"];
     delete?: never;
@@ -374,7 +379,17 @@ export interface paths {
     put?: never;
     /**
      * Complete Dropbox Authorization
-     * @description Finish connecting Dropbox with the code the athlete pasted back.
+     * @description Finish connecting Dropbox with the code that came back.
+     *
+     *     Called by the athlete's own browser either way: by the form they pasted
+     *     into, or by the callback page at `/settings/dropbox/callback` reading its
+     *     own query string. The `state` is forwarded verbatim when there is one —
+     *     the service, not this route, decides whether it matches.
+     *
+     *     A 201 here means arc has read the athlete's Dropbox with the credential it
+     *     just stored, unless `verification_note` says why it could not — see
+     *     `ConnectionService.complete_dropbox`. A grant that cannot read is a 422 and
+     *     no connection at all.
      */
     post: operations["connections-complete_dropbox_authorization"];
     delete?: never;
@@ -476,11 +491,13 @@ export interface paths {
     };
     /**
      * List Folders
-     * @description The folders directly under ``path`` — the folder picker's data.
+     * @description What is directly under ``path`` — the folder picker's data.
      *
-     *     Folders only: the athlete is choosing a directory to watch, and the files
-     *     in it are what the poll will find, not what this answers. A folder holding
-     *     nothing but files is a 200 with an empty list.
+     *     Subfolders as rows, and the current folder's own contents as two numbers:
+     *     the athlete is choosing a directory to watch, and "what is in here" is the
+     *     fact that tells them whether this is the one their head unit writes to. A
+     *     folder holding nothing but files is a 200 with an empty list and a file
+     *     count that says so.
      */
     get: operations["connections-list_folders"];
     put?: never;
@@ -2820,6 +2837,8 @@ export interface components {
       id: string;
       /** Last Error */
       last_error: string | null;
+      /** Last Verified At */
+      last_verified_at: string | null;
       provider: components["schemas"]["ConnectionProvider"];
       /** Scopes */
       scopes: string[];
@@ -2837,14 +2856,37 @@ export interface components {
      *     Three states with three different remedies, which is why `error` is not
      *     folded into `needs_reauth`:
      *
-     *     * ``connected`` — the credential works, or at least nothing has told arc
-     *       otherwise;
-     *     * ``needs_reauth`` — Dropbox refused the refresh token. The athlete has to
-     *       go through the connect ritual again; nothing local will fix it;
+     *     * ``connected`` — a scoped call to the provider succeeded, and
+     *       ``connections.last_verified_at`` says when. **An observation with a
+     *       timestamp, not the absence of bad news.** It used to mean "nothing has
+     *       told arc otherwise", which is a claim arc could go on making for weeks
+     *       after a console permission change killed the grant: nothing asks, so
+     *       nothing tells. The status and the stamp are read together — a status
+     *       with no stamp behind it is a connection nobody has checked yet, and the
+     *       panel says exactly that rather than inventing a time;
+     *     * ``needs_reauth`` — Dropbox refused the credential, or refused a call for
+     *       want of a scope the grant does not carry. The athlete has to go through
+     *       the connect ritual again (after ticking the permission, where that is
+     *       what went wrong); nothing local will fix it. **Only a reconnect leaves
+     *       it** — disconnect, then connect, whose probe proves a scoped read before
+     *       a row is written. In particular a successful token refresh does not:
+     *       minting a token proves the credential is alive, not that the grant can
+     *       read a file, and a grant whose `files.metadata.read` was unticked in the
+     *       console does the first and not the second. Healing the row on a refresh
+     *       let a flip un-flip itself inside the very cycle that made it — see
+     *       `app.connectors.dropbox.DropboxClient._refresh`;
      *     * ``error`` — arc cannot *read* its own credential, which today means
-     *       `SECRETS__ENCRYPTION_KEY` has changed since the row was written. The
-     *       remedy is to restore the key, and re-authorizing would only paper over a
-     *       configuration mistake that is also hiding every other secret.
+     *       `SECRETS__ENCRYPTION_KEY` has changed since the row was written.
+     *       Restoring the key makes the credential decryptable again — and **arc does
+     *       not currently re-check a row in this state**, so nothing turns the status
+     *       back. An `error` row is skipped by `app.ingest.feeds._due_feeds` and
+     *       refused by `ConnectionService._readable_client`, and neither ever asks a
+     *       second time, so the way back is disconnect and connect again — which
+     *       takes every feed on the account with it. That is a known sharp edge: the
+     *       honest remedy costs the athlete their folders over a configuration
+     *       mistake they may have already fixed, and a re-examination path is the
+     *       thing that would remove the cost. Restoring the key is still worth doing
+     *       first, because the same variable is hiding every other secret arc holds.
      * @enum {string}
      */
     ConnectionStatus: "connected" | "needs_reauth" | "error";
@@ -2972,12 +3014,67 @@ export interface components {
       expires_at: string;
     };
     /**
+     * DropboxAuthorizationStart
+     * @description Where Dropbox should send the athlete back to, if it can send them.
+     *
+     *     The whole body is optional, and its absence is the **paste** flow — the
+     *     one arc has always had, still reachable and still the only one that works
+     *     on a deployment served over plain http at a LAN address.
+     */
+    DropboxAuthorizationStart: {
+      /** Redirect Uri */
+      redirect_uri?: string;
+    };
+    /**
      * DropboxCodeSubmit
-     * @description The authorization code Dropbox showed the athlete, pasted back.
+     * @description The authorization code Dropbox handed back, pasted or redirected.
      */
     DropboxCodeSubmit: {
       /** Code */
       code: string;
+      /** State */
+      state?: string;
+    };
+    /**
+     * DropboxConnectionRead
+     * @description The connection a completion just stored, and what arc proved about it.
+     *
+     *     A subclass rather than a field on `ConnectionRead`: the note is about one
+     *     completion, not a property of the connection. A later `GET` has nothing to
+     *     say about a check that ran once, minutes ago, and a nullable field on
+     *     every connection read would invite the panel to render a stale answer as
+     *     the current one.
+     */
+    DropboxConnectionRead: {
+      /** Account Label */
+      account_label: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Feeds */
+      feeds: components["schemas"]["FeedRead"][];
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Error */
+      last_error: string | null;
+      /** Last Verified At */
+      last_verified_at: string | null;
+      provider: components["schemas"]["ConnectionProvider"];
+      /** Scopes */
+      scopes: string[];
+      status: components["schemas"]["ConnectionStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+      /** Verification Note */
+      verification_note: string | null;
     };
     /**
      * DropboxSetupRead
@@ -3185,23 +3282,45 @@ export interface components {
     };
     /**
      * FolderList
-     * @description The folders directly under one remote path.
+     * @description What is directly under one remote path: the subfolders, and the files.
      *
      *     Never a 404 for an empty folder: a directory holding only files is a
      *     legitimate answer with `items: []`, and the picker says so rather than
      *     drawing an empty box.
+     *
+     *     The counts describe the **current** folder only, and describe all of it —
+     *     `ConnectionService.folders` follows Dropbox's cursor to the end before
+     *     counting, so a client may render them as a total. Per-subfolder counts are
+     *     deliberately absent: they would cost one Dropbox call per row.
      */
     FolderList: {
+      /** File Count */
+      file_count: number;
       /** Items */
       items: components["schemas"]["FolderRead"][];
+      /** Path Display */
+      path_display: string;
+      /** Supported File Count */
+      supported_file_count: number;
     };
     /**
      * FolderRead
-     * @description One folder in a remote listing.
+     * @description One folder in a remote listing, in both spellings Dropbox keeps.
+     *
+     *     The two are not interchangeable and the difference is the whole point:
+     *     `path_lower` is the **identity** — what a feed row stores, what
+     *     `uq_feeds_connection_id_remote_path` is written against, and what a client
+     *     sends back to watch this folder — while `path_display` and `name` are the
+     *     only forms that belong on screen. A picker rendering `path_lower` shows
+     *     `/apps/wahoofitness` to an athlete looking at `/Apps/WahooFitness` in
+     *     Dropbox, which reads as a case bug in arc and once cost a real run an hour
+     *     chasing a case-sensitivity fault that did not exist.
      */
     FolderRead: {
       /** Name */
       name: string;
+      /** Path Display */
+      path_display: string;
       /** Path Lower */
       path_lower: string;
     };
@@ -3350,6 +3469,8 @@ export interface components {
        */
       connection_id?: string;
       kind: components["schemas"]["IntegrationKind"];
+      /** Path Display */
+      path_display?: string;
       /** Remote Path */
       remote_path?: string;
       transport: components["schemas"]["TransportKind"];
@@ -3396,6 +3517,8 @@ export interface components {
       last_error: string | null;
       /** Remote Path */
       remote_path: string;
+      /** Remote Path Display */
+      remote_path_display: string | null;
       state: components["schemas"]["FeedDeliveryState"];
       storage: components["schemas"]["ConnectionProvider"];
     };
@@ -3447,6 +3570,8 @@ export interface components {
       newest_at: string | null;
       /** Path */
       path: string;
+      /** Path Display */
+      path_display: string;
       transport: components["schemas"]["TransportKind"];
     };
     /**
@@ -7809,7 +7934,11 @@ export interface operations {
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["DropboxAuthorizationStart"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
@@ -7818,6 +7947,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DropboxAuthorizationRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
       /** @description No valid session */
@@ -7868,7 +8006,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["ConnectionRead"];
+          "application/json": components["schemas"]["DropboxConnectionRead"];
         };
       };
       /** @description Malformed body */
@@ -7905,6 +8043,15 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+      /** @description Dropbox answered with a failure */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };
@@ -8126,6 +8273,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorDetail"];
         };
       };
+      /** @description Dropbox answered with a failure */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
     };
   };
   "connections-list_folders": {
@@ -8188,6 +8344,15 @@ export interface operations {
       };
       /** @description Dropbox is rate-limiting arc */
       429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Dropbox answered with a failure */
+      502: {
         headers: {
           [name: string]: unknown;
         };

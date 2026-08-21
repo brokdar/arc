@@ -25,11 +25,12 @@ import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Final
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ConflictError
 from app.core.logging import get_logger
 from app.domain.connections import ConnectionStatus
 from app.persistence.connections import ConnectionRow, EncryptedCredentials
@@ -46,6 +47,18 @@ API_BASE: Final = "https://api.dropboxapi.com"
 #: Dropbox is strict about it: `/2/files/download` on `api.dropboxapi.com` is a
 #: 400. The argument travels in a header there, and the body is the file.
 CONTENT_BASE: Final = "https://content.dropboxapi.com"
+
+#: The endpoints whose success proves arc can still read the athlete's files.
+#:
+#: The `list_folder` family and nothing else. `users/get_current_account`
+#: answers 200 for a grant carrying no file scopes at all, so a credential
+#: verified by it can be verified and useless at the same time — the exact
+#: state the audited run-through found stored and labelled `connected`. Adding
+#: an endpoint here is a claim that its 200 means "the files are readable"; a
+#: revoke or a token call is not.
+VERIFYING_ENDPOINTS: Final = frozenset(
+    {"/2/files/list_folder", "/2/files/list_folder/continue"}
+)
 
 #: The scopes arc asks for when the athlete connects an account.
 #:
@@ -73,6 +86,47 @@ EXPIRY_SKEW_SECONDS: Final = 60
 #: How long arc waits on any one Dropbox request.
 REQUEST_TIMEOUT_SECONDS: Final = 30.0
 
+#: What the athlete reads when arc's permission to read their Dropbox is gone.
+#:
+#: **The athlete's situation, not the mechanism.** "token", "credential" and
+#: "the API" name things they cannot see, cannot check and cannot fix, and
+#: every failure behind this sentence — a refused refresh, a revoked grant, a
+#: 401 on a token minted seconds ago — has the same single remedy: remove the
+#: account from arc and add it again.
+#:
+#: One constant because it is written onto the row (`last_error`, which the
+#: settings panel renders) *and* answered to the browser
+#: (`app.services.connections._dropbox_failures_translated`). Two spellings of
+#: one remedy is how a flow ends up telling the athlete two different things
+#: about a single failure.
+PERMISSION_LOST: Final = (
+    "arc lost its permission to read your Dropbox. Disconnect and connect "
+    "again to fix it."
+)
+
+#: What the athlete reads when Dropbox says the *account* is not allowed this.
+#:
+#: The remedy is on dropbox.com and it is not the connect ritual, which is the
+#: whole reason this sentence exists apart from :data:`PERMISSION_LOST`. A 403
+#: arc cannot read as a scope is Dropbox describing the account or the team —
+#: a team policy, a suspended member, a shared folder somebody else owns — and
+#: none of it changes when arc mints a new token. Sending the athlete to
+#: Disconnect over it costs them every feed and every integration on that
+#: account, and the reconnect then meets the same 403.
+#:
+#: "your account or team" rather than a mechanism, and "check your account at
+#: dropbox.com" rather than a console path: arc does not know which of the
+#: account conditions it is, so it names the place the answer is and stops
+#: there. One constant for the same reason :data:`PERMISSION_LOST` is one: it
+#: is written onto a feed row, answered to the browser, and refused with during
+#: a connect, and three spellings of one condition is three different accounts
+#: of it.
+ACCOUNT_NO_ACCESS: Final = (
+    "Dropbox says your account does not have access to this. That is a "
+    "setting on your Dropbox account or team, not something in arc — check "
+    "your account at dropbox.com, then try again here."
+)
+
 
 class DropboxError(Exception):
     """Anything that went wrong talking to Dropbox."""
@@ -87,8 +141,64 @@ class DropboxAuthError(DropboxError):
     """
 
 
+class DropboxScopeError(DropboxAuthError):
+    """Dropbox will not do this at all: the grant carries no scope for it.
+
+    A **subclass** of :class:`DropboxAuthError` rather than a branch of its
+    own, because every caller that already refuses on a dead credential must
+    refuse on this too — and a class of its own because the remedy differs in
+    kind. A dead credential is fixed by re-authorizing; a missing scope is
+    fixed on dropbox.com first, by ticking a permission and submitting it, and
+    only then by re-authorizing. Refreshing cannot mint a scope, which is why
+    :meth:`DropboxClient._call` raises this **without** its refresh-and-retry:
+    the retry would spend a token request to be told the same thing, and then
+    report it as "Dropbox rejected a freshly refreshed access token" — a
+    sentence about a credential that is perfectly alive.
+    """
+
+    def __init__(self, required_scope: str) -> None:
+        super().__init__(
+            f"Dropbox refused the call for want of the "
+            f"{required_scope or 'required'} scope"
+        )
+        #: The scope Dropbox named, verbatim (`files.metadata.read`). ``""``
+        #: when it named none, which the service reads as "all of them".
+        self.required_scope = required_scope
+
+
+class DropboxAccessError(DropboxError):
+    """Dropbox answered that the account or team does not have access.
+
+    **Deliberately not a** :class:`DropboxAuthError`, which is the whole point
+    of the class. Dropbox documents 403 as an account/team access condition —
+    the request "may succeed on retry, but only after corresponding action on
+    the account" — so the credential is alive, the grant is intact, and the
+    remedy is on the athlete's Dropbox account rather than in arc. Inheriting
+    from :class:`DropboxAuthError` would put it back on every path that refuses
+    a dead credential: the connection would flip to `needs_reauth`, the panel
+    would offer Disconnect, and taking that offer would cascade away every feed
+    and integration on the account in order to run a reconnect that meets the
+    same 403 — with advice about scopes Dropbox never mentioned.
+
+    A 401 or a 403 whose body *names* a scope is still
+    :class:`DropboxScopeError`: Dropbox said which permission, and that is a
+    fact about the grant, not about the account. This is the rest of 403.
+    """
+
+
 class DropboxUpstreamError(DropboxError):
     """Dropbox answered, and the answer was a failure arc did not cause."""
+
+
+class DropboxUnreachableError(DropboxUpstreamError):
+    """Nothing answered at all: DNS, a refused connection, a timeout.
+
+    The one failure where "Dropbox could not be reached" is a true sentence,
+    and its own class so that nothing else can borrow it. Every *answered*
+    failure — a 409, a 503, a rate limit — was re-labelled as unreachability
+    before this existed, which sent an athlete to check their network over a
+    request Dropbox had replied to in full.
+    """
 
 
 class DropboxRateLimitedError(DropboxUpstreamError):
@@ -141,10 +251,20 @@ class DropboxAccount:
 
 @dataclass(frozen=True, slots=True)
 class DropboxFolder:
-    """One folder in a listing."""
+    """One folder in a listing, in both of the spellings Dropbox keeps.
+
+    ``path_lower`` is the identity — case-insensitive, what a feed row stores
+    and what `uq_feeds_…` is written against. ``path_display`` is the athlete's
+    own capitalisation, and the only one that ever belongs on screen: a picker
+    showing `/apps/wahoofitness` matches nothing in the folder list the athlete
+    is looking at in Dropbox, which reads as a bug in arc rather than as a
+    normalisation.
+    """
 
     path_lower: str
     name: str
+    #: Empty only if Dropbox omitted it, which it does not do for a real entry.
+    path_display: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +306,17 @@ class DropboxListing:
 
     folders: tuple[DropboxFolder, ...]
     files: tuple[DropboxFile, ...]
+    #: The **listed folder itself**, spelled as the athlete spells it.
+    #:
+    #: `list_folder` says nothing about the directory it was asked for — only
+    #: about its contents — and `get_metadata` would be a second round trip on
+    #: every browse. Every entry's own `path_display` carries the parent's
+    #: spelling in front of its name, so this is read off the first entry
+    #: instead, folders and files alike, and costs nothing.
+    #:
+    #: A folder with no entries at all leaves nothing to read it from, and the
+    #: requested path is echoed rather than capitalised on a guess.
+    path_display: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -250,7 +381,7 @@ class _ReachableTransport(httpx.AsyncBaseTransport):
             # The class name is in the message because the three cases the
             # operator would act on differently — DNS, refused, timed out —
             # are otherwise indistinguishable in a log line.
-            raise DropboxUpstreamError(
+            raise DropboxUnreachableError(
                 f"{request.url.host} did not answer ({type(exc).__name__}: {exc})"
             ) from exc
 
@@ -287,25 +418,77 @@ def code_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+#: The hosts Dropbox will redirect back to over plain `http`.
+#:
+#: Dropbox's own exemption, not arc's: every other redirect URI it accepts must
+#: be `https`. `::1` is spelled without its URL brackets because that is what
+#: `urlsplit(...).hostname` reports.
+LOOPBACK_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def redirect_eligible(redirect_uri: str) -> bool:
+    """Whether Dropbox will send the athlete back to this URI at all.
+
+    **The rule is Dropbox's and it is checked before the athlete leaves.** A
+    redirect URI must be `https` anywhere, or `http` on the loopback —
+    `localhost`, `127.0.0.1`, `[::1]`. Everything else is refused when the app
+    owner tries to *register* it, which is a console page arc never sees, and
+    then again by the authorize endpoint, which is an error page on
+    dropbox.com several clicks into a flow the athlete believed was working.
+    Neither failure names arc, and neither one says "connect by pasting the
+    code instead" — so arc decides here, and falls back before offering
+    anything.
+
+    The excluded case is the one this exists for: arc reached at
+    `http://192.168.1.50` from the sofa. That deployment connects by paste, and
+    it is not a broken install.
+
+    Matching is on the parsed host, never a prefix: `localhost.evil.example`
+    starts with `localhost` and is somebody else's machine.
+    """
+    parts = urlsplit(redirect_uri)
+    if not parts.hostname:
+        return False
+    if parts.scheme == "https":
+        return True
+    return parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS
+
+
+def new_state() -> str:
+    """A fresh CSRF nonce for a redirect flow.
+
+    43 characters of urlsafe base64 from 32 random bytes, comfortably past the
+    32 the contract asks for. It is stored beside the verifier and compared on
+    the way back: the verifier proves the *code* is arc's, and this proves the
+    *redirect* is — a code delivered to arc's callback by a page the athlete
+    was tricked into opening carries no nonce arc ever issued.
+    """
+    return secrets.token_urlsafe(32)
+
+
 def authorize_url(
-    *, app_key: str, verifier: str, scopes: Iterable[str] = READ_SCOPES
+    *,
+    app_key: str,
+    verifier: str,
+    scopes: Iterable[str] = READ_SCOPES,
+    redirect_uri: str | None = None,
+    state: str | None = None,
 ) -> str:
     """The URL the athlete opens to authorize arc.
 
-    **PKCE with a pasted code, and no `redirect_uri`.** The conventional OAuth
-    flow registers a redirect back to the application, and it is unavailable
-    here for a reason that is structural rather than aesthetic: a redirect URI
-    is registered *per origin*, and a self-hosted arc has no stable one. It is
-    `http://localhost:3000` on the developer's laptop, `http://arc.local` from
-    the phone, `http://192.168.1.42` when the router hands out a different
-    lease, and none of those is reachable from Dropbox's servers anyway without
-    exposing the box to the internet. Registering one pins the deployment to a
-    single hostname and breaks the day the athlete reaches arc by IP.
+    **PKCE either way, and the redirect is optional.** With a `redirect_uri`
+    Dropbox sends the athlete back to arc with the code in the query string;
+    without one it displays the code on screen for them to copy. The second is
+    what lets arc connect a cloud account from a deployment Dropbox will not
+    redirect to at all — plain `http` on a LAN address, which is a normal way
+    to run a self-hosted application and not a broken install
+    (:func:`redirect_eligible` decides which).
 
-    Without a redirect URI Dropbox displays the authorization code on screen
-    for the athlete to copy, and PKCE is what makes that safe: the code alone
-    is useless, because redeeming it requires the verifier that never left this
-    process (see :func:`code_challenge`).
+    PKCE is what makes the pasted code safe, and it is unchanged by the
+    redirect: the code alone is useless, because redeeming it requires the
+    verifier that never left this process (see :func:`code_challenge`).
+    `state` adds the other half the redirect needs — proof that the code came
+    back through the flow arc started, not through a link somebody sent.
 
     `token_access_type=offline` is what makes the grant carry a **refresh**
     token — without it arc holds a four-hour credential and the athlete
@@ -319,6 +502,10 @@ def authorize_url(
         "code_challenge_method": "S256",
         "scope": " ".join(sorted(scopes)),
     }
+    if redirect_uri is not None:
+        query["redirect_uri"] = redirect_uri
+    if state is not None:
+        query["state"] = state
     return f"{AUTHORIZE_ENDPOINT}?{urlencode(query)}"
 
 
@@ -352,28 +539,37 @@ def _token_failure(response: httpx.Response) -> DropboxError:
     )
 
 
-async def exchange_code(*, app_key: str, code: str, verifier: str) -> TokenGrant:
-    """Redeem a pasted authorization code for a token pair.
+async def exchange_code(
+    *, app_key: str, code: str, verifier: str, redirect_uri: str | None = None
+) -> TokenGrant:
+    """Redeem an authorization code — pasted or redirected — for a token pair.
 
     The form carries `client_id` and `code_verifier` and **no client secret**:
     arc is a public OAuth client (see the module docstring), and a deployment
     that never registered a secret must never be asked for one.
+
+    `redirect_uri` is sent **iff** the authorize call carried one (RFC 6749
+    s4.1.3): a code minted against a redirect is only redeemable by repeating
+    it, and one minted without a redirect is refused if it is sent. Either
+    mismatch comes back as `invalid_grant`, which the athlete reads as "the
+    code expired" — so the caller passes back what it stored, not what it
+    thinks the origin is now.
 
     Raises:
         DropboxAuthError: When Dropbox refuses the code (`invalid_grant` —
             spent, expired, or minted against a different verifier).
         DropboxUpstreamError: For any other failure.
     """
+    form = {
+        "code": code,
+        "grant_type": "authorization_code",
+        "code_verifier": verifier,
+        "client_id": app_key,
+    }
+    if redirect_uri is not None:
+        form["redirect_uri"] = redirect_uri
     async with _client() as http:
-        response = await http.post(
-            TOKEN_ENDPOINT,
-            data={
-                "code": code,
-                "grant_type": "authorization_code",
-                "code_verifier": verifier,
-                "client_id": app_key,
-            },
-        )
+        response = await http.post(TOKEN_ENDPOINT, data=form)
     if response.status_code != 200:
         raise _token_failure(response)
     return _grant_from(response.json())
@@ -396,13 +592,94 @@ async def current_account(*, access_token: str) -> DropboxAccount:
     return _account_from(response)
 
 
+async def probe_readable(*, access_token: str) -> None:
+    """Prove a fresh grant can actually read the athlete's Dropbox.
+
+    A module function beside :func:`current_account`, and for the same reason:
+    this runs during `complete`, before there is a connection row to hang a
+    :class:`DropboxClient` off — and its answer decides whether that row is
+    written at all.
+
+    **`list_folder`, not `get_current_account`.** The account read succeeds for
+    a grant carrying no file scopes whatsoever, so it proves the credential
+    exists and nothing about the thing arc is here to do. This asks the API
+    the feed poll will ask, with the token the connect just obtained.
+
+    `limit=1` because nothing about the contents is wanted, and `has_more` is
+    ignored: the question is only whether a scoped call succeeds, so the root
+    of a Dropbox holding ten thousand files costs what an empty one costs.
+
+    Raises:
+        DropboxScopeError: Dropbox named the scope the grant is missing. The
+            refusal the athlete can act on without guessing, so it is told
+            apart from the rest even though the remedy overlaps.
+        DropboxAccessError: A 403 naming no scope — the account or the team
+            does not have access. Not a verdict on the credential, and its own
+            class because the remedy is on dropbox.com and re-authorizing is
+            not it.
+        DropboxAuthError: Dropbox refused the credential for some other
+            reason. Same remedy — fix the app registration, authorize again.
+        DropboxUpstreamError: Dropbox was rate-limiting arc, broken, or not
+            there. Says nothing about the credential, and the caller must not
+            read it as a verdict on one.
+    """
+    async with _client() as http:
+        response = await http.post(
+            f"{API_BASE}/2/files/list_folder",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"path": "", "recursive": False, "limit": 1},
+        )
+    if response.status_code == 200:
+        return
+    if response.status_code in {401, 403}:
+        body = _json_or_empty(response)
+        if (scope := _missing_scope(body)) is not None:
+            raise DropboxScopeError(scope)
+        summary = str(body.get("error_summary", ""))
+        # The same three-way read `DropboxClient._call` makes, and it has to
+        # be: this probe decides whether a row is written at all, and a
+        # connect that refused an account condition as a dead credential
+        # would send the athlete back through the ritual that cannot fix it.
+        if response.status_code == 403:
+            raise DropboxAccessError(
+                f"Dropbox refused to list the root folder with 403: "
+                f"{summary or 'no reason given'}"
+            )
+        raise DropboxAuthError(
+            f"Dropbox refused to list the root folder: {summary or 'unauthorized'}"
+        )
+    if response.status_code == 429:
+        raise DropboxRateLimitedError(
+            "Dropbox is rate-limiting arc", retry_after=_retry_after(response)
+        )
+    raise DropboxUpstreamError(
+        f"Dropbox answered {response.status_code} listing the root folder"
+    )
+
+
 def _account_from(response: httpx.Response) -> DropboxAccount:
-    """Project `/2/users/get_current_account` onto the label arc stores."""
+    """Project `/2/users/get_current_account` onto the label arc stores.
+
+    **A 200 is not a promise that the body is JSON.** A proxy in front of
+    Dropbox — or in front of arc's own egress — answers a maintenance page with
+    200 and `text/html`, and parsing that with `response.json()` raised a bare
+    `ValueError` out of a `DropboxError` hierarchy every caller catches. It
+    reached the athlete mid-connect as a 500, and it escaped the wrapper in
+    `ConnectionService.complete_dropbox` that deletes a flow whose code has
+    already been spent — so the next attempt was told the code had been used.
+    An unreadable body is an upstream failure like any other, and it names the
+    endpoint because that is the only thing distinguishing it in a log.
+    """
     if response.status_code != 200:
         raise DropboxUpstreamError(
             f"Dropbox would not describe the account ({response.status_code})"
         )
-    body = response.json()
+    body = _json_or_empty(response)
+    if not body:
+        raise DropboxUpstreamError(
+            "Dropbox answered /2/users/get_current_account with 200 and a body "
+            "arc could not read as the account JSON"
+        )
     display = str((body.get("name") or {}).get("display_name") or "").strip()
     email = str(body.get("email") or "").strip()
     label = f"{display} ({email})" if display and email else display or email
@@ -452,12 +729,14 @@ class DropboxClient:
         self._session = session
         self._connection = connection
         self._app_key = app_key
+        #: Whether this client has already stamped `last_verified_at`. One
+        #: write per client, not per call: a folder listing that follows
+        #: `has_more` through forty pages is one observation of one credential
+        #: working, and forty commits of the same fact would put a write on the
+        #: read path for every page of it. See :meth:`_record_verified`.
+        self._verified = False
 
     # --- public calls --------------------------------------------------------
-
-    async def list_folders(self, path: str) -> list[DropboxFolder]:
-        """Every folder directly under ``path`` (``""`` is the Dropbox root)."""
-        return list((await self.list_entries(path)).folders)
 
     async def list_entries(self, path: str) -> DropboxListing:
         """Everything directly under ``path``, folders and files alike.
@@ -467,9 +746,13 @@ class DropboxClient:
         folder the athlete is looking for — or, for a count, report a fraction
         of what is there as if it were the total. This returns everything or
         raises, never a truncated listing that looks complete.
+
+        The listed folder's own display path comes off the first entry seen —
+        see :attr:`DropboxListing.path_display`.
         """
         folders: list[DropboxFolder] = []
         files: list[DropboxFile] = []
+        here: str | None = None
         body = await self._call(
             "/2/files/list_folder",
             {"path": path, "recursive": False, "include_deleted": False},
@@ -477,17 +760,24 @@ class DropboxClient:
         )
         while True:
             for entry in body.get("entries", []):
+                if here is None:
+                    here = _parent_display(entry)
                 if entry.get(".tag") == "folder":
                     folders.append(
                         DropboxFolder(
                             path_lower=str(entry.get("path_lower") or ""),
                             name=str(entry.get("name") or ""),
+                            path_display=str(entry.get("path_display") or ""),
                         )
                     )
                 elif entry.get(".tag") == "file":
                     files.append(_file_from(entry))
             if not body.get("has_more"):
-                return DropboxListing(folders=tuple(folders), files=tuple(files))
+                return DropboxListing(
+                    folders=tuple(folders),
+                    files=tuple(files),
+                    path_display=path if here is None else here,
+                )
             body = await self._call(
                 "/2/files/list_folder/continue", {"cursor": body["cursor"]}, path=path
             )
@@ -551,8 +841,8 @@ class DropboxClient:
         Raises:
             DropboxPathNotFoundError: When the id no longer resolves — the
                 file was deleted between the listing and this call.
-            DropboxAuthError / DropboxRateLimitedError / DropboxUpstreamError:
-                As :meth:`_content_failure` classifies them.
+            DropboxAuthError / DropboxAccessError / DropboxRateLimitedError /
+            DropboxUpstreamError: As :meth:`_content_failure` classifies them.
         """
         token = await self._access_token()
         async with _client() as http:
@@ -577,21 +867,43 @@ class DropboxClient:
         here costs one replayed page and the refresh happens on the next
         listing. Retrying inside the download would double the bytes moved for
         a case the batch rule already covers.
+
+        **401 and 403 are read the same way**, exactly as :meth:`_call` and
+        :func:`probe_readable` read them. This classified only the 401 shape of
+        `missing_scope`, and Dropbox sends both: a `files.content.read`
+        withdrawn in the console answered 403 here, fell through to
+        :class:`DropboxUpstreamError`, and `app.ingest.feeds._take_batch` reads
+        that as the page's fault — so after `max_batch_attempts` polls the
+        cursor advanced past a page whose file was never downloaded. The ride
+        was gone, silently, while the panel said "connected, last checked just
+        now". A scope refusal is proof about the grant whichever status carries
+        it, and the rest of 403 is :class:`DropboxAccessError`, which blames
+        neither the page nor the credential.
         """
         if response.status_code == 429:
             return DropboxRateLimitedError(
                 "Dropbox is rate-limiting arc", retry_after=_retry_after(response)
             )
-        if response.status_code == 401:
-            return DropboxAuthError("Dropbox rejected arc's access token")
         # `Dropbox-API-Result` carries the metadata JSON on a 200; on a
         # failure the content endpoint answers exactly like an RPC one, with
         # the tagged-error JSON in the body.
-        summary = str(_json_or_empty(response).get("error_summary", ""))
+        body = _json_or_empty(response)
+        summary = str(body.get("error_summary", ""))
+        if response.status_code in {401, 403}:
+            if (scope := _missing_scope(body)) is not None:
+                return DropboxScopeError(scope)
+            if response.status_code == 403:
+                return DropboxAccessError(
+                    f"403 downloading {file_id} ({summary or 'no reason given'})"
+                )
+            return DropboxAuthError(
+                f"401 downloading {file_id} ({summary or 'no reason given'})"
+            )
         if response.status_code == 409 and "not_found" in summary:
             return DropboxPathNotFoundError(file_id)
         return DropboxUpstreamError(
-            f"Dropbox answered {response.status_code} downloading {file_id}"
+            f"{response.status_code} downloading {file_id} "
+            f"({summary or 'no reason given'})"
         )
 
     async def revoke(self) -> None:
@@ -616,6 +928,26 @@ class DropboxClient:
         Under a per-connection lock, and re-checking the expiry after
         acquiring it: the caller that waited for the lock wants the token the
         holder just stored, not a second refresh that would invalidate it.
+
+        **A refresh that works does not make the connection `connected`
+        again.** It stores the new token and nothing else: no status, no
+        cleared ``last_error``. What a 200 here proves is that the *credential*
+        can still mint tokens, which is a strictly smaller claim than "arc can
+        read the athlete's files" — a grant whose `files.metadata.read` was
+        unticked in the Dropbox console refreshes perfectly and lists nothing.
+        Healing the row here is how a `needs_reauth` flip un-flipped itself
+        inside the poll cycle that made it: `mark_needs_reauth` clears
+        ``access_token_expires_at``, so the very next call on that connection
+        refreshes, and the refresh wrote `connected` over the refusal that had
+        just been proved. If the call after it then failed with anything but a
+        scope refusal — a 429, a 5xx, a folder that moved — the cycle ended
+        `connected` with no error at all, which is the zombie state
+        :class:`ConnectionStatus` exists to make impossible.
+
+        The row goes back to `connected` through **reconnect** only:
+        disconnect, then connect, whose probe
+        (`app.services.connections.complete_dropbox`) proves a scoped read
+        before a row is written at all.
         """
         async with _lock_for(self._connection.id):
             expires_at = self._connection.access_token_expires_at
@@ -625,9 +957,7 @@ class DropboxClient:
             stored = self._credentials()
             refresh_token = stored.get("refresh_token")
             if not refresh_token:
-                await self._mark_needs_reauth(
-                    "arc holds no refresh token for this Dropbox account"
-                )
+                await self.mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "arc holds no refresh token for this Dropbox account; reconnect it"
                 )
@@ -644,10 +974,7 @@ class DropboxClient:
             if response.status_code != 200:
                 failure = _token_failure(response)
                 if isinstance(failure, DropboxAuthError):
-                    await self._mark_needs_reauth(
-                        "Dropbox refused arc's refresh token. Reconnect the "
-                        "account to authorize it again."
-                    )
+                    await self.mark_needs_reauth(PERMISSION_LOST)
                 raise failure
 
             grant = _grant_from(response.json())
@@ -659,17 +986,77 @@ class DropboxClient:
                 stored["refresh_token"] = grant.refresh_token
             self._connection.credentials = EncryptedCredentials.seal(stored)
             self._connection.access_token_expires_at = grant.expires_at
-            self._connection.status = ConnectionStatus.CONNECTED
-            self._connection.last_error = None
+            # Status and `last_error` are deliberately untouched — see above.
             await commit(self._session)
             return grant.access_token
 
-    async def _mark_needs_reauth(self, detail: str) -> None:
-        """Record a dead credential on the row, so the panel can say so."""
+    async def mark_needs_reauth(self, detail: str) -> None:
+        """Record a dead credential on the row, so the panel can say so.
+
+        ``detail`` is athlete-facing — the settings panel renders
+        ``last_error`` verbatim — which is why every caller here passes
+        :data:`PERMISSION_LOST` rather than the diagnostic the exception
+        carries. The two are deliberately different texts: the exception is
+        read in a log by whoever is debugging, the row is read on screen by
+        somebody who needs to know which button to press.
+
+        Public, because the *feed poll* flips a row too: a listing refused for
+        want of a scope is proof arriving on a path this class does not raise
+        from (`app.ingest.feeds`), and a second spelling of the flip is how two
+        callers end up disagreeing about what `needs_reauth` leaves behind.
+
+        ``last_verified_at`` is deliberately **left where it is**. It records
+        when the credential last worked, and that moment did happen; clearing
+        it would replace a true "last checked at 14:02" with "never checked",
+        which reads as a connection nobody has looked at rather than one that
+        has just broken.
+        """
         self._connection.status = ConnectionStatus.NEEDS_REAUTH
         self._connection.last_error = detail
         self._connection.access_token_expires_at = None
         await commit(self._session)
+
+    async def _record_verified(self) -> None:
+        """Stamp the row: Dropbox answered a scoped call, just now.
+
+        Called from :meth:`_call` on a 200 from the `list_folder` family and
+        from nowhere else. **Not from `get_current_account`**, which succeeds
+        for a grant carrying no file scopes whatsoever — treating any 200 as
+        verification is precisely how a credential that could not list a single
+        folder came to be stored and labelled `connected`. The question this
+        column answers is "can arc still read the athlete's files", and only a
+        call that reads files can answer it.
+
+        The write is committed here rather than left for the caller, for the
+        reason :meth:`_refresh` commits: the callers are a scheduled poll, a
+        folder browse and a discovery sweep, and two of the three are read
+        paths that would otherwise drop the fact on the floor.
+
+        Under the **refresh lock**, which is why that lock is named for the
+        connection rather than for refreshing: it is now what makes "one writer
+        per connection at a time" true. Two calls issued concurrently on one
+        client can both find a live token and both reach here, and an
+        `AsyncSession` answers two overlapping commits with
+        `IllegalStateChangeError` rather than serialising them.
+
+        A `ConflictError` is swallowed. The athlete disconnecting the account
+        while a listing is in flight is a race whose loser must be this
+        bookkeeping write, never the listing the athlete asked for.
+        """
+        if self._verified:
+            return
+        async with _lock_for(self._connection.id):
+            if self._verified:
+                return
+            self._verified = True
+            self._connection.last_verified_at = dt.datetime.now(dt.UTC)
+            try:
+                await commit(self._session)
+            except ConflictError:
+                logger.info(
+                    "dropbox_verification_not_stored",
+                    connection_id=str(self._connection.id),
+                )
 
     async def _call(
         self, endpoint: str, payload: Any, *, path: str = "", retried: bool = False
@@ -689,12 +1076,64 @@ class DropboxClient:
                 "Dropbox is rate-limiting arc",
                 retry_after=_retry_after(response),
             )
-        if response.status_code == 401:
-            if retried:
-                await self._mark_needs_reauth(
-                    "Dropbox rejected a freshly refreshed access token. "
-                    "Reconnect the account."
+        if response.status_code in {401, 403}:
+            # **The body is read before the retry counter is consulted.** A
+            # `missing_scope` 401 and an `expired_access_token` 401 are the
+            # same status code and different facts, and refreshing cannot mint
+            # a scope: retrying one would spend a token request to be refused
+            # identically, then report it as a dead credential. Classified by
+            # what Dropbox said, never by whether this is the first or the
+            # second 401 — a stale token refreshed into a grant that never
+            # carried the scope produces the pair, and the second one is still
+            # about the scope.
+            #
+            # **403 is read the same way and retried in neither shape**, which
+            # is the asymmetry with 401 worth stating: 401 is Dropbox saying
+            # *this token* will not do, which a refresh can genuinely fix, so
+            # it gets the one refresh-and-retry. 403 is Dropbox saying *this
+            # app* will not do — a scope the grant does not carry, an account
+            # that cannot be reached this way — and no token arc can mint
+            # changes that answer. Retrying it would spend a token request to
+            # be refused identically, and (`retried` now true) report an
+            # unrecoverable condition as a dead credential. Left unclassified,
+            # a 403 fell through to :class:`DropboxUpstreamError` and reached
+            # the athlete as a 502's "try again in a few minutes", which is
+            # advice that never comes true. `probe_readable` has always read
+            # both codes; this is the same rule on the path every browse and
+            # every poll takes.
+            #
+            # **A 403 naming no scope is not a dead credential either.** It was
+            # raised as :class:`DropboxAuthError`, which is the class every
+            # caller answers with "disconnect and connect again" — and Dropbox
+            # documents 403 as an account or team condition that "may succeed
+            # on retry, but only after corresponding action on the account".
+            # Re-authorizing cannot clear one, so the advice was destructive
+            # (disconnect cascades away the feeds and the integrations) and
+            # then failed on the same 403, with wording about scopes Dropbox
+            # never named. :class:`DropboxAccessError` says the true thing.
+            body = _json_or_empty(response)
+            if (scope := _missing_scope(body)) is not None:
+                logger.info(
+                    "dropbox_scope_refused",
+                    connection_id=str(self._connection.id),
+                    endpoint=endpoint,
+                    required_scope=scope,
                 )
+                raise DropboxScopeError(scope)
+            if response.status_code == 403:
+                summary = str(body.get("error_summary", ""))
+                logger.info(
+                    "dropbox_account_access_refused",
+                    connection_id=str(self._connection.id),
+                    endpoint=endpoint,
+                    error_summary=summary,
+                )
+                raise DropboxAccessError(
+                    f"Dropbox refused {endpoint} with 403 "
+                    f"({summary or 'no reason given'})"
+                )
+            if retried:
+                await self.mark_needs_reauth(PERMISSION_LOST)
                 raise DropboxAuthError(
                     "Dropbox rejected a freshly refreshed access token"
                 )
@@ -702,8 +1141,8 @@ class DropboxClient:
             # Forget the expiry so `_access_token` refreshes, then retry once.
             self._connection.access_token_expires_at = None
             return await self._call(endpoint, payload, path=path, retried=True)
+        summary = str(_json_or_empty(response).get("error_summary", ""))
         if response.status_code == 409:
-            summary = str(_json_or_empty(response).get("error_summary", ""))
             # `reset` before `not_found`: it is the one 409 with a local
             # remedy, and the caller must not confuse it with a missing folder.
             if summary.startswith("reset"):
@@ -712,11 +1151,16 @@ class DropboxClient:
                 )
             if "not_found" in summary:
                 raise DropboxPathNotFoundError(path)
-            raise DropboxUpstreamError(f"Dropbox refused the request: {summary}")
         if response.status_code >= 400:
+            # Dropbox's own words, whatever it said them about. The service
+            # quotes this into the sentence the athlete reads, so a summary
+            # dropped here is a summary nobody ever sees.
             raise DropboxUpstreamError(
-                f"Dropbox answered {response.status_code} for {endpoint}"
+                f"{response.status_code} for {endpoint}"
+                f" ({summary or 'no reason given'})"
             )
+        if endpoint in VERIFYING_ENDPOINTS:
+            await self._record_verified()
         return _json_or_empty(response)
 
 
@@ -730,6 +1174,19 @@ def _file_from(entry: dict[str, Any]) -> DropboxFile:
         rev=str(entry.get("rev") or ""),
         client_modified=_stamp(entry.get("client_modified")),
     )
+
+
+def _parent_display(entry: dict[str, Any]) -> str:
+    """The listed folder's own display path, read off one of its children.
+
+    `/Apps/WahooFitness/ride.fit` is the child; `/Apps/WahooFitness` is the
+    folder that was listed. Dropbox builds `path_display` as the parent's
+    spelling plus the entry's own name, so cutting at the last separator is
+    exact rather than a heuristic — and a child directly under the root cuts
+    down to `""`, which is Dropbox's own spelling of it.
+    """
+    display = str(entry.get("path_display") or "")
+    return display.rpartition("/")[0]
 
 
 def _stamp(raw: Any) -> dt.datetime | None:
@@ -750,6 +1207,21 @@ def _stamp(raw: Any) -> dt.datetime | None:
         if parsed.tzinfo is None
         else parsed.astimezone(dt.UTC)
     )
+
+
+def _missing_scope(body: dict[str, Any]) -> str | None:
+    """The scope Dropbox named as missing, or ``None`` if that is not why.
+
+    Dropbox's tagged-union error: ``{"error": {".tag": "missing_scope",
+    "required_scope": "files.metadata.read"}}``. ``None`` — not ``""`` — for
+    every other body, including one that could not be parsed at all, because
+    the caller branches on "is this a scope problem" and an empty string is a
+    scope problem with a nameless scope, which is a different answer.
+    """
+    error = body.get("error")
+    if not isinstance(error, dict) or error.get(".tag") != "missing_scope":
+        return None
+    return str(error.get("required_scope") or "")
 
 
 def _json_or_empty(response: httpx.Response) -> dict[str, Any]:

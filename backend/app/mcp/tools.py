@@ -1508,9 +1508,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         Per folder: the `folder` itself, `last_delivery_at` (when arc last
         successfully heard from the provider at all — not when a ride last
         arrived), `deliveries_7d` (files that became sessions in the last seven
-        days), `last_error`, and the `connection_status` of the credential
-        behind it. `state` folds those into one word: `paused` (switched off on
-        purpose), `failing` (the last poll left an error), `never_delivered`
+        days), `last_error`, the `connection_status` of the credential behind
+        it and `last_verified_at` — when arc last watched that credential
+        actually read a file, which is what makes `connected` an observation
+        rather than a claim. `null` there means nobody has checked it yet, not
+        that it is broken. `state` folds those into one word: `paused`
+        (switched off on purpose), `failing` (the last poll left an error),
+        `never_delivered`
         (nothing has ever come through — a fact about setup, not a fault), or
         `delivering`. A source with two folders reports **both**, and there is
         no one word for the source itself: one failing folder beside one
