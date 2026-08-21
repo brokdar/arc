@@ -39,21 +39,27 @@ echo "📦 Installing backend dependencies..."
 cd "$WORKSPACE/backend"
 uv sync
 
+# Versions for the three installs below come from tools/requirements.txt, never
+# from PyPI's latest: an unpinned `uv tool install` means the gate a rebuilt
+# container runs is whatever shipped that morning, with no commit here to blame.
+# Dependabot's `pip` ecosystem raises the pins.
+TOOL_PINS="$WORKSPACE/tools/requirements.txt"
+
 echo "🛠️  Installing just..."
 # Every workflow in this repo goes through the justfile, so the task runner has
 # to be present. `rust-just` is the just project's own PyPI distribution; uv
 # drops the binary in ~/.local/bin, which is already on PATH.
-uv tool install rust-just
+uv tool install --constraints "$TOOL_PINS" rust-just
 
 echo "📝 Installing git-cliff..."
 # Drafts CHANGELOG.md entries from conventional commits (`just changelog`,
 # config in cliff.toml). Published to PyPI as a wheel with the binary, so it
 # needs no Rust toolchain.
-uv tool install git-cliff
+uv tool install --constraints "$TOOL_PINS" git-cliff
 
 echo "🔧 Setting up prek hooks..."
 cd "$WORKSPACE"
-uv tool install prek
+uv tool install --constraints "$TOOL_PINS" prek
 # Install all three shims: cheap checks run on commit, heavy checks (pyrefly,
 # unit tests, type-check) on push, and conventional-commit subject linting on
 # commit-msg.
