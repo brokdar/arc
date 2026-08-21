@@ -9,7 +9,12 @@ from app.main import create_app
 from app.services.wellness import PROMPT_SWEEP_JOB_ID
 
 
-async def test_scheduler_runs_for_the_lifetime_of_the_app() -> None:
+async def test_scheduler_runs_for_the_lifetime_of_the_app(data_root: Path) -> None:
+    # `data_root` is not read here, but the lifespan is: `ensure_data_directories`
+    # mkdirs under `DATA__ROOT`, which defaults to the *relative* `data/`. Every
+    # xdist worker shares `cwd=backend/`, so without this the test writes into
+    # the checkout's own `data/` tree — shared mutable state between workers,
+    # and the one thing the in-memory database was chosen to avoid.
     app = create_app()
 
     async with LifespanManager(app):
@@ -60,7 +65,9 @@ async def test_the_dropbox_feed_poll_is_registered_at_startup(data_root: Path) -
         assert job.next_run_time is not None
 
 
-async def test_the_daily_wellness_prompt_sweep_is_registered_at_startup() -> None:
+async def test_the_daily_wellness_prompt_sweep_is_registered_at_startup(
+    data_root: Path,
+) -> None:
     """The prompt only exists if something raises it.
 
     A surface that silently stopped raising looks exactly like an athlete who
