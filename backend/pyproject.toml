@@ -16,12 +16,12 @@ dependencies = [
     "asyncpg>=0.31.0",
     "apscheduler>=3.11,<4",
     "fastmcp>=3.4.7,<4",
-    "pydantic>=2.13.0",
+    "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "structlog>=25.5.0",
     "bcrypt>=5",
     "itsdangerous>=2.2",
-    "garmin-fit-sdk>=21.213.0",
+    "garmin-fit-sdk>=21.214.0",
     "fitdecode>=0.11.0",
     "gpxpy>=1.6.2",
     "tcxreader>=0.4.11",
@@ -32,7 +32,7 @@ dependencies = [
     # dependency is one `uv lock` away from not being there.
     "httpx>=0.28.1",
     # Fernet, for the OAuth credentials at rest (`app/persistence/connections.py`).
-    "cryptography>=45",
+    "cryptography>=50.0.1",
 ]
 
 [dependency-groups]
@@ -44,9 +44,9 @@ dev = [
     "pytest-xdist>=3.8.0",
     "asgi-lifespan>=2.1.0",
     "aiosqlite>=0.21.0",
-    "ruff>=0.16.3",
+    "ruff>=0.16.5",
     "pyrefly>=1.1.0",
-    "import-linter>=2.3",
+    "import-linter>=2.14",
     "hypothesis>=6.165.10",
     "fit-tool>=0.9.16",
     # The API fuzzer (`just fuzz`, `.github/workflows/api-fuzz.yml`). A locked
@@ -62,7 +62,7 @@ dev = [
     # unbounded upstream. schemathesis 4.24.3 calls
     # `CanonicalSchema.is_satisfiable`, removed in jsonschema-rs 0.50. Delete
     # the line to lift it — the Dependabot PR that raises it runs the fuzz job.
-    "jsonschema-rs<0.50",
+    "jsonschema-rs<0.53",
 ]
 
 [build-system]
