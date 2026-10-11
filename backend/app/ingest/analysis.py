@@ -38,6 +38,7 @@ from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.metrics import PerformedSet
+from app.domain.power_curve import PowerCurve, power_curve
 from app.domain.session_analysis import SessionInputs, analyse_session
 from app.domain.streams import AnomalyKind, StreamChannel
 from app.ingest.parquet import (
@@ -55,6 +56,7 @@ from app.persistence.activity import (
 )
 from app.persistence.metrics import SessionMetricsRow
 from app.services.metrics import SessionMetricsService
+from app.services.power_curve import PowerCurveService
 
 logger = get_logger(__name__)
 
@@ -336,6 +338,36 @@ def _shifted(anomaly: StreamAnomalyRow, offset: int) -> StreamAnomaly:
     )
 
 
+async def _power_curve(
+    session_row: SessionRow, recordings: RecordingRepository
+) -> PowerCurve | None:
+    """The session's power curve over its joined stream, or ``None``.
+
+    Read through :func:`load_streams` rather than from the columns
+    :meth:`SessionAnalyser.compute` already holds, because the curve also needs
+    the power channel's repaired regions on the joined grid, which only the
+    chart path assembles. That is a second parquet read per computation —
+    milliseconds, against keeping one implementation of the join.
+    """
+    if not session_row.recordings:
+        return None
+    try:
+        streams = await load_streams(session_row, recordings)
+    except NotFoundError:
+        return None
+    return power_curve(
+        streams.channels.get(StreamChannel.POWER),
+        anomalies=[
+            (anomaly.start_index, anomaly.end_index)
+            for anomaly in streams.anomalies
+            # `RESAMPLED_ONLY` spans the whole frame and certifies that
+            # nothing was repaired; counting it would mark every best unclean.
+            if anomaly.channel is StreamChannel.POWER
+            and anomaly.kind is not AnomalyKind.RESAMPLED_ONLY
+        ],
+    )
+
+
 class SessionAnalyser:
     """Computes and stores one session's metric artefact."""
 
@@ -346,11 +378,13 @@ class SessionAnalyser:
         sessions: SessionRepository,
         recordings: RecordingRepository,
         metrics: SessionMetricsService,
+        power_curves: PowerCurveService,
     ) -> None:
         self._session = session
         self._sessions = sessions
         self._recordings = recordings
         self._metrics = metrics
+        self._power_curves = power_curves
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -360,6 +394,7 @@ class SessionAnalyser:
             sessions=SessionRepository(session),
             recordings=RecordingRepository(session),
             metrics=SessionMetricsService.from_session(session),
+            power_curves=PowerCurveService.from_session(session),
         )
 
     async def compute(
@@ -383,6 +418,11 @@ class SessionAnalyser:
         artefact: its logged sets produce the strength block and every
         stream-derived slot carries its reason.
 
+        The session's power curve is replaced on the way, from the same stored
+        stream: this is the one place a stream meets analysis, so it is the
+        one hook that keeps the curve in step with every ingest, recompute and
+        rebuild.
+
         Raises:
             NotFoundError: When no session has that id.
         """
@@ -393,6 +433,9 @@ class SessionAnalyser:
         anchors = await self._metrics.current_anchors()
         sex = await self._metrics.athlete_sex()
         durations, columns, segments = await self._recorded(session_row)
+        await self._power_curves.store(
+            session_id, await _power_curve(session_row, self._recordings), actor=actor
+        )
 
         analysis = analyse_session(
             SessionInputs(

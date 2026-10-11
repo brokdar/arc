@@ -46,6 +46,7 @@ from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp import views
+from app.mcp.power_tools import POWER_TOOLS, register_power_tools
 from app.mcp.tools import register_tools
 from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
@@ -110,6 +111,7 @@ EXPECTED_TOOLS = {
     "get_wellness_trend",
     "get_wellness_weeks",
     "get_ingest_status",
+    "get_power_curve",
     # writes
     "append_anchor",
     "create_workout",
@@ -147,6 +149,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_wellness_trend", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_ingest_status", {}),
+    ("get_power_curve", {"session_id": "{session}"}),
 )
 
 
@@ -2590,10 +2593,11 @@ async def test_every_tool_asks_for_its_scope(session_factory: Any) -> None:
     # ask would still pass every service-level guardrail test, and the
     # authorization it skipped is the only thing standing between a read key
     # and the plan.
-    source = ast.parse(inspect.getsource(register_tools))
+    # Both registration modules: the power reads live in their own.
     registered = {
         node.name: node
-        for node in ast.walk(source)
+        for register in (register_tools, register_power_tools)
+        for node in ast.walk(ast.parse(inspect.getsource(register)))
         if isinstance(node, ast.AsyncFunctionDef)
         and any(
             isinstance(decorator, ast.Attribute) and decorator.attr == "tool"
@@ -3747,3 +3751,69 @@ async def seed_integration(
     await session.commit()
     await session.refresh(row, ["feeds"])
     return row
+
+
+# --- get_power_curve ------------------------------------------------------------------
+
+
+async def test_the_power_tools_register_from_their_own_module(
+    session_factory: Any,
+) -> None:
+    # The power reads are not appended to the 2,500-line `register_tools`.
+    defined_in_tools = {
+        node.name
+        for node in ast.walk(ast.parse(inspect.getsource(register_tools)))
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+
+    assert POWER_TOOLS <= EXPECTED_TOOLS
+    assert not POWER_TOOLS & defined_in_tools
+
+
+async def test_the_power_curve_is_the_endpoints_answer(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "outdoor_ride.fit")
+    response = await client.get(f"/api/v1/sessions/{session_id}/power-curve")
+    assert response.status_code == 200, response.text
+    endpoint = response.json()
+    assert endpoint["status"] == "assessed"
+
+    data = await call(READER, "get_power_curve", {"session_id": session_id})
+
+    assert data["session_id"] == session_id
+    assert data["status"] == "assessed"
+    assert data["grid_version"] == endpoint["grid_version"]
+    assert data["points"] == endpoint["points"]
+    assert [point["duration_s"] for point in data["points"]][:3] == [1, 2, 3]
+    assert {"duration_s", "watts", "start_index", "clean"} == set(data["points"][0])
+
+
+async def test_a_session_without_power_has_the_endpoints_reason(
+    data_root: Path, client: AsyncClient
+) -> None:
+    session_id = await ingest(client, "strength_watch.fit")
+    endpoint = (await client.get(f"/api/v1/sessions/{session_id}/power-curve")).json()
+
+    data = await call(READER, "get_power_curve", {"session_id": session_id})
+
+    assert data["status"] == "not_assessed"
+    assert data["reason"] == endpoint["reason"]
+    assert data["points"] == []
+
+
+async def test_an_unknown_session_is_the_tools_not_found(session_factory: Any) -> None:
+    missing = str(uuid.uuid7())
+
+    with pytest.raises(ToolError, match=f"^not_found: Session {missing} not found$"):
+        await call(READER, "get_power_curve", {"session_id": missing})
+
+
+async def test_a_malformed_session_id_is_refused_by_name(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="^invalid: .*session_id"):
+        await call(READER, "get_power_curve", {"session_id": "yesterday"})
+
+
+async def test_the_power_curve_needs_a_read_key(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_power_curve", {"session_id": str(uuid.uuid7())})

@@ -7,6 +7,12 @@ written for. This re-parses each original, rewrites its parquet and its
 recording row (`app.ingest.rebuild`), and then appends a metric version for
 every session whose stream changed, with a reason that says why.
 
+The recompute is also the **backfill for derived per-session tables** the
+analyser writes beside the metric artefact — the power curve
+(`session_mmp`) first among them. A session recorded before such a table
+existed has no row until this runs over it; a second run leaves the row as it
+was, because the same stream gives the same curve.
+
 Run it from ``backend/``::
 
     just rebuild-streams                     # everything, then recompute

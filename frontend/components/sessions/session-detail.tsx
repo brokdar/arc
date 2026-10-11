@@ -12,6 +12,7 @@ import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
 import { MatchPanel } from "@/components/sessions/match-panel";
+import { PowerCurveCard } from "@/components/sessions/power-curve-card";
 import { ScoringPanel } from "@/components/sessions/scoring-panel";
 import { SessionAnalysis } from "@/components/sessions/session-analysis";
 import { MatchBadge } from "@/components/sessions/session-list";
@@ -154,6 +155,10 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           metrics={session.metrics ?? null}
           hasRecording={session.recordings.length > 0}
         />
+
+        {session.recordings.length > 0 ? (
+          <PowerCurveCard sessionId={session.id} />
+        ) : null}
 
         {/* Directly under the numbers, and above the file's own account of
             itself: what a session *was* — the planned session it answered, or
