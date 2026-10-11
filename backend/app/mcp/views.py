@@ -30,7 +30,15 @@ from app.domain.activity import parse_timezone
 from app.domain.anchors import AnchorType, AnchorVersion
 from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
+from app.domain.pmc import (
+    FitnessTrend,
+    SeriesMaturity,
+    atl_explanation,
+    ctl_explanation,
+    tsb_explanation,
+)
 from app.domain.purpose import discipline_of
+from app.domain.session_analysis import explanation_to_json
 from app.domain.templates import PurposeTemplate
 from app.domain.wellness import (
     INPUT_TIERS,
@@ -1335,4 +1343,72 @@ def _feed_status(feed: FeedStatus) -> dict[str, Any]:
             feed.last_verified_at.isoformat() if feed.last_verified_at else None
         ),
         "account_label": feed.account_label,
+    }
+
+
+# --- fitness ------------------------------------------------------------------
+
+
+def _display_only(value: float) -> dict[str, Any]:
+    """One day's display-only value, stamped (`app.domain.authority`)."""
+    return {"value": value, "display_only": True}
+
+
+def _series_maturity(series: SeriesMaturity) -> dict[str, Any]:
+    """One average's maturity, stamped."""
+    return {
+        "display_only": True,
+        "mature": series.mature,
+        "seeded": series.seeded,
+        "matures_on_day": series.matures_on_day,
+        "matures_on": None
+        if series.matures_on is None
+        else series.matures_on.isoformat(),
+    }
+
+
+def fitness_trend(trend: FitnessTrend) -> dict[str, Any]:
+    """The fitness series, in **the same shape `GET /fitness` serves**.
+
+    Not compacted, unlike most of this module: the coach is meant to read the
+    numbers the athlete is looking at, and `test_mcp_tools.py` asserts this
+    equals the endpoint's body for the same window. The window, not the shape,
+    is what keeps it small — the tool defaults to the last 90 days.
+    """
+    return {
+        "points": [
+            {
+                "local_date": point.local_date.isoformat(),
+                "day": point.day,
+                "ctl": _display_only(point.ctl),
+                "atl": _display_only(point.atl),
+                "tsb": _display_only(point.tsb),
+                "load": point.load.load,
+                "fitness_load": point.load.fitness_load,
+                "n": point.load.n,
+                "uncounted": point.load.uncounted,
+                "load_incomplete": point.load.load_incomplete,
+            }
+            for point in trend.points
+        ],
+        "maturity": {
+            "first_session": (
+                None
+                if trend.maturity.first_session is None
+                else trend.maturity.first_session.isoformat()
+            ),
+            "as_of": trend.maturity.as_of.isoformat(),
+            "day": trend.maturity.day,
+            "ctl": _series_maturity(trend.maturity.ctl),
+            "atl": _series_maturity(trend.maturity.atl),
+        },
+        "form_lag_days": trend.form_lag_days,
+        "explanations": {
+            key: explanation_to_json(explanation) | {"display_only": True}
+            for key, explanation in (
+                ("ctl", ctl_explanation()),
+                ("atl", atl_explanation()),
+                ("tsb", tsb_explanation(trend.form_lag_days)),
+            )
+        },
     }

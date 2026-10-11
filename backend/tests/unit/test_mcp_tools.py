@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from httpx import AsyncClient
 from sqlalchemy import delete, select
@@ -46,6 +47,7 @@ from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp import views
+from app.mcp.analysis_tools import ANALYSIS_TOOLS, register_analysis_tools
 from app.mcp.tools import register_tools
 from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
@@ -110,6 +112,7 @@ EXPECTED_TOOLS = {
     "get_wellness_trend",
     "get_wellness_weeks",
     "get_ingest_status",
+    "get_fitness_trend",
     # writes
     "append_anchor",
     "create_workout",
@@ -147,6 +150,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_wellness_trend", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_ingest_status", {}),
+    ("get_fitness_trend", {}),
 )
 
 
@@ -276,6 +280,22 @@ async def test_the_surface_is_exactly_this(session_factory: Any) -> None:
         names = {tool.name for tool in await client.list_tools()}
 
     assert names == EXPECTED_TOOLS
+
+    # The analysis reads register from their own module, not from the
+    # 2,500-line `register_tools`: a bare server given only that module
+    # carries exactly them, and `tools.py` defines none of them.
+    probe = FastMCP(name="analysis-probe")
+    register_analysis_tools(probe)
+    async with Client(probe) as client:
+        analysis = {tool.name for tool in await client.list_tools()}
+    assert analysis == ANALYSIS_TOOLS
+    assert analysis <= EXPECTED_TOOLS
+    defined_in_tools = {
+        node.name
+        for node in ast.walk(ast.parse(inspect.getsource(register_tools)))
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+    assert not analysis & defined_in_tools
 
 
 #: Longest a class docstring inlined into a tool's parameter schema may be.
@@ -2590,10 +2610,11 @@ async def test_every_tool_asks_for_its_scope(session_factory: Any) -> None:
     # ask would still pass every service-level guardrail test, and the
     # authorization it skipped is the only thing standing between a read key
     # and the plan.
-    source = ast.parse(inspect.getsource(register_tools))
+    # Both registration modules: the analysis reads live in their own.
     registered = {
         node.name: node
-        for node in ast.walk(source)
+        for register in (register_tools, register_analysis_tools)
+        for node in ast.walk(ast.parse(inspect.getsource(register)))
         if isinstance(node, ast.AsyncFunctionDef)
         and any(
             isinstance(decorator, ast.Attribute) and decorator.attr == "tool"
@@ -3747,3 +3768,124 @@ async def seed_integration(
     await session.commit()
     await session.refresh(row, ["feeds"])
     return row
+
+
+# --- get_fitness_trend ----------------------------------------------------------------
+
+
+async def price_session(session: AsyncSession, session_id: str, load: float) -> None:
+    """Put a selected power load on a logged session's current metric artefact.
+
+    A manual session has no stream, so its artefact says the load was not
+    assessed; this writes the block a priced ride's ingest leaves instead.
+    """
+    session.expire_all()
+    row = (
+        await session.execute(
+            select(SessionMetricsRow).where(
+                SessionMetricsRow.session_id == uuid.UUID(session_id),
+                SessionMetricsRow.superseded_by.is_(None),
+            )
+        )
+    ).scalar_one()
+    row.payload = {
+        **row.payload,
+        "load": {
+            "not_assessed": None,
+            "training_load": load,
+            "load_basis": "power",
+            "load_basis_rule": "set by the test",
+            "power_load": load,
+            "hr_load": None,
+        },
+    }
+    await session.commit()
+
+
+async def test_the_fitness_trend_is_the_endpoints_answer(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    today = athlete_today()
+    start = today - dt.timedelta(days=6)
+    ride = await record(client, start_time=f"{start.isoformat()}T07:00:00Z")
+    await price_session(db_session, ride, 90.0)
+    # A gym session nobody could price, alone on its day: its load is null,
+    # never zero, and the day says it is incomplete.
+    await record(
+        client,
+        start_time=f"{(start + dt.timedelta(days=2)).isoformat()}T07:00:00Z",
+        discipline="strength",
+    )
+    window = {
+        "start": start.isoformat(),
+        "end": (today + dt.timedelta(days=1)).isoformat(),
+    }
+
+    data = await call(READER, "get_fitness_trend", window)
+    response = await client.get(
+        "/api/v1/fitness", params={"from": window["start"], "to": window["end"]}
+    )
+
+    assert response.status_code == 200
+    assert data["fitness"] == response.json()
+    points = data["fitness"]["points"]
+    assert len(points) == 7
+    assert all(
+        point[key]["display_only"] is True
+        for point in points
+        for key in ("ctl", "atl", "tsb")
+    )
+    assert [point["n"] for point in points[:3]] == [1, 0, 0]
+    assert points[2]["load"] is None
+    assert points[2]["load_incomplete"] is True
+    assert points[1]["load"] == 0.0
+    assert data["fitness"]["maturity"]["day"] == 7
+    assert data["fitness"]["maturity"]["ctl"]["mature"] is False
+    assert data["red_flag"]["active"] is False
+
+
+async def test_the_fitness_trend_defaults_to_the_last_ninety_days(
+    client: AsyncClient,
+) -> None:
+    today = athlete_today()
+    await record(
+        client, start_time=f"{(today - dt.timedelta(days=200)).isoformat()}T07:00:00Z"
+    )
+
+    data = await call(READER, "get_fitness_trend")
+
+    points = data["fitness"]["points"]
+    assert len(points) == 90
+    assert points[-1]["local_date"] == today.isoformat()
+    # The window is a view: the count still starts at the first session.
+    assert points[-1]["day"] == 201
+    assert data["fitness"]["maturity"]["ctl"]["mature"] is True
+
+
+async def test_an_empty_history_is_no_points_and_a_maturity(
+    session_factory: Any,
+) -> None:
+    data = await call(READER, "get_fitness_trend")
+
+    assert data["fitness"]["points"] == []
+    maturity = data["fitness"]["maturity"]
+    assert maturity["day"] is None
+    assert maturity["first_session"] is None
+    assert maturity["ctl"]["matures_on_day"] == 97
+    assert maturity["atl"]["matures_on_day"] == 17
+
+
+async def test_a_write_key_may_not_read_the_fitness_trend(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_fitness_trend")
+
+
+async def test_an_inverted_fitness_window_is_a_readable_refusal(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match=r"invalid: from \(2026-08-17\)"):
+        await call(
+            READER, "get_fitness_trend", {"start": "2026-08-17", "end": "2026-08-10"}
+        )

@@ -548,6 +548,43 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/fitness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Fitness
+     * @description Fitness (CTL), fatigue (ATL) and form (TSB), one point per day.
+     *
+     *     **Display-only.** These describe training; arc never changes a plan
+     *     because of them, and every value is stamped `display_only: true`.
+     *
+     *     * CTL is the 42-day EWMA of **cycling** load, ATL the 7-day EWMA of every
+     *       discipline's load, `α = 1 − e^(−1/τ)`; form is `CTL − ATL` at
+     *       `form_lag_days`.
+     *     * The series starts on the first session's `local_date` and runs every day
+     *       to today — rest days included. Before the first session there are no
+     *       points, never a run of zeros.
+     *     * A session neither load model could price adds nothing and marks its day
+     *       `load_incomplete`; `n` counts the sessions that were counted.
+     *     * `maturity` says whether each average still mostly describes its starting
+     *       seed of zero: CTL until day 97, ATL until day 17, counted from the first
+     *       session whatever window was asked for.
+     *
+     *     `from` after `to` is a 422; equal bounds are a legal empty window.
+     */
+    get: operations["fitness-get_fitness"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/ingest/events": {
     parameters: {
       query?: never;
@@ -2978,6 +3015,19 @@ export interface components {
      */
     Discipline: "cycling" | "strength";
     /**
+     * DisplayOnlyValueRead
+     * @description One day's value of a display-only metric.
+     */
+    DisplayOnlyValueRead: {
+      /**
+       * Display Only
+       * @constant
+       */
+      display_only: true;
+      /** Value */
+      value: number;
+    };
+    /**
      * DisputeRating
      * @description The athlete's one-tap answer to a note.
      *
@@ -3279,6 +3329,74 @@ export interface components {
       last_error: string | null;
       /** Remote Path */
       remote_path: string;
+    };
+    /**
+     * FitnessExplanationsRead
+     * @description The arithmetic behind each series — once per read, not per day.
+     */
+    FitnessExplanationsRead: {
+      atl: components["schemas"]["SeriesExplanationRead"];
+      ctl: components["schemas"]["SeriesExplanationRead"];
+      tsb: components["schemas"]["SeriesExplanationRead"];
+    };
+    /**
+     * FitnessMaturityRead
+     * @description How far into its history the series has been read.
+     */
+    FitnessMaturityRead: {
+      /**
+       * As Of
+       * Format: date
+       */
+      as_of: string;
+      atl: components["schemas"]["SeriesMaturityRead"];
+      ctl: components["schemas"]["SeriesMaturityRead"];
+      /** Day */
+      day: number | null;
+      /** First Session */
+      first_session: string | null;
+    };
+    /**
+     * FitnessPointRead
+     * @description One calendar day of the series.
+     *
+     *     Every day from the first session to today is a point, rest days included —
+     *     the averages decay on them, and a series that skipped them would hold
+     *     fitness flat across a month off.
+     */
+    FitnessPointRead: {
+      atl: components["schemas"]["DisplayOnlyValueRead"];
+      ctl: components["schemas"]["DisplayOnlyValueRead"];
+      /** Day */
+      day: number;
+      /** Fitness Load */
+      fitness_load: number;
+      /** Load */
+      load: number | null;
+      /** Load Incomplete */
+      load_incomplete: boolean;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date: string;
+      /** N */
+      n: number;
+      tsb: components["schemas"]["DisplayOnlyValueRead"];
+      /** Uncounted */
+      uncounted: number;
+    };
+    /**
+     * FitnessTrendRead
+     * @description Fitness, fatigue and form over a window, and how much to trust them.
+     */
+    FitnessTrendRead: {
+      explanations: components["schemas"]["FitnessExplanationsRead"];
+      /** Form Lag Days */
+      form_lag_days: number;
+      maturity: components["schemas"]["FitnessMaturityRead"];
+      /** Points */
+      points: components["schemas"]["FitnessPointRead"][];
     };
     /**
      * FolderList
@@ -5382,6 +5500,50 @@ export interface components {
       | "sets_load"
       | "response"
       | "fuelling";
+    /**
+     * SeriesExplanationRead
+     * @description How one series is computed, stamped with its authority.
+     */
+    SeriesExplanationRead: {
+      /** Assumptions */
+      assumptions: string[];
+      /** Citation */
+      citation: string | null;
+      /**
+       * Display Only
+       * @constant
+       */
+      display_only: true;
+      /** Formula */
+      formula: string;
+      /** Inputs */
+      inputs: {
+        [key: string]: string;
+      };
+    };
+    /**
+     * SeriesMaturityRead
+     * @description Whether one average still mostly describes where it started.
+     *
+     *     Maturing while the seed's remaining weight `(1 − α)ⁿ` is above 10 %: CTL
+     *     through day 96, ATL through day 16 — or mature from day 1 when the series
+     *     started from a supplied seed.
+     */
+    SeriesMaturityRead: {
+      /**
+       * Display Only
+       * @constant
+       */
+      display_only: true;
+      /** Mature */
+      mature: boolean;
+      /** Matures On */
+      matures_on: string | null;
+      /** Matures On Day */
+      matures_on_day: number;
+      /** Seeded */
+      seeded: boolean;
+    };
     /**
      * SessionAlignmentRead
      * @description One version of how a recording lines up with its prescription.
@@ -8470,6 +8632,58 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "fitness-get_fitness": {
+    parameters: {
+      query?: {
+        /** @description First day to return, inclusive. Omit to start at the first session. */
+        from?: string;
+        /** @description First day *not* to return — the range is half-open [from, to), like every range in this application. Omit for through today; a later date is clipped to today. */
+        to?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FitnessTrendRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description `from` is after `to` */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };
