@@ -26,6 +26,7 @@ from app.domain.workout import (
     RampStep,
     RepeatBlock,
     SteadyStep,
+    Step,
     StepRole,
     Target,
     Targets,
@@ -140,7 +141,7 @@ def ramp_steps(draw: st.DrawFn) -> RampStep:
     )
 
 
-def step_trees(depth: int) -> st.SearchStrategy[object]:
+def step_trees(depth: int) -> st.SearchStrategy[Step]:
     """Steps nested at most ``depth`` repeat blocks deep."""
     leaves = st.one_of(steady_steps(), ramp_steps())
     if depth <= 0:

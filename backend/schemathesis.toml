@@ -342,3 +342,16 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 include-name = "PUT /api/v1/connections/dropbox/app"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# `allow_header_conformance` (schemathesis 4.30) wants `Allow` to list every
+# method the contract documents at a path. An anchor version documents PUT,
+# PATCH and DELETE only to refuse them, and those handlers answer with
+# `Allow: GET`; advertising the three on an OPTIONS would contradict the
+# refusals themselves. The header is pinned as GET by
+# `test_an_anchor_version_advertises_only_get` (`test_allow_header.py`), and
+# every other path keeps the check.
+
+[[operations]]
+include-path = "/api/v1/anchors/{anchor_version_id}"
+[operations.checks.allow_header_conformance]
+enabled = false

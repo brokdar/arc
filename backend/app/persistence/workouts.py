@@ -166,7 +166,7 @@ class WorkoutRepository:
         result = await self._session.execute(
             select(WorkoutRow.id, WorkoutRow.name).where(WorkoutRow.id.in_(ids))
         )
-        return {row.id: row.name for row in result}
+        return {workout_id: name for workout_id, name in result}
 
     async def folders(self) -> Sequence[str]:
         """Return every folder label in use, sorted."""

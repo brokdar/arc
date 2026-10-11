@@ -71,9 +71,10 @@ async def test_the_recording_json_columns_are_queryable_jsonb(
     try:
         async with engine.connect() as conn:
             row = (
-                await conn.execute(
-                    sa.text(
-                        """
+                (
+                    await conn.execute(
+                        sa.text(
+                            """
                         SELECT jsonb_array_length(recording_stops) AS stops,
                                (recording_stops -> 0 ->> 0)::int AS first_start,
                                (recording_stops -> 0 ->> 1)::int AS first_end,
@@ -82,18 +83,21 @@ async def test_the_recording_json_columns_are_queryable_jsonb(
                                elapsed_time_s - recording_time_s AS paused
                         FROM recordings
                         """
+                        )
                     )
                 )
-            ).one()
+                .mappings()
+                .one()
+            )
     finally:
         await engine.dispose()
 
-    assert row.stops == 1
-    assert row.has_power is True
-    assert row.candidates == "array"
+    assert row["stops"] == 1
+    assert row["has_power"] is True
+    assert row["candidates"] == "array"
     # A4.4's invariant, asserted on what Postgres itself can see: the paused
     # total is exactly the row range the same row reports.
-    assert row.paused == row.first_end - row.first_start
+    assert row["paused"] == row["first_end"] - row["first_start"]
 
 
 async def test_the_dedup_key_is_unique_in_the_database(
@@ -150,9 +154,10 @@ async def test_the_metric_payload_is_queryable_jsonb(
     try:
         async with engine.connect() as conn:
             row = (
-                await conn.execute(
-                    sa.text(
-                        """
+                (
+                    await conn.execute(
+                        sa.text(
+                            """
                         SELECT version,
                                superseded_by IS NULL AS is_tip,
                                jsonb_typeof(payload) AS shape,
@@ -161,18 +166,21 @@ async def test_the_metric_payload_is_queryable_jsonb(
                                jsonb_typeof(payload -> 'intervals') AS intervals
                         FROM session_metrics
                         """
+                        )
                     )
                 )
-            ).one()
+                .mappings()
+                .one()
+            )
     finally:
         await engine.dispose()
 
-    assert row.version == 1
-    assert row.is_tip is True
-    assert row.shape == "object"
-    assert row.has_load is True
-    assert row.recording_s > 0
-    assert row.intervals == "array"
+    assert row["version"] == 1
+    assert row["is_tip"] is True
+    assert row["shape"] == "object"
+    assert row["has_load"] is True
+    assert row["recording_s"] > 0
+    assert row["intervals"] == "array"
 
 
 async def test_the_metric_version_chain_is_unique_per_session(
