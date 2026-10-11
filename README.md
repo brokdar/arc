@@ -16,9 +16,15 @@ built out increment by increment.
 
 ## Quick start
 
-Needs Docker and [just](https://just.systems)
-(`uv tool install --constraints tools/requirements.txt rust-just`, the version
-this repo pins); the devcontainer installs both.
+Needs Docker and [mise](https://mise.jdx.dev):
+
+```bash
+mise install       # uv, bun, node, gh, just, prek — pinned in mise.toml/mise.lock
+mise run bootstrap # git-cliff, git hooks, both projects' deps
+```
+
+(A devcontainer under `.devcontainer/` does the same thing inside a container,
+if you'd rather not install any of this on the host.)
 
 ```bash
 git clone <this repo> arc && cd arc
@@ -102,9 +108,10 @@ start without any, and rejects keys under 32 characters, keys still holding the
 
 ## Development
 
-The devcontainer (`.devcontainer/`) installs uv, bun, just, prek, Playwright
-browsers and both projects' dependencies. Outside it, you need uv, bun, just
-and Docker.
+`mise install && mise run bootstrap` (see Quick start) sets up uv, bun, just,
+prek, Playwright browsers and both projects' dependencies on the host. The
+devcontainer (`.devcontainer/`) does the same thing inside a container,
+for whoever would rather not install any of this directly.
 
 For day-to-day work, run the apps on the host with hot reload and only
 Postgres in Docker:
@@ -131,7 +138,7 @@ E2E_PASSWORD=... just smoke
 ```
 
 `just` on its own lists every recipe. Git hooks are managed by
-[prek](https://prek.j178.dev/) (installed by the devcontainer, or run
+[prek](https://prek.j178.dev/) (installed by `mise run bootstrap`, or run
 `prek install -t pre-commit -t pre-push` once): cheap checks run on commit,
 type checking and unit tests run on push.
 

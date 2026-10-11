@@ -1,0 +1,32 @@
+[tools]
+# Python itself comes from backend/.python-version (uv reads that directly);
+# uv is the tool mise needs to manage.
+uv = "latest"
+bun = "latest"
+# Matches frontend/Dockerfile's runtime stage (node:24-alpine) — the one place
+# other than CI where a Node version actually ships.
+node = "24"
+gh = "latest"
+# Pinned to tools/requirements.txt (test_mise_tool_pins fails if they drift).
+# Declared here rather than only `uv tool install`ed because mise shims `just`
+# and `prek` on PATH for any machine that ever installed them through mise, and
+# a shim with no version set in the current directory fails with "No version is
+# set for shim" — which is what a worktree without these two lines hit.
+just = "1.59.0"
+prek = "0.5.7"
+
+[settings]
+lockfile = true
+
+# Everything `.devcontainer/startup.sh` did beyond installing uv/bun/node/gh:
+# git-cliff (tools/requirements.txt; just and prek are in [tools]), the git hooks, and the
+# two project dependency installs. Run once per machine with `mise run bootstrap`.
+[tasks.bootstrap]
+description = "Install pinned tools, git hooks, and backend/frontend dependencies"
+run = """
+set -e
+uv tool install --constraints tools/requirements.txt git-cliff
+prek install -t pre-commit -t pre-push -t commit-msg
+cd backend && uv sync
+cd ../frontend && bun install && bunx playwright install --with-deps chromium
+"""
