@@ -264,6 +264,41 @@ async def test_no_history_is_an_empty_series_with_a_maturity(
     assert body["maturity"]["ctl"]["matures_on_day"] == 97
 
 
+async def test_a_history_nothing_could_price_says_it_has_no_load_behind_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # A manual ride and a gym session, neither priced: the averages compute to
+    # zero, and the read must say that zero has nothing behind it.
+    await log(client)
+    await log(client, start_time=f"{NEXT}T18:00:00Z", discipline="strength")
+
+    body = (
+        await client.get(
+            FITNESS,
+            params={
+                "from": DAY.isoformat(),
+                "to": (DAY + dt.timedelta(days=3)).isoformat(),
+            },
+        )
+    ).json()
+
+    assert [point["load"] for point in body["points"]] == [None, None, 0.0]
+    assert body["maturity"]["first_session"] == DAY.isoformat()
+    assert body["maturity"]["first_priced_session"] is None
+
+    gym = await log(
+        client,
+        start_time=f"{(DAY + dt.timedelta(days=2)).isoformat()}T18:00:00Z",
+        discipline="strength",
+    )
+    await price(db_session, gym, 25.0, "hr")
+    body = (await client.get(FITNESS, params={"from": DAY.isoformat()})).json()
+    assert (
+        body["maturity"]["first_priced_session"]
+        == (DAY + dt.timedelta(days=2)).isoformat()
+    )
+
+
 async def test_a_range_into_the_future_stops_at_today(client: AsyncClient) -> None:
     today = athlete_today()
     await log(client, start_time=f"{today - dt.timedelta(days=2)}T09:00:00Z")

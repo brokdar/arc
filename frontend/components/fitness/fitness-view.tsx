@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Explained } from "@/components/design/metric-explanation";
+import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { FitnessChart } from "@/components/fitness/fitness-chart";
@@ -89,20 +90,14 @@ function DisplayOnlyBadge() {
   );
 }
 
+/** Why a readout slot is empty when nothing behind it was priced. */
+const UNPRICED_REASON = "No session has a priced load yet";
+
 function FitnessBody({ trend }: { trend: Trend }) {
   if (trend.points.length === 0) {
     return trend.maturity.first_session === null ? (
-      <Panel className="flex flex-wrap items-center gap-3 px-5 py-4">
-        <p className="text-base text-ink-secondary">
-          Record a ride with power or heart rate to see fitness, fatigue and
-          form.
-        </p>
-        <Link
-          href="/inbox"
-          className="rounded-button bg-accent px-3 py-1.5 font-medium text-accent-ink text-sm"
-        >
-          Upload a ride
-        </Link>
+      <Panel className="px-5 py-4">
+        <RecordARide />
       </Panel>
     ) : (
       <p className="text-base text-ink-muted">
@@ -112,6 +107,17 @@ function FitnessBody({ trend }: { trend: Trend }) {
         </span>
         .
       </p>
+    );
+  }
+  // Sessions, but none either load model could price: the averages are 0
+  // with no load behind them, which is no data, not zero fitness.
+  if (trend.maturity.first_priced_session === null) {
+    return (
+      <Panel className="flex flex-col gap-4 px-5 py-4">
+        <SectionLabel level={2}>Fitness, fatigue and form</SectionLabel>
+        <Readout point={null} trend={trend} />
+        <RecordARide lead="None of your sessions so far has a power or heart-rate load." />
+      </Panel>
     );
   }
   const latest = trend.points[trend.points.length - 1];
@@ -124,6 +130,24 @@ function FitnessBody({ trend }: { trend: Trend }) {
       {latest ? <Readout point={latest} trend={trend} /> : null}
       <FitnessChart points={trend.points} />
     </Panel>
+  );
+}
+
+/** The remedy for a series with nothing priced behind it. */
+function RecordARide({ lead }: { lead?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <p className="text-base text-ink-secondary">
+        {lead ? `${lead} ` : null}Record a ride with power or heart rate to see
+        fitness, fatigue and form.
+      </p>
+      <Link
+        href="/inbox"
+        className="rounded-button bg-accent px-3 py-1.5 font-medium text-accent-ink text-sm"
+      >
+        Upload a ride
+      </Link>
+    </div>
   );
 }
 
@@ -165,28 +189,31 @@ function MaturityNote({ trend }: { trend: Trend }) {
   );
 }
 
-/** The last day's three numbers, each under its series' explanation. */
+/**
+ * The last day's three numbers, each under its series' explanation — or, with
+ * no priced load behind them (`point` null), a placeholder in each slot.
+ */
 function Readout({
   point,
   trend,
 }: {
-  point: Trend["points"][number];
+  point: Trend["points"][number] | null;
   trend: Trend;
 }) {
   const slots = [
     {
       label: "Fitness",
-      value: point.ctl.value,
+      value: point?.ctl.value,
       explanation: trend.explanations.ctl,
     },
     {
       label: "Fatigue",
-      value: point.atl.value,
+      value: point?.atl.value,
       explanation: trend.explanations.atl,
     },
     {
       label: "Form",
-      value: point.tsb.value,
+      value: point?.tsb.value,
       explanation: trend.explanations.tsb,
     },
   ];
@@ -195,12 +222,16 @@ function Readout({
       {slots.map((slot) => (
         <div key={slot.label} className="flex flex-col gap-0.5">
           <SectionLabel>{slot.label}</SectionLabel>
-          <Explained
-            explanation={slot.explanation}
-            className="font-mono text-ink text-xl"
-          >
-            {slot.value.toFixed(0)}
-          </Explained>
+          {slot.value === undefined ? (
+            <NotAssessed reason={UNPRICED_REASON} className="text-xl" />
+          ) : (
+            <Explained
+              explanation={slot.explanation}
+              className="font-mono text-ink text-xl"
+            >
+              {slot.value.toFixed(0)}
+            </Explained>
+          )}
         </div>
       ))}
     </section>

@@ -3885,7 +3885,40 @@ async def test_a_write_key_may_not_read_the_fitness_trend(
 async def test_an_inverted_fitness_window_is_a_readable_refusal(
     session_factory: Any,
 ) -> None:
-    with pytest.raises(ToolError, match=r"invalid: from \(2026-08-17\)"):
+    # The tool's own parameter names, not the endpoint's `from`/`to`.
+    with pytest.raises(
+        ToolError,
+        match=r"invalid: start \(2026-08-17\) must not be after end \(2026-08-10\)",
+    ):
         await call(
             READER, "get_fitness_trend", {"start": "2026-08-17", "end": "2026-08-10"}
         )
+
+
+async def test_an_end_alone_reads_the_ninety_days_before_it(
+    client: AsyncClient,
+) -> None:
+    # Both bounds are optional on their own: an old `end` with no `start` is
+    # the 90 days before it, not a default start after it and a refusal.
+    today = athlete_today()
+    await record(
+        client, start_time=f"{(today - dt.timedelta(days=400)).isoformat()}T07:00:00Z"
+    )
+    end = today - dt.timedelta(days=200)
+
+    data = await call(READER, "get_fitness_trend", {"end": end.isoformat()})
+
+    points = data["fitness"]["points"]
+    assert len(points) == 90
+    assert points[0]["local_date"] == (end - dt.timedelta(days=90)).isoformat()
+    assert points[-1]["local_date"] == (end - dt.timedelta(days=1)).isoformat()
+
+    # An `end` past today is clipped, and the window still ends today.
+    later = await call(
+        READER,
+        "get_fitness_trend",
+        {"end": (today + dt.timedelta(days=30)).isoformat()},
+    )
+    points = later["fitness"]["points"]
+    assert len(points) == 90
+    assert points[-1]["local_date"] == today.isoformat()

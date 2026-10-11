@@ -30,6 +30,7 @@ from app.services.guardrails import current_profile
 
 #: How many days `get_fitness_trend` returns when no `start` is given — a
 #: training block and its run-in, small enough that one call stays one call.
+#: The window ends where the read does: `end` when given, else today.
 DEFAULT_FITNESS_DAYS = 90
 
 #: Every tool this module registers.
@@ -60,15 +61,17 @@ def register_analysis_tools(mcp: FastMCP) -> None:
           fitness.
         * `load` is null on a day whose sessions could not be priced; such a
           session adds nothing and its day says `load_incomplete: true`. `n`
-          is how many sessions the day counted.
+          is how many sessions the day counted. `maturity.first_priced_session`
+          null means no session has been priced yet: the zeros are no data,
+          not zero fitness — say so rather than quote them.
         * `maturity`: an average that started from zero is still mostly that
           zero until CTL's day 97 and ATL's day 17, counted from the first
           session. While `mature` is false, say the number is maturing rather
           than quoting it as the athlete's fitness.
 
         Args:
-            start: First local date, `YYYY-MM-DD`, inclusive. Omit for the last
-                90 days.
+            start: First local date, `YYYY-MM-DD`, inclusive. Omit for the 90
+                days before `end` (or through today, without one).
             end: First local date **after** the range — half-open
                 `[start, end)`. Omit for through today; later is clipped.
 
@@ -77,17 +80,30 @@ def register_analysis_tools(mcp: FastMCP) -> None:
         require_scope(Scope.READ)
         with tool_errors():
             today = athlete_today()
+            last = None if end is None else views.as_date(end, field="end")
             first = (
                 views.as_date(start, field="start")
                 if start is not None
-                else today - dt.timedelta(days=DEFAULT_FITNESS_DAYS - 1)
+                else _default_start(last, today=today)
             )
-            last = None if end is None else views.as_date(end, field="end")
             async with session_scope() as session:
                 trend = await FitnessService.from_session(session).trend(
-                    start=first, end=last, today=today
+                    start=first, end=last, today=today, bound_names=("start", "end")
                 )
                 return {
                     "fitness": views.fitness_trend(trend),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }
+
+
+def _default_start(end: dt.date | None, *, today: dt.date) -> dt.date:
+    """The first day of the :data:`DEFAULT_FITNESS_DAYS` before ``end``.
+
+    ``end`` is exclusive and clipped at today, as the service reads it, so
+    the window is the same length whether or not it was given.
+    """
+    stop = today + dt.timedelta(days=1)
+    if end is not None:
+        stop = min(end, stop)
+    span = dt.timedelta(days=DEFAULT_FITNESS_DAYS)
+    return stop - span if stop - dt.date.min >= span else dt.date.min

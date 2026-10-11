@@ -13,6 +13,7 @@ import { ATHLETE_TIMEZONE } from "@/tests/mocks/fixtures";
 import {
   FITNESS_TREND,
   FITNESS_TREND_EMPTY,
+  FITNESS_TREND_UNPRICED,
 } from "@/tests/mocks/generated-pmc";
 import { http } from "@/tests/mocks/handlers";
 import { rebased } from "@/tests/mocks/handlers-fitness";
@@ -196,6 +197,38 @@ describe("FitnessView", () => {
       "href",
       "/inbox",
     );
+    expect(container.querySelector("canvas")).toBeNull();
+    expect(constructions).toHaveLength(0);
+  });
+
+  it("renders a history nothing could price as not assessed, never zero", async () => {
+    // The generated read: every session unpriced, so the domain's averages
+    // are 0 on every day with no load behind them.
+    expect(FITNESS_TREND_UNPRICED.points.length).toBeGreaterThan(0);
+    expect(FITNESS_TREND_UNPRICED.maturity.first_priced_session).toBeNull();
+    server.use(
+      http.get("/api/v1/fitness", ({ response }) =>
+        response(200).json(rebased(FITNESS_TREND_UNPRICED)),
+      ),
+    );
+    const { container } = renderFitness();
+
+    expect(
+      await screen.findByText(/Record a ride with power or heart rate/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Upload a ride" })).toHaveAttribute(
+      "href",
+      "/inbox",
+    );
+    const readout = screen.getByRole("region", { name: "Today" });
+    for (const label of ["Fitness", "Fatigue", "Form"]) {
+      expect(within(readout).getByText(label)).toBeVisible();
+    }
+    expect(
+      within(readout).getAllByRole("img", { name: /^Not assessed: / }),
+    ).toHaveLength(3);
+    expect(within(readout).queryByText("0")).toBeNull();
+    // No flat line of zeros either.
     expect(container.querySelector("canvas")).toBeNull();
     expect(constructions).toHaveLength(0);
   });

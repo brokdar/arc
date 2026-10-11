@@ -23,7 +23,10 @@ The history is shaped for what `/fitness` has to render:
 * gym sessions priced by heart rate, which feed fatigue and not fitness;
 * one gym session **nobody could price**, so its day is `load_incomplete`.
 
-It also emits the empty read — the domain over no sessions at all.
+It also emits the empty read — the domain over no sessions at all — and the
+unpriced one: a history whose every session neither load model could price
+(:data:`UNPRICED_HISTORY`), which the domain answers with points of zero and
+no ``first_priced_session``.
 
 Run it with ``just pmc-fixture`` after changing `app/domain/pmc.py` or the
 fitness read shape, and commit the result.
@@ -83,6 +86,14 @@ def _history() -> tuple[SessionLoad, ...]:
 #: The stored history the fixture is computed from.
 HISTORY = _history()
 
+#: Manual sessions only — a ride logged without power or heart rate and two gym
+#: sessions without heart rate — over the last ten days of the read.
+UNPRICED_HISTORY = (
+    SessionLoad(AS_OF - dt.timedelta(days=9), CYCLING, None),
+    SessionLoad(AS_OF - dt.timedelta(days=6), STRENGTH, None),
+    SessionLoad(AS_OF - dt.timedelta(days=2), STRENGTH, None),
+)
+
 HEADER = """// GENERATED FILE — do not hand-edit.
 //
 // Produced by `backend/scripts/emit_pmc_fixture.py` (`just pmc-fixture`) by
@@ -115,6 +126,14 @@ EMPTY_HEADER = """;
 /** The same read over no sessions at all: no points, and a maturity. */
 export const FITNESS_TREND_EMPTY: Schemas["FitnessTrendRead"] = """
 
+UNPRICED_HEADER = """;
+
+/**
+ * Ten days whose every session no load model could price: points whose
+ * averages are 0 with nothing behind them, and no `first_priced_session`.
+ */
+export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = """
+
 
 def _dump(sessions: tuple[SessionLoad, ...]) -> str:
     """One trend read over ``sessions``, as the endpoint serializes it."""
@@ -125,7 +144,15 @@ def _dump(sessions: tuple[SessionLoad, ...]) -> str:
 
 def main() -> None:
     """Write the generated module."""
-    body = HEADER + _dump(HISTORY) + EMPTY_HEADER + _dump(()) + ";\n"
+    body = (
+        HEADER
+        + _dump(HISTORY)
+        + EMPTY_HEADER
+        + _dump(())
+        + UNPRICED_HEADER
+        + _dump(UNPRICED_HISTORY)
+        + ";\n"
+    )
     DESTINATION.write_text(body, encoding="utf-8")
     print(f"wrote {DESTINATION.relative_to(ROOT)}", file=sys.stderr)
 

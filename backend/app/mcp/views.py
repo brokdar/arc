@@ -1397,6 +1397,11 @@ def fitness_trend(trend: FitnessTrend) -> dict[str, Any]:
                 if trend.maturity.first_session is None
                 else trend.maturity.first_session.isoformat()
             ),
+            "first_priced_session": (
+                None
+                if trend.maturity.first_priced is None
+                else trend.maturity.first_priced.isoformat()
+            ),
             "as_of": trend.maturity.as_of.isoformat(),
             "day": trend.maturity.day,
             "ctl": _series_maturity(trend.maturity.ctl),

@@ -82,6 +82,10 @@ class FitnessMaturityRead(BaseModel):
 
     #: The day the count starts on; null with no session recorded.
     first_session: dt.date | None
+    #: The first day, on or before `as_of`, with a session a load model could
+    #: price. **null** when none was: the averages then read 0 with no load
+    #: behind them — no data, not zero fitness.
+    first_priced_session: dt.date | None
     #: The last day of the window, never after today.
     as_of: dt.date
     #: `as_of`'s day number; null when it precedes the first session.

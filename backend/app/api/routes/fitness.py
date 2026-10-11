@@ -89,7 +89,9 @@ async def get_fitness(
       to today — rest days included. Before the first session there are no
       points, never a run of zeros.
     * A session neither load model could price adds nothing and marks its day
-      `load_incomplete`; `n` counts the sessions that were counted.
+      `load_incomplete`; `n` counts the sessions that were counted. With
+      `maturity.first_priced_session` null nothing has been priced, and the
+      zeros are no data rather than zero fitness.
     * `maturity` says whether each average still mostly describes its starting
       seed of zero: CTL until day 97, ATL until day 17, counted from the first
       session whatever window was asked for.
@@ -150,6 +152,7 @@ def to_fitness_read(trend: FitnessTrend) -> FitnessTrendRead:
         ],
         maturity=FitnessMaturityRead(
             first_session=trend.maturity.first_session,
+            first_priced_session=trend.maturity.first_priced,
             as_of=trend.maturity.as_of,
             day=trend.maturity.day,
             ctl=_maturity(trend.maturity.ctl),

@@ -286,6 +286,24 @@ def test_a_window_before_the_first_session_has_no_points_and_a_maturity() -> Non
     assert trend.maturity.ctl.matures_on == on(10 + 96)
 
 
+def test_first_priced_is_the_first_priced_session_the_read_reaches() -> None:
+    sessions = [
+        ride(FIRST, None),
+        SessionLoad(local_date=on(1), discipline=STRENGTH, load=None),
+        ride(on(3), 40.0),
+    ]
+
+    whole = fitness_trend(sessions, start=None, end=None, today=on(5))
+    assert whole.maturity.first_session == FIRST
+    assert whole.maturity.first_priced == on(3)
+
+    # Read as of a day before the priced ride, nothing priced is behind it:
+    # its zeros are an absence of load, not a reading of none.
+    before = fitness_trend(sessions, start=None, end=on(3), today=on(5))
+    assert [point.ctl for point in before.points] == [0.0, 0.0, 0.0]
+    assert before.maturity.first_priced is None
+
+
 def test_no_history_has_a_maturity_with_nothing_to_count() -> None:
     trend = fitness_trend([], start=None, end=None, today=FIRST)
 

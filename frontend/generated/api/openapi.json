@@ -2356,6 +2356,18 @@
             ],
             "title": "Day"
           },
+          "first_priced_session": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Priced Session"
+          },
           "first_session": {
             "anyOf": [
               {
@@ -2369,7 +2381,14 @@
             "title": "First Session"
           }
         },
-        "required": ["first_session", "as_of", "day", "ctl", "atl"],
+        "required": [
+          "first_session",
+          "first_priced_session",
+          "as_of",
+          "day",
+          "ctl",
+          "atl"
+        ],
         "title": "FitnessMaturityRead",
         "type": "object"
       },
@@ -12636,7 +12655,7 @@
     },
     "/api/v1/fitness": {
       "get": {
-        "description": "Fitness (CTL), fatigue (ATL) and form (TSB), one point per day.\n\n**Display-only.** These describe training; arc never changes a plan\nbecause of them, and every value is stamped `display_only: true`.\n\n* CTL is the 42-day EWMA of **cycling** load, ATL the 7-day EWMA of every\n  discipline's load, `\u03b1 = 1 \u2212 e^(\u22121/\u03c4)`; form is `CTL \u2212 ATL` at\n  `form_lag_days`.\n* The series starts on the first session's `local_date` and runs every day\n  to today \u2014 rest days included. Before the first session there are no\n  points, never a run of zeros.\n* A session neither load model could price adds nothing and marks its day\n  `load_incomplete`; `n` counts the sessions that were counted.\n* `maturity` says whether each average still mostly describes its starting\n  seed of zero: CTL until day 97, ATL until day 17, counted from the first\n  session whatever window was asked for.\n\n`from` after `to` is a 422; equal bounds are a legal empty window.",
+        "description": "Fitness (CTL), fatigue (ATL) and form (TSB), one point per day.\n\n**Display-only.** These describe training; arc never changes a plan\nbecause of them, and every value is stamped `display_only: true`.\n\n* CTL is the 42-day EWMA of **cycling** load, ATL the 7-day EWMA of every\n  discipline's load, `\u03b1 = 1 \u2212 e^(\u22121/\u03c4)`; form is `CTL \u2212 ATL` at\n  `form_lag_days`.\n* The series starts on the first session's `local_date` and runs every day\n  to today \u2014 rest days included. Before the first session there are no\n  points, never a run of zeros.\n* A session neither load model could price adds nothing and marks its day\n  `load_incomplete`; `n` counts the sessions that were counted. With\n  `maturity.first_priced_session` null nothing has been priced, and the\n  zeros are no data rather than zero fitness.\n* `maturity` says whether each average still mostly describes its starting\n  seed of zero: CTL until day 97, ATL until day 17, counted from the first\n  session whatever window was asked for.\n\n`from` after `to` is a 422; equal bounds are a legal empty window.",
         "operationId": "fitness-get_fitness",
         "parameters": [
           {

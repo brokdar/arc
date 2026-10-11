@@ -46,11 +46,13 @@ TAU_CTL = 42
 TAU_ATL = 7
 
 #: How much of the seed may still be in the average before it is called mature.
-#: See :func:`maturity`.
+#: A chosen convention, not a published threshold; see :func:`maturity`.
 MATURITY_SEED_WEIGHT = 0.10
 
 #: Form's default lag, in days: today's form is today's fitness minus today's
-#: fatigue. See :func:`form` for why it is a parameter at all.
+#: fatigue. A tunable default, not a validated value: intervals.icu does not
+#: document its lag, and `metric-policy-and-verification` calibrates this
+#: against an intervals.icu export. See :func:`form`.
 DEFAULT_FORM_LAG_DAYS = 0
 
 _CITATION = (
@@ -195,6 +197,9 @@ class Maturity:
     Args:
         first_session: The day the count starts on, or ``None`` with no
             session at all.
+        first_priced: The first day, on or before ``as_of``, with a session a
+            load model could price — or ``None`` when none was, and the
+            averages' zeros are an absence of load rather than a reading of it.
         as_of: The last day the trend was read for — the end of the window,
             never after today.
         day: ``as_of``'s day number counting from ``first_session`` as 1, or
@@ -204,6 +209,7 @@ class Maturity:
     """
 
     first_session: dt.date | None
+    first_priced: dt.date | None
     as_of: dt.date
     day: int | None
     ctl: SeriesMaturity
@@ -415,6 +421,10 @@ def fitness_trend(
         # ending there is empty whatever `as_of` says.
         as_of = end - dt.timedelta(days=1) if end > dt.date.min else dt.date.min
     first = min((s.local_date for s in held), default=None)
+    first_priced = min(
+        (s.local_date for s in held if s.load is not None and s.local_date <= as_of),
+        default=None,
+    )
     day = (as_of - first).days + 1 if first is not None and as_of >= first else None
     series = pmc(
         daily_loads(held, through=as_of), seed=seed, form_lag_days=form_lag_days
@@ -429,6 +439,7 @@ def fitness_trend(
         points=points,
         maturity=Maturity(
             first_session=first,
+            first_priced=first_priced,
             as_of=as_of,
             day=day,
             ctl=_standing(TAU_CTL, seeded=seed.ctl is not None, first=first, day=day),

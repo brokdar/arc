@@ -91,6 +91,7 @@ export const FITNESS_TREND: Schemas["FitnessTrendRead"] = {
       seeded: false,
     },
     day: 40,
+    first_priced_session: "2026-07-07",
     first_session: "2026-07-07",
   },
   points: [
@@ -1006,7 +1007,297 @@ export const FITNESS_TREND_EMPTY: Schemas["FitnessTrendRead"] = {
       seeded: false,
     },
     day: null,
+    first_priced_session: null,
     first_session: null,
   },
   points: [],
+};
+
+/**
+ * Ten days whose every session no load model could price: points whose
+ * averages are 0 with nothing behind them, and no `first_priced_session`.
+ */
+export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = {
+  explanations: {
+    atl: {
+      assumptions: [
+        "every discipline feeds fatigue; strength through its heart-rate load, which is a low-trust estimate",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 17",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "ATL_d = ATL_{d−1} + α·(load_d − ATL_{d−1}), α = 1 − e^(−1/7)",
+      inputs: {
+        seed: "0",
+        α: "0.133122",
+        τ: "7 days",
+      },
+    },
+    ctl: {
+      assumptions: [
+        "only cycling load feeds fitness",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 97",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula:
+        "CTL_d = CTL_{d−1} + α·(cycling load_d − CTL_{d−1}), α = 1 − e^(−1/42)",
+      inputs: {
+        seed: "0",
+        α: "0.023528",
+        τ: "42 days",
+      },
+    },
+    tsb: {
+      assumptions: [
+        "the lag is a declared parameter: TrainingPeaks reads yesterday's balance (L = 1), and intervals.icu's convention is unconfirmed",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "TSB_d = CTL_{d−L} − ATL_{d−L}",
+      inputs: {
+        L: "0 days",
+      },
+    },
+  },
+  form_lag_days: 0,
+  maturity: {
+    as_of: "2026-08-15",
+    atl: {
+      display_only: true,
+      mature: false,
+      matures_on: "2026-08-22",
+      matures_on_day: 17,
+      seeded: false,
+    },
+    ctl: {
+      display_only: true,
+      mature: false,
+      matures_on: "2026-11-10",
+      matures_on_day: 97,
+      seeded: false,
+    },
+    day: 10,
+    first_priced_session: null,
+    first_session: "2026-08-06",
+  },
+  points: [
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 1,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-08-06",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 2,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-07",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 3,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-08",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 4,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-08-09",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 5,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-10",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 6,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-11",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 7,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-12",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 8,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-08-13",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 9,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-14",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 10,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-15",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+  ],
 };

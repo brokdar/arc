@@ -44,6 +44,9 @@ export function rebased(document: Trend, today = athleteToday()): Trend {
       ...document.maturity,
       as_of: move(document.maturity.as_of),
       first_session: moveNullable(document.maturity.first_session),
+      first_priced_session: moveNullable(
+        document.maturity.first_priced_session,
+      ),
       ctl: {
         ...document.maturity.ctl,
         matures_on: moveNullable(document.maturity.ctl.matures_on),
