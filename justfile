@@ -222,6 +222,15 @@ wellness-trend-fixture:
 	cd backend && uv run python scripts/emit_wellness_trend_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-wellness-trend.ts
 
+# Regenerate the frontend's power-curve fixtures from the real domain.
+# Run after changing app/domain/power_curve.py, the power-curve read shape or
+# the metrics fixture's stream, and commit the result: every best is the
+# domain's own window search over the same stream `RIDE_STREAMS` carries, and a
+# hand-typed curve could put a 5 s best below the minute's.
+power-curve-fixture:
+	cd backend && uv run python scripts/emit_power_curve_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-power-curve.ts
+
 # --- Maintenance -------------------------------------------------------------
 
 # Re-parse every original under data/originals/, rewrite its stream file and
@@ -229,6 +238,7 @@ wellness-trend-fixture:
 # The path for "the parser learned something new": recompute alone reads the
 # stored parquet, so a stream written before a channel existed can never gain
 # that channel without this. Originals are read-only and are never moved.
+# The recompute also backfills each session's power curve (`session_mmp`).
 # Pass --no-recompute to rewrite streams only, or --recording <uuid> for one.
 #
 # ORDERING: deploy the new image FIRST, rebuild SECOND, and never roll the

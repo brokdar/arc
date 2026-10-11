@@ -1456,6 +1456,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/sessions/{session_id}/power-curve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Power Curve
+     * @description One session's best mean power for every duration, from 1 s upwards.
+     *
+     *     The grid is fixed (`grid_version`): every second below 2 min, then
+     *     progressively coarser steps, up to the ride's own length and never past
+     *     it. A session with no power meter — or one recorded before curves
+     *     existed — answers `not_assessed` with the reason, never zeros. 404 for an
+     *     unknown session.
+     */
+    get: operations["sessions-get_power_curve"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sessions/{session_id}/rematch": {
     parameters: {
       query?: never;
@@ -2342,6 +2368,21 @@ export interface components {
       | "dropout_held"
       | "dropped"
       | "resampled_only";
+    /**
+     * AssessedPowerCurveRead
+     * @description A session's mean-maximal power at every grid duration it is long enough for.
+     */
+    AssessedPowerCurveRead: {
+      /** Grid Version */
+      grid_version: number;
+      /** Points */
+      points: components["schemas"]["PowerCurvePointRead"][];
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      status: "assessed";
+    };
     /**
      * AthleteRead
      * @description The athlete profile as returned by the API.
@@ -4217,6 +4258,19 @@ export interface components {
       reasons: components["schemas"]["Reason"][];
     };
     /**
+     * NotAssessedPowerCurveRead
+     * @description Why a session has no power curve, naming the missing input.
+     */
+    NotAssessedPowerCurveRead: {
+      /** Reason */
+      reason: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      status: "not_assessed";
+    };
+    /**
      * NoteKind
      * @description What kind of interpretive text this is.
      *
@@ -4719,6 +4773,20 @@ export interface components {
      * @enum {string}
      */
     Polarity: "higher_is_better" | "higher_is_worse" | "higher_is_neither";
+    /**
+     * PowerCurvePointRead
+     * @description The best window of one duration.
+     */
+    PowerCurvePointRead: {
+      /** Clean */
+      clean: boolean;
+      /** Duration S */
+      duration_s: number;
+      /** Start Index */
+      start_index: number;
+      /** Watts */
+      watts: number;
+    };
     /**
      * PowerMetricsRead
      * @description Everything derived from the power channel.
@@ -11179,6 +11247,66 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "sessions-get_power_curve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json":
+            | components["schemas"]["AssessedPowerCurveRead"]
+            | components["schemas"]["NotAssessedPowerCurveRead"];
         };
       };
       /** @description No valid session */

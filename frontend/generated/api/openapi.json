@@ -574,6 +574,31 @@
         "title": "AnomalyKind",
         "type": "string"
       },
+      "AssessedPowerCurveRead": {
+        "description": "A session's mean-maximal power at every grid duration it is long enough for.",
+        "properties": {
+          "grid_version": {
+            "title": "Grid Version",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/PowerCurvePointRead"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "status": {
+            "const": "assessed",
+            "default": "assessed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["grid_version", "points"],
+        "title": "AssessedPowerCurveRead",
+        "type": "object"
+      },
       "AthleteRead": {
         "description": "The athlete profile as returned by the API.\n\nEvery field is nullable: the profile is bootstrapped empty on first access\nand filled in from the UI.",
         "properties": {
@@ -4218,6 +4243,24 @@
         "title": "MissedReasonsUpdate",
         "type": "object"
       },
+      "NotAssessedPowerCurveRead": {
+        "description": "Why a session has no power curve, naming the missing input.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "const": "not_assessed",
+            "default": "not_assessed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["reason"],
+        "title": "NotAssessedPowerCurveRead",
+        "type": "object"
+      },
       "NoteKind": {
         "description": "What kind of interpretive text this is.\n\nThe two differ in what they are *about*, not in how much they are trusted:\n\n``EVALUATION`` is the coach's read of one session \u2014 what the athlete did\nand what it means \u2014 and is the autonomy tier the build plan calls Tier 1,\nwritten only against a session.\n\n``ANNOTATION`` is free commentary (Tier 0), and may hang off a session or\na plan week: \"this block has been three weeks of threshold\" is about the\nweek, not about any one ride.",
         "enum": ["evaluation", "annotation"],
@@ -5374,6 +5417,30 @@
         "enum": ["higher_is_better", "higher_is_worse", "higher_is_neither"],
         "title": "Polarity",
         "type": "string"
+      },
+      "PowerCurvePointRead": {
+        "description": "The best window of one duration.",
+        "properties": {
+          "clean": {
+            "title": "Clean",
+            "type": "boolean"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "integer"
+          },
+          "start_index": {
+            "title": "Start Index",
+            "type": "integer"
+          },
+          "watts": {
+            "title": "Watts",
+            "type": "number"
+          }
+        },
+        "required": ["duration_s", "watts", "start_index", "clean"],
+        "title": "PowerCurvePointRead",
+        "type": "object"
       },
       "PowerMetricsRead": {
         "description": "Everything derived from the power channel.",
@@ -16137,6 +16204,98 @@
           }
         ],
         "summary": "Recompute Session Metrics",
+        "tags": ["sessions"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/power-curve": {
+      "get": {
+        "description": "One session's best mean power for every duration, from 1 s upwards.\n\nThe grid is fixed (`grid_version`): every second below 2 min, then\nprogressively coarser steps, up to the ride's own length and never past\nit. A session with no power meter \u2014 or one recorded before curves\nexisted \u2014 answers `not_assessed` with the reason, never zeros. 404 for an\nunknown session.",
+        "operationId": "sessions-get_power_curve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "assessed": "#/components/schemas/AssessedPowerCurveRead",
+                      "not_assessed": "#/components/schemas/NotAssessedPowerCurveRead"
+                    },
+                    "propertyName": "status"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AssessedPowerCurveRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NotAssessedPowerCurveRead"
+                    }
+                  ],
+                  "title": "Response Sessions-Get Power Curve"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Power Curve",
         "tags": ["sessions"]
       }
     },
