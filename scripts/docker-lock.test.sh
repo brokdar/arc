@@ -16,13 +16,17 @@ set -uo pipefail
 # (exported whenever git was invoked with `-c`) killed this suite at `git clone`
 # with exit 128, no summary and no cleanup.
 for _v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done
+# Identity through the environment, never `git config`: a config write that
+# lands in the wrong repository outlives the run — one did, and authored 30
+# real commits as `t <t@t>`.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-lock.sh"
 ROOT="$(mktemp -d)"
 PASS=0; FAIL=0
 
-cd "$ROOT"
-git init -q . && git config user.email t@t && git config user.name t
+cd "$ROOT" || exit 1
+git init -q .
 echo x > f && git add -A && git commit -qm base
 
 run() { # name expected_exit -- args...
