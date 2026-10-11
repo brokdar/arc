@@ -46,7 +46,8 @@ TAU_CTL = 42
 TAU_ATL = 7
 
 #: How much of the seed may still be in the average before it is called mature.
-#: A chosen convention, not a published threshold; see :func:`maturity`.
+#: A tunable default, not a validated value — a chosen convention rather than a
+#: published threshold; see :func:`maturity`.
 MATURITY_SEED_WEIGHT = 0.10
 
 #: Form's default lag, in days: today's form is today's fitness minus today's
@@ -86,6 +87,21 @@ class SessionLoad:
     local_date: dt.date
     discipline: SessionDiscipline
     load: float | None
+
+    @property
+    def feeds_fitness(self) -> bool:
+        """Whether this session is a priced input to CTL: a priced ride.
+
+        The one place "what fitness is fed" is decided, so the daily sum and
+        the day fitness is first fed (:attr:`SeriesMaturity.first_priced`)
+        cannot disagree. See :class:`DailyLoad` for why only cycling counts.
+        """
+        return self.load is not None and self.discipline is SessionDiscipline.CYCLING
+
+    @property
+    def feeds_fatigue(self) -> bool:
+        """Whether this session is a priced input to ATL: any priced session."""
+        return self.load is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,17 +193,56 @@ class PmcPoint:
 class SeriesMaturity:
     """Whether one average is still dominated by where it started.
 
+    **Each average is first fed on its own day.** ``first_priced`` is the
+    first day, on or before ``as_of``, with a session that *this* average
+    takes in (:attr:`SessionLoad.feeds_fitness` for CTL,
+    :attr:`SessionLoad.feeds_fatigue` for ATL). Before it the average is the
+    seed decaying with nothing behind it — ``0`` for an athlete whose history
+    began in arc, which is no data rather than zero fitness — and with it
+    ``None`` that is true of every day read. One date for both averages, as
+    this was first built, let a priced gym session vouch for a fitness no ride
+    had ever fed. Pinned by `test_domain_pmc.py::
+    test_a_priced_gym_session_feeds_fatigue_and_leaves_fitness_unassessed`.
+
+    It counts sessions only: a supplied seed gives the average a value before
+    any of them, and the service supplies none today.
+
     Args:
         mature: Whether it is mature on the day the trend was read for.
         seeded: Whether it started from a supplied seed.
         matures_on_day: The first day number that is mature.
         matures_on: That day's date, or ``None`` with no session to count from.
+        first_priced: The first day, on or before ``as_of``, a session fed
+            this average; ``None`` when none did.
     """
 
     mature: bool
     seeded: bool
     matures_on_day: int
     matures_on: dt.date | None
+    first_priced: dt.date | None
+
+
+@dataclass(frozen=True, slots=True)
+class FormStanding:
+    """From which day form is a balance of two fed averages.
+
+    **Form is assessed on day d when both of its inputs are**: ``TSB_d =
+    CTL_{d−L} − ATL_{d−L}`` reads two averages ``L`` days back, so
+    ``first_assessed`` is the later of the two ``first_priced`` days, plus
+    ``L``. Fitness unfed while fatigue is fed is not a negative form — it is
+    ``0 − ATL``, a fatigue with its sign flipped — so either input missing
+    leaves form unassessed. ``None`` when either average has nothing priced
+    behind it, or when that day falls after ``as_of``.
+
+    No maturity of its own: form has no time constant, and how far to trust
+    it is how far its two inputs have matured.
+
+    Args:
+        first_assessed: The first day form reads two fed averages.
+    """
+
+    first_assessed: dt.date | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,23 +252,21 @@ class Maturity:
     Args:
         first_session: The day the count starts on, or ``None`` with no
             session at all.
-        first_priced: The first day, on or before ``as_of``, with a session a
-            load model could price — or ``None`` when none was, and the
-            averages' zeros are an absence of load rather than a reading of it.
         as_of: The last day the trend was read for — the end of the window,
             never after today.
         day: ``as_of``'s day number counting from ``first_session`` as 1, or
             ``None`` when ``as_of`` precedes it (or there is no session).
         ctl: Fitness's standing.
         atl: Fatigue's standing.
+        tsb: From when form is a balance of the two.
     """
 
     first_session: dt.date | None
-    first_priced: dt.date | None
     as_of: dt.date
     day: int | None
     ctl: SeriesMaturity
     atl: SeriesMaturity
+    tsb: FormStanding
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,11 +308,11 @@ def daily_loads(
             DailyLoad(
                 local_date=day,
                 fitness_load=sum(
-                    s.load
-                    for s in priced
-                    if s.load is not None and s.discipline is SessionDiscipline.CYCLING
+                    s.load for s in priced if s.load is not None and s.feeds_fitness
                 ),
-                fatigue_load=sum(s.load for s in priced if s.load is not None),
+                fatigue_load=sum(
+                    s.load for s in priced if s.load is not None and s.feeds_fatigue
+                ),
                 n=len(priced),
                 uncounted=len(sessions_that_day) - len(priced),
             )
@@ -372,11 +425,17 @@ def maturity(day: int, *, tau: float, seeded: bool) -> SeriesMaturity:
         seeded=seeded,
         matures_on_day=first_mature,
         matures_on=None,
+        first_priced=None,
     )
 
 
 def _standing(
-    tau: float, *, seeded: bool, first: dt.date | None, day: int | None
+    tau: float,
+    *,
+    seeded: bool,
+    first: dt.date | None,
+    day: int | None,
+    first_priced: dt.date | None,
 ) -> SeriesMaturity:
     """One series' maturity, dated against the first session."""
     standing = maturity(day or 0, tau=tau, seeded=seeded)
@@ -389,7 +448,20 @@ def _standing(
             if first is None
             else first + dt.timedelta(days=standing.matures_on_day - 1)
         ),
+        first_priced=first_priced,
     )
+
+
+def _form_standing(
+    ctl: SeriesMaturity, atl: SeriesMaturity, *, lag_days: int, as_of: dt.date
+) -> FormStanding:
+    """From when form reads two fed averages; see :class:`FormStanding`."""
+    if ctl.first_priced is None or atl.first_priced is None:
+        return FormStanding(first_assessed=None)
+    later = max(ctl.first_priced, atl.first_priced)
+    if (as_of - later).days < lag_days:
+        return FormStanding(first_assessed=None)
+    return FormStanding(first_assessed=later + dt.timedelta(days=lag_days))
 
 
 def fitness_trend(
@@ -421,10 +493,7 @@ def fitness_trend(
         # ending there is empty whatever `as_of` says.
         as_of = end - dt.timedelta(days=1) if end > dt.date.min else dt.date.min
     first = min((s.local_date for s in held), default=None)
-    first_priced = min(
-        (s.local_date for s in held if s.load is not None and s.local_date <= as_of),
-        default=None,
-    )
+    read = [s for s in held if s.local_date <= as_of]
     day = (as_of - first).days + 1 if first is not None and as_of >= first else None
     series = pmc(
         daily_loads(held, through=as_of), seed=seed, form_lag_days=form_lag_days
@@ -435,15 +504,29 @@ def fitness_trend(
         if (start is None or point.local_date >= start)
         and (end is None or point.local_date < end)
     )
+    ctl = _standing(
+        TAU_CTL,
+        seeded=seed.ctl is not None,
+        first=first,
+        day=day,
+        first_priced=min((s.local_date for s in read if s.feeds_fitness), default=None),
+    )
+    atl = _standing(
+        TAU_ATL,
+        seeded=seed.atl is not None,
+        first=first,
+        day=day,
+        first_priced=min((s.local_date for s in read if s.feeds_fatigue), default=None),
+    )
     return FitnessTrend(
         points=points,
         maturity=Maturity(
             first_session=first,
-            first_priced=first_priced,
             as_of=as_of,
             day=day,
-            ctl=_standing(TAU_CTL, seeded=seed.ctl is not None, first=first, day=day),
-            atl=_standing(TAU_ATL, seeded=seed.atl is not None, first=first, day=day),
+            ctl=ctl,
+            atl=atl,
+            tsb=_form_standing(ctl, atl, lag_days=form_lag_days, as_of=as_of),
         ),
         as_of=as_of,
         form_lag_days=form_lag_days,

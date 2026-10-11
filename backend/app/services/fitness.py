@@ -24,7 +24,7 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
-from app.core.exceptions import ValidationError
+from app.core.exceptions import InvalidRangeError
 from app.domain.pmc import FitnessTrend, SessionLoad, fitness_trend
 from app.persistence.activity import SessionRepository
 from app.services.metrics import SessionMetricsService, summarise
@@ -52,7 +52,6 @@ class FitnessService:
         start: dt.date | None = None,
         end: dt.date | None = None,
         today: dt.date | None = None,
-        bound_names: tuple[str, str] = ("from", "to"),
     ) -> FitnessTrend:
         """The series over the half-open window ``[start, end)``.
 
@@ -63,19 +62,15 @@ class FitnessService:
                 today either way.
             today: The athlete's local today; read from their clock when
                 omitted.
-            bound_names: What the caller calls ``start`` and ``end``, so the
-                refusal names the arguments it was actually given — the
-                endpoint's `from`/`to`, the MCP tool's `start`/`end`.
 
         Raises:
-            ValidationError: When ``start`` is after ``end``. Equal bounds are
-                a legal, empty window, like every half-open range here.
+            InvalidRangeError: When ``start`` is after ``end``, carrying both;
+                each adapter words it with its own argument names. Equal
+                bounds are a legal, empty window, like every half-open range
+                here.
         """
         if start is not None and end is not None and start > end:
-            raise ValidationError(
-                f"{bound_names[0]} ({start.isoformat()}) must not be after "
-                f"{bound_names[1]} ({end.isoformat()})"
-            )
+            raise InvalidRangeError(start, end)
         rows = await self._sessions.all_oldest_first()
         current = await self._metrics.current_for_sessions(row.id for row in rows)
         loads = [

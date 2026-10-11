@@ -44,16 +44,23 @@ export function rebased(document: Trend, today = athleteToday()): Trend {
       ...document.maturity,
       as_of: move(document.maturity.as_of),
       first_session: moveNullable(document.maturity.first_session),
-      first_priced_session: moveNullable(
-        document.maturity.first_priced_session,
-      ),
       ctl: {
         ...document.maturity.ctl,
         matures_on: moveNullable(document.maturity.ctl.matures_on),
+        first_priced_session: moveNullable(
+          document.maturity.ctl.first_priced_session,
+        ),
       },
       atl: {
         ...document.maturity.atl,
         matures_on: moveNullable(document.maturity.atl.matures_on),
+        first_priced_session: moveNullable(
+          document.maturity.atl.first_priced_session,
+        ),
+      },
+      tsb: {
+        ...document.maturity.tsb,
+        first_assessed: moveNullable(document.maturity.tsb.first_assessed),
       },
     },
   };

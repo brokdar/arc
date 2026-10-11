@@ -1361,10 +1361,14 @@ def _series_maturity(series: SeriesMaturity) -> dict[str, Any]:
         "mature": series.mature,
         "seeded": series.seeded,
         "matures_on_day": series.matures_on_day,
-        "matures_on": None
-        if series.matures_on is None
-        else series.matures_on.isoformat(),
+        "matures_on": _iso(series.matures_on),
+        "first_priced_session": _iso(series.first_priced),
     }
+
+
+def _iso(day: dt.date | None) -> str | None:
+    """A nullable date as the endpoint serializes it."""
+    return None if day is None else day.isoformat()
 
 
 def fitness_trend(trend: FitnessTrend) -> dict[str, Any]:
@@ -1392,20 +1396,15 @@ def fitness_trend(trend: FitnessTrend) -> dict[str, Any]:
             for point in trend.points
         ],
         "maturity": {
-            "first_session": (
-                None
-                if trend.maturity.first_session is None
-                else trend.maturity.first_session.isoformat()
-            ),
-            "first_priced_session": (
-                None
-                if trend.maturity.first_priced is None
-                else trend.maturity.first_priced.isoformat()
-            ),
+            "first_session": _iso(trend.maturity.first_session),
             "as_of": trend.maturity.as_of.isoformat(),
             "day": trend.maturity.day,
             "ctl": _series_maturity(trend.maturity.ctl),
             "atl": _series_maturity(trend.maturity.atl),
+            "tsb": {
+                "display_only": True,
+                "first_assessed": _iso(trend.maturity.tsb.first_assessed),
+            },
         },
         "form_lag_days": trend.form_lag_days,
         "explanations": {

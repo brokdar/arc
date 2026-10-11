@@ -295,13 +295,59 @@ def test_first_priced_is_the_first_priced_session_the_read_reaches() -> None:
 
     whole = fitness_trend(sessions, start=None, end=None, today=on(5))
     assert whole.maturity.first_session == FIRST
-    assert whole.maturity.first_priced == on(3)
+    # A priced ride feeds both averages, so both are first fed on its day.
+    assert whole.maturity.ctl.first_priced == on(3)
+    assert whole.maturity.atl.first_priced == on(3)
+    assert whole.maturity.tsb.first_assessed == on(3)
 
     # Read as of a day before the priced ride, nothing priced is behind it:
     # its zeros are an absence of load, not a reading of none.
     before = fitness_trend(sessions, start=None, end=on(3), today=on(5))
     assert [point.ctl for point in before.points] == [0.0, 0.0, 0.0]
-    assert before.maturity.first_priced is None
+    assert before.maturity.ctl.first_priced is None
+    assert before.maturity.atl.first_priced is None
+    assert before.maturity.tsb.first_assessed is None
+
+
+def test_a_priced_gym_session_feeds_fatigue_and_leaves_fitness_unassessed() -> None:
+    # An unpriced ride on day 1 and an HR-priced gym session on day 4. Fatigue
+    # has a load behind it from day 4; fitness, fed by cycling only, has none
+    # on any day — its zeros are no data, whatever fatigue knows.
+    sessions = [
+        ride(FIRST, None),
+        SessionLoad(local_date=on(3), discipline=STRENGTH, load=30.0),
+    ]
+
+    trend = fitness_trend(sessions, start=None, end=None, today=on(5))
+
+    assert trend.maturity.ctl.first_priced is None
+    assert trend.maturity.atl.first_priced == on(3)
+    # Form is CTL − ATL: with fitness unassessed it is minus a fatigue, not a
+    # balance, and it is not assessed either.
+    assert trend.maturity.tsb.first_assessed is None
+    assert [point.ctl for point in trend.points] == [0.0] * 6
+
+
+def test_form_is_assessed_where_both_inputs_are_at_its_lag() -> None:
+    sessions = [
+        SessionLoad(local_date=on(1), discipline=STRENGTH, load=30.0),
+        ride(on(3), 60.0),
+    ]
+
+    same_day = fitness_trend(sessions, start=None, end=None, today=on(6))
+    assert same_day.maturity.atl.first_priced == on(1)
+    assert same_day.maturity.ctl.first_priced == on(3)
+    assert same_day.maturity.tsb.first_assessed == on(3)
+
+    # TSB_d reads CTL_{d−1} and ATL_{d−1}: it first reads two priced averages
+    # the day after the later of them was first fed.
+    lagged = fitness_trend(sessions, start=None, end=None, today=on(6), form_lag_days=1)
+    assert lagged.maturity.tsb.first_assessed == on(4)
+
+    # And not at all when that day is after the read.
+    early = fitness_trend(sessions, start=None, end=None, today=on(3), form_lag_days=1)
+    assert early.maturity.ctl.first_priced == on(3)
+    assert early.maturity.tsb.first_assessed is None
 
 
 def test_no_history_has_a_maturity_with_nothing_to_count() -> None:

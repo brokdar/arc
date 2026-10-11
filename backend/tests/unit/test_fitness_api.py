@@ -23,7 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
+from app.core.exceptions import InvalidRangeError, ValidationError
 from app.persistence.metrics import SessionMetricsRow
+from app.services.fitness import FitnessService
 
 FITNESS = "/api/v1/fitness"
 MANUAL = "/api/v1/manual-sessions"
@@ -284,7 +286,9 @@ async def test_a_history_nothing_could_price_says_it_has_no_load_behind_it(
 
     assert [point["load"] for point in body["points"]] == [None, None, 0.0]
     assert body["maturity"]["first_session"] == DAY.isoformat()
-    assert body["maturity"]["first_priced_session"] is None
+    assert body["maturity"]["ctl"]["first_priced_session"] is None
+    assert body["maturity"]["atl"]["first_priced_session"] is None
+    assert body["maturity"]["tsb"] == {"display_only": True, "first_assessed": None}
 
     gym = await log(
         client,
@@ -293,10 +297,50 @@ async def test_a_history_nothing_could_price_says_it_has_no_load_behind_it(
     )
     await price(db_session, gym, 25.0, "hr")
     body = (await client.get(FITNESS, params={"from": DAY.isoformat()})).json()
+    # A priced gym session feeds fatigue only: fitness still has nothing.
     assert (
-        body["maturity"]["first_priced_session"]
+        body["maturity"]["atl"]["first_priced_session"]
         == (DAY + dt.timedelta(days=2)).isoformat()
     )
+    assert body["maturity"]["ctl"]["first_priced_session"] is None
+    assert body["maturity"]["tsb"]["first_assessed"] is None
+
+
+async def test_each_series_is_first_fed_by_what_feeds_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # An unpriced ride on day 1, an HR-priced gym session on day 4: fatigue
+    # has a load from day 4, fitness — cycling only — none at all, and form,
+    # their difference, is not assessed while one side is missing.
+    await log(client)
+    gym = await log(
+        client,
+        start_time=f"{(DAY + dt.timedelta(days=3)).isoformat()}T18:00:00Z",
+        discipline="strength",
+    )
+    await price(db_session, gym, 30.0, "hr")
+    window = {"from": DAY.isoformat(), "to": (DAY + dt.timedelta(days=6)).isoformat()}
+
+    body = (await client.get(FITNESS, params=window)).json()
+
+    assert body["maturity"]["ctl"]["first_priced_session"] is None
+    assert (
+        body["maturity"]["atl"]["first_priced_session"]
+        == (DAY + dt.timedelta(days=3)).isoformat()
+    )
+    assert body["maturity"]["tsb"] == {"display_only": True, "first_assessed": None}
+    # The series still starts on the first session, priced or not.
+    assert body["points"][0]["local_date"] == DAY.isoformat()
+
+    # A priced ride on day 5 feeds fitness, and form is assessed from there.
+    ride = await log(
+        client, start_time=f"{(DAY + dt.timedelta(days=4)).isoformat()}T09:00:00Z"
+    )
+    await price(db_session, ride, 60.0, "power")
+    body = (await client.get(FITNESS, params=window)).json()
+    fifth = (DAY + dt.timedelta(days=4)).isoformat()
+    assert body["maturity"]["ctl"]["first_priced_session"] == fifth
+    assert body["maturity"]["tsb"]["first_assessed"] == fifth
 
 
 async def test_a_range_into_the_future_stops_at_today(client: AsyncClient) -> None:
@@ -340,6 +384,23 @@ async def test_from_after_to_is_refused_naming_both(client: AsyncClient) -> None
     detail = response.json()["detail"]
     assert "from (2026-03-10)" in detail
     assert "to (2026-03-01)" in detail
+
+
+async def test_the_service_refuses_an_inverted_window_in_no_adapters_words(
+    db_session: AsyncSession,
+) -> None:
+    # The service names neither the endpoint's `from`/`to` nor the tool's
+    # `start`/`end`; it hands each adapter the two dates to word for itself.
+    with pytest.raises(InvalidRangeError) as refused:
+        await FitnessService.from_session(db_session).trend(
+            start=dt.date(2026, 3, 10), end=dt.date(2026, 3, 1)
+        )
+
+    assert refused.value.start == dt.date(2026, 3, 10)
+    assert refused.value.end == dt.date(2026, 3, 1)
+    assert isinstance(refused.value, ValidationError)
+    assert "from" not in refused.value.detail
+    assert "to (" not in refused.value.detail
 
 
 async def test_an_empty_range_is_legal(client: AsyncClient) -> None:

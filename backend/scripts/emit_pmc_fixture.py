@@ -26,7 +26,14 @@ The history is shaped for what `/fitness` has to render:
 It also emits the empty read — the domain over no sessions at all — and the
 unpriced one: a history whose every session neither load model could price
 (:data:`UNPRICED_HISTORY`), which the domain answers with points of zero and
-no ``first_priced_session``.
+no series' ``first_priced_session``.
+
+And one history whose load arrives late (:data:`LATE_PRICED_HISTORY`): manual
+sessions first, then gym sessions priced by heart rate — fatigue fed, fitness
+not — then priced rides from mid-window. Each series is first fed on a
+different day, so the chart has to gap each line up to its own. It is emitted
+twice: read on :data:`AS_OF`, and read on the day before its first priced ride,
+when only fatigue has anything behind it.
 
 Run it with ``just pmc-fixture`` after changing `app/domain/pmc.py` or the
 fitness read shape, and commit the result.
@@ -94,6 +101,38 @@ UNPRICED_HISTORY = (
     SessionLoad(AS_OF - dt.timedelta(days=2), STRENGTH, None),
 )
 
+#: When :data:`LATE_PRICED_HISTORY` starts, and the offsets in it.
+LATE_FIRST = AS_OF - dt.timedelta(days=29)
+#: The first priced gym session: fatigue is fed from here.
+LATE_GYM_OFFSET = 6
+#: The first priced ride: fitness, and so form, are fed from here.
+LATE_RIDE_OFFSET = 14
+
+
+def _late_priced_history() -> tuple[SessionLoad, ...]:
+    """Thirty days: unpriced sessions, then priced gym, then priced rides."""
+
+    def on(offset: int) -> dt.date:
+        return LATE_FIRST + dt.timedelta(days=offset)
+
+    sessions = [
+        SessionLoad(on(0), CYCLING, None),
+        SessionLoad(on(2), STRENGTH, None),
+        SessionLoad(on(4), CYCLING, None),
+        SessionLoad(on(LATE_GYM_OFFSET), STRENGTH, 30.0),
+        SessionLoad(on(9), STRENGTH, 35.0),
+        SessionLoad(on(11), CYCLING, None),
+    ]
+    for offset in range(LATE_RIDE_OFFSET, 30):
+        if (offset - LATE_RIDE_OFFSET) % 7 in (3, 6):  # Two rest days a week.
+            continue
+        sessions.append(SessionLoad(on(offset), CYCLING, 60.0 + offset * 1.5))
+    return tuple(sessions)
+
+
+#: Load arriving late, and per series: see the module docstring.
+LATE_PRICED_HISTORY = _late_priced_history()
+
 HEADER = """// GENERATED FILE — do not hand-edit.
 //
 // Produced by `backend/scripts/emit_pmc_fixture.py` (`just pmc-fixture`) by
@@ -134,10 +173,28 @@ UNPRICED_HEADER = """;
  */
 export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = """
 
+LATE_PRICED_HEADER = """;
 
-def _dump(sessions: tuple[SessionLoad, ...]) -> str:
-    """One trend read over ``sessions``, as the endpoint serializes it."""
-    trend = fitness_trend(sessions, start=None, end=None, today=AS_OF)
+/**
+ * Thirty days whose load arrives late and per series: unpriced sessions
+ * first, gym sessions priced by heart rate from day 7 (fatigue fed, fitness
+ * not), priced rides from day 15. Each series' `first_priced_session` — and
+ * form's `first_assessed` — is a different day from the first session's.
+ */
+export const FITNESS_TREND_LATE_PRICED: Schemas["FitnessTrendRead"] = """
+
+GYM_PRICED_HEADER = """;
+
+/**
+ * The same history read on the day before its first priced ride: fatigue
+ * has load behind it, fitness and form have none.
+ */
+export const FITNESS_TREND_GYM_PRICED: Schemas["FitnessTrendRead"] = """
+
+
+def _dump(sessions: tuple[SessionLoad, ...], *, today: dt.date = AS_OF) -> str:
+    """One trend read over ``sessions`` on ``today``, as the endpoint serializes it."""
+    trend = fitness_trend(sessions, start=None, end=None, today=today)
     payload = to_fitness_read(trend).model_dump(mode="json")
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
 
@@ -151,6 +208,13 @@ def main() -> None:
         + _dump(())
         + UNPRICED_HEADER
         + _dump(UNPRICED_HISTORY)
+        + LATE_PRICED_HEADER
+        + _dump(LATE_PRICED_HISTORY)
+        + GYM_PRICED_HEADER
+        + _dump(
+            LATE_PRICED_HISTORY,
+            today=LATE_FIRST + dt.timedelta(days=LATE_RIDE_OFFSET - 1),
+        )
         + ";\n"
     )
     DESTINATION.write_text(body, encoding="utf-8")

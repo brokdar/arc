@@ -75,6 +75,23 @@ class SeriesMaturityRead(BaseModel):
     matures_on_day: int
     #: That day's date; null with no session to count from.
     matures_on: dt.date | None
+    #: The first day, on or before `as_of`, a session fed **this** average —
+    #: a priced ride for CTL, any priced session for ATL. **null** when none
+    #: did: the average then reads 0 with no load behind it — no data, not
+    #: zero. Before this day its values are the same absence.
+    first_priced_session: dt.date | None
+
+
+class FormStandingRead(BaseModel):
+    """From which day form is a balance of two fed averages.
+
+    `TSB_d = CTL_{d−L} − ATL_{d−L}`, so form is assessed from the later of
+    CTL's and ATL's `first_priced_session`, plus `form_lag_days`; null when
+    either is null or that day is after `as_of`.
+    """
+
+    display_only: Literal[True]
+    first_assessed: dt.date | None
 
 
 class FitnessMaturityRead(BaseModel):
@@ -82,16 +99,13 @@ class FitnessMaturityRead(BaseModel):
 
     #: The day the count starts on; null with no session recorded.
     first_session: dt.date | None
-    #: The first day, on or before `as_of`, with a session a load model could
-    #: price. **null** when none was: the averages then read 0 with no load
-    #: behind them — no data, not zero fitness.
-    first_priced_session: dt.date | None
     #: The last day of the window, never after today.
     as_of: dt.date
     #: `as_of`'s day number; null when it precedes the first session.
     day: int | None
     ctl: SeriesMaturityRead
     atl: SeriesMaturityRead
+    tsb: FormStandingRead
 
 
 class SeriesExplanationRead(ExplanationRead):

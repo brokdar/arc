@@ -5,6 +5,7 @@ consistent JSON responses so endpoints never need try/except for domain
 errors.
 """
 
+import datetime as dt
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -100,6 +101,39 @@ class ValidationError(AppError):
     """The request is semantically invalid beyond schema validation."""
 
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class InvalidRangeError(ValidationError):
+    """A date range whose start is after its end.
+
+    **The service says which dates; the adapter says which arguments.** One
+    service read serves adapters that spell the same two bounds differently —
+    `GET /fitness` takes `from`/`to`, the MCP tool `start`/`end` — and a
+    refusal is only actionable if it names the argument the caller actually
+    sent. So the service raises this with the two dates and a neutral
+    sentence, and each adapter re-words it through :meth:`naming` in its own
+    vocabulary. It displaces a `bound_names` keyword the service took, which
+    made a use-case carry its callers' parameter names. Equal bounds are not
+    this error: an empty half-open range is legal everywhere here.
+    """
+
+    def __init__(
+        self,
+        start: dt.date,
+        end: dt.date,
+        *,
+        names: tuple[str, str] = ("the range's start", "its end"),
+    ) -> None:
+        self.start = start
+        self.end = end
+        super().__init__(
+            f"{names[0]} ({start.isoformat()}) must not be after "
+            f"{names[1]} ({end.isoformat()})"
+        )
+
+    def naming(self, start: str, end: str) -> InvalidRangeError:
+        """The same refusal, with the bounds called ``start`` and ``end``."""
+        return InvalidRangeError(self.start, self.end, names=(start, end))
 
 
 class RateLimitedError(AppError):

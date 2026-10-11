@@ -20,6 +20,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from app.core.clock import athlete_today
+from app.core.exceptions import InvalidRangeError
 from app.mcp import views
 from app.mcp.auth import Scope
 from app.mcp.identity import require_scope
@@ -61,9 +62,15 @@ def register_analysis_tools(mcp: FastMCP) -> None:
           fitness.
         * `load` is null on a day whose sessions could not be priced; such a
           session adds nothing and its day says `load_incomplete: true`. `n`
-          is how many sessions the day counted. `maturity.first_priced_session`
-          null means no session has been priced yet: the zeros are no data,
-          not zero fitness — say so rather than quote them.
+          is how many sessions the day counted.
+        * Each series has its own first day with load behind it:
+          `maturity.ctl.first_priced_session` is the first priced **ride**,
+          `maturity.atl.first_priced_session` the first priced session of any
+          discipline, `maturity.tsb.first_assessed` the first day form reads
+          both (at `form_lag_days`). Before that day, or on every day when it
+          is null, that series' values are no data, not zero — a strength-only
+          history has a fatigue and no fitness or form. Say so rather than
+          quote them.
         * `maturity`: an average that started from zero is still mostly that
           zero until CTL's day 97 and ATL's day 17, counted from the first
           session. While `mature` is false, say the number is maturing rather
@@ -87,9 +94,12 @@ def register_analysis_tools(mcp: FastMCP) -> None:
                 else _default_start(last, today=today)
             )
             async with session_scope() as session:
-                trend = await FitnessService.from_session(session).trend(
-                    start=first, end=last, today=today, bound_names=("start", "end")
-                )
+                try:
+                    trend = await FitnessService.from_session(session).trend(
+                        start=first, end=last, today=today
+                    )
+                except InvalidRangeError as exc:
+                    raise exc.naming("start", "end") from exc
                 return {
                     "fitness": views.fitness_trend(trend),
                     "red_flag": views.red_flag(await current_profile(session)),

@@ -22,10 +22,11 @@ from app.api.schemas.fitness import (
     FitnessMaturityRead,
     FitnessPointRead,
     FitnessTrendRead,
+    FormStandingRead,
     SeriesExplanationRead,
     SeriesMaturityRead,
 )
-from app.core.exceptions import ValidationErrorDetail
+from app.core.exceptions import InvalidRangeError, ValidationErrorDetail
 from app.domain.metrics import MetricExplanation
 from app.domain.pmc import (
     FitnessTrend,
@@ -89,16 +90,24 @@ async def get_fitness(
       to today — rest days included. Before the first session there are no
       points, never a run of zeros.
     * A session neither load model could price adds nothing and marks its day
-      `load_incomplete`; `n` counts the sessions that were counted. With
-      `maturity.first_priced_session` null nothing has been priced, and the
-      zeros are no data rather than zero fitness.
+      `load_incomplete`; `n` counts the sessions that were counted.
+    * Each series says from which day it has load behind it:
+      `maturity.ctl.first_priced_session` (the first priced ride),
+      `maturity.atl.first_priced_session` (the first priced session of any
+      discipline) and `maturity.tsb.first_assessed` (both, at the form lag).
+      Before that day — or on every day, when it is null — that series' values
+      are no data rather than zero.
     * `maturity` says whether each average still mostly describes its starting
       seed of zero: CTL until day 97, ATL until day 17, counted from the first
       session whatever window was asked for.
 
     `from` after `to` is a 422; equal bounds are a legal empty window.
     """
-    return to_fitness_read(await service.trend(start=start, end=end))
+    try:
+        trend = await service.trend(start=start, end=end)
+    except InvalidRangeError as exc:
+        raise exc.naming("from", "to") from exc
+    return to_fitness_read(trend)
 
 
 def _explanation(explanation: MetricExplanation) -> SeriesExplanationRead:
@@ -120,6 +129,7 @@ def _maturity(series: SeriesMaturity) -> SeriesMaturityRead:
         seeded=series.seeded,
         matures_on_day=series.matures_on_day,
         matures_on=series.matures_on,
+        first_priced_session=series.first_priced,
     )
 
 
@@ -152,11 +162,14 @@ def to_fitness_read(trend: FitnessTrend) -> FitnessTrendRead:
         ],
         maturity=FitnessMaturityRead(
             first_session=trend.maturity.first_session,
-            first_priced_session=trend.maturity.first_priced,
             as_of=trend.maturity.as_of,
             day=trend.maturity.day,
             ctl=_maturity(trend.maturity.ctl),
             atl=_maturity(trend.maturity.atl),
+            tsb=FormStandingRead(
+                display_only=True,
+                first_assessed=trend.maturity.tsb.first_assessed,
+            ),
         ),
         form_lag_days=trend.form_lag_days,
         explanations=FitnessExplanationsRead(

@@ -78,6 +78,7 @@ export const FITNESS_TREND: Schemas["FitnessTrendRead"] = {
     as_of: "2026-08-15",
     atl: {
       display_only: true,
+      first_priced_session: "2026-07-07",
       mature: true,
       matures_on: "2026-07-23",
       matures_on_day: 17,
@@ -85,14 +86,18 @@ export const FITNESS_TREND: Schemas["FitnessTrendRead"] = {
     },
     ctl: {
       display_only: true,
+      first_priced_session: "2026-07-07",
       mature: false,
       matures_on: "2026-10-11",
       matures_on_day: 97,
       seeded: false,
     },
     day: 40,
-    first_priced_session: "2026-07-07",
     first_session: "2026-07-07",
+    tsb: {
+      display_only: true,
+      first_assessed: "2026-07-07",
+    },
   },
   points: [
     {
@@ -994,6 +999,7 @@ export const FITNESS_TREND_EMPTY: Schemas["FitnessTrendRead"] = {
     as_of: "2026-08-15",
     atl: {
       display_only: true,
+      first_priced_session: null,
       mature: false,
       matures_on: null,
       matures_on_day: 17,
@@ -1001,14 +1007,18 @@ export const FITNESS_TREND_EMPTY: Schemas["FitnessTrendRead"] = {
     },
     ctl: {
       display_only: true,
+      first_priced_session: null,
       mature: false,
       matures_on: null,
       matures_on_day: 97,
       seeded: false,
     },
     day: null,
-    first_priced_session: null,
     first_session: null,
+    tsb: {
+      display_only: true,
+      first_assessed: null,
+    },
   },
   points: [],
 };
@@ -1072,6 +1082,7 @@ export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = {
     as_of: "2026-08-15",
     atl: {
       display_only: true,
+      first_priced_session: null,
       mature: false,
       matures_on: "2026-08-22",
       matures_on_day: 17,
@@ -1079,14 +1090,18 @@ export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = {
     },
     ctl: {
       display_only: true,
+      first_priced_session: null,
       mature: false,
       matures_on: "2026-11-10",
       matures_on_day: 97,
       seeded: false,
     },
     day: 10,
-    first_priced_session: null,
     first_session: "2026-08-06",
+    tsb: {
+      display_only: true,
+      first_assessed: null,
+    },
   },
   points: [
     {
@@ -1296,6 +1311,1100 @@ export const FITNESS_TREND_UNPRICED: Schemas["FitnessTrendRead"] = {
       tsb: {
         display_only: true,
         value: 0.0,
+      },
+      uncounted: 0,
+    },
+  ],
+};
+
+/**
+ * Thirty days whose load arrives late and per series: unpriced sessions
+ * first, gym sessions priced by heart rate from day 7 (fatigue fed, fitness
+ * not), priced rides from day 15. Each series' `first_priced_session` — and
+ * form's `first_assessed` — is a different day from the first session's.
+ */
+export const FITNESS_TREND_LATE_PRICED: Schemas["FitnessTrendRead"] = {
+  explanations: {
+    atl: {
+      assumptions: [
+        "every discipline feeds fatigue; strength through its heart-rate load, which is a low-trust estimate",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 17",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "ATL_d = ATL_{d−1} + α·(load_d − ATL_{d−1}), α = 1 − e^(−1/7)",
+      inputs: {
+        seed: "0",
+        α: "0.133122",
+        τ: "7 days",
+      },
+    },
+    ctl: {
+      assumptions: [
+        "only cycling load feeds fitness",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 97",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula:
+        "CTL_d = CTL_{d−1} + α·(cycling load_d − CTL_{d−1}), α = 1 − e^(−1/42)",
+      inputs: {
+        seed: "0",
+        α: "0.023528",
+        τ: "42 days",
+      },
+    },
+    tsb: {
+      assumptions: [
+        "the lag is a declared parameter: TrainingPeaks reads yesterday's balance (L = 1), and intervals.icu's convention is unconfirmed",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "TSB_d = CTL_{d−L} − ATL_{d−L}",
+      inputs: {
+        L: "0 days",
+      },
+    },
+  },
+  form_lag_days: 0,
+  maturity: {
+    as_of: "2026-08-15",
+    atl: {
+      display_only: true,
+      first_priced_session: "2026-07-23",
+      mature: true,
+      matures_on: "2026-08-02",
+      matures_on_day: 17,
+      seeded: false,
+    },
+    ctl: {
+      display_only: true,
+      first_priced_session: "2026-07-31",
+      mature: false,
+      matures_on: "2026-10-21",
+      matures_on_day: 97,
+      seeded: false,
+    },
+    day: 30,
+    first_session: "2026-07-17",
+    tsb: {
+      display_only: true,
+      first_assessed: "2026-07-31",
+    },
+  },
+  points: [
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 1,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-17",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 2,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-18",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 3,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-19",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 4,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-20",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 5,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-21",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 6,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-22",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.9936630074945523,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 7,
+      fitness_load: 0.0,
+      load: 30.0,
+      load_incomplete: false,
+      local_date: "2026-07-23",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -3.9936630074945523,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.462018200246871,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 8,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-24",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -3.462018200246871,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.001147066326911,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 9,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-25",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -3.001147066326911,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 7.260901574442537,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 10,
+      fitness_load: 0.0,
+      load: 35.0,
+      load_incomplete: false,
+      local_date: "2026-07-26",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -7.260901574442537,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 6.2943151071455326,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 11,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-27",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -6.2943151071455326,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 5.456402660448158,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 12,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-28",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -5.456402660448158,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 4.730034878480603,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 13,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-29",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -4.730034878480603,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 4.1003627012023705,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 14,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-30",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -4.1003627012023705,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 14.337403926867584,
+      },
+      ctl: {
+        display_only: true,
+        value: 1.9057933811682957,
+      },
+      day: 15,
+      fitness_load: 81.0,
+      load: 81.0,
+      load_incomplete: false,
+      local_date: "2026-07-31",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -12.431610545699288,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 23.411351874602996,
+      },
+      ctl: {
+        display_only: true,
+        value: 3.802039128510018,
+      },
+      day: 16,
+      fitness_load: 82.5,
+      load: 82.5,
+      load_incomplete: false,
+      local_date: "2026-08-01",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -19.60931274609298,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 31.477039964353068,
+      },
+      ctl: {
+        display_only: true,
+        value: 5.688961881745568,
+      },
+      day: 17,
+      fitness_load: 84.0,
+      load: 84.0,
+      load_incomplete: false,
+      local_date: "2026-08-02",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -25.7880780826075,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 27.28675029465092,
+      },
+      ctl: {
+        display_only: true,
+        value: 5.555110203968415,
+      },
+      day: 18,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-03",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -21.731640090682504,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 35.23590350816884,
+      },
+      ctl: {
+        display_only: true,
+        value: 7.471371091662961,
+      },
+      day: 19,
+      fitness_load: 87.0,
+      load: 87.0,
+      load_incomplete: false,
+      local_date: "2026-08-04",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -27.76453241650588,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 42.32653190107039,
+      },
+      ctl: {
+        display_only: true,
+        value: 9.377838062757416,
+      },
+      day: 20,
+      fitness_load: 88.5,
+      load: 88.5,
+      load_incomplete: false,
+      local_date: "2026-08-05",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -32.94869383831298,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 36.69193507810896,
+      },
+      ctl: {
+        display_only: true,
+        value: 9.157193350292339,
+      },
+      day: 21,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-06",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -27.534741727816623,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 43.9880997911395,
+      },
+      ctl: {
+        display_only: true,
+        value: 11.094580707080407,
+      },
+      day: 22,
+      fitness_load: 91.5,
+      load: 91.5,
+      load_incomplete: false,
+      local_date: "2026-08-07",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -32.89351908405909,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 50.51266688417752,
+      },
+      ctl: {
+        display_only: true,
+        value: 13.02167707708362,
+      },
+      day: 23,
+      fitness_load: 93.0,
+      load: 93.0,
+      load_incomplete: false,
+      local_date: "2026-08-08",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -37.4909898070939,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 56.3683530529442,
+      },
+      ctl: {
+        display_only: true,
+        value: 14.938724589863707,
+      },
+      day: 24,
+      fitness_load: 94.5,
+      load: 94.5,
+      load_incomplete: false,
+      local_date: "2026-08-09",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -41.42962846308049,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 48.86447950691301,
+      },
+      ctl: {
+        display_only: true,
+        value: 14.587241596697554,
+      },
+      day: 25,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-10",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -34.277237910215455,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 55.33894214169583,
+      },
+      ctl: {
+        display_only: true,
+        value: 16.538038956937303,
+      },
+      day: 26,
+      fitness_load: 97.5,
+      load: 97.5,
+      load_incomplete: false,
+      local_date: "2026-08-11",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -38.800903184758525,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 61.15119386292212,
+      },
+      ctl: {
+        display_only: true,
+        value: 18.478229815628993,
+      },
+      day: 27,
+      fitness_load: 99.0,
+      load: 99.0,
+      load_incomplete: false,
+      local_date: "2026-08-12",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -42.67296404729313,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 53.01061850310612,
+      },
+      ctl: {
+        display_only: true,
+        value: 18.043468234415013,
+      },
+      day: 28,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-08-13",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -34.967150268691114,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 59.53218785791223,
+      },
+      ctl: {
+        display_only: true,
+        value: 20.018823821386587,
+      },
+      day: 29,
+      fitness_load: 102.0,
+      load: 102.0,
+      load_incomplete: false,
+      local_date: "2026-08-14",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -39.513364036525644,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 65.38527535365643,
+      },
+      ctl: {
+        display_only: true,
+        value: 21.982995093156287,
+      },
+      day: 30,
+      fitness_load: 103.5,
+      load: 103.5,
+      load_incomplete: false,
+      local_date: "2026-08-15",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -43.402280260500135,
+      },
+      uncounted: 0,
+    },
+  ],
+};
+
+/**
+ * The same history read on the day before its first priced ride: fatigue
+ * has load behind it, fitness and form have none.
+ */
+export const FITNESS_TREND_GYM_PRICED: Schemas["FitnessTrendRead"] = {
+  explanations: {
+    atl: {
+      assumptions: [
+        "every discipline feeds fatigue; strength through its heart-rate load, which is a low-trust estimate",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 17",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "ATL_d = ATL_{d−1} + α·(load_d − ATL_{d−1}), α = 1 − e^(−1/7)",
+      inputs: {
+        seed: "0",
+        α: "0.133122",
+        τ: "7 days",
+      },
+    },
+    ctl: {
+      assumptions: [
+        "only cycling load feeds fitness",
+        "a day with no session is a load of 0 and the average decays",
+        "a session neither load model could price is left out and its day is marked load_incomplete",
+        "maturing until the seed's weight (1 − α)ⁿ falls to 10%: day 97",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula:
+        "CTL_d = CTL_{d−1} + α·(cycling load_d − CTL_{d−1}), α = 1 − e^(−1/42)",
+      inputs: {
+        seed: "0",
+        α: "0.023528",
+        τ: "42 days",
+      },
+    },
+    tsb: {
+      assumptions: [
+        "the lag is a declared parameter: TrainingPeaks reads yesterday's balance (L = 1), and intervals.icu's convention is unconfirmed",
+      ],
+      citation:
+        "Banister EW et al. (1975), A systems model of training for athletic performance; Coggan's performance-management chart",
+      display_only: true,
+      formula: "TSB_d = CTL_{d−L} − ATL_{d−L}",
+      inputs: {
+        L: "0 days",
+      },
+    },
+  },
+  form_lag_days: 0,
+  maturity: {
+    as_of: "2026-07-30",
+    atl: {
+      display_only: true,
+      first_priced_session: "2026-07-23",
+      mature: false,
+      matures_on: "2026-08-02",
+      matures_on_day: 17,
+      seeded: false,
+    },
+    ctl: {
+      display_only: true,
+      first_priced_session: null,
+      mature: false,
+      matures_on: "2026-10-21",
+      matures_on_day: 97,
+      seeded: false,
+    },
+    day: 14,
+    first_session: "2026-07-17",
+    tsb: {
+      display_only: true,
+      first_assessed: null,
+    },
+  },
+  points: [
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 1,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-17",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 2,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-18",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 3,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-19",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 4,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-20",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 5,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-21",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 0.0,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 6,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-22",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: 0.0,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.9936630074945523,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 7,
+      fitness_load: 0.0,
+      load: 30.0,
+      load_incomplete: false,
+      local_date: "2026-07-23",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -3.9936630074945523,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.462018200246871,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 8,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-24",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -3.462018200246871,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 3.001147066326911,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 9,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-25",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -3.001147066326911,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 7.260901574442537,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 10,
+      fitness_load: 0.0,
+      load: 35.0,
+      load_incomplete: false,
+      local_date: "2026-07-26",
+      n: 1,
+      tsb: {
+        display_only: true,
+        value: -7.260901574442537,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 6.2943151071455326,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 11,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-27",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -6.2943151071455326,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 5.456402660448158,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 12,
+      fitness_load: 0.0,
+      load: null,
+      load_incomplete: true,
+      local_date: "2026-07-28",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -5.456402660448158,
+      },
+      uncounted: 1,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 4.730034878480603,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 13,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-29",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -4.730034878480603,
+      },
+      uncounted: 0,
+    },
+    {
+      atl: {
+        display_only: true,
+        value: 4.1003627012023705,
+      },
+      ctl: {
+        display_only: true,
+        value: 0.0,
+      },
+      day: 14,
+      fitness_load: 0.0,
+      load: 0.0,
+      load_incomplete: false,
+      local_date: "2026-07-30",
+      n: 0,
+      tsb: {
+        display_only: true,
+        value: -4.1003627012023705,
       },
       uncounted: 0,
     },

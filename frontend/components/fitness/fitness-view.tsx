@@ -7,7 +7,7 @@ import { Explained } from "@/components/design/metric-explanation";
 import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
-import { FitnessChart } from "@/components/fitness/fitness-chart";
+import { FitnessChart, isFed } from "@/components/fitness/fitness-chart";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
@@ -90,8 +90,23 @@ function DisplayOnlyBadge() {
   );
 }
 
-/** Why a readout slot is empty when nothing behind it was priced. */
-const UNPRICED_REASON = "No session has a priced load yet";
+/** Why each readout slot is empty when its series has no load behind it. */
+const NOT_FED_REASON = {
+  ctl: "No ride with a power or heart-rate load yet",
+  atl: "No session with a power or heart-rate load yet",
+} as const;
+
+/**
+ * Why form is empty: it is fitness minus fatigue, so it says which input is
+ * missing — or, with both fed, that its lag reads a day before they were.
+ */
+function formReason(trend: Trend): string {
+  if (trend.maturity.ctl.first_priced_session === null) {
+    return "No ride with a power or heart-rate load yet — form is fitness minus fatigue";
+  }
+  const lag = trend.form_lag_days;
+  return `Form reads fitness and fatigue ${lag} day${lag === 1 ? "" : "s"} back, before a ride fed fitness`;
+}
 
 function FitnessBody({ trend }: { trend: Trend }) {
   if (trend.points.length === 0) {
@@ -109,26 +124,30 @@ function FitnessBody({ trend }: { trend: Trend }) {
       </p>
     );
   }
-  // Sessions, but none either load model could price: the averages are 0
-  // with no load behind them, which is no data, not zero fitness.
-  if (trend.maturity.first_priced_session === null) {
+  const latest = trend.points[trend.points.length - 1];
+  // Sessions, but none either load model could price: fatigue — fed by
+  // every discipline — has nothing behind it, so nothing else does either.
+  // The averages are 0 with no load behind them: no data, not zero fitness.
+  if (!latest || !isFed(trend.maturity, "atl", latest.local_date)) {
     return (
       <Panel className="flex flex-col gap-4 px-5 py-4">
         <SectionLabel level={2}>Fitness, fatigue and form</SectionLabel>
-        <Readout point={null} trend={trend} />
+        <Readout point={latest ?? null} trend={trend} />
         <RecordARide lead="None of your sessions so far has a power or heart-rate load." />
       </Panel>
     );
   }
-  const latest = trend.points[trend.points.length - 1];
   return (
     <Panel className="flex flex-col gap-4 px-5 py-4">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <SectionLabel level={2}>Fitness, fatigue and form</SectionLabel>
         <MaturityNote trend={trend} />
       </div>
-      {latest ? <Readout point={latest} trend={trend} /> : null}
-      <FitnessChart points={trend.points} />
+      <Readout point={latest} trend={trend} />
+      {isFed(trend.maturity, "ctl", latest.local_date) ? null : (
+        <RecordARide lead="Fitness counts rides only, and none so far has a power or heart-rate load." />
+      )}
+      <FitnessChart points={trend.points} maturity={trend.maturity} />
     </Panel>
   );
 }
@@ -190,8 +209,9 @@ function MaturityNote({ trend }: { trend: Trend }) {
 }
 
 /**
- * The last day's three numbers, each under its series' explanation — or, with
- * no priced load behind them (`point` null), a placeholder in each slot.
+ * The last day's three numbers, each under its series' explanation — or a
+ * placeholder in the slot of any series with no load behind it by that day,
+ * each naming its own missing input. Every slot keeps its position.
  */
 function Readout({
   point,
@@ -200,20 +220,25 @@ function Readout({
   point: Trend["points"][number] | null;
   trend: Trend;
 }) {
+  const fed = (series: "ctl" | "atl" | "tsb") =>
+    point !== null && isFed(trend.maturity, series, point.local_date);
   const slots = [
     {
       label: "Fitness",
-      value: point?.ctl.value,
+      value: fed("ctl") ? point?.ctl.value : undefined,
+      reason: NOT_FED_REASON.ctl,
       explanation: trend.explanations.ctl,
     },
     {
       label: "Fatigue",
-      value: point?.atl.value,
+      value: fed("atl") ? point?.atl.value : undefined,
+      reason: NOT_FED_REASON.atl,
       explanation: trend.explanations.atl,
     },
     {
       label: "Form",
-      value: point?.tsb.value,
+      value: fed("tsb") ? point?.tsb.value : undefined,
+      reason: formReason(trend),
       explanation: trend.explanations.tsb,
     },
   ];
@@ -223,7 +248,7 @@ function Readout({
         <div key={slot.label} className="flex flex-col gap-0.5">
           <SectionLabel>{slot.label}</SectionLabel>
           {slot.value === undefined ? (
-            <NotAssessed reason={UNPRICED_REASON} className="text-xl" />
+            <NotAssessed reason={slot.reason} className="text-xl" />
           ) : (
             <Explained
               explanation={slot.explanation}

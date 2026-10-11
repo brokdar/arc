@@ -12,6 +12,8 @@ import { formatDayMonth } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Point = components["schemas"]["FitnessPointRead"];
+type Maturity = components["schemas"]["FitnessMaturityRead"];
+type Series = (typeof FITNESS_LINES)[number]["key"];
 
 /** How many pixels tall the plot is. */
 const HEIGHT = 220;
@@ -23,9 +25,35 @@ export const FITNESS_LINES = [
   { key: "tsb", label: "Form (TSB)", token: "--color-chart-form" },
 ] as const;
 
+/**
+ * The first day a series has load behind it, or null when it has none.
+ *
+ * Read from the API, per series, never inferred from the values: CTL is fed by
+ * priced rides, ATL by any priced session, form from where both are at its lag
+ * (`app.domain.pmc.FormStanding`). Before that day the series' value is the
+ * domain's starting zero decaying with nothing behind it — no data, not zero.
+ */
+function firstFed(maturity: Maturity, series: Series): string | null {
+  return series === "tsb"
+    ? maturity.tsb.first_assessed
+    : maturity[series].first_priced_session;
+}
+
+/** Whether ``series`` has load behind it on ``day``. */
+export function isFed(
+  maturity: Maturity,
+  series: Series,
+  day: string,
+): boolean {
+  const first = firstFed(maturity, series);
+  return first !== null && day >= first;
+}
+
 export interface FitnessChartProps {
   /** Every day of the window, oldest first — the API leaves none out. */
   readonly points: readonly Point[];
+  /** From when each series has load behind it; see {@link firstFed}. */
+  readonly maturity: Maturity;
   readonly className?: string;
 }
 
@@ -40,9 +68,19 @@ export interface FitnessChartProps {
  * point on the fatigue line — the average a session was left out of — and in
  * text below it, which the figure names as its description. A coloured dot is
  * a claim only a sighted reader can check; the sentence is what makes "this
- * day is missing a session" reachable at all.
+ * day is missing a session" reachable at all. Before fatigue is first fed
+ * there is no fatigue to mark, and the sentence alone carries it.
+ *
+ * **A line starts on the day its own series is first fed.** The API's points
+ * run from the first session, priced or not, and before a series has load
+ * behind it its value is a zero that means nothing; those days go to uPlot as
+ * `null`, which it draws as a gap, so no line is ever drawn along zero.
  */
-export function FitnessChart({ points, className }: FitnessChartProps) {
+export function FitnessChart({
+  points,
+  maturity,
+  className,
+}: FitnessChartProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const descriptionId = useId();
   const incomplete = points.filter((point) => point.load_incomplete);
@@ -101,9 +139,17 @@ export function FitnessChart({ points, className }: FitnessChartProps) {
     const data = [
       points.map((_point, index) => index),
       ...FITNESS_LINES.map((line) =>
-        points.map((point) => point[line.key].value),
+        points.map((point) =>
+          isFed(maturity, line.key, point.local_date)
+            ? point[line.key].value
+            : null,
+        ),
       ),
-      points.map((point) => (point.load_incomplete ? point.atl.value : null)),
+      points.map((point) =>
+        point.load_incomplete && isFed(maturity, "atl", point.local_date)
+          ? point.atl.value
+          : null,
+      ),
     ] as unknown as uPlot.AlignedData;
     const instance = new uPlot(options, data, element);
     const observer = new ResizeObserver(() => {
@@ -114,7 +160,7 @@ export function FitnessChart({ points, className }: FitnessChartProps) {
       observer.disconnect();
       instance.destroy();
     };
-  }, [points]);
+  }, [points, maturity]);
 
   return (
     <figure

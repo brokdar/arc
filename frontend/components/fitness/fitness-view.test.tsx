@@ -13,6 +13,8 @@ import { ATHLETE_TIMEZONE } from "@/tests/mocks/fixtures";
 import {
   FITNESS_TREND,
   FITNESS_TREND_EMPTY,
+  FITNESS_TREND_GYM_PRICED,
+  FITNESS_TREND_LATE_PRICED,
   FITNESS_TREND_UNPRICED,
 } from "@/tests/mocks/generated-pmc";
 import { http } from "@/tests/mocks/handlers";
@@ -205,7 +207,9 @@ describe("FitnessView", () => {
     // The generated read: every session unpriced, so the domain's averages
     // are 0 on every day with no load behind them.
     expect(FITNESS_TREND_UNPRICED.points.length).toBeGreaterThan(0);
-    expect(FITNESS_TREND_UNPRICED.maturity.first_priced_session).toBeNull();
+    expect(FITNESS_TREND_UNPRICED.maturity.ctl.first_priced_session).toBeNull();
+    expect(FITNESS_TREND_UNPRICED.maturity.atl.first_priced_session).toBeNull();
+    expect(FITNESS_TREND_UNPRICED.maturity.tsb.first_assessed).toBeNull();
     server.use(
       http.get("/api/v1/fitness", ({ response }) =>
         response(200).json(rebased(FITNESS_TREND_UNPRICED)),
@@ -231,6 +235,122 @@ describe("FitnessView", () => {
     // No flat line of zeros either.
     expect(container.querySelector("canvas")).toBeNull();
     expect(constructions).toHaveLength(0);
+  });
+
+  it("gaps each line until its own series is first fed, never drawing zero", async () => {
+    // The generated read: unpriced sessions first, priced gym sessions (ATL
+    // fed) from day 7, priced rides (CTL, and so form) from day 15. The
+    // series still starts on the first session; each line starts later.
+    const served = rebased(FITNESS_TREND_LATE_PRICED);
+    const firstFed = {
+      ctl: served.maturity.ctl.first_priced_session,
+      atl: served.maturity.atl.first_priced_session,
+      tsb: served.maturity.tsb.first_assessed,
+    };
+    expect(firstFed.atl).not.toBeNull();
+    expect(firstFed.ctl).not.toBeNull();
+    expect(firstFed.atl).not.toBe(firstFed.ctl);
+    expect(served.points[0]?.local_date).toBe(served.maturity.first_session);
+    server.use(
+      http.get("/api/v1/fitness", ({ response }) => response(200).json(served)),
+    );
+    renderFitness();
+
+    await screen.findByRole("figure", { name: /Fitness, fatigue and form/ });
+
+    const lines = plotted();
+    for (const [label, key] of [
+      ["Fitness (CTL)", "ctl"],
+      ["Fatigue (ATL)", "atl"],
+      ["Form (TSB)", "tsb"],
+    ] as const) {
+      const first = firstFed[key];
+      if (first === null) throw new Error(`${key} is never fed`);
+      const before = served.points.filter((point) => point.local_date < first);
+      expect(before.length).toBeGreaterThan(0);
+      // Only gaps before the series is fed — the domain's 0s never reach
+      // the canvas — and the domain's own values from that day on.
+      expect(lines.get(label)).toEqual(
+        served.points.map((point) =>
+          point.local_date < first ? null : point[key].value,
+        ),
+      );
+    }
+    // An unpriced session before fatigue was fed has no fatigue value to
+    // mark; its day is named in words only.
+    const marks = lines.get("Load incomplete") ?? [];
+    served.points.forEach((point, index) => {
+      if (firstFed.atl !== null && point.local_date < firstFed.atl) {
+        expect(marks[index]).toBeNull();
+      } else {
+        expect(marks[index]).toBe(
+          point.load_incomplete ? point.atl.value : null,
+        );
+      }
+    });
+    expect(
+      served.points.some(
+        (point) =>
+          point.load_incomplete &&
+          firstFed.atl !== null &&
+          point.local_date >= firstFed.atl,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves fitness and form not assessed while only the gym is priced", async () => {
+    // Read the day before the first priced ride: fatigue has load behind it,
+    // fitness (cycling only) and form (fitness − fatigue) have none.
+    const served = rebased(FITNESS_TREND_GYM_PRICED);
+    expect(served.maturity.ctl.first_priced_session).toBeNull();
+    expect(served.maturity.atl.first_priced_session).not.toBeNull();
+    expect(served.maturity.tsb.first_assessed).toBeNull();
+    server.use(
+      http.get("/api/v1/fitness", ({ response }) => response(200).json(served)),
+    );
+    renderFitness();
+
+    const readout = await screen.findByRole("region", { name: "Today" });
+    const [last] = served.points.slice(-1);
+    if (!last) throw new Error("the fixture has no points");
+    expect(last.ctl.value).toBe(0);
+    // Fixed slots, in order: Fitness, Fatigue, Form.
+    const slots = Array.from(readout.children) as HTMLElement[];
+    expect(
+      slots.map(
+        (slot) =>
+          within(slot).getByText(/^(Fitness|Fatigue|Form)$/).textContent,
+      ),
+    ).toEqual(["Fitness", "Fatigue", "Form"]);
+    const [fitness, fatigue, form] = slots;
+    if (!fitness || !fatigue || !form) throw new Error("three slots");
+    expect(
+      within(fitness).getByRole("img", {
+        name: "Not assessed: No ride with a power or heart-rate load yet",
+      }),
+    ).toBeVisible();
+    expect(within(fatigue).getByText(last.atl.value.toFixed(0))).toBeVisible();
+    expect(
+      within(form).getByRole("img", { name: /^Not assessed: / }),
+    ).toHaveAccessibleName(/fitness/);
+    expect(within(readout).queryByText("0")).toBeNull();
+    // The remedy names what is missing, and the action beside it.
+    expect(screen.getByText(/Fitness counts rides only/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Upload a ride" })).toHaveAttribute(
+      "href",
+      "/inbox",
+    );
+    // Fatigue is drawn; fitness and form are gaps the whole way.
+    const lines = plotted();
+    expect(lines.get("Fitness (CTL)")?.every((value) => value === null)).toBe(
+      true,
+    );
+    expect(lines.get("Form (TSB)")?.every((value) => value === null)).toBe(
+      true,
+    );
+    expect(lines.get("Fatigue (ATL)")?.some((value) => value !== null)).toBe(
+      true,
+    );
   });
 
   it("shows an error, not a blank panel, when the read fails", async () => {

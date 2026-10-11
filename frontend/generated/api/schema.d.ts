@@ -569,9 +569,13 @@ export interface paths {
      *       to today — rest days included. Before the first session there are no
      *       points, never a run of zeros.
      *     * A session neither load model could price adds nothing and marks its day
-     *       `load_incomplete`; `n` counts the sessions that were counted. With
-     *       `maturity.first_priced_session` null nothing has been priced, and the
-     *       zeros are no data rather than zero fitness.
+     *       `load_incomplete`; `n` counts the sessions that were counted.
+     *     * Each series says from which day it has load behind it:
+     *       `maturity.ctl.first_priced_session` (the first priced ride),
+     *       `maturity.atl.first_priced_session` (the first priced session of any
+     *       discipline) and `maturity.tsb.first_assessed` (both, at the form lag).
+     *       Before that day — or on every day, when it is null — that series' values
+     *       are no data rather than zero.
      *     * `maturity` says whether each average still mostly describes its starting
      *       seed of zero: CTL until day 97, ATL until day 17, counted from the first
      *       session whatever window was asked for.
@@ -3355,10 +3359,9 @@ export interface components {
       ctl: components["schemas"]["SeriesMaturityRead"];
       /** Day */
       day: number | null;
-      /** First Priced Session */
-      first_priced_session: string | null;
       /** First Session */
       first_session: string | null;
+      tsb: components["schemas"]["FormStandingRead"];
     };
     /**
      * FitnessPointRead
@@ -3453,6 +3456,23 @@ export interface components {
     FolderUpdate: {
       /** Enabled */
       enabled: boolean;
+    };
+    /**
+     * FormStandingRead
+     * @description From which day form is a balance of two fed averages.
+     *
+     *     `TSB_d = CTL_{d−L} − ATL_{d−L}`, so form is assessed from the later of
+     *     CTL's and ATL's `first_priced_session`, plus `form_lag_days`; null when
+     *     either is null or that day is after `as_of`.
+     */
+    FormStandingRead: {
+      /**
+       * Display Only
+       * @constant
+       */
+      display_only: true;
+      /** First Assessed */
+      first_assessed: string | null;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -5539,6 +5559,8 @@ export interface components {
        * @constant
        */
       display_only: true;
+      /** First Priced Session */
+      first_priced_session: string | null;
       /** Mature */
       mature: boolean;
       /** Matures On */
