@@ -17,7 +17,7 @@
 # this directory (.github/dependabot.yml) — so the pins are raised rather than
 # left to rot, and the PR that raises zizmor runs the job zizmor gates.
 
-zizmor==1.29.0     # audits .github/workflows: the pre-push hook and the Workflow Security job
-prek==0.4.14       # installs and runs the git hooks, so it gates every commit and push
+zizmor==1.30.1     # audits .github/workflows: the pre-push hook and the Workflow Security job
+prek==0.5.4       # installs and runs the git hooks, so it gates every commit and push
 rust-just==1.58.0  # the task runner every justfile recipe goes through
-git-cliff==2.13.1  # drafts CHANGELOG entries (`just changelog`)
+git-cliff==2.14.2  # drafts CHANGELOG entries (`just changelog`)
