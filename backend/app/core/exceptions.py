@@ -10,9 +10,12 @@ from contextlib import contextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import compile_path
 
 
 class ErrorDetail(BaseModel):
@@ -158,8 +161,44 @@ def _sanitize_for_json(obj: Any) -> Any:
     return repr(obj)
 
 
+def _methods_served_at(request: Request) -> list[str]:
+    """Every method the OpenAPI contract serves at the request's path.
+
+    Read from the contract rather than the route table: FastAPI keeps included
+    routers as private nested objects, and the contract is the thing a client
+    (and Schemathesis) holds the header to. An operation with no 2xx response
+    is a documented refusal — the append-only anchor handlers — so its method
+    is answered, not served, and advertising it would contradict the
+    ``Allow`` that handler sends itself.
+    """
+    methods: set[str] = set()
+    for template, operations in request.app.openapi()["paths"].items():
+        if not compile_path(template)[0].match(request.url.path):
+            continue
+        methods |= {
+            method.upper()
+            for method, operation in operations.items()
+            if any(str(code).startswith("2") for code in operation["responses"])
+        }
+    return sorted(methods)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach handlers translating AppError subclasses to JSON responses."""
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(
+        request: Request, exc: StarletteHTTPException
+    ) -> Response:
+        # FastAPI registers one Starlette route per method, and Starlette's
+        # 405 carries the `Allow` of whichever route on the path it tried
+        # first — `OPTIONS /anchors` answered `Allow: GET` beside a POST.
+        # RFC 9110 asks for the full set (found by Schemathesis).
+        if exc.status_code == status.HTTP_405_METHOD_NOT_ALLOWED and (
+            served := _methods_served_at(request)
+        ):
+            exc.headers = {**(exc.headers or {}), "Allow": ", ".join(served)}
+        return await http_exception_handler(request, exc)
 
     @app.exception_handler(AppError)
     async def handle_app_error(_request: Request, exc: AppError) -> JSONResponse:
