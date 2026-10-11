@@ -237,6 +237,51 @@ export function formatUtcStampYear(isoInstant: string): string {
 }
 
 /**
+ * How long ago an instant was, as a person would say it: `4 minutes ago`.
+ *
+ * For a stamp whose *recency* is the whole message — "arc checked this
+ * connection 4 minutes ago" answers "is it working now", where `21.08 14:32`
+ * makes the reader do the subtraction against a clock they have to find first.
+ * Every other timestamp in arc stays absolute: a ride happened at a time, and a
+ * calendar of "3 days ago" would be unreadable.
+ *
+ * No `Intl.RelativeTimeFormat`, for this module's no-locale reason — and here
+ * it buys a second thing: the output is the same string on every machine, so a
+ * test can assert on the words rather than on whatever the runner's ICU build
+ * decides "yesterday" is called.
+ *
+ * A **future** stamp reads `just now` rather than `in 4 minutes`. Wall clocks
+ * step backwards (`.claude/rules/clock-monotonicity.md`) and the browser's is
+ * not the server's, so a stamp a little ahead of the reader means skew, not a
+ * check that has not happened yet — and "in 4 minutes" is a sentence nobody
+ * can act on. Anything unparseable returns an em dash, as the other stamp
+ * formatters do, so a caller never renders a plausible wrong age.
+ */
+export function formatRelativeTime(
+  isoInstant: string,
+  now: Date = new Date(),
+): string {
+  const instant = new Date(isoInstant);
+  if (Number.isNaN(instant.getTime())) {
+    return EM_DASH;
+  }
+  const seconds = Math.round((now.getTime() - instant.getTime()) / 1000);
+  if (seconds < 60) {
+    return "just now";
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
+/**
  * Seconds as the headline says them: `3h10`, `45min`, `30s`.
  *
  * Prose, not a clock reading — `formatDurationHm` renders `3:10` for a column

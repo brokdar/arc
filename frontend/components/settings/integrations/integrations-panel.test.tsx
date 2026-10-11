@@ -10,9 +10,11 @@ import {
   dropboxFeed,
   INBOX_PATH,
   integrationsState,
+  minutesAgo,
   seedDropboxConnection,
   seedIntegration,
   WAHOO_PATH,
+  WAHOO_PATH_DISPLAY,
 } from "@/tests/mocks/fixtures";
 
 function renderPanel() {
@@ -108,6 +110,43 @@ describe("what the panel lists", () => {
     );
     // And it is its own entry — not folded into Wahoo, which was never added.
     expect(screen.queryByRole("region", { name: "Wahoo" })).toBeNull();
+  });
+
+  it("names a watched folder as the athlete's Dropbox spells it", async () => {
+    seedDropboxConnection();
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    // What the watch stored: the normalised path is the folder's identity,
+    // the display path is its name.
+    integrationsState().displays.set(WAHOO_PATH, WAHOO_PATH_DISPLAY);
+    renderPanel();
+
+    const wahoo = await entry("Wahoo");
+    const folder = within(wahoo).getByTestId("integration-folder");
+
+    // `remote_path` is `path_lower` and a lie about the folder's name;
+    // `/apps/wahoofitness` in front of somebody looking at
+    // `/Apps/WahooFitness` in Dropbox reads as a case bug in arc.
+    expect(folder).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(folder.textContent).not.toContain(WAHOO_PATH);
+    expect(
+      within(folder).getByRole("button", {
+        name: `Stop watching ${WAHOO_PATH_DISPLAY}`,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the stored path for a folder watched before spellings", async () => {
+    seedDropboxConnection();
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    renderPanel();
+
+    const wahoo = await entry("Wahoo");
+
+    // `null` is a state — arc never learned this folder's spelling — and the
+    // row shows what it has always shown rather than a guessed capitalisation.
+    expect(within(wahoo).getByTestId("integration-folder")).toHaveTextContent(
+      WAHOO_PATH,
+    );
   });
 
   it("offers the add flow as the remedy when nothing but the local drop exists", async () => {
@@ -239,6 +278,81 @@ describe("removing an integration", () => {
 });
 
 describe("the account the folders are collected through", () => {
+  /** The line that states the account's health, whichever state it is in. */
+  function health(): Promise<HTMLElement> {
+    return screen.findByTestId("account-health");
+  }
+
+  it("states that the connection works, and when that was last true", async () => {
+    // AC-11. Health used to be the *absence* of red text: a working account
+    // and one whose grant had been revoked in the Dropbox console rendered
+    // identically until an unrelated screen failed.
+    seedDropboxConnection({ last_verified_at: minutesAgo(4) });
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    renderPanel();
+    await entry("Wahoo");
+
+    const line = await health();
+    expect(line).toHaveTextContent("Connected as Ada Lovelace");
+    expect(line).toHaveTextContent("last checked 4 minutes ago");
+  });
+
+  it("says nobody has checked yet rather than inventing a time", async () => {
+    // AC-11 edge. A connection stored when Dropbox could not answer the
+    // connect-time probe has no stamp until its first poll, and `created_at`
+    // is the substitute that would report a check that never ran.
+    seedDropboxConnection({ last_verified_at: null });
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    renderPanel();
+    await entry("Wahoo");
+
+    const line = await health();
+    expect(line).toHaveTextContent("Connected as Ada Lovelace");
+    expect(line).toHaveTextContent("not checked yet");
+    expect(line).not.toHaveTextContent(/ago/);
+  });
+
+  it("renders the reconnect remedy the poll wrote, on the next fetch", async () => {
+    // AC-9 edge: the payload shape the poll leaves behind after a scope
+    // refusal. The panel is the first thing the athlete sees afterwards, and
+    // it has to carry Dropbox's own remedy rather than a shrug.
+    const refusal =
+      "Dropbox will not let arc read your files. Open your app at " +
+      "https://www.dropbox.com/developers/apps, tick files.metadata.read on " +
+      "its Permissions tab, choose Submit, then disconnect this Dropbox " +
+      "account here and connect it again — Dropbox gives arc a newly ticked " +
+      "permission only on a connection made after you submit it.";
+    seedDropboxConnection({
+      status: "needs_reauth",
+      last_error: refusal,
+      // The stamp survives the flip: "it stopped working" and "nobody ever
+      // checked" are different sentences, and the row knows which is true.
+      last_verified_at: minutesAgo(120),
+    });
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    renderPanel();
+    await entry("Wahoo");
+
+    const line = await health();
+    expect(line).toHaveTextContent("files.metadata.read");
+    expect(line).toHaveTextContent("Permissions");
+    expect(line).toHaveTextContent("Submit");
+    // The healthy sentence is gone, not merely joined by a warning.
+    expect(line).not.toHaveTextContent("Connected as");
+  });
+
+  it("names no mechanism the athlete cannot see", async () => {
+    seedDropboxConnection({ last_verified_at: minutesAgo(4) });
+    seedIntegration("wahoo", [WAHOO_PATH]);
+    const { container } = renderPanel();
+    await entry("Wahoo");
+
+    const text = (container.textContent ?? "").toLowerCase();
+    for (const word of ["token", "credential", "the api"]) {
+      expect(text).not.toContain(word);
+    }
+  });
+
   it("says how many integrations a disconnect takes with it, by name", async () => {
     const user = userEvent.setup();
     seedDropboxConnection();

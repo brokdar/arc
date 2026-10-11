@@ -7,9 +7,12 @@ import { IntegrationsPanel } from "@/components/settings/integrations/integratio
 import { AthleteClock } from "@/lib/clock";
 import {
   ATHLETE_TIMEZONE,
+  addIntegration,
   connectionsState,
   DROPBOX_CODE,
   DROPBOX_CONNECTION_ID,
+  dropboxFolderPage,
+  integrationCatalogue,
   integrationsState,
   postedIntegrations,
   seedAppFolderSuspicion,
@@ -19,7 +22,42 @@ import {
   seedIntegration,
   WAHOO_NEWEST_AT,
   WAHOO_PATH,
+  WAHOO_PATH_DISPLAY,
 } from "@/tests/mocks/fixtures";
+import { http } from "@/tests/mocks/handlers";
+import { server } from "@/tests/mocks/server";
+
+/**
+ * What the API answers when arc's permission to read the Dropbox is gone.
+ *
+ * Spelled out rather than imported: it is the *backend's* sentence
+ * (`app.connectors.dropbox.PERMISSION_LOST`), and a test that built it from
+ * the same source as the code would pass while the two drifted apart.
+ */
+const PERMISSION_LOST =
+  "arc lost its permission to read your Dropbox. Disconnect and connect again to fix it.";
+
+/**
+ * Walk the picker to the Wahoo folder and start watching it.
+ *
+ * Two clicks where there used to be one: the shortcut *navigates* now instead
+ * of committing on arc's guess, so the athlete reads what is actually in the
+ * folder before they tell arc to watch it. Shared because half this file ends
+ * on the same commitment and each of them used to spell out a button label
+ * carrying a path.
+ */
+async function watchWahooFolder(
+  user: ReturnType<typeof userEvent.setup>,
+  step: HTMLElement,
+) {
+  await user.click(
+    within(step).getByRole("button", { name: "Go to Wahoo's folder" }),
+  );
+  await within(step).findByText(/files here/);
+  await user.click(
+    within(step).getByRole("button", { name: "Watch this folder" }),
+  );
+}
 
 /**
  * The flow is exercised through the panel that opens it, not in isolation.
@@ -173,20 +211,29 @@ describe("the Dropbox transport's steps", () => {
     const flow = await openFlow(user);
     await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
 
-    await user.click(
-      await screen.findByRole("button", { name: /Connect Dropbox/i }),
-    );
+    // The paste flow, deliberately: this test is about which step the flow
+    // asks for next, and the redirect flow's answer is a navigation to
+    // dropbox.com that no component test can follow. Which flow is chosen,
+    // and what each one sends, is `dropbox-connect-step.test.tsx`.
+    await user.click(await screen.findByTestId("use-paste-flow"));
     await user.type(
       await screen.findByLabelText(/Authorisation code/i),
       DROPBOX_CODE,
     );
     await user.click(screen.getByRole("button", { name: "Finish connecting" }));
 
+    // The connect confirms itself before the flow moves on: the folder step
+    // does not exist until the athlete has read which account was connected.
+    await user.click(
+      within(await screen.findByTestId("connect-confirmation")).getByRole(
+        "button",
+        { name: /Choose the folder/i },
+      ),
+    );
+
     // The connect step is done, so the flow moves on rather than asking again.
     const folder = await screen.findByTestId("folder-step");
-    await user.click(
-      within(folder).getByRole("button", { name: `Collect ${WAHOO_PATH}` }),
-    );
+    await watchWahooFolder(user, folder);
 
     expect(
       await screen.findByRole("region", { name: "Wahoo" }),
@@ -224,9 +271,7 @@ describe("when it does not go through", () => {
     await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
     const folder = await screen.findByTestId("folder-step");
 
-    await user.click(
-      within(folder).getByRole("button", { name: `Collect ${WAHOO_PATH}` }),
-    );
+    await watchWahooFolder(user, folder);
 
     // The server's own words, because it is the only party that knows who
     // holds the folder — and the flow stays up so the athlete can pick another.
@@ -237,6 +282,34 @@ describe("when it does not go through", () => {
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
       WAHOO_PATH,
     ]);
+  });
+
+  it("prints what the server said about a folder it could not list", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    // The API answered, and what it answered names the remedy. "Could not
+    // load that folder. Is the API reachable?" is the sentence that sent a
+    // real athlete hunting a folder-path problem that did not exist.
+    server.use(
+      http.get("/api/v1/connections/{connection_id}/folders", ({ response }) =>
+        response(409).json({ detail: PERMISSION_LOST }),
+      ),
+    );
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+
+    expect(await within(folder).findByRole("alert")).toHaveTextContent(
+      PERMISSION_LOST,
+    );
+    expect(within(folder).queryByText(/Is the API reachable/)).toBeNull();
+    // And nothing underneath it. The first listing failed, so there is no
+    // tree to fall back to and no request in flight — "Reading your folders…"
+    // there is a promise that never comes true, and it used to stay on screen
+    // under the alert for ever.
+    expect(within(folder).queryByText(/Reading your folders/)).toBeNull();
   });
 });
 
@@ -268,17 +341,36 @@ describe("what arc found in the athlete's Dropbox", () => {
     ).toBeInTheDocument();
     // Verbatim: the proposal's own kind, transport, connection and path, so
     // accepting and adding by hand are one write path with one set of refusals.
+    // Both spellings go — the normalised one is the folder's identity, and the
+    // display one is the only thing arc can put on screen afterwards.
     expect(postedIntegrations()).toEqual([
       {
         kind: "wahoo",
         transport: "cloud_folder",
         connection_id: DROPBOX_CONNECTION_ID,
         remote_path: WAHOO_PATH,
+        path_display: WAHOO_PATH_DISPLAY,
       },
     ]);
     expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
       WAHOO_PATH,
     ]);
+  });
+
+  it("names the folder as Dropbox spells it, never as arc stores it", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+
+    const proposal = await within(flow).findByTestId("proposal-wahoo");
+
+    // Same rule as the picker's, on the road that reaches a decision fastest:
+    // `path_lower` is the identity a feed row is written against, and putting
+    // it on screen shows `/apps/wahoofitness` to an athlete looking at
+    // `/Apps/WahooFitness` in Dropbox — which reads as a case bug in arc.
+    expect(proposal).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(proposal.textContent).not.toContain(WAHOO_PATH);
   });
 
   it("renders the newest stamp on the athlete's clock, not in UTC", async () => {
@@ -331,6 +423,7 @@ describe("what arc found in the athlete's Dropbox", () => {
         transport: "cloud_folder",
         connection_id: DROPBOX_CONNECTION_ID,
         remote_path: "/rides",
+        path_display: "/rides",
       },
     ]);
   });
@@ -388,6 +481,619 @@ describe("what arc found in the athlete's Dropbox", () => {
     );
     expect(
       within(flow).getByRole("button", { name: "Wahoo" }),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * AC-12: the derivation that decides what to render, rendered.
+ *
+ * The steps stay derived — nothing here counts pages or re-asks a stored
+ * answer. What changes is that the derivation's *output* is on screen: the
+ * flow spans two applications and an OAuth round trip, and before this the
+ * athlete could not see how much of it remained.
+ */
+describe("the map of the flow", () => {
+  /** The three rows, by the state each one is in. */
+  function rowStates() {
+    return {
+      appKey: screen.getByTestId("step-app-key").dataset.state,
+      account: screen.getByTestId("step-account").dataset.state,
+      folder: screen.getByTestId("step-folder").dataset.state,
+    };
+  }
+
+  it("shows the stored app key done, the account open and the folder to come", async () => {
+    const user = userEvent.setup();
+    // The seeded instance holds `DROPBOX__APP_KEY` and no connection: the
+    // first step is answered, the second is owed.
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "current",
+      folder: "upcoming",
+    });
+    // All three in one render: the done one summarised, the current one
+    // expanded where it stands, the last one named.
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent(
+      /Register a Dropbox app/i,
+    );
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent(
+      /DROPBOX__APP_KEY/,
+    );
+    expect(
+      within(screen.getByTestId("step-account")).getByTestId("connect-step"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("step-folder")).toHaveTextContent(/folder/i);
+    expect(
+      within(screen.getByTestId("step-folder")).queryByTestId("folder-step"),
+    ).toBeNull();
+  });
+
+  it("names every step from the start, with the first one open", async () => {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    // Nothing is hidden at the start either: a flow whose length is unknown
+    // is one the athlete cannot decide to begin.
+    expect(rowStates()).toEqual({
+      appKey: "current",
+      account: "upcoming",
+      folder: "upcoming",
+    });
+    expect(screen.getByTestId("step-account")).toHaveTextContent(
+      /Connect the Dropbox account/i,
+    );
+  });
+
+  it("keeps the app key's last characters instead of asking for it again", async () => {
+    const user = userEvent.setup();
+    seedDropboxAppKey(false);
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    await screen.findByTestId("app-key-step");
+
+    await user.type(
+      screen.getByLabelText(/Dropbox app key/i),
+      "abc123def456xyz",
+    );
+    await user.click(screen.getByRole("button", { name: "Save app key" }));
+
+    // The checkmark moves and the answer is summarised, never re-asked. The
+    // tail is enough to recognise the key by and not enough to be it.
+    expect(await screen.findByTestId("connect-step")).toBeInTheDocument();
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "current",
+      folder: "upcoming",
+    });
+    expect(screen.getByTestId("step-app-key")).toHaveTextContent("6xyz");
+    expect(screen.queryByLabelText(/Dropbox app key/i)).toBeNull();
+  });
+
+  it("puts a connect that came back by redirect where a pasted one lands", async () => {
+    const user = userEvent.setup();
+    // The state the browser returns in after Dropbox redirected to arc's
+    // callback and the athlete read the confirmation there: an account is
+    // connected, and only the folder is still owed.
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await screen.findByTestId("step-map");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "done",
+      folder: "current",
+    });
+    // The account row states which account, so the athlete does not have to
+    // remember which of their Dropboxes they authorised.
+    expect(screen.getByTestId("step-account")).toHaveTextContent(
+      "Ada Lovelace (ada@example.com)",
+    );
+    expect(
+      within(screen.getByTestId("step-folder")).getByTestId("folder-step"),
+    ).toBeInTheDocument();
+  });
+
+  it("puts a pasted connect on the same row the redirect one reaches", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+
+    await user.click(await screen.findByTestId("use-paste-flow"));
+    await user.type(
+      await screen.findByLabelText(/Authorisation code/i),
+      DROPBOX_CODE,
+    );
+    await user.click(screen.getByRole("button", { name: "Finish connecting" }));
+    // The confirmation is the connect step's own completed state, and it is
+    // still the current row until the athlete moves the flow on.
+    const confirmation = await screen.findByTestId("connect-confirmation");
+    expect(
+      within(screen.getByTestId("step-account")).getByTestId(
+        "connect-confirmation",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(confirmation).getByRole("button", { name: /Choose the folder/i }),
+    );
+
+    await screen.findByTestId("folder-step");
+    expect(rowStates()).toEqual({
+      appKey: "done",
+      account: "done",
+      folder: "current",
+    });
+  });
+});
+
+/**
+ * AC-15: the flow ends on a statement rather than by vanishing.
+ *
+ * Every other confirmation in this feature exists for the same reason: a
+ * screen that disappears is indistinguishable from a screen that crashed, and
+ * the athlete has just told arc to go and read a folder on a cadence.
+ */
+describe("when the folder is chosen", () => {
+  it("says what arc will now do, and how to undo it", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+
+    await watchWahooFolder(user, folder);
+
+    const done = await screen.findByTestId("flow-complete");
+    // Display case, because the picker knew it: the completion names the
+    // folder the athlete will go looking for in Dropbox, not the identity arc
+    // stored (which `postedIntegrations` still asserts is `path_lower`).
+    expect(done).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    // When the first check happens, in the athlete's terms — the folder is
+    // watched from now on, and nothing has arrived yet.
+    expect(done).toHaveTextContent(/first check/i);
+    // UI convention 3 applied to a commitment: the undo is named where it is
+    // made, not discovered later.
+    expect(done).toHaveTextContent(/Pause/);
+    expect(done).toHaveTextContent(/Stop watching/i);
+    expect(done).toHaveTextContent(/Settings/);
+    // The map is still there with the last row ticked, and the flow is still
+    // open: the athlete closes it, not the render.
+    expect(screen.getByTestId("step-folder").dataset.state).toBe("done");
+    expect(screen.getByTestId("add-integration-flow")).toBeInTheDocument();
+  });
+
+  it("closes only when the athlete says so", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    const folder = await screen.findByTestId("folder-step");
+    await watchWahooFolder(user, folder);
+    const done = await screen.findByTestId("flow-complete");
+
+    await user.click(within(done).getByRole("button", { name: "Done" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("add-integration-flow")).toBeNull(),
+    );
+    expect(
+      await screen.findByRole("region", { name: "Wahoo" }),
+    ).toBeInTheDocument();
+  });
+
+  it("states the same thing when arc found the folder itself", async () => {
+    const user = userEvent.setup();
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    const proposal = await within(flow).findByTestId("proposal-wahoo");
+
+    await user.click(
+      within(proposal).getByRole("button", { name: "Add Wahoo" }),
+    );
+
+    // Accepting a proposal is the same commitment reached by a shorter road,
+    // so it ends on the same sentence rather than on a panel closing itself —
+    // including the folder's spelling. Discovery used to publish only the
+    // stored path, so this road ended on `/apps/wahoofitness` while the
+    // picker's road ended on `/Apps/WahooFitness`.
+    const done = await screen.findByTestId("flow-complete");
+    expect(done).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(done.textContent).not.toContain(WAHOO_PATH);
+    expect(done).toHaveTextContent(/first check/i);
+  });
+});
+
+/**
+ * AC-16 to AC-21: the one screen where the athlete decides something.
+ *
+ * Every assertion here is about a fact the picker used to withhold or get
+ * wrong: the folder's real name, what is inside it, where the athlete is, what
+ * the action they are about to take will do, and what the server said when a
+ * listing failed.
+ */
+describe("choosing the folder arc watches", () => {
+  /** Open the flow, pick Wahoo, and hand back the picker. */
+  async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+    seedDropboxConnection();
+    renderPanel();
+    const flow = await openFlow(user);
+    await user.click(within(flow).getByRole("button", { name: "Wahoo" }));
+    return screen.findByTestId("folder-step");
+  }
+
+  it("renders Dropbox's own capitalisation and never the path arc stores", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+
+    // The row's own name, as the athlete's Dropbox spells it.
+    expect(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(step).getByRole("button", { name: "WahooFitness" }),
+    );
+    await waitFor(() =>
+      expect(within(step).getByText("WahooFitness")).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    // The whole point: `/apps/wahoofitness` matches nothing the athlete can
+    // see in Dropbox, and showing it read as a case bug in arc.
+    expect(step.textContent).not.toContain(WAHOO_PATH);
+    expect(step.textContent).not.toContain("wahoofitness");
+    expect(step.textContent).toContain("Apps");
+  });
+
+  it("stores the path Dropbox canonicalises, not the one on screen", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+    await user.click(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    );
+    await within(step).findByText(/files here/);
+
+    await user.click(
+      within(step).getByRole("button", { name: "Watch this folder" }),
+    );
+
+    // Display case is a rendering; `path_lower` is the identity the feed row
+    // and `uq_feeds_connection_id_remote_path` are written against. Both are
+    // sent: the identity is what the write is keyed on, and the spelling is
+    // what the card and the already-held refusal read back.
+    expect(
+      await screen.findByRole("region", { name: "Wahoo" }),
+    ).toBeInTheDocument();
+    expect(postedIntegrations()).toEqual([
+      {
+        kind: "wahoo",
+        transport: "cloud_folder",
+        connection_id: DROPBOX_CONNECTION_ID,
+        remote_path: WAHOO_PATH,
+        path_display: WAHOO_PATH_DISPLAY,
+      },
+    ]);
+    expect(integrationsState().stored.get("wahoo")?.folders).toEqual([
+      WAHOO_PATH,
+    ]);
+  });
+
+  it("refuses a second watch naming the folder as the athlete spells it", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await watchWahooFolder(user, step);
+    const done = await screen.findByTestId("flow-complete");
+    await user.click(within(done).getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("add-integration-flow")).toBeNull(),
+    );
+
+    // Same folder, second time — through the flow again, so the refusal is
+    // about a row the *picker* wrote and therefore one arc has a spelling for.
+    const again = await openFlow(user);
+    await user.click(within(again).getByRole("button", { name: "Wahoo" }));
+    const reopened = await screen.findByTestId("folder-step");
+    await watchWahooFolder(user, reopened);
+
+    // The refusal prints directly under a breadcrumb reading
+    // `/Apps/WahooFitness`. Spelling the same folder `/apps/wahoofitness`
+    // there reads as arc talking about a different folder, or as a case bug.
+    const refusal = await screen.findByRole("alert");
+    expect(refusal).toHaveTextContent(
+      `Wahoo is already collecting ${WAHOO_PATH_DISPLAY}`,
+    );
+    expect(refusal.textContent).not.toContain(WAHOO_PATH);
+  });
+
+  it("ends on the folder as the athlete's Dropbox spells it", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+    await user.click(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    );
+    await within(step).findByText(/files here/);
+
+    await user.click(
+      within(step).getByRole("button", { name: "Watch this folder" }),
+    );
+
+    const done = await screen.findByTestId("flow-complete");
+    expect(done).toHaveTextContent(WAHOO_PATH_DISPLAY);
+    expect(done.textContent).not.toContain(WAHOO_PATH);
+  });
+
+  it("says how many files are here and how many arc can read", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+
+    await user.click(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    );
+
+    // Five files, three of them rides: the gap is the CSV and the PNG, and it
+    // is how the athlete recognises the folder their head unit writes to.
+    // "Nothing but files in here" asserted a fact the old response could not
+    // support — it listed folders only.
+    await waitFor(() =>
+      expect(step).toHaveTextContent(
+        "No subfolders. 5 files here, 3 arc can read.",
+      ),
+    );
+    expect(step).not.toHaveTextContent(/Nothing but files/);
+  });
+
+  it("counts the current folder's files while it still has subfolders", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+
+    // The root: two subfolders and Dropbox's own getting-started PDF, which
+    // arc cannot read — so the two numbers differ and neither is a subfolder
+    // count.
+    await waitFor(() =>
+      expect(step).toHaveTextContent("1 file here, none arc can read."),
+    );
+    expect(step).not.toHaveTextContent(/No subfolders/);
+  });
+
+  it("says a folder is empty rather than guessing what is in it", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+
+    await user.click(
+      await within(step).findByRole("button", { name: "Photos" }),
+    );
+
+    await waitFor(() => expect(step).toHaveTextContent(/This folder is empty/));
+    expect(step).not.toHaveTextContent(/files here/);
+  });
+
+  it("navigates by breadcrumb, with the root a single plain segment", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    const trail = within(step).getByRole("navigation", { name: "Folder path" });
+
+    // At the root there is one segment and nothing to navigate to.
+    expect(within(trail).getByText("Dropbox")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(trail).queryByRole("button")).toBeNull();
+    // And the controls it replaced are gone.
+    expect(
+      within(step).queryByRole("button", { name: /Up one folder/i }),
+    ).toBeNull();
+    expect(within(step).queryByText(/Collect/)).toBeNull();
+
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+    await user.click(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    );
+    await within(step).findByText(/files here/);
+
+    // Two levels down, every ancestor is one click away — not two presses of
+    // an "up" button that cannot say how far up it goes.
+    await user.click(within(trail).getByRole("button", { name: "Dropbox" }));
+
+    await waitFor(() =>
+      expect(within(trail).getByText("Dropbox")).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    expect(
+      within(step).getByRole("button", { name: "Apps" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers exactly one watch action, for the folder it names", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await within(step).findByText(/file here/);
+
+    // The screen used to carry one commit button per row, so a tree of eight
+    // folders offered eight irreversible actions and named none of them.
+    const watches = within(step).getAllByRole("button", { name: /watch/i });
+    expect(watches).toHaveLength(1);
+    expect(watches[0]).toHaveAccessibleName("Watch this folder");
+    // What it does, and how to undo it, beside the control that does it.
+    expect(step).toHaveTextContent(/every few minutes/);
+    expect(step).toHaveTextContent(
+      /Pause or stop watching any time in Settings/,
+    );
+    // A row does one thing: it opens.
+    await user.click(within(step).getByRole("button", { name: "Apps" }));
+    expect(
+      await within(step).findByRole("button", { name: "WahooFitness" }),
+    ).toBeInTheDocument();
+  });
+
+  it("refuses a second watch while the first is still in flight", async () => {
+    const user = userEvent.setup();
+    // Held open rather than delayed by a timer: the assertion is about the
+    // state between the click and the answer, and a race decided by a
+    // stopwatch is one that passes on a fast machine and not on a slow one.
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    server.use(
+      http.post("/api/v1/integrations", async ({ request, response }) => {
+        const body = await request.json();
+        await held;
+        const result = addIntegration(body);
+        return "integration" in result
+          ? response(201).json(result.integration)
+          : response(409).json({ detail: result.detail });
+      }),
+    );
+    const step = await openPicker(user);
+    await within(step).findByText(/file here/);
+
+    const watch = within(step).getByRole("button", {
+      name: "Watch this folder",
+    });
+    await user.click(watch);
+
+    await waitFor(() => expect(watch).toBeDisabled());
+    // A second press has nothing to land on, so arc cannot be told twice to
+    // watch the same folder and answer itself with its own 409.
+    await user.click(watch);
+    answer();
+
+    expect(
+      await screen.findByRole("region", { name: "Wahoo" }),
+    ).toBeInTheDocument();
+    expect(postedIntegrations()).toHaveLength(1);
+  });
+
+  it("keeps the athlete where they were when a listing fails", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+    await user.click(await within(step).findByRole("button", { name: "Apps" }));
+    await within(step).findByRole("button", { name: "WahooFitness" });
+
+    // The next listing fails once. The athlete has not moved yet — the tree
+    // they can see is still `/Apps`, and it stays clickable.
+    let failures = 1;
+    server.use(
+      http.get(
+        "/api/v1/connections/{connection_id}/folders",
+        ({ query, response }) => {
+          if (failures > 0) {
+            failures -= 1;
+            return response(409).json({ detail: PERMISSION_LOST });
+          }
+          const listing = dropboxFolderPage(query.get("path") ?? "");
+          return listing === null
+            ? response(404).json({ detail: "no such folder" })
+            : response(200).json(listing);
+        },
+      ),
+    );
+    await user.click(
+      within(step).getByRole("button", { name: "WahooFitness" }),
+    );
+
+    // The server's own sentence, not "Could not load that folder. Is the API
+    // reachable?" — and not instead of the screen.
+    const alert = await within(step).findByRole("alert");
+    expect(alert).toHaveTextContent(PERMISSION_LOST);
+    expect(
+      within(step).getByRole("navigation", { name: "Folder path" }),
+    ).toHaveTextContent("Apps");
+    expect(
+      within(step).getByRole("button", { name: "WahooFitness" }),
+    ).toBeInTheDocument();
+
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+
+    // The retry re-issues the listing that failed, and its success clears the
+    // failure rather than leaving a stale red line under a working screen.
+    await waitFor(() => expect(step).toHaveTextContent(/5 files here/));
+    expect(within(step).queryByRole("alert")).toBeNull();
+  });
+
+  it("joins the shortcut to the tree with the reason for both", async () => {
+    const user = userEvent.setup();
+    const step = await openPicker(user);
+
+    // The rationale used to live in the component's docstring, where the
+    // athlete could not read it.
+    expect(step).toHaveTextContent(/Wahoo usually writes to one folder/);
+    expect(step).toHaveTextContent(/if your head unit files somewhere else/);
+
+    // And the shortcut goes there rather than committing on arc's guess: the
+    // contents line proves the folder before the athlete acts on it.
+    await user.click(
+      within(step).getByRole("button", { name: "Go to Wahoo's folder" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        within(step).getByRole("navigation", { name: "Folder path" }),
+      ).toHaveTextContent("WahooFitness"),
+    );
+    expect(step).toHaveTextContent(/5 files here, 3 arc can read/);
+    expect(postedIntegrations()).toEqual([]);
+  });
+
+  it("leaves the tree standing alone when there is no folder to suggest", async () => {
+    const user = userEvent.setup();
+    // A source arc has no default path for. The copy about the shortcut is
+    // about the shortcut, so with no shortcut there is nothing to explain.
+    server.use(
+      http.get("/api/v1/integration-catalogue", ({ response }) => {
+        const catalogue = integrationCatalogue();
+        return response(200).json({
+          ...catalogue,
+          items: catalogue.items.map((item) =>
+            item.kind === "wahoo"
+              ? {
+                  ...item,
+                  transports: item.transports.map((transport) => ({
+                    ...transport,
+                    default_path: null,
+                  })),
+                }
+              : item,
+          ),
+        });
+      }),
+    );
+    const step = await openPicker(user);
+    await within(step).findByText(/file here/);
+
+    expect(
+      within(step).queryByRole("button", { name: /Go to Wahoo's folder/ }),
+    ).toBeNull();
+    expect(step).not.toHaveTextContent(/usually writes to one folder/);
+    // The tree is still the way in, and still the only way in.
+    expect(
+      within(step).getByRole("button", { name: "Apps" }),
     ).toBeInTheDocument();
   });
 });

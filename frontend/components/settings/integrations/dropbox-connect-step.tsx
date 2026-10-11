@@ -4,13 +4,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { Field } from "@/components/design/field";
-import { SectionLabel } from "@/components/design/section-label";
 import { Problems } from "@/components/settings/integrations/integration-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+import {
+  redirectEligible,
+  redirectUriFor,
+  rememberAddFlow,
+  useBrowserOrigin,
+} from "@/lib/dropbox-redirect";
+import { cn } from "@/lib/utils";
+
+type IntegrationKind = components["schemas"]["IntegrationKind"];
 
 const setupKey = $api.queryOptions(
   "get",
@@ -29,10 +37,77 @@ const catalogueKey = $api.queryOptions(
  * the road the rides travel down, and it shows up only for as long as it takes
  * to open it.
  *
- * PR-6 owns this file next, when the paste disappears in favour of a real
- * redirect. The paste stays reachable even then — on a plain-HTTP LAN
- * deployment Dropbox refuses to redirect at all.
+ * Two ways through, chosen by where the browser is. Where Dropbox will
+ * redirect — https anywhere, or http on the loopback — the athlete comes
+ * straight back and never sees a code. Where it will not, which is arc served
+ * over plain http at a LAN address, Dropbox shows a code and the athlete
+ * pastes it. The paste flow is not a legacy path: it is the only one that
+ * works on that deployment, it is offered explicitly on every other one as
+ * the way out when a redirect does not arrive, and it is what makes arc
+ * connectable from a box nothing on the internet can reach.
+ *
+ * Neither step carries its own heading: both are rendered as rows of the add
+ * flow's step map (`CloudFolderSteps`), which names them there. A second
+ * heading under the row's own would read as a second step.
  */
+
+/**
+ * Which side of the dropbox.com/arc boundary an instruction belongs to.
+ *
+ * Copy, not decoration. This checklist is the only place in arc that asks the
+ * athlete to leave and do something in somebody else's application, and the
+ * run-through this work came from had them hunting arc's Settings for a field
+ * that lives in the Dropbox console. **No item may carry two locations** —
+ * "copy the App key and paste it below" was one instruction on both sites, and
+ * is two items now.
+ */
+type Where = "dropbox" | "arc";
+
+const WHERE_WORDS: Readonly<Record<Where, string>> = {
+  dropbox: "on dropbox.com",
+  arc: "in arc",
+};
+
+/** One instruction, with the side it happens on in a fixed right-hand slot. */
+function ChecklistItem({
+  where,
+  children,
+}: {
+  readonly where: Where;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <li className="text-ink-muted text-sm">
+      <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-2.5">
+        <span className="max-w-[62ch]">{children}</span>
+        <span
+          data-testid="where"
+          data-where={where}
+          className={cn(
+            "shrink-0 rounded-badge px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-[0.04em]",
+            where === "arc"
+              ? "bg-accent-wash text-accent-quiet"
+              : "bg-well text-ink-faint",
+          )}
+        >
+          {WHERE_WORDS[where]}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * What arc can honestly say about an app key before it has spent one.
+ *
+ * Shape only: a Dropbox App key is a short run of letters and digits, and the
+ * only thing that can tell a real one from a plausible one is an OAuth round
+ * trip. So the field catches the two paste accidents it can actually see — a
+ * value with whitespace in it, and the address of the console page the key was
+ * printed on — and it never tells the athlete a key looks right. Claiming a
+ * check that did not happen is the defect this whole feature exists to undo.
+ */
+const APP_KEY_SHAPE = /^[A-Za-z0-9]+$/;
 
 /**
  * Register a Dropbox app: the step that cannot be done inside arc.
@@ -44,40 +119,51 @@ const catalogueKey = $api.queryOptions(
  * carries it, with no restart. Shown only while arc holds no app key in
  * either source, and never re-entered once it does: a completed step re-asked
  * is a step the athlete cannot tell from a failure.
+ *
+ * The saved key is handed back to the flow rather than merely announced,
+ * because the flow's step map summarises this step once it is done and arc
+ * can never read a stored key back: `GET /dropbox/setup` answers whether one
+ * is set and from where, not what it is.
  */
 export function DropboxAppKeyStep({
-  onRecheck,
+  onSaved,
   checking,
 }: {
-  readonly onRecheck: () => void;
+  /** The key that was stored, so the flow can recheck and summarise it. */
+  readonly onSaved: (appKey: string) => void;
   readonly checking: boolean;
 }) {
   const base = useId();
   const queryClient = useQueryClient();
   const [appKey, setAppKey] = useState("");
   const save = $api.useMutation("put", "/api/v1/connections/dropbox/app", {
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       setAppKey("");
       queryClient.invalidateQueries({ queryKey: setupKey });
       // The catalogue's `app_configured` is what decides this step is done —
       // rechecking it is what moves the flow on to connecting the account.
-      onRecheck();
+      onSaved(variables?.body?.app_key ?? "");
     },
   });
+
+  const trimmed = appKey.trim();
+  const shaped = APP_KEY_SHAPE.test(trimmed);
+  // Silent on an untouched field: a hint under an empty input is a refusal of
+  // something nobody typed.
+  const hinting = trimmed !== "" && !shaped;
 
   return (
     <div
       data-testid="app-key-step"
       className="flex flex-col items-start gap-2.5"
     >
-      <SectionLabel>Register a Dropbox app</SectionLabel>
       <p className="max-w-[62ch] text-ink-muted text-sm">
         arc talks to your Dropbox as an app you own, so nothing about your files
         passes through anyone else&apos;s server. It is a three-minute job and
         it is done once.
       </p>
-      <ol className="flex list-decimal flex-col gap-1 pl-5 text-ink-muted text-sm">
-        <li>
+      <ol className="flex list-decimal flex-col gap-1.5 pl-5">
+        <ChecklistItem where="dropbox">
           Open{" "}
           <a
             className="text-accent underline underline-offset-2"
@@ -88,25 +174,28 @@ export function DropboxAppKeyStep({
             dropbox.com/developers/apps
           </a>{" "}
           and choose <strong>Create app</strong>.
-        </li>
-        <li>
+        </ChecklistItem>
+        <ChecklistItem where="dropbox">
           Pick <strong>Scoped access</strong>, then{" "}
           <strong>Full Dropbox</strong> — an App folder app can only see a
           directory it created itself, which is never the one your head unit
           already uploads to. Dropbox cannot change this afterwards; getting it
           wrong means registering another app.
-        </li>
-        <li>
+        </ChecklistItem>
+        <ChecklistItem where="dropbox">
           On the app&apos;s <strong>Permissions</strong> tab, tick{" "}
           <code className="font-mono">account_info.read</code>,{" "}
           <code className="font-mono">files.metadata.read</code> and{" "}
           <code className="font-mono">files.content.read</code>, then submit.
-        </li>
-        <li>
-          Copy the <strong>App key</strong> from the app&apos;s Settings tab and
-          paste it below. There is no app secret to copy: arc connects with
-          PKCE.
-        </li>
+        </ChecklistItem>
+        <RedirectUriStep />
+        <ChecklistItem where="dropbox">
+          Copy the <strong>App key</strong> from the app&apos;s Settings tab.
+          There is no app secret to take with it: arc connects with PKCE.
+        </ChecklistItem>
+        <ChecklistItem where="arc">
+          Paste the App key into the field below, and save it.
+        </ChecklistItem>
       </ol>
       <form
         className="flex w-full flex-col items-start gap-2.5"
@@ -115,7 +204,7 @@ export function DropboxAppKeyStep({
           // The previous refusal described a key that is no longer in the
           // field; react-query holds it until the next `mutate()`.
           save.reset();
-          save.mutate({ body: { app_key: appKey } });
+          save.mutate({ body: { app_key: trimmed } });
         }}
       >
         <Field
@@ -128,18 +217,88 @@ export function DropboxAppKeyStep({
             className="font-mono"
             value={appKey}
             autoComplete="off"
+            aria-invalid={hinting || undefined}
+            aria-describedby={hinting ? `${base}-app-key-hint` : undefined}
             onChange={(event) => setAppKey(event.target.value)}
           />
+          {hinting ? (
+            <p
+              id={`${base}-app-key-hint`}
+              data-testid="app-key-hint"
+              className="max-w-[42ch] text-destructive text-xs"
+            >
+              That does not look like an App key. An App key is a short run of
+              letters and digits, on your app&apos;s Settings tab — a web
+              address pasted here is the page the key is printed on, not the
+              key.
+            </p>
+          ) : null}
         </Field>
-        <Button
-          type="submit"
-          disabled={save.isPending || checking || appKey.trim() === ""}
-        >
+        <Button type="submit" disabled={save.isPending || checking || !shaped}>
           {save.isPending || checking ? "Saving…" : "Save app key"}
         </Button>
       </form>
       <Problems problems={apiErrorMessages(save.error)} />
     </div>
+  );
+}
+
+/**
+ * The registration step that makes the code disappear: arc’s redirect URI.
+ *
+ * A checklist item rather than a note, because it is a field on the same
+ * console page as everything else here and it is only free to fill in *while*
+ * the athlete is on it — coming back to add it later means finding the app
+ * again. Shown only where Dropbox would accept it: on a deployment reached
+ * over plain http at a LAN address, asking the athlete to register a URI
+ * Dropbox refuses would be a step that cannot be completed, so the step says
+ * what happens instead.
+ *
+ * Copyable as text and as a button. The button is the ordinary way; the text
+ * is what survives a browser that refuses clipboard access, and it must,
+ * because a mistyped redirect URI fails on dropbox.com with an error naming
+ * neither arc nor the character that is wrong.
+ */
+function RedirectUriStep() {
+  const origin = useBrowserOrigin();
+  const [copied, setCopied] = useState(false);
+
+  if (origin === null) {
+    return null;
+  }
+  if (!redirectEligible(origin)) {
+    // Still badged for the console: it is the answer to "what do I put under
+    // Redirect URIs?", asked while standing on that page.
+    return (
+      <ChecklistItem where="dropbox">
+        Leave <strong>Redirect URIs</strong> empty. arc is reached at{" "}
+        <code className="font-mono">{origin}</code>, and Dropbox only redirects
+        to https addresses or to localhost — so it will show you a code to copy
+        at the end instead of sending you back here.
+      </ChecklistItem>
+    );
+  }
+  const uri = redirectUriFor(origin);
+  return (
+    <ChecklistItem where="dropbox">
+      On the same Settings tab, under <strong>Redirect URIs</strong>, add{" "}
+      <code data-testid="redirect-uri" className="font-mono break-all">
+        {uri}
+      </code>{" "}
+      and choose <strong>Add</strong>. That is what lets Dropbox send you back
+      to arc instead of showing you a code to copy.{" "}
+      <Button
+        type="button"
+        size="xs"
+        variant="secondary"
+        onClick={() => {
+          void navigator.clipboard?.writeText(uri);
+          setCopied(true);
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </ChecklistItem>
   );
 }
 
@@ -191,22 +350,94 @@ function AppKeyInForce({
 }
 
 /**
- * The connect ritual: render the link, take the code Dropbox showed.
+ * What a finished connect says: the account, and that arc has read it.
  *
- * Two visible steps because it *is* two steps — there is no redirect and no
- * callback, which is what lets arc connect a cloud account from behind a home
- * router. The pasted code is **kept** when the exchange is refused: a
- * 43-character string copied off another site is exactly the thing a form must
- * not throw away on an error.
+ * Rendered by both flows and worded identically — the paste flow inline in
+ * the step below, the redirect flow on the callback page — because which one
+ * a deployment can offer is arc's problem and not something the athlete
+ * should be able to read off a success screen.
+ *
+ * It exists at all because success used to be signalled by the connect step
+ * disappearing. Every other step of the add flow confirms itself; the one
+ * that leaves the application, spends two minutes on dropbox.com and comes
+ * back was the one that did not — and it is also the one where a stored
+ * credential nobody had proved would surface two screens later as a sentence
+ * about a folder path.
+ *
+ * The athlete moves the flow on, not the render: a confirmation that
+ * dismisses itself is the vanishing screen again.
+ */
+export function DropboxConnected({
+  connection,
+  onContinue,
+}: {
+  readonly connection: components["schemas"]["DropboxConnectionRead"];
+  readonly onContinue: () => void;
+}) {
+  return (
+    <div
+      data-testid="connect-confirmation"
+      role="status"
+      className="flex flex-col items-start gap-2.5 rounded-card border border-hairline bg-inset px-3.5 py-3"
+    >
+      <p className="max-w-[62ch] text-sm">
+        Connected as{" "}
+        <strong>{connection.account_label || "your Dropbox account"}</strong>.
+      </p>
+      <p className="max-w-[62ch] text-ink-muted text-sm">
+        {/* The server's sentence when it has one: a connection it stored
+            without being able to prove is a fact only the server knows, and
+            paraphrasing it here would put the same copy in two places. */}
+        {connection.verification_note ??
+          "arc read your Dropbox to check the permission works, and it does."}
+      </p>
+      <Button type="button" onClick={onContinue}>
+        Choose the folder
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The connect ritual: hand the browser to Dropbox and take what comes back.
+ *
+ * **Where the browser is decides which flow runs**, and the browser is the
+ * only thing that knows: arc sits behind Caddy, so the server sees a proxy's
+ * idea of its own origin and `X-Forwarded-Host` is written by whoever spoke to
+ * the proxy. So this reads `window.location.origin`, sends it as the redirect
+ * URI, and the server validates it before Dropbox is ever told about it.
+ *
+ * On an eligible origin the athlete leaves in **this tab** — not a new one:
+ * the redirect has to come back somewhere, and a popup arc cannot get the
+ * athlete back out of is the failure mode this replaces. The place they were
+ * in the add flow is written to `sessionStorage` first, because the tab is
+ * about to be handed to dropbox.com and React state does not survive that.
+ *
+ * The paste flow is offered on every origin, not only the ineligible ones: a
+ * redirect that never arrives — a mistyped redirect URI in the Dropbox
+ * console, a browser that blocked the navigation — otherwise leaves the
+ * athlete with a working account and no way to finish.
  */
 export function DropboxConnectStep({
   onConnected,
+  integrationKind = null,
 }: {
   readonly onConnected: () => void;
+  /** What is being added, so the flow can resume there. */
+  readonly integrationKind?: IntegrationKind | null;
 }) {
   const base = useId();
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
+  // Set once the athlete asks for the code instead: either because Dropbox
+  // will not redirect to this origin at all, or because a redirect they were
+  // offered did not arrive.
+  const [pasting, setPasting] = useState(false);
+  const origin = useBrowserOrigin();
+  // `null` until mounted, which is "not decided yet" and not "not eligible":
+  // a redirect offered on the strength of a prerender would be offered on
+  // every deployment.
+  const canRedirect = origin !== null && redirectEligible(origin);
   // Which app key the connect will run on, and from which source. The flow
   // only renders this step once a key exists, so the read is informative
   // rather than gating — but "saved here" versus "from DROPBOX__APP_KEY" is a
@@ -215,33 +446,101 @@ export function DropboxConnectStep({
   const start = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/authorize",
+    {
+      onSuccess: (data, variables) => {
+        if (variables?.body?.redirect_uri === undefined) {
+          return;
+        }
+        // Written before the navigation, not after: there is no "after" in
+        // this tab.
+        rememberAddFlow(integrationKind);
+        window.location.assign(data.authorize_url);
+      },
+    },
   );
+  // The completed connection, held until the athlete has read it. Nothing is
+  // invalidated on success: the flow decides which step is owed from the
+  // catalogue, so refetching it here would replace this step with the folder
+  // picker before the confirmation had been on screen for a frame.
+  const [connected, setConnected] = useState<
+    components["schemas"]["DropboxConnectionRead"] | null
+  >(null);
   const complete = $api.useMutation(
     "post",
     "/api/v1/connections/dropbox/complete",
     {
-      onSuccess: () => {
+      onSuccess: (data) => {
         setCode("");
-        queryClient.invalidateQueries();
-        onConnected();
+        setConnected(data);
       },
     },
   );
+
+  const beginRedirect = () => {
+    // The previous refusal described an attempt that is over; react-query
+    // holds it until the next `mutate()`.
+    start.reset();
+    start.mutate({ body: { redirect_uri: redirectUriFor(origin as string) } });
+  };
+  const beginPaste = () => {
+    setPasting(true);
+    start.reset();
+    start.mutate({ body: {} });
+  };
 
   return (
     <div
       data-testid="connect-step"
       className="flex flex-col items-start gap-2.5"
     >
-      <SectionLabel>Connect the Dropbox account</SectionLabel>
-      <p className="max-w-[62ch] text-ink-muted text-sm">
-        arc reads the folder your head unit already uploads to, so a ride never
-        has to be uploaded by hand.
-      </p>
-      {setup.data?.app_key_set ? (
-        <AppKeyInForce source={setup.data.source} />
+      {/* Everything that explains the step goes away once the step is done:
+          an instruction still on screen beside its own confirmation reads as
+          something the athlete has to do again. */}
+      {connected === null ? (
+        <>
+          <p className="max-w-[62ch] text-ink-muted text-sm">
+            arc reads the folder your head unit already uploads to, so a ride
+            never has to be uploaded by hand.
+          </p>
+          {setup.data?.app_key_set ? (
+            <AppKeyInForce source={setup.data.source} />
+          ) : null}
+        </>
       ) : null}
-      {start.data ? (
+
+      {connected !== null ? (
+        <DropboxConnected
+          connection={connected}
+          onContinue={() => {
+            queryClient.invalidateQueries();
+            onConnected();
+          }}
+        />
+      ) : canRedirect && !pasting ? (
+        <div className="flex flex-col items-start gap-2.5">
+          <p className="max-w-[62ch] text-ink-muted text-sm">
+            Dropbox will ask you to allow arc to read your files, then send you
+            straight back here.
+          </p>
+          <Button
+            type="button"
+            disabled={start.isPending}
+            onClick={beginRedirect}
+          >
+            {start.isPending ? "Opening Dropbox…" : "Connect Dropbox"}
+          </Button>
+          {/* UI convention 3: the way out, named, before it is needed. A
+              redirect that does not arrive is otherwise a dead end. */}
+          <button
+            type="button"
+            data-testid="use-paste-flow"
+            className="text-ink-muted text-sm underline underline-offset-2"
+            onClick={beginPaste}
+          >
+            Dropbox did not bring you back? Connect with a code instead.
+          </button>
+        </div>
+      ) : start.data ? (
         <form
           className="flex w-full flex-col items-start gap-2.5"
           onSubmit={(event) => {
@@ -286,13 +585,19 @@ export function DropboxConnectStep({
           </Button>
         </form>
       ) : (
-        <Button
-          type="button"
-          disabled={start.isPending}
-          onClick={() => start.mutate({})}
-        >
-          {start.isPending ? "Starting…" : "Connect Dropbox"}
-        </Button>
+        <div className="flex flex-col items-start gap-2.5">
+          {origin !== null && !canRedirect ? (
+            <p className="max-w-[62ch] text-ink-muted text-sm">
+              arc is reached at <code className="font-mono">{origin}</code>, and
+              Dropbox only redirects to https addresses or to localhost. It will
+              show you a code to copy back here instead — nothing else about
+              connecting changes.
+            </p>
+          ) : null}
+          <Button type="button" disabled={start.isPending} onClick={beginPaste}>
+            {start.isPending ? "Starting…" : "Connect Dropbox"}
+          </Button>
+        </div>
       )}
       <Problems
         problems={[

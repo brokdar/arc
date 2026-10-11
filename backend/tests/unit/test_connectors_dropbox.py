@@ -13,26 +13,38 @@ import datetime as dt
 from collections.abc import Iterator
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import dropbox
 from app.connectors.dropbox import (
+    PERMISSION_LOST,
     READ_SCOPES,
+    DropboxAccessError,
     DropboxAuthError,
     DropboxClient,
     DropboxRateLimitedError,
+    DropboxScopeError,
     DropboxUpstreamError,
     authorize_url,
+    current_account,
+    exchange_code,
     new_code_verifier,
+    new_state,
+    probe_readable,
+    redirect_eligible,
 )
 from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.persistence.connections import ConnectionRow, EncryptedCredentials
 from tests.unit.dropbox_fake import (
+    ACCOUNT_PATH,
     LIST_FOLDER_PATH,
     TOKEN_PATH,
     FakeDropbox,
     expired_access_token,
+    missing_scope,
+    no_access,
     rate_limited,
 )
 
@@ -112,6 +124,109 @@ def test_the_authorize_url_asks_for_no_write_scope() -> None:
     assert "files.content.write" not in query["scope"][0]
 
 
+# --- AC-24: which deployments Dropbox will redirect back to ------------------
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://arc.example.com/settings/dropbox/callback",
+        # A self-signed https on the LAN is still https, and Dropbox takes it.
+        "https://arc.local/settings/dropbox/callback",
+        "https://arc.example.com:8443/settings/dropbox/callback",
+        "http://localhost:3000/settings/dropbox/callback",
+        "http://127.0.0.1:3000/settings/dropbox/callback",
+        "http://[::1]:3000/settings/dropbox/callback",
+    ],
+)
+def test_dropbox_redirects_to_https_anywhere_and_to_http_on_the_loopback(
+    uri: str,
+) -> None:
+    assert redirect_eligible(uri) is True
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # The deployment this rule exists for: arc reached over plain HTTP by
+        # LAN address. Dropbox refuses to register it, so arc must not offer
+        # the redirect and must say why.
+        "http://192.168.1.50/settings/dropbox/callback",
+        "http://arc.local/settings/dropbox/callback",
+        "http://10.0.0.4:3000/settings/dropbox/callback",
+        # `localhost.evil.example` is not the loopback, and a prefix match
+        # would have said it was.
+        "http://localhost.evil.example/settings/dropbox/callback",
+        "http://127.0.0.1.evil.example/settings/dropbox/callback",
+        # Not a URL arc could ever be reached at.
+        "ftp://arc.example.com/callback",
+        "javascript:alert(1)",
+        "/settings/dropbox/callback",
+        "https:///settings/dropbox/callback",
+        "",
+    ],
+)
+def test_everything_else_is_ineligible_so_the_paste_flow_is_offered_instead(
+    uri: str,
+) -> None:
+    assert redirect_eligible(uri) is False
+
+
+def test_a_state_is_long_enough_to_be_a_nonce_and_never_repeats() -> None:
+    # AC-24 asks for at least 32 characters, and the CSRF value is worthless
+    # if two flows can be issued the same one.
+    states = {new_state() for _ in range(64)}
+
+    assert len(states) == 64
+    assert all(len(state) >= 32 for state in states)
+
+
+def test_the_authorize_url_carries_the_redirect_and_state_when_given_them() -> None:
+    query = parse_qs(
+        urlparse(
+            authorize_url(
+                app_key="k",
+                verifier=new_code_verifier(),
+                redirect_uri="https://arc.example.com/settings/dropbox/callback",
+                state="a-nonce",
+            )
+        ).query
+    )
+
+    assert query["redirect_uri"] == [
+        "https://arc.example.com/settings/dropbox/callback"
+    ]
+    assert query["state"] == ["a-nonce"]
+    # The paste flow is the same URL minus two parameters, not a second one.
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["token_access_type"] == ["offline"]
+
+
+async def test_the_exchange_repeats_the_redirect_uri_dropbox_was_given(
+    fake: FakeDropbox,
+) -> None:
+    await exchange_code(
+        app_key="k",
+        code="c",
+        verifier=new_code_verifier(),
+        redirect_uri="https://arc.example.com/settings/dropbox/callback",
+    )
+
+    # RFC 6749 s4.1.3: a code minted against a redirect URI is only redeemable
+    # by repeating it, and Dropbox enforces it — omitting it here is an
+    # `invalid_grant` the athlete would read as "the code expired".
+    form = fake.calls_to(TOKEN_PATH)[0].form
+    assert form["redirect_uri"] == "https://arc.example.com/settings/dropbox/callback"
+
+
+async def test_the_paste_exchange_still_sends_no_redirect_uri(
+    fake: FakeDropbox,
+) -> None:
+    await exchange_code(app_key="k", code="c", verifier=new_code_verifier())
+
+    assert "redirect_uri" not in fake.calls_to(TOKEN_PATH)[0].form
+
+
 # --- AC-4: one refresh, one retry --------------------------------------------
 
 
@@ -120,7 +235,7 @@ async def test_an_expired_access_token_is_refreshed_once_then_the_call_is_made(
 ) -> None:
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     refreshes = fake.calls_to(TOKEN_PATH)
     assert len(refreshes) == 1
@@ -139,7 +254,7 @@ async def test_a_refreshed_token_is_re_encrypted_and_stored(
     fake.refresh_token = "rotated-refresh-token"
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     stored = EncryptedCredentials.unseal(row.credentials)
@@ -160,7 +275,7 @@ async def test_a_refresh_that_keeps_the_old_token_leaves_it_in_place(
     fake.refresh_token = None
     row = await connection(db_session, expires_in=-60)
 
-    await client(db_session, row).list_folders("")
+    await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     assert EncryptedCredentials.unseal(row.credentials)["refresh_token"] == (
@@ -175,7 +290,7 @@ async def test_a_refresh_refused_as_invalid_grant_needs_reauth_and_does_not_retr
     row = await connection(db_session, expires_in=-60)
 
     with pytest.raises(DropboxAuthError):
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     await db_session.refresh(row)
     assert row.status is ConnectionStatus.NEEDS_REAUTH
@@ -190,9 +305,9 @@ async def test_a_401_mid_call_triggers_one_refresh_and_one_retry(
     fake.script(LIST_FOLDER_PATH, expired_access_token())
     row = await connection(db_session, expires_in=3_600)
 
-    folders = await client(db_session, row).list_folders("")
+    listing = await client(db_session, row).list_entries("")
 
-    assert [folder.path_lower for folder in folders] == ["/apps", "/photos"]
+    assert [folder.path_lower for folder in listing.folders] == ["/apps", "/photos"]
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
 
@@ -204,7 +319,7 @@ async def test_a_second_401_after_refreshing_is_an_error_not_a_loop(
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxAuthError):
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
@@ -216,7 +331,7 @@ async def test_two_concurrent_calls_on_one_connection_refresh_once(
     row = await connection(db_session, expires_in=-60)
     caller = client(db_session, row)
 
-    await asyncio.gather(caller.list_folders(""), caller.list_folders(""))
+    await asyncio.gather(caller.list_entries(""), caller.list_entries(""))
 
     assert len(fake.calls_to(TOKEN_PATH)) == 1
     assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
@@ -229,8 +344,286 @@ async def test_a_429_raises_a_named_error_carrying_the_delay_and_refreshes_nothi
     row = await connection(db_session, expires_in=3_600)
 
     with pytest.raises(DropboxRateLimitedError) as raised:
-        await client(db_session, row).list_folders("")
+        await client(db_session, row).list_entries("")
 
     assert raised.value.retry_after == pytest.approx(42.0)
     assert isinstance(raised.value, DropboxUpstreamError)
     assert fake.calls_to(TOKEN_PATH) == []
+
+
+# --- AC-4: a missing scope is not a stale token ------------------------------
+#
+# Both arrive as a 401 and Dropbox says which is which in the body. Reading
+# that body is the whole of this section: refreshing cannot mint a scope, so a
+# `missing_scope` answered with a refresh-and-retry costs a token request and
+# then reports the wrong thing — "Dropbox rejected a freshly refreshed access
+# token" for a credential that is perfectly alive and simply not allowed to
+# list folders.
+
+
+async def test_a_missing_scope_401_is_reported_as_scope_and_refreshes_nothing(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read"))
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert raised.value.required_scope == "files.metadata.read"
+    # No refresh and no retry: the traffic is where this rule is visible.
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_a_missing_scope_after_a_refresh_is_still_reported_as_scope(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The second 401 of a call is classified by its body, not by its position.
+
+    A genuinely stale token refreshed into a grant that never carried the
+    scope produces exactly this pair, and reporting the second one as "arc
+    lost its permission" would hide the console change that fixes it.
+    """
+    fake.script(
+        LIST_FOLDER_PATH, expired_access_token(), missing_scope("files.content.read")
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert raised.value.required_scope == "files.content.read"
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
+    await db_session.refresh(row)
+    # Not marked dead: the credential works, and the athlete's app registration
+    # is what does not.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
+
+
+async def test_a_403_naming_a_scope_is_a_scope_error_and_refreshes_nothing(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Dropbox says "missing scope" with both status codes; arc reads both.
+
+    `probe_readable` has always parsed 401 and 403 alike, and `_call` — the
+    path every browse and every poll takes — read only 401. So the same
+    withdrawn permission was a named scope during the connect and a generic
+    upstream failure five minutes later, which reached the athlete as a 502's
+    "try again in a few minutes" for a condition no waiting fixes.
+    """
+    fake.script(LIST_FOLDER_PATH, missing_scope("files.metadata.read", status=403))
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert raised.value.required_scope == "files.metadata.read"
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+
+
+async def test_a_403_about_anything_else_is_an_account_matter_and_is_not_retried(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The asymmetry with 401, in the traffic: 403 never buys a refresh.
+
+    A 401 is Dropbox refusing *this token*, which a fresh one can genuinely
+    fix — so it gets the one refresh-and-retry. A 403 naming no scope is
+    Dropbox describing the *account*: a team policy, a suspended member, a
+    folder somebody else owns. Retrying would spend a token request to be
+    refused identically.
+
+    And it is deliberately **not** a `DropboxAuthError`. That class means "the
+    credential is dead", every caller answers it with disconnect-and-connect,
+    and taking that advice here costs the athlete every feed on the account to
+    run a reconnect that meets the same 403.
+    """
+    fake.script(LIST_FOLDER_PATH, no_access())
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAccessError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert not isinstance(raised.value, DropboxAuthError)
+    assert fake.calls_to(TOKEN_PATH) == []
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 1
+    await db_session.refresh(row)
+    # The row is untouched: nothing about the credential was refused.
+    assert row.status is ConnectionStatus.CONNECTED
+    assert row.last_error is None
+
+
+async def test_a_403_with_no_scope_on_a_download_is_an_account_matter(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """The download path reads 403 the same way the RPC path does.
+
+    `_content_failure` classified only 401, so this shape fell through to
+    `DropboxUpstreamError` — which `app.ingest.feeds._take_batch` blames the
+    *page* for, spending the give-up budget on a condition that has nothing to
+    do with the page.
+    """
+    fake.download_failures["id:ride.fit"] = no_access()
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAccessError) as raised:
+        await client(db_session, row).download("id:ride.fit")
+
+    assert not isinstance(raised.value, DropboxAuthError)
+
+
+async def test_a_403_naming_a_scope_on_a_download_is_a_scope_error(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Dropbox spells `missing_scope` with 403 as well, and the download path
+    read only the 401 spelling.
+
+    The consequence was silent data loss, which is why this is pinned at the
+    connector rather than only through the poll: a 403 `missing_scope` became
+    a `DropboxUpstreamError`, `_take_batch` blamed the batch, and after
+    `max_batch_attempts` polls the cursor advanced past a page whose file had
+    never been downloaded — while the panel read "connected, last checked just
+    now".
+    """
+    fake.download_failures["id:ride.fit"] = missing_scope(
+        "files.content.read", status=403
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxScopeError) as raised:
+        await client(db_session, row).download("id:ride.fit")
+
+    assert raised.value.required_scope == "files.content.read"
+
+
+async def test_a_403_with_no_scope_during_the_probe_is_an_account_matter(
+    fake: FakeDropbox,
+) -> None:
+    """`probe_readable` makes the same three-way read `_call` makes.
+
+    It decides whether a connection row is written at all, so classifying an
+    account condition as a dead credential would refuse the connect with the
+    four console moves for a permission Dropbox never mentioned.
+    """
+    fake.script(LIST_FOLDER_PATH, no_access())
+
+    with pytest.raises(DropboxAccessError):
+        await probe_readable(access_token="access-token-1")
+
+
+async def test_the_account_endpoint_answering_200_with_no_json_is_an_upstream_failure(
+    fake: FakeDropbox,
+) -> None:
+    """A proxy's maintenance page carries a 200 and is not the account JSON.
+
+    Parsed unguarded, it raised a bare `ValueError` out of a hierarchy every
+    caller catches as `DropboxError` — a 500 to the athlete, and an escape from
+    the wrapper that deletes a flow whose code has already been spent.
+    """
+    fake.script(ACCOUNT_PATH, httpx.Response(200, text="<html>maintenance</html>"))
+
+    with pytest.raises(DropboxUpstreamError) as raised:
+        await current_account(access_token="access-token-1")
+
+    assert "get_current_account" in str(raised.value)
+
+
+async def test_a_401_arc_cannot_read_keeps_the_refresh_once_then_fail_path(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    # Dropbox's 401 is not always JSON — a proxy in front of it answers HTML.
+    # An unreadable body says nothing about scope, so the pre-existing path
+    # (refresh once, retry once, then give up) is what it gets.
+    unreadable = httpx.Response(401, text="<html>unauthorized</html>")
+    fake.script(
+        LIST_FOLDER_PATH, unreadable, httpx.Response(401, text="<html>no</html>")
+    )
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAuthError) as raised:
+        await client(db_session, row).list_entries("")
+
+    assert not isinstance(raised.value, DropboxScopeError)
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert len(fake.calls_to(LIST_FOLDER_PATH)) == 2
+
+
+# --- AC-7: what a dead credential writes on the row --------------------------
+
+
+async def test_a_dead_credential_records_the_athletes_remedy_not_the_mechanism(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    fake.script(LIST_FOLDER_PATH, expired_access_token(), expired_access_token())
+    row = await connection(db_session, expires_in=3_600)
+
+    with pytest.raises(DropboxAuthError):
+        await client(db_session, row).list_entries("")
+
+    await db_session.refresh(row)
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == PERMISSION_LOST
+    # `last_error` is rendered in Settings. "token" and "credential" name
+    # things the athlete cannot see, check or fix.
+    assert "token" not in row.last_error
+    assert "credential" not in row.last_error
+    assert "Disconnect and connect again" in row.last_error
+
+
+async def test_a_successful_refresh_does_not_put_a_flipped_row_back_to_connected(
+    db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """A refresh proves the credential is alive, not that arc can read files.
+
+    The two claims came apart in one poll cycle. `mark_needs_reauth` clears
+    the token expiry, so the next call on a just-flipped connection refreshes
+    first — and a refresh that healed the status wrote `connected` over the
+    scope refusal that had *just* been proved. If the call after it then failed
+    with anything but another scope refusal, the cycle ended `connected` with
+    no error on the row at all: the zombie state the whole feature exists to
+    kill, restored by arc itself.
+
+    A grant whose `files.metadata.read` was unticked in the Dropbox console
+    refreshes perfectly for ever. The row leaves `needs_reauth` through a
+    reconnect and nothing else.
+    """
+    row = await connection(
+        db_session, expires_in=3_600, status=ConnectionStatus.NEEDS_REAUTH
+    )
+    # Exactly what `mark_needs_reauth` leaves behind.
+    row.last_error = PERMISSION_LOST
+    row.access_token_expires_at = None
+    await db_session.commit()
+
+    listing = await client(db_session, row).list_entries("")
+
+    # The refresh happened and the call went through on the new token …
+    assert len(fake.calls_to(TOKEN_PATH)) == 1
+    assert listing.folders
+    # … and the row still says what the poll proved about it.
+    await db_session.refresh(row)
+    assert row.status is ConnectionStatus.NEEDS_REAUTH
+    assert row.last_error == PERMISSION_LOST
+
+
+# --- what counts as proof that arc can read the athlete's files --------------
+
+
+def test_only_the_list_folder_family_verifies_a_credential() -> None:
+    """Pinned as an exact set, because widening it is silent and cheap.
+
+    Every member is a claim that a 200 from that endpoint means "arc can still
+    read the athlete's files". `users/get_current_account` answers 200 for a
+    grant carrying no file scopes whatsoever, so adding it would restore
+    exactly the defect `last_verified_at` was introduced to end: a connection
+    that cannot list a single folder, stamped and labelled `connected`. A
+    revoke and a token call say nothing about files either.
+    """
+    assert set(dropbox.VERIFYING_ENDPOINTS) == {
+        "/2/files/list_folder",
+        "/2/files/list_folder/continue",
+    }
+    assert "/2/users/get_current_account" not in dropbox.VERIFYING_ENDPOINTS

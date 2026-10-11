@@ -46,13 +46,18 @@ export function apiErrorMessages(error: unknown): string[] {
  */
 export const HTTP_STATUS = Symbol.for("arc.api.httpStatus");
 
+/** The status a failure body was tagged with, or undefined for an untagged one. */
+function statusOf(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const status = (error as Record<symbol, unknown>)[HTTP_STATUS];
+  return typeof status === "number" ? status : undefined;
+}
+
 /** Whether a failure body carries the status it was tagged with. */
 function hasStatus(error: unknown, status: number): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as Record<symbol, unknown>)[HTTP_STATUS] === status
-  );
+  return statusOf(error) === status;
 }
 
 /** Whether a failure was the session guard's 401 rather than anything else. */
@@ -96,11 +101,46 @@ export function isConflict(error: unknown): boolean {
  * that expires *under* an open page leaves the guard's cached answer saying
  * yes until it refetches, and every query in the meantime is a 401. The remedy
  * for that is logging in, not checking the network.
+ *
+ * **Every other 4xx that carries a sentence prints that sentence.** A 4xx is
+ * the server having decided *about this request* and written down why: which
+ * Dropbox permission is missing and which console tab grants it, which folder
+ * is not there, how long a rate limit has left to run. Collapsing all of that
+ * into a question about the network was arc holding the answer and showing a
+ * guess instead — the audited failure this function is named in, where
+ * Dropbox had said "scope `files.metadata.read` missing" and the athlete was
+ * sent hunting a folder path.
+ *
+ * **A 502 prints its sentence too, and it is the only 5xx that does.** In arc
+ * a 502 is `UpstreamError` and nothing else: a *named* upstream answered arc,
+ * arc could not fix what it said, and the body is a sentence written for the
+ * athlete — "Dropbox answered arc with an error it cannot fix (…). Nothing is
+ * wrong with your setup — try again in a few minutes." Discarding it put
+ * "Could not load that folder. Is the API reachable?" back on screen for every
+ * answered Dropbox 5xx, which is the exact sentence this function exists to
+ * delete. A 500 is different in kind — it is arc's *own* failure, its detail
+ * is a stack trace's leftovers rather than prose anybody wrote for a reader,
+ * and there is no remedy in it. So 500 and every other 5xx keep the generic
+ * sentence, along with a thrown `Error` (the request never arrived), a body
+ * with no `detail`, one whose `detail` is blank, and FastAPI's per-field
+ * validation *list* — a list of field complaints belongs beside the fields,
+ * which is `apiErrorMessages`'s job, not a paragraph where a page should
+ * have been.
  */
 export function loadFailureMessage(error: unknown, subject: string): string {
-  return isUnauthorized(error)
-    ? `Your session has expired. Log in again to see ${subject}.`
-    : `Could not load ${subject}. Is the API reachable?`;
+  if (isUnauthorized(error)) {
+    return `Your session has expired. Log in again to see ${subject}.`;
+  }
+  const status = statusOf(error);
+  const answeredForAReader =
+    status !== undefined && ((status >= 400 && status < 500) || status === 502);
+  if (answeredForAReader) {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim() !== "") {
+      return detail;
+    }
+  }
+  return `Could not load ${subject}. Is the API reachable?`;
 }
 
 /** One entry of FastAPI's validation list: `{loc, msg}` → `body.name: required`. */

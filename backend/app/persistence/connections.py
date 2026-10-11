@@ -195,6 +195,37 @@ class ConnectionRow(Base):
     access_token_expires_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime)
     #: Why the connection is not `connected`, in the athlete's words.
     last_error: Mapped[str | None] = mapped_column(String(MAX_ERROR_LENGTH))
+    #: When arc last saw this credential *work* — the moment the status stops
+    #: being a claim and becomes an observation (`ConnectionStatus`).
+    #:
+    #: Written only where Dropbox answered a **scoped** call successfully: the
+    #: `list_folder` family, which is what the feed poll, the folder picker and
+    #: the connect-time probe all issue. Deliberately **not**
+    #: `users/get_current_account`, which succeeds for a grant carrying no file
+    #: scopes at all — counting it as verification is how a connection that
+    #: cannot list a single folder came to be labelled `connected` in the first
+    #: place.
+    #:
+    #: No dedicated health-check job stamps it, and that is the whole design:
+    #: the poll already touches Dropbox every couple of minutes on behalf of
+    #: every watched folder, so verification is a by-product of work arc does
+    #: anyway rather than a second timer with its own failure modes.
+    #:
+    #: The cost of that design, seen and accepted: **a connection with no
+    #: watched folder is never re-verified on its own.** Nothing polls it, so
+    #: the only thing that stamps it is the athlete browsing folders, and a
+    #: permission revoked in the Dropbox console on an account somebody
+    #: abandoned mid-flow stays invisible until they come back to the picker.
+    #: Nothing is being collected through such a connection, so nothing is
+    #: silently lost; a health-check timer for it would be a second scheduled
+    #: job whose only subject is a connection doing no work.
+    #:
+    #: **Null means nobody has checked yet**, which is a real state and not a
+    #: missing value: a connection stored under the transient-probe rule
+    #: (`app.services.connections.VERIFICATION_DEFERRED`) has one until its
+    #: first poll. Every reader renders it as "not checked yet"; none of them
+    #: may substitute `created_at`.
+    last_verified_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime)
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
@@ -252,6 +283,26 @@ class FeedRow(Base):
     #: Normalised by `app.domain.connections.normalise_remote_path`. The empty
     #: string is the Dropbox root, which is legal if unwise.
     remote_path: Mapped[str] = mapped_column(String(MAX_REMOTE_PATH_LENGTH))
+    #: The same folder as the athlete's Dropbox spells it, and the only
+    #: spelling that belongs on screen.
+    #:
+    #: Stored beside :attr:`remote_path` rather than derived from it, because
+    #: it cannot be derived: `path_lower` is a normalisation, and no rule
+    #: recovers `/Apps/WahooFitness` from `/apps/wahoofitness`. The picker and
+    #: the discovery road both hold Dropbox's `path_display` at the moment the
+    #: folder is chosen, so it is written then or never.
+    #:
+    #: **Nullable, and null is a state**: watched before this column existed.
+    #: There is no backfill — inventing a capitalisation would be arc asserting
+    #: a spelling Dropbox never gave it — so every reader falls back to
+    #: :attr:`remote_path`, which is what those rows have always shown.
+    #:
+    #: Never the identity. `uq_feeds_connection_id_remote_path` is written
+    #: against `remote_path` alone, and the folder-clash refusal compares the
+    #: normalised path, because two spellings of one folder are one folder.
+    remote_path_display: Mapped[str | None] = mapped_column(
+        String(MAX_REMOTE_PATH_LENGTH)
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Dropbox's `list_folder` cursor. Null until the first poll.
     cursor: Mapped[str | None] = mapped_column(Text)
@@ -289,12 +340,17 @@ class OAuthAuthorizationRow(Base):
     #: The CSRF nonce a redirect flow round-trips through Dropbox, and the URI
     #: Dropbox is told to send the athlete back to.
     #:
-    #: Both **nullable and unread by any code in this release**: the paste flow
-    #: has neither, and the redirect flow that fills them in is a later PR. The
-    #: columns ship here so that PR is a behaviour change and not a schema
-    #: change on a database already holding live credentials — a migration is
-    #: the risky half of that work and it belongs with the one that is already
-    #: touching these tables.
+    #: Both **nullable, and null together**: a paste flow has neither, because
+    #: Dropbox shows the athlete a code instead of redirecting anywhere and
+    #: there is nothing to round-trip. `ConnectionService.complete_dropbox`
+    #: reads that as a rule in both directions — a row holding a state wants
+    #: one back, a row holding none must be completed without one — so "null"
+    #: here is a state the service asserts on, not a value that was not filled
+    #: in yet.
+    #:
+    #: They shipped inert one release ahead of the flow that uses them, so
+    #: adding the redirect was a behaviour change and not a schema change on a
+    #: database already holding live credentials.
     state: Mapped[str | None] = mapped_column(String(MAX_STATE_LENGTH))
     redirect_uri: Mapped[str | None] = mapped_column(String(MAX_REDIRECT_URI_LENGTH))
     created_at: Mapped[dt.datetime] = mapped_column(

@@ -8,6 +8,7 @@ import {
   formatDurationWords,
   formatMinutesPrime,
   formatPercent,
+  formatRelativeTime,
   formatSets,
   formatUtcStamp,
   formatUtcStampYear,
@@ -193,5 +194,37 @@ describe("formatUtcStampYear", () => {
 
   it("holds the slot when there is no instant to print", () => {
     expect(formatUtcStampYear("")).toBe("—");
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const now = new Date("2026-08-21T12:00:00Z");
+
+  it("says how long ago, in the units a person would use", () => {
+    expect(formatRelativeTime("2026-08-21T11:56:00Z", now)).toBe(
+      "4 minutes ago",
+    );
+    expect(formatRelativeTime("2026-08-21T11:59:00Z", now)).toBe(
+      "1 minute ago",
+    );
+    expect(formatRelativeTime("2026-08-21T09:00:00Z", now)).toBe("3 hours ago");
+    expect(formatRelativeTime("2026-08-21T11:00:00Z", now)).toBe("1 hour ago");
+    expect(formatRelativeTime("2026-08-18T12:00:00Z", now)).toBe("3 days ago");
+    expect(formatRelativeTime("2026-08-20T12:00:00Z", now)).toBe("1 day ago");
+  });
+
+  it("calls the last minute `just now` rather than counting seconds", () => {
+    expect(formatRelativeTime("2026-08-21T11:59:30Z", now)).toBe("just now");
+  });
+
+  it("reads a stamp from the future as skew, not as the future", () => {
+    // The browser's clock is not the server's, and wall clocks step backwards
+    // (.claude/rules/clock-monotonicity.md). "in 4 minutes" is a sentence
+    // nobody can act on; "just now" is true to within the skew.
+    expect(formatRelativeTime("2026-08-21T12:04:00Z", now)).toBe("just now");
+  });
+
+  it("holds the slot rather than inventing an age", () => {
+    expect(formatRelativeTime("not a timestamp", now)).toBe("—");
   });
 });
