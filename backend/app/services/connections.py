@@ -22,6 +22,7 @@ from app.connectors.dropbox import (
     PERMISSION_LOST,
     READ_SCOPES,
     DropboxAccessError,
+    DropboxAppKeyError,
     DropboxAuthError,
     DropboxClient,
     DropboxError,
@@ -878,6 +879,14 @@ class ConnectionService:
                         verifier=pending.code_verifier,
                         redirect_uri=pending.redirect_uri,
                     )
+                except DropboxAppKeyError as exc:
+                    offered = True
+                    raise ValidationError(
+                        "Dropbox does not recognise the app key arc connected "
+                        "with. Check it against the App key on your app's page "
+                        "at https://www.dropbox.com/developers/apps, save the "
+                        "corrected key in Settings, and connect again."
+                    ) from exc
                 except DropboxAuthError as exc:
                     # Dropbox *answered*, refusing the code: it is gone.
                     offered = True

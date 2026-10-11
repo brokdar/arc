@@ -141,6 +141,15 @@ class DropboxAuthError(DropboxError):
     """
 
 
+class DropboxAppKeyError(DropboxAuthError):
+    """Dropbox does not recognise the app key arc presented (`invalid_client`).
+
+    A subclass so every caller refusing a dead credential still refuses this,
+    and its own class because the remedy is not a fresh code: a key Dropbox has
+    never heard of fails every authorization until it is corrected in arc.
+    """
+
+
 class DropboxScopeError(DropboxAuthError):
     """Dropbox will not do this at all: the grant carries no scope for it.
 
@@ -531,8 +540,13 @@ def _token_failure(response: httpx.Response) -> DropboxError:
     except ValueError:
         body = {}
     error = str(body.get("error", "")) if isinstance(body, dict) else ""
-    if error in {"invalid_grant", "unauthorized_client", "invalid_client"}:
-        return DropboxAuthError(error or "invalid_grant")
+    # Dropbox glues the description onto the code (`invalid_client: Invalid
+    # client_id`), so the code is what precedes the colon.
+    code = error.partition(":")[0].strip()
+    if code == "invalid_client":
+        return DropboxAppKeyError(error)
+    if code in {"invalid_grant", "unauthorized_client"}:
+        return DropboxAuthError(error)
     return DropboxUpstreamError(
         f"Dropbox refused the token request with {response.status_code} "
         f"({error or 'no error code'})"

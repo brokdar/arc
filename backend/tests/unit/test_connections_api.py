@@ -803,6 +803,30 @@ async def test_an_invalid_grant_is_a_422_and_writes_no_row(
     assert await count_of(db_session, OAuthAuthorizationRow) == 0
 
 
+async def test_an_app_key_dropbox_does_not_know_is_named_as_the_app_key(
+    client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
+) -> None:
+    """Found by Schemathesis: a fuzzed app key reached the real token endpoint.
+
+    Dropbox answered ``"error": "invalid_client: Invalid client_id"`` — the
+    code with its description glued on — so an exact match on the code missed
+    it, and the athlete read a 502 promising "nothing is wrong with your
+    setup" about the one value in their setup that was wrong. Nor is it the
+    stale-code sentence: no new code fixes a key Dropbox has never heard of.
+    """
+    await client.post(AUTHORIZE)
+    fake.token_error = "invalid_client: Invalid client_id"
+
+    response = await client.post(COMPLETE, json={"code": "fresh-code"})
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "app key" in detail
+    assert "already been used" not in detail
+    assert await count_of(db_session, ConnectionRow) == 0
+    assert await count_of(db_session, OAuthAuthorizationRow) == 0
+
+
 async def test_a_token_exchange_that_never_reaches_dropbox_is_a_422(
     client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeDropbox
 ) -> None:
