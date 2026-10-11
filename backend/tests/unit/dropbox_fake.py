@@ -43,13 +43,21 @@ class Call:
     headers: httpx.Headers
 
 
-def folder_entry(name: str, path_lower: str) -> dict[str, Any]:
-    """A `folder` entry as `list_folder` returns it."""
+def folder_entry(
+    name: str, path_lower: str, *, path_display: str | None = None
+) -> dict[str, Any]:
+    """A `folder` entry as `list_folder` returns it.
+
+    ``path_display`` defaults to ``path_lower`` because most tests here are
+    not about casing and an all-lowercase Dropbox is a real one. A test that
+    *is* about casing passes the athlete's own spelling, which is the only
+    way to catch a reader that projected the wrong field.
+    """
     return {
         ".tag": "folder",
         "name": name,
         "path_lower": path_lower,
-        "path_display": path_lower,
+        "path_display": path_display if path_display is not None else path_lower,
         "id": f"id:{name}",
     }
 
@@ -69,12 +77,14 @@ def file_entry(
     entry_id: str | None = None,
     rev: str = "0123456789abcdef",
     client_modified: str = DEFAULT_CLIENT_MODIFIED,
+    path_display: str | None = None,
 ) -> dict[str, Any]:
     """A `file` entry as `list_folder` returns it."""
     return {
         ".tag": "file",
         "name": name,
         "path_lower": path_lower,
+        "path_display": path_display if path_display is not None else path_lower,
         "id": entry_id or f"id:{name}",
         "size": size,
         "rev": rev,
@@ -83,6 +93,16 @@ def file_entry(
         # head unit wrote the ride rather than when Dropbox received it.
         "server_modified": client_modified,
     }
+
+
+def _is_probe(call: Call) -> bool:
+    """Whether a call is `complete`'s read probe rather than a real listing.
+
+    `limit` is what tells them apart, and only the probe sends it: arc's
+    folder listings ask for everything under a path and follow `has_more` to
+    the end, while the probe asks for one entry and ignores the rest.
+    """
+    return call.path == LIST_FOLDER_PATH and (call.body or {}).get("limit") is not None
 
 
 def deleted_entry(name: str, path_lower: str) -> dict[str, Any]:
@@ -240,6 +260,8 @@ class FakeDropbox:
         )
 
     def _list_folder(self, call: Call) -> httpx.Response:
+        if _is_probe(call):
+            return self._probe()
         if call.path == LIST_FOLDER_PATH:
             wanted = str((call.body or {}).get("path", ""))
             failure = self.list_failures.get(wanted) or self.list_failures.get(
@@ -260,13 +282,35 @@ class FakeDropbox:
                 return reset_cursor()
             return httpx.Response(200, json=answer)
         pages = self.pages if self.pages is not None else [_DEFAULT_PAGE]
-        index = min(
-            len(self.calls_to(LIST_FOLDER_CONTINUE_PATH))
-            + len(self.calls_to(LIST_FOLDER_PATH))
-            - 1,
-            len(pages) - 1,
-        )
+        # Probes are excluded from the walk, not just from the answer: the
+        # index counts calls, so leaving `complete`'s probe in it would serve
+        # every test that connects and then lists one page too far.
+        index = min(len(self._listings()) - 1, len(pages) - 1)
         return httpx.Response(200, json=pages[index])
+
+    def _listings(self) -> list[Call]:
+        """Recorded calls that walk a folder, probes excluded."""
+        return [
+            call
+            for call in self.calls
+            if call.path in {LIST_FOLDER_PATH, LIST_FOLDER_CONTINUE_PATH}
+            and not _is_probe(call)
+        ]
+
+    def _probe(self) -> httpx.Response:
+        """Answer `complete`'s `limit=1` probe without moving the listing on.
+
+        Its own branch because a probe is not a listing. It asks for one entry
+        of the root only to find out whether a scoped call succeeds at all,
+        and serving it out of :attr:`pages` or :attr:`tree` would spend the
+        page the *next* call is written against — every test that connects and
+        then lists would read one page too far. Overridden the same way any
+        other answer is, with `script(LIST_FOLDER_PATH, ...)` or
+        :attr:`raises`, which is how a refused or unanswered probe is written.
+        """
+        return httpx.Response(
+            200, json=page(folder_entry("Apps", "/apps"), has_more=True)
+        )
 
     def _from_tree(self, call: Call) -> httpx.Response:
         """Serve one page of :attr:`tree`, paginating like Dropbox does.
@@ -357,6 +401,50 @@ def expired_access_token() -> httpx.Response:
         json={
             "error_summary": "expired_access_token/",
             "error": {".tag": "expired_access_token"},
+        },
+    )
+
+
+def missing_scope(
+    required_scope: str = "files.metadata.read", *, status: int = 401
+) -> httpx.Response:
+    """Dropbox's 401 for a call the grant carries no scope for.
+
+    The same status code as a dead access token, and a different body — which
+    is the whole reason this exists as its own answer: a grant that lists no
+    file scopes reaches every read endpoint and is refused here, not at the
+    token exchange.
+
+    ``status`` because Dropbox says it both ways: `probe_readable` has always
+    read 401 **and** 403, and a 403 carrying this body is the same fact about
+    the same grant. A test passing 403 is testing the code path, not a
+    hypothetical — a 403 arc failed to classify reached the athlete as "try
+    again in a few minutes" for a condition no amount of waiting fixes.
+    """
+    return httpx.Response(
+        status,
+        json={
+            "error_summary": f"missing_scope/{required_scope}",
+            "error": {".tag": "missing_scope", "required_scope": required_scope},
+        },
+    )
+
+
+def no_access(summary: str = "access_denied/team_policy/...") -> httpx.Response:
+    """Dropbox's 403 for a call the *account* is not allowed to make.
+
+    A 403 with no `missing_scope` in it, which is the other half of what
+    Dropbox sends on that status: a team policy, a suspended member, a shared
+    folder somebody else owns. The grant is intact and re-authorizing changes
+    nothing, so arc reads it as `DropboxAccessError` — the distinction this
+    body exists to exercise, because the same shape used to be reported as a
+    dead credential and answered with "disconnect".
+    """
+    return httpx.Response(
+        403,
+        json={
+            "error_summary": summary,
+            "error": {".tag": "access_denied", "access_error": {".tag": "team_policy"}},
         },
     )
 

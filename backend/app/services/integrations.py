@@ -69,6 +69,10 @@ class FolderView:
     connection_id: uuid.UUID
     storage: StorageProvider
     remote_path: str
+    #: The athlete's own capitalisation, or ``None`` for a folder watched
+    #: before arc stored one. The panel renders this and falls back to
+    #: :attr:`remote_path` — see `FeedRow.remote_path_display`.
+    remote_path_display: str | None
     enabled: bool
     state: FeedDeliveryState
     last_delivery_at: dt.datetime | None
@@ -156,6 +160,13 @@ class IntegrationProposal:
     #: Normalised, so accepting stores the same spelling the folder-clash
     #: refusal compares against.
     path: str
+    #: The same folder as the athlete's Dropbox spells it, and the only
+    #: spelling the panel renders. Carried beside :attr:`path` rather than
+    #: instead of it for the reason `FolderRead` gives: one of the two is an
+    #: identity and the other is a name, and a screen showing
+    #: `/apps/wahoofitness` to somebody looking at `/Apps/WahooFitness` reads
+    #: as a case bug in arc.
+    path_display: str
     activity_files: int
     newest_at: dt.datetime | None
     #: ``True`` when arc is already collecting this folder on this account.
@@ -306,11 +317,15 @@ class IntegrationService:
                     display_name=(
                         CATALOGUE[kind].display_name
                         if kind is not None
-                        else (path or "the Dropbox root")
+                        # The folder is the only true name arc has for it, so
+                        # it is the folder as the athlete spells it — the
+                        # stored spelling is an identity, not a name.
+                        else (candidate.path_display or path or "the Dropbox root")
                     ),
                     connection_id=connection_id,
                     transport=TransportKind.CLOUD_FOLDER,
                     path=path,
+                    path_display=candidate.path_display,
                     activity_files=candidate.activity_files,
                     newest_at=candidate.newest_at,
                     configured=feed is not None,
@@ -424,6 +439,7 @@ class IntegrationService:
         transport: TransportKind,
         connection_id: uuid.UUID | None,
         remote_path: str | None,
+        path_display: str | None = None,
         actor: Actor,
     ) -> AddedIntegration:
         """Add a source, and the first (or next) folder it is collected through.
@@ -431,6 +447,15 @@ class IntegrationService:
         Returns the integration either way: adding Wahoo a second time with a
         different folder is one integration with two folders, reported as
         `created=False` so the adapter can answer 200 rather than 201.
+
+        ``path_display`` is the same folder as the athlete's Dropbox spells it,
+        and this is the only moment arc can learn it: `remote_path` is stored
+        normalised, and nothing recovers `/Apps/WahooFitness` from
+        `/apps/wahoofitness` afterwards. Both roads in already hold it — the
+        picker from the listing it is standing in, the discovery proposals from
+        the candidate — so it is threaded through rather than looked up. Absent
+        means absent (a caller that does not know), and the folder is stored
+        with none, exactly like a row watched before the column existed.
 
         Raises:
             ValidationError: When the kind cannot be added (the local drop), the
@@ -483,7 +508,18 @@ class IntegrationService:
         # own: the view returned below is built from `integration.feeds`, and a
         # relationship SQLAlchemy has already loaded is not re-read just
         # because a row was inserted behind it.
-        integration.feeds.append(FeedRow(connection_id=connection.id, remote_path=path))
+        integration.feeds.append(
+            FeedRow(
+                connection_id=connection.id,
+                remote_path=path,
+                # Only a spelling of the folder that was asked for. A caller
+                # sending some other path's display form would put a name on
+                # this row that belongs to a different folder, so the two are
+                # compared normalised and a mismatch is dropped rather than
+                # refused: the folder is right, the label is the caller's bug.
+                remote_path_display=_display_for(path, path_display),
+            )
+        )
         await self._audit.record(
             actor=actor,
             action="integration.created" if created else "integration.folder_added",
@@ -664,6 +700,16 @@ class IntegrationService:
         compares stored strings, and `normalise_remote_path` is Python — so
         `/Apps/WahooFitness/` and `/apps/wahoofitness` are one folder here and
         two rows as far as any constraint can tell.
+
+        **Compared on the normalised path, named by the display one.** The
+        picker prints this sentence directly under a breadcrumb reading
+        `/Apps/WahooFitness`, so a refusal spelling the same folder
+        `/apps/wahoofitness` reads as arc talking about a *different* folder,
+        or as a case bug. The spelling comes off the row that is already
+        holding it (`FeedRow.remote_path_display`) rather than from the
+        request, because the sentence is about what arc has, not about what was
+        asked for — and a row watched before that column existed has only the
+        stored path, which is what it has always shown.
         """
         existing = await self._connections.feed_for_path(connection.id, path)
         if existing is None:
@@ -673,10 +719,27 @@ class IntegrationService:
             owner = await self._repository.get(existing.integration_id)
             if owner is not None:
                 holder = CATALOGUE[owner.kind].display_name
+        where = existing.remote_path_display or path
         raise ConflictError(
-            f"{holder} is already collecting {path or 'the Dropbox root'} on "
+            f"{holder} is already collecting {where or 'the Dropbox root'} on "
             "this account. One folder feeds one integration."
         )
+
+
+def _display_for(path: str, path_display: str | None) -> str | None:
+    """The display spelling to store beside ``path``, or ``None``.
+
+    ``None`` for an absent one, an empty one, and one that normalises to some
+    *other* folder — the last because the display path is a label and the
+    normalised path is the identity, so a caller that sent a mismatched pair
+    has told arc two different things and only one of them is checkable. The
+    identity wins and the label is dropped, which leaves the row rendering the
+    stored path: right, if less friendly. Storing the mismatch instead would
+    put another folder's name on this one for good.
+    """
+    if not path_display:
+        return None
+    return path_display if normalise_remote_path(path_display) == path else None
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:
@@ -706,6 +769,7 @@ def _folder(feed: FeedRow, connections: dict[uuid.UUID, ConnectionRow]) -> Folde
         connection_id=feed.connection_id,
         storage=_provider_of(feed, connections),
         remote_path=feed.remote_path,
+        remote_path_display=feed.remote_path_display,
         enabled=feed.enabled,
         state=delivery_state(feed),
         last_delivery_at=feed.last_delivery_at,

@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
+import { redirectEligible } from "@/lib/dropbox-redirect";
 import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
@@ -4132,8 +4133,49 @@ function daysBetween(from: string, to: string): number {
 // ============================================================================
 
 type Connection = Schemas["ConnectionRead"];
+type CompletedConnection = Schemas["DropboxConnectionRead"];
 type Feed = Schemas["FeedRead"];
 type Folder = Schemas["FolderRead"];
+type FolderList = Schemas["FolderList"];
+
+/** The Wahoo folder, in the spelling arc stores. */
+export const WAHOO_PATH = "/apps/wahoofitness";
+
+/** The same folder, in the spelling the athlete's Dropbox shows them. */
+export const WAHOO_PATH_DISPLAY = "/Apps/WahooFitness";
+
+/**
+ * One folder of the fake Dropbox: its subfolders, and the files in it.
+ *
+ * Files are *names*, not counts, because the two numbers the API reports are
+ * derived from them by the same rule the backend applies
+ * (`app.domain.connections.is_activity_file`). A fixture that carried the
+ * counts directly could not fail when the picker rendered the wrong one — and
+ * a folder whose `supported_file_count` exceeded its `file_count` is a payload
+ * the real API cannot produce.
+ */
+export interface DropboxFolderContents {
+  /** The folder itself, as the athlete capitalised it. `""` is the root. */
+  readonly path_display: string;
+  readonly folders: readonly Folder[];
+  readonly files: readonly string[];
+}
+
+/**
+ * The extensions arc can read, as `app.domain.connections` holds them.
+ *
+ * Restated rather than imported, for the reason `normaliseRemotePath` is: the
+ * counts on screen are a promise about what the poll will take, and a mock
+ * that derived them from the same source as the code could not catch the two
+ * drifting apart.
+ */
+const ACTIVITY_EXTENSIONS = new Set(["fit", "gpx", "tcx"]);
+
+/** Whether the poll would spend a download on this name. Case-insensitive. */
+function isActivityFile(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && ACTIVITY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
 
 /** The connection id every seeded fixture uses. */
 export const DROPBOX_CONNECTION_ID = "0199b000-0000-7000-8000-00000000c001";
@@ -4154,16 +4196,48 @@ export const DROPBOX_READ_SCOPES = [
   "files.metadata.read",
 ];
 
+/**
+ * `VERIFICATION_DEFERRED` in `app/services/connections.py`, word for word.
+ *
+ * Copied rather than paraphrased: it is the sentence the athlete reads when
+ * arc stored a connection it could not prove, and a test written against an
+ * invented one would pass against a component that renders nothing the server
+ * ever sends.
+ */
+export const DROPBOX_VERIFICATION_DEFERRED =
+  "Dropbox did not answer when arc checked that it can read your files. The " +
+  "account is connected, and arc checks again the first time it looks for " +
+  "new rides.";
+
 interface ConnectionsMockState {
   connections: Connection[];
   /** Whether an authorization has been started but not yet completed. */
   authorizationStarted: boolean;
+  /**
+   * The nonce the started authorization was minted with, or null.
+   *
+   * Null is the paste flow, and the difference is load-bearing: the API
+   * refuses a completion whose `state` does not match this exactly, in either
+   * direction, so a step that sent the wrong one gets the refusal the real
+   * server would give it rather than a connection it should not have.
+   */
+  authorizationState: string | null;
+  /** The redirect URI the last authorize call was given, if any. */
+  authorizationRedirectUri: string | null;
   /** The app key pasted into Settings, as `provider_apps` holds it. */
   storedAppKey: string | null;
   /** `DROPBOX__APP_KEY`, the config-as-code seed the store overrides. */
   envAppKey: string | null;
-  /** Remote path → the folders directly under it. */
-  folders: Map<string, Folder[]>;
+  /** Remote path (as arc stores it) → everything directly under it. */
+  folders: Map<string, DropboxFolderContents>;
+  /**
+   * What the next completion says about proving the credential.
+   *
+   * `null` is the ordinary case: arc read the athlete's Dropbox during the
+   * connect and it worked. A sentence is the connection the server stored
+   * without being able to prove it, because Dropbox did not answer the check.
+   */
+  verificationNote: string | null;
   minted: number;
 }
 
@@ -4171,24 +4245,65 @@ function seedConnectionsState(): ConnectionsMockState {
   return {
     connections: [],
     authorizationStarted: false,
+    authorizationState: null,
+    authorizationRedirectUri: null,
     // The seeded instance is one whose operator set `DROPBOX__APP_KEY` — the
     // configuration every existing test was written against. A test about
     // the registration checklist clears it with `seedDropboxAppKey(false)`.
     storedAppKey: null,
     envAppKey: "test-app-key",
-    folders: new Map<string, Folder[]>([
+    folders: new Map<string, DropboxFolderContents>([
       [
         "",
-        [
-          { path_lower: "/apps", name: "Apps" },
-          { path_lower: "/photos", name: "Photos" },
-        ],
+        {
+          path_display: "",
+          folders: [
+            { path_lower: "/apps", path_display: "/Apps", name: "Apps" },
+            { path_lower: "/photos", path_display: "/Photos", name: "Photos" },
+          ],
+          // The file every Dropbox is created with, and one arc cannot read:
+          // the root is the folder where the two counts differ most.
+          files: ["Get Started with Dropbox.pdf"],
+        },
       ],
-      ["/apps", [{ path_lower: "/apps/wahoofitness", name: "WahooFitness" }]],
-      // A folder holding only files: Dropbox answers 200 with no entries, and
-      // the picker has to say so rather than draw an empty box.
-      ["/apps/wahoofitness", []],
+      [
+        "/apps",
+        {
+          path_display: "/Apps",
+          folders: [
+            {
+              path_lower: WAHOO_PATH,
+              path_display: "/Apps/WahooFitness",
+              name: "WahooFitness",
+            },
+          ],
+          files: [],
+        },
+      ],
+      [
+        // A folder holding only files: Dropbox answers with no folder entries,
+        // and the picker says what is in it rather than drawing an empty box.
+        // Three rides, which is what discovery reports for the same folder.
+        WAHOO_PATH,
+        {
+          path_display: "/Apps/WahooFitness",
+          folders: [],
+          files: [
+            "2026-08-16-090000.fit",
+            "2026-08-15-063000.fit",
+            "2026-08-13-171500.fit",
+            "summary.csv",
+            "elevation.png",
+          ],
+        },
+      ],
+      // Nothing at all in it: the state the old copy asserted files into.
+      // `path_display` echoes the *requested* path, lower case and all,
+      // because that is what the API can answer with — it derives a listing's
+      // display path from its first entry, and an empty folder has none.
+      ["/photos", { path_display: "/photos", folders: [], files: [] }],
     ]),
+    verificationNote: null,
     minted: 0,
   };
 }
@@ -4241,9 +4356,20 @@ export function dropboxConnection(
     last_error: null,
     created_at: "2026-08-16T09:30:00Z",
     updated_at: "2026-08-16T09:30:00Z",
+    // Computed, unlike every other stamp here, because this one is rendered
+    // *relative to now*: a frozen instant would age into "8 months ago" and
+    // then into a different sentence again, so a test asserting on the words
+    // would rot on a date rather than on a change to the code. Four minutes is
+    // the last poll of a healthy connection — the real API's ordinary answer.
+    last_verified_at: minutesAgo(4),
     feeds: [],
     ...overrides,
   };
+}
+
+/** An instant `minutes` before now, as the API would serve it. */
+export function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
 /** A watched folder, as the API reports it before anything has been delivered. */
@@ -4274,7 +4400,8 @@ export function seedDropboxConnection(
 /** Complete an authorization the way the API does, or say why not. */
 export function completeDropbox(
   code: string,
-): { connection: Connection } | { detail: string } {
+  nonce: string | null = null,
+): { completed: CompletedConnection } | { detail: string } {
   const state = connectionsState();
   if (!state.authorizationStarted) {
     return {
@@ -4290,6 +4417,19 @@ export function completeDropbox(
         "connecting another.",
     };
   }
+  // The service's rule, both ways round: a redirect flow wants its nonce back
+  // and a paste flow must arrive without one. A mismatch ends the flow rather
+  // than leaving it redeemable.
+  if ((state.authorizationState ?? null) !== (nonce ?? null)) {
+    state.authorizationStarted = false;
+    state.authorizationState = null;
+    state.authorizationRedirectUri = null;
+    return {
+      detail:
+        "arc could not verify that connection came back from the link it " +
+        "sent you, so it has been stopped. Start the connection again.",
+    };
+  }
   if (code.trim() !== DROPBOX_CODE) {
     return {
       detail:
@@ -4298,9 +4438,78 @@ export function completeDropbox(
     };
   }
   state.authorizationStarted = false;
+  state.authorizationState = null;
+  state.authorizationRedirectUri = null;
   const connection = dropboxConnection();
   state.connections = [connection];
-  return { connection };
+  // The completion carries one field the stored connection does not: what arc
+  // could prove about the credential at the moment it was stored. A later
+  // `GET /connections` has nothing to say about a check that ran once.
+  return {
+    completed: { ...connection, verification_note: state.verificationNote },
+  };
+}
+
+/**
+ * `POST /connections/dropbox/authorize`, refusing what the service refuses.
+ *
+ * The eligibility rule is the server's — `app.connectors.dropbox`'s
+ * `redirect_eligible` — so the fake applies it too: a step that offered the
+ * redirect from a plain-http LAN address gets the 422 the real API would give
+ * it, rather than a link Dropbox would refuse minutes later.
+ */
+export function startDropboxAuthorization(
+  redirectUri: string | null,
+):
+  | { authorize_url: string; expires_at: string }
+  | { status: 422; detail: string } {
+  const state = connectionsState();
+  const appKey = dropboxAppKey();
+  if (appKey === null) {
+    return {
+      status: 422,
+      detail:
+        "arc has no Dropbox app key yet. Register an app at " +
+        "https://www.dropbox.com/developers/apps — Scoped access, access " +
+        "type Full Dropbox — and paste its app key into Settings, in the " +
+        "steps for adding an integration.",
+    };
+  }
+  if (redirectUri !== null && !redirectEligible(redirectUri)) {
+    return {
+      status: 422,
+      detail:
+        `Dropbox will not redirect back to ${redirectUri}: it only redirects ` +
+        "to https addresses, or to http on localhost. arc reached over plain " +
+        "http at a LAN address is connected by pasting the code Dropbox " +
+        "shows you — start the connection again and paste the code.",
+    };
+  }
+  state.authorizationStarted = true;
+  state.authorizationRedirectUri = redirectUri;
+  state.minted += 1;
+  // A fresh nonce per start, as the service mints one: a fake that reused one
+  // could not tell a resumed flow from a superseded one.
+  state.authorizationState =
+    redirectUri === null ? null : `nonce-${state.minted}`;
+  const query = new URLSearchParams({
+    // The key in force, not a constant: a flow that offered connect before
+    // one was set would otherwise get a working link back.
+    client_id: appKey,
+    response_type: "code",
+    token_access_type: "offline",
+    code_challenge: "fake-challenge",
+    code_challenge_method: "S256",
+    scope: DROPBOX_READ_SCOPES.join(" "),
+  });
+  if (redirectUri !== null) {
+    query.set("redirect_uri", redirectUri);
+    query.set("state", state.authorizationState as string);
+  }
+  return {
+    authorize_url: `https://www.dropbox.com/oauth2/authorize?${query}`,
+    expires_at: "2026-08-16T09:45:00Z",
+  };
 }
 
 /** Create a feed the way the API does — normalised path, 409 on a repeat. */
@@ -4329,9 +4538,24 @@ export function createDropboxFeed(
   return { feed };
 }
 
-/** The folders directly under a path, or null when the path is unknown. */
-export function dropboxFolders(path: string): Folder[] | null {
-  return connectionsState().folders.get(normaliseRemotePath(path)) ?? null;
+/**
+ * `GET /connections/{id}/folders` — what is under a path, or null if unknown.
+ *
+ * The counts are computed here rather than seeded, so a folder can never
+ * report more readable files than files, and a test that changes what is in
+ * the folder changes the sentence on screen without touching a number.
+ */
+export function dropboxFolderPage(path: string): FolderList | null {
+  const here = connectionsState().folders.get(normaliseRemotePath(path));
+  if (here === undefined) {
+    return null;
+  }
+  return {
+    path_display: here.path_display,
+    items: [...here.folders],
+    file_count: here.files.length,
+    supported_file_count: here.files.filter(isActivityFile).length,
+  };
 }
 
 // ============================================================================
@@ -4346,14 +4570,20 @@ type IntegrationKind = Schemas["IntegrationKind"];
 /** Where the local drop looks, as a real deployment would report it. */
 export const INBOX_PATH = "/srv/arc/data/inbox";
 
-/** The Wahoo folder, in the spelling arc stores. */
-export const WAHOO_PATH = "/apps/wahoofitness";
-
 interface IntegrationsMockState {
   /** `kind` → the folders that integration is collected through. */
   stored: Map<IntegrationKind, { id: string; folders: string[] }>;
   /** Folders the athlete has paused, by remote path. */
   paused: Set<string>;
+  /**
+   * The athlete's own spelling of a watched folder, by normalised path.
+   *
+   * The server learns this at watch time and stores it beside the path
+   * (`feeds.remote_path_display`), so the mock has to as well: a handler that
+   * echoed a canned display path could not fail when the flow stops sending
+   * one, and the card's fallback would be untested in both directions.
+   */
+  displays: Map<string, string>;
   scanIntervalSeconds: number;
   /** Whether the interval above was set in the app or read from `.env`. */
   scanIntervalStored: boolean;
@@ -4364,6 +4594,7 @@ function seedIntegrationsState(): IntegrationsMockState {
   return {
     stored: new Map(),
     paused: new Set<string>(),
+    displays: new Map<string, string>(),
     scanIntervalSeconds: 30,
     scanIntervalStored: false,
     minted: 0,
@@ -4451,6 +4682,7 @@ function integrationFolder(
     connection_id: connection?.id ?? DROPBOX_CONNECTION_ID,
     storage: "dropbox",
     remote_path: remotePath,
+    remote_path_display: integrationsState().displays.get(remotePath) ?? null,
     enabled: !integrationsState().paused.has(remotePath),
     state: integrationsState().paused.has(remotePath)
       ? "paused"
@@ -4574,6 +4806,7 @@ export function addIntegration(body: {
   transport: Schemas["TransportKind"];
   connection_id?: string;
   remote_path?: string;
+  path_display?: string;
 }):
   | { status: 200 | 201; integration: Integration }
   | { status: 404 | 409 | 422; detail: string } {
@@ -4605,19 +4838,30 @@ export function addIntegration(body: {
     };
   }
   const path = normaliseRemotePath(body.remote_path ?? WAHOO_PATH);
+  // The refusal names the folder as the **row holding it** spells it, never as
+  // the request spelled it: the server reads `feeds.remote_path_display`, and
+  // a mock that echoed the request back would agree with a flow that sent the
+  // wrong thing.
+  const held = state.displays.get(path) ?? path;
   for (const [kind, entry] of state.stored) {
     if (entry.folders.includes(path)) {
       return {
         status: 409,
-        detail: `${DISPLAY_NAMES[kind]} is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+        detail: `${DISPLAY_NAMES[kind]} is already collecting ${held || "the Dropbox root"} on this account. One folder feeds one integration.`,
       };
     }
   }
   if (connection.feeds.some((feed) => feed.remote_path === path)) {
     return {
       status: 409,
-      detail: `A folder arc has not classified yet is already collecting ${path || "the Dropbox root"} on this account. One folder feeds one integration.`,
+      detail: `A folder arc has not classified yet is already collecting ${held || "the Dropbox root"} on this account. One folder feeds one integration.`,
     };
+  }
+  // Stored only when it is a spelling of *this* folder, as the service does:
+  // the normalised path is the identity and the display path is a label, so a
+  // mismatched pair loses the label rather than renaming the folder.
+  if (body.path_display && normaliseRemotePath(body.path_display) === path) {
+    state.displays.set(path, body.path_display);
   }
   const existing = state.stored.get(body.kind);
   if (existing) {
@@ -4874,12 +5118,20 @@ export function discoverIntegrations(connectionId: string): Discovery | null {
       const path = normaliseRemotePath(folder.path);
       const kind =
         classified.get(path) ?? (path === WAHOO_PATH ? "wahoo" : null);
+      // Dropbox's own spelling, taken from the same folder tree the browser
+      // reads: the service derives it from the listing's entries, so the two
+      // surfaces describe one Dropbox and cannot disagree about its casing.
+      const pathDisplay =
+        connectionsState().folders.get(path)?.path_display ?? path;
       return {
         kind,
-        display_name: kind ? DISPLAY_NAMES[kind] : path || "the Dropbox root",
+        display_name: kind
+          ? DISPLAY_NAMES[kind]
+          : pathDisplay || path || "the Dropbox root",
         connection_id: connectionId,
         transport: "cloud_folder" as const,
         path,
+        path_display: pathDisplay,
         activity_files: folder.activityFiles,
         newest_at: folder.newestAt,
         configured: held.has(path),
