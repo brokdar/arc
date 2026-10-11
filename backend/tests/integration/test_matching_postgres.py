@@ -109,9 +109,10 @@ async def test_the_breakdown_is_queryable_jsonb(client: AsyncClient) -> None:
     try:
         async with engine.connect() as conn:
             row = (
-                await conn.execute(
-                    sa.text(
-                        """
+                (
+                    await conn.execute(
+                        sa.text(
+                            """
                         SELECT jsonb_typeof(breakdown) AS shape,
                                (breakdown ->> 'score')::float AS score,
                                (breakdown -> 'weights' ->> 'duration')::float
@@ -124,21 +125,24 @@ async def test_the_breakdown_is_queryable_jsonb(client: AsyncClient) -> None:
                                    AS first_component
                         FROM session_matches
                         """
+                        )
                     )
                 )
-            ).one()
+                .mappings()
+                .one()
+            )
     finally:
         await engine.dispose()
 
-    assert row.shape == "object"
-    assert row.duration_weight == pytest.approx(0.4)
+    assert row["shape"] == "object"
+    assert row["duration_weight"] == pytest.approx(0.4)
     # A typed-in ride has no stream, so duration is the one component that
     # could be assessed and the other two say why they could not — the
     # renormalisation, visible to Postgres itself.
-    assert row.assessed == 1
-    assert row.absent == 2
-    assert row.first_component == "duration"
-    assert row.score == pytest.approx(1.0)
+    assert row["assessed"] == 1
+    assert row["absent"] == 2
+    assert row["first_component"] == "duration"
+    assert row["score"] == pytest.approx(1.0)
 
 
 async def test_neither_side_can_be_linked_twice(client: AsyncClient) -> None:
