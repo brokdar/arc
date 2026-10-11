@@ -37,13 +37,10 @@ from app.api.routes.power_curve import to_read
 from app.domain.power_curve import power_curve
 from app.domain.streams import StreamChannel
 from app.services.power_curve import NO_POWER, NO_RECORDING, SessionPowerCurve
-from scripts.emit_metrics_fixture import build_columns
+from scripts.emit_metrics_fixture import POWER_REPAIR, build_columns
 
 ROOT = Path(__file__).resolve().parents[2]
 DESTINATION = ROOT / "frontend" / "tests" / "mocks" / "generated-power-curve.ts"
-
-#: The repaired power region `emit_metrics_fixture.py` attaches to its stream.
-RIDE_ANOMALIES = [(512, 515)]
 
 #: The two-hour ride: ``(seconds, watts)`` blocks — a warm-up, three
 #: 20-minute threshold efforts, a sprint, and an endurance tail.
@@ -80,7 +77,7 @@ def document(answer: SessionPowerCurve) -> dict[str, Any]:
 def build() -> dict[str, dict[str, Any]]:
     """Every exported constant's payload, by name."""
     session_id = uuid.UUID(int=0)
-    ride = power_curve(build_columns()[StreamChannel.POWER], anomalies=RIDE_ANOMALIES)
+    ride = power_curve(build_columns()[StreamChannel.POWER], anomalies=[POWER_REPAIR])
     long = power_curve(long_ride())
     if ride is None or long is None:
         raise SystemExit("a fixture stream carries no power: nothing to emit")

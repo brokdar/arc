@@ -59,6 +59,9 @@ _GRID_STEP_BEYOND = 300
 #: So a short run is bridged — eight seconds covers a 4 s-sampled file with
 #: room for a dropped packet — and anything longer is a real absence (a
 #: dropout, a recording stop) and is zero-filled.
+#:
+#: A tunable default (the spec's "8 s, tunable"), not a validated value: it
+#: is calibrated against intervals.icu by `metric-policy-and-verification`.
 MMP_INTERP_MAX_GAP_S = 8
 
 #: Fixed-point scale the search sums in: centiwatts. Exact integers rather

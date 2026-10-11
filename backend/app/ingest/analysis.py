@@ -38,7 +38,6 @@ from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.domain.actor import Actor
 from app.domain.metrics import PerformedSet
-from app.domain.power_curve import PowerCurve, power_curve
 from app.domain.session_analysis import SessionInputs, analyse_session
 from app.domain.streams import AnomalyKind, StreamChannel
 from app.ingest.parquet import (
@@ -47,6 +46,7 @@ from app.ingest.parquet import (
     read_streams,
     stream_path,
 )
+from app.ingest.power_curve import session_power_curve
 from app.persistence.activity import (
     RecordingRepository,
     RecordingRow,
@@ -338,36 +338,6 @@ def _shifted(anomaly: StreamAnomalyRow, offset: int) -> StreamAnomaly:
     )
 
 
-async def _power_curve(
-    session_row: SessionRow, recordings: RecordingRepository
-) -> PowerCurve | None:
-    """The session's power curve over its joined stream, or ``None``.
-
-    Read through :func:`load_streams` rather than from the columns
-    :meth:`SessionAnalyser.compute` already holds, because the curve also needs
-    the power channel's repaired regions on the joined grid, which only the
-    chart path assembles. That is a second parquet read per computation —
-    milliseconds, against keeping one implementation of the join.
-    """
-    if not session_row.recordings:
-        return None
-    try:
-        streams = await load_streams(session_row, recordings)
-    except NotFoundError:
-        return None
-    return power_curve(
-        streams.channels.get(StreamChannel.POWER),
-        anomalies=[
-            (anomaly.start_index, anomaly.end_index)
-            for anomaly in streams.anomalies
-            # `RESAMPLED_ONLY` spans the whole frame and certifies that
-            # nothing was repaired; counting it would mark every best unclean.
-            if anomaly.channel is StreamChannel.POWER
-            and anomaly.kind is not AnomalyKind.RESAMPLED_ONLY
-        ],
-    )
-
-
 class SessionAnalyser:
     """Computes and stores one session's metric artefact."""
 
@@ -433,9 +403,10 @@ class SessionAnalyser:
         anchors = await self._metrics.current_anchors()
         sex = await self._metrics.athlete_sex()
         durations, columns, segments = await self._recorded(session_row)
-        await self._power_curves.store(
-            session_id, await _power_curve(session_row, self._recordings), actor=actor
+        curve = await session_power_curve(
+            session_row, lambda row: load_streams(row, self._recordings)
         )
+        await self._power_curves.store(session_id, curve, actor=actor)
 
         analysis = analyse_session(
             SessionInputs(
