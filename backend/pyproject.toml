@@ -10,18 +10,18 @@ dynamic = ["version"]
 # be classified by the domain-purity contract below and its completeness test,
 # so it would be permanent noise in two places.
 dependencies = [
-    "fastapi[standard]>=0.141.1",
-    "sqlalchemy[asyncio]>=2.1.1",
-    "alembic>=1.20.0",
-    "asyncpg>=0.31.0",
+    "fastapi[standard]>=0.162.0",
+    "sqlalchemy[asyncio]>=2.1.6",
+    "alembic>=1.20.1",
+    "asyncpg>=0.32.0",
     "apscheduler>=3.11,<4",
-    "fastmcp>=3.4.7,<4",
-    "pydantic>=2.13.5",
-    "pydantic-settings>=2.15.0",
+    "fastmcp>=3.4.11,<4",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.2",
     "structlog>=25.5.0",
     "bcrypt>=5",
     "itsdangerous>=2.2",
-    "garmin-fit-sdk>=21.217.0",
+    "garmin-fit-sdk>=21.218.0",
     "fitdecode>=0.11.0",
     "gpxpy>=1.6.2",
     "tcxreader>=0.4.11",
@@ -32,27 +32,27 @@ dependencies = [
     # dependency is one `uv lock` away from not being there.
     "httpx>=0.28.1",
     # Fernet, for the OAuth credentials at rest (`app/persistence/connections.py`).
-    "cryptography>=50.0.1",
+    "cryptography>=50.0.2",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.0",
-    "pytest-asyncio>=1.0.0",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
     "pytest-cov>=7.0.0",
-    "pytest-mock>=3.16.0",
+    "pytest-mock>=3.17.0",
     "pytest-xdist>=3.8.0",
     "asgi-lifespan>=2.1.0",
     "aiosqlite>=0.21.0",
-    "ruff>=0.16.9",
-    "pyrefly>=1.3.1",
+    "ruff>=0.17.3",
+    "pyrefly>=1.4.0",
     "import-linter>=2.15",
-    "hypothesis>=6.168.3",
-    "fit-tool>=0.9.16",
+    "hypothesis>=6.170.13",
+    "fit-tool>=0.9.17",
     # The API fuzzer (`just fuzz`, `.github/workflows/api-fuzz.yml`). A locked
     # dependency rather than a `uvx` fetch so CI runs a tree this repo pins and
     # Dependabot maintains — neither is true of a version inside a `run:` block.
-    "schemathesis>=4.30.1",
+    "schemathesis>=4.32.7",
     # The application never parses YAML; the guards over this repo's config do
     # (`tests/unit/test_zizmor_invocation.py`), and comparing two invocations by
     # regex would break on a reflow that changes nothing about what runs. Named
