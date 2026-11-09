@@ -79,6 +79,8 @@ from app.domain.wellness_baseline import (
     MetricTrend,
     Readiness,
     WellnessMetric,
+    days_after,
+    days_before,
     readiness,
     trend_for,
 )
@@ -425,9 +427,9 @@ class WellnessService:
         # The anchor is the last day *in* the half-open range. An empty range
         # has no last day, and the day before its start is the honest anchor:
         # nothing in it has happened yet.
-        anchor = end - dt.timedelta(days=1)
-        window_start = min(start, anchor - dt.timedelta(days=BASELINE_WINDOW_DAYS - 1))
-        window_end = max(end, anchor + dt.timedelta(days=1))
+        anchor = days_before(end, 1)
+        window_start = min(start, days_before(anchor, BASELINE_WINDOW_DAYS - 1))
+        window_end = max(end, days_after(anchor, 1))
         rows, _ = await self._repository.range(
             start=window_start,
             end=window_end,
