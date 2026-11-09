@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
   lines byte-identical, temp file plus rename, previous file kept at the
   gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
+- **The scratch-repo test suites no longer write a git identity to disk.** The
+  three that build throwaway repositories took their `user.email` from
+  `git config`; run from a commit hook, which exports `GIT_DIR`, that wrote
+  `t <t@t>` into the real `.git/config`. They now use `GIT_AUTHOR_*` and
+  `GIT_COMMITTER_*`, unset every other `GIT_*` variable, and stop if they
+  cannot enter their temp directory.
 
 ### Config preflight
 
