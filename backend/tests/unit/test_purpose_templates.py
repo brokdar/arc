@@ -222,11 +222,37 @@ def test_the_declared_windows_survive_being_parsed(
     assert windows["threshold"] == [30]
     assert windows["vo2max"] == [10]
     assert windows["anaerobic"] == [3]
-    assert [
-        criterion.smoothing_s
-        for criterion in templates[Purpose.RECOVERY].default_criteria
-        if isinstance(criterion, Ceiling)
-    ] == [0]
+    # Road ceilings are judged through the same 30 s window as NP. See
+    # `test_road_ride_ceilings_are_smoothed_not_raw`.
+    for purpose in (Purpose.RECOVERY, Purpose.ENDURANCE):
+        assert [
+            criterion.smoothing_s
+            for criterion in templates[purpose].default_criteria
+            if isinstance(criterion, Ceiling)
+        ] == [30]
+
+
+def test_road_ride_ceilings_are_smoothed_not_raw(
+    templates: dict[Purpose, PurposeTemplate],
+) -> None:
+    """The endurance and recovery ceilings read 30 s averages, not raw samples.
+
+    Chosen over a minimum-excursion-duration rule (issue #50). It displaced the
+    raw-sample default (`smoothing_s: 0`), which counted every 1-5 s spike at a
+    junction or traffic light as time above the cap: a 2026-08-14 ride whose
+    best 1-minute average was exactly FTP was scored `over` on 391 s of such
+    spikes. A 30 s window is the one NP already uses, needs no new criterion
+    field, and still flags sustained work: 30 s of tempo moves the average,
+    a sprint does not. Raw samples stay right for interval purposes, which
+    carry no ceiling. This is data in the template file, which cannot hold a
+    comment, so the decision lives here. Existing planned sessions froze their
+    criteria at planning time and keep the raw window, so no migration.
+    """
+    for purpose in (Purpose.RECOVERY, Purpose.ENDURANCE):
+        (ceiling,) = (
+            c for c in templates[purpose].default_criteria if isinstance(c, Ceiling)
+        )
+        assert ceiling.smoothing_s == 30, purpose
 
 
 def test_the_file_on_disk_is_what_is_loaded() -> None:

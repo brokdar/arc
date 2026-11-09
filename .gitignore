@@ -20,6 +20,9 @@ coverage.xml
 # Environments
 .env
 .env.local
+# Backups the tooling writes before it rewrites .env (`just set-password`
+# leaves .env.set-password.bak): each holds a previous secrets file.
+*.bak
 .envrc
 .venv
 venv/
