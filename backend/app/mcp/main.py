@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.mcp.analysis_tools import register_analysis_tools
 from app.mcp.auth import McpKey, parse_api_keys, verify_key
 from app.mcp.power_tools import register_power_tools
 from app.mcp.tools import register_tools
@@ -66,6 +67,7 @@ def create_server(keys: list[McpKey]) -> FastMCP:
     """Build the MCP server with bearer auth, the tool surface and /health."""
     mcp: FastMCP = FastMCP(name=SERVER_NAME, auth=StaticKeyVerifier(keys))
     register_tools(mcp)
+    register_analysis_tools(mcp)
     register_power_tools(mcp)
 
     # Custom routes sit outside the MCP endpoint that RequireAuthMiddleware

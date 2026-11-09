@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `.env` now runs that check instead of only leaving it alone.
   `*.bak` is gitignored.
 
+### Fitness, fatigue and form on a page
+
+- `/fitness` charts CTL, ATL and form from the rides arc already holds, so
+  "am I getting fitter" no longer needs intervals.icu. The coach reads the same
+  series through `get_fitness_trend`. The three numbers are display-only: a
+  test fails if a deterministic rule module imports them.
+- History no load model could price shows as "not assessed", never as 0, and
+  each series stays unassessed until its own load is priced. A priced gym
+  session no longer vouches for a fitness no ride has fed.
+- `get_fitness_trend` with only an old `end` now defaults `start` to the 90
+  days before it instead of refusing the call.
+
 ### An agent surface that can read back what it wrote (#17–#26)
 
 An external coaching agent (claude-opus-5) migrated a real athlete into arc

@@ -1819,6 +1819,23 @@
         "title": "Discipline",
         "type": "string"
       },
+      "DisplayOnlyValueRead": {
+        "description": "One day's value of a display-only metric.",
+        "properties": {
+          "display_only": {
+            "const": true,
+            "title": "Display Only",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": ["value", "display_only"],
+        "title": "DisplayOnlyValueRead",
+        "type": "object"
+      },
       "DisputeRating": {
         "description": "The athlete's one-tap answer to a note.\n\nDeliberately two values and no scale. This is a signal about coach\nquality, gathered from someone who is reading their training log rather\nthan filling in a survey, and a five-point scale asked of a passer-by\ncollects noise rather than resolution.",
         "enum": ["up", "down"],
@@ -2322,6 +2339,157 @@
         "title": "FeedRead",
         "type": "object"
       },
+      "FitnessExplanationsRead": {
+        "description": "The arithmetic behind each series \u2014 once per read, not per day.",
+        "properties": {
+          "atl": {
+            "$ref": "#/components/schemas/SeriesExplanationRead"
+          },
+          "ctl": {
+            "$ref": "#/components/schemas/SeriesExplanationRead"
+          },
+          "tsb": {
+            "$ref": "#/components/schemas/SeriesExplanationRead"
+          }
+        },
+        "required": ["ctl", "atl", "tsb"],
+        "title": "FitnessExplanationsRead",
+        "type": "object"
+      },
+      "FitnessMaturityRead": {
+        "description": "How far into its history the series has been read.",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "atl": {
+            "$ref": "#/components/schemas/SeriesMaturityRead"
+          },
+          "ctl": {
+            "$ref": "#/components/schemas/SeriesMaturityRead"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "first_session": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Session"
+          },
+          "tsb": {
+            "$ref": "#/components/schemas/FormStandingRead"
+          }
+        },
+        "required": ["first_session", "as_of", "day", "ctl", "atl", "tsb"],
+        "title": "FitnessMaturityRead",
+        "type": "object"
+      },
+      "FitnessPointRead": {
+        "description": "One calendar day of the series.\n\nEvery day from the first session to today is a point, rest days included \u2014\nthe averages decay on them, and a series that skipped them would hold\nfitness flat across a month off.",
+        "properties": {
+          "atl": {
+            "$ref": "#/components/schemas/DisplayOnlyValueRead"
+          },
+          "ctl": {
+            "$ref": "#/components/schemas/DisplayOnlyValueRead"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "fitness_load": {
+            "title": "Fitness Load",
+            "type": "number"
+          },
+          "load": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load"
+          },
+          "load_incomplete": {
+            "title": "Load Incomplete",
+            "type": "boolean"
+          },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "tsb": {
+            "$ref": "#/components/schemas/DisplayOnlyValueRead"
+          },
+          "uncounted": {
+            "title": "Uncounted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "local_date",
+          "day",
+          "ctl",
+          "atl",
+          "tsb",
+          "load",
+          "fitness_load",
+          "n",
+          "uncounted",
+          "load_incomplete"
+        ],
+        "title": "FitnessPointRead",
+        "type": "object"
+      },
+      "FitnessTrendRead": {
+        "description": "Fitness, fatigue and form over a window, and how much to trust them.",
+        "properties": {
+          "explanations": {
+            "$ref": "#/components/schemas/FitnessExplanationsRead"
+          },
+          "form_lag_days": {
+            "title": "Form Lag Days",
+            "type": "integer"
+          },
+          "maturity": {
+            "$ref": "#/components/schemas/FitnessMaturityRead"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/FitnessPointRead"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": ["points", "maturity", "form_lag_days", "explanations"],
+        "title": "FitnessTrendRead",
+        "type": "object"
+      },
       "FolderList": {
         "description": "What is directly under one remote path: the subfolders, and the files.\n\nNever a 404 for an empty folder: a directory holding only files is a\nlegitimate answer with `items: []`, and the picker says so rather than\ndrawing an empty box.\n\nThe counts describe the **current** folder only, and describe all of it \u2014\n`ConnectionService.folders` follows Dropbox's cursor to the end before\ncounting, so a client may render them as a total. Per-subfolder counts are\ndeliberately absent: they would cost one Dropbox call per row.",
         "properties": {
@@ -2384,6 +2552,31 @@
         },
         "required": ["enabled"],
         "title": "FolderUpdate",
+        "type": "object"
+      },
+      "FormStandingRead": {
+        "description": "From which day form is a balance of two fed averages.\n\n`TSB_d = CTL_{d\u2212L} \u2212 ATL_{d\u2212L}`, so form is assessed from the later of\nCTL's and ATL's `first_priced_session`, plus `form_lag_days`; null when\neither is null or that day is after `as_of`.",
+        "properties": {
+          "display_only": {
+            "const": true,
+            "title": "Display Only",
+            "type": "boolean"
+          },
+          "first_assessed": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Assessed"
+          }
+        },
+        "required": ["display_only", "first_assessed"],
+        "title": "FormStandingRead",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6853,6 +7046,110 @@
         ],
         "title": "ScoringAxis",
         "type": "string"
+      },
+      "SeriesExplanationRead": {
+        "description": "How one series is computed, stamped with its authority.",
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "citation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation"
+          },
+          "display_only": {
+            "const": true,
+            "title": "Display Only",
+            "type": "boolean"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "required": [
+          "formula",
+          "inputs",
+          "assumptions",
+          "citation",
+          "display_only"
+        ],
+        "title": "SeriesExplanationRead",
+        "type": "object"
+      },
+      "SeriesMaturityRead": {
+        "description": "Whether one average still mostly describes where it started.\n\nMaturing while the seed's remaining weight `(1 \u2212 \u03b1)\u207f` is above 10 %: CTL\nthrough day 96, ATL through day 16 \u2014 or mature from day 1 when the series\nstarted from a supplied seed.",
+        "properties": {
+          "display_only": {
+            "const": true,
+            "title": "Display Only",
+            "type": "boolean"
+          },
+          "first_priced_session": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Priced Session"
+          },
+          "mature": {
+            "title": "Mature",
+            "type": "boolean"
+          },
+          "matures_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matures On"
+          },
+          "matures_on_day": {
+            "title": "Matures On Day",
+            "type": "integer"
+          },
+          "seeded": {
+            "title": "Seeded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "display_only",
+          "mature",
+          "seeded",
+          "matures_on_day",
+          "matures_on",
+          "first_priced_session"
+        ],
+        "title": "SeriesMaturityRead",
+        "type": "object"
       },
       "SessionAlignmentRead": {
         "description": "One version of how a recording lines up with its prescription.",
@@ -12443,6 +12740,87 @@
         ],
         "summary": "Get Exercise",
         "tags": ["exercises"]
+      }
+    },
+    "/api/v1/fitness": {
+      "get": {
+        "description": "Fitness (CTL), fatigue (ATL) and form (TSB), one point per day.\n\n**Display-only.** These describe training; arc never changes a plan\nbecause of them, and every value is stamped `display_only: true`.\n\n* CTL is the 42-day EWMA of **cycling** load, ATL the 7-day EWMA of every\n  discipline's load, `\u03b1 = 1 \u2212 e^(\u22121/\u03c4)`; form is `CTL \u2212 ATL` at\n  `form_lag_days`.\n* The series starts on the first session's `local_date` and runs every day\n  to today \u2014 rest days included. Before the first session there are no\n  points, never a run of zeros.\n* A session neither load model could price adds nothing and marks its day\n  `load_incomplete`; `n` counts the sessions that were counted.\n* Each series says from which day it has load behind it:\n  `maturity.ctl.first_priced_session` (the first priced ride),\n  `maturity.atl.first_priced_session` (the first priced session of any\n  discipline) and `maturity.tsb.first_assessed` (both, at the form lag).\n  Before that day \u2014 or on every day, when it is null \u2014 that series' values\n  are no data rather than zero.\n* `maturity` says whether each average still mostly describes its starting\n  seed of zero: CTL until day 97, ATL until day 17, counted from the first\n  session whatever window was asked for.\n\n`from` after `to` is a 422; equal bounds are a legal empty window.",
+        "operationId": "fitness-get_fitness",
+        "parameters": [
+          {
+            "description": "First day to return, inclusive. Omit to start at the first session.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "description": "First day to return, inclusive. Omit to start at the first session.",
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "First day *not* to return \u2014 the range is half-open [from, to), like every range in this application. Omit for through today; a later date is clipped to today.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "description": "First day *not* to return \u2014 the range is half-open [from, to), like every range in this application. Omit for through today; a later date is clipped to today.",
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FitnessTrendRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "`from` is after `to`"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Fitness",
+        "tags": ["fitness"]
       }
     },
     "/api/v1/ingest/events": {
