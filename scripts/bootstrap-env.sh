@@ -15,7 +15,11 @@ EXAMPLE_FILE="$REPO_ROOT/.env.example"
 PLACEHOLDER_HASH="'change-me-to-a-bcrypt-hash'"
 
 if [ -e "$ENV_FILE" ]; then
-  echo ".env already exists — leaving it alone."
+  echo ".env already exists — leaving it alone. Checking it against the current settings:"
+  # A months-old .env is missing whatever was added since, and the api would
+  # find out as a traceback at boot. Report the verdict here instead; the
+  # check's own exit code is not init's (nothing here failed).
+  (cd "$REPO_ROOT/backend" && uv run python -m app.preflight --file "$ENV_FILE") || true
   # `rm .env && just init` alone crash-loops the api: a new POSTGRES__PASSWORD
   # is only applied when the cluster is initialized, so the volume has to go too.
   echo "To start over: rm .env && docker compose down -v && just init"

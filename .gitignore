@@ -20,6 +20,9 @@ coverage.xml
 # Environments
 .env
 .env.local
+# Backups of .env (`.env.bak`, `.env.set-password.bak`): each is a copy of a
+# secrets file, one `git add -A` from being committed.
+*.bak
 .envrc
 .venv
 venv/

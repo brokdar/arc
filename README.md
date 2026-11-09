@@ -31,6 +31,11 @@ user and no sign-up: `just init` stored a bcrypt hash of that password in
 `.env` as `AUTH__PASSWORD_HASH`, and nothing else. To change it later, run
 `just hash-password` and paste the line it prints over the one in `.env`.
 
+After pulling a new version, run `just env-check`: it compares `.env` with the
+settings the code reads and names any key that is missing, no longer used, or
+malformed, before a restart finds out. The api and mcp containers run the same
+check at boot and stop with one line per problem instead of a traceback.
+
 > **Re-running `just init` on a machine that already ran the stack?** It mints
 > a *new* random `POSTGRES__PASSWORD`, but Postgres only applies that when the
 > cluster is first created — the existing `postgres-data` volume keeps the old
