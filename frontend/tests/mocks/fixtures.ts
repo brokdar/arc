@@ -1656,6 +1656,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       ...NO_WELLNESS,
       local_date: "2026-08-06",
       start_time: "2026-08-06T16:30:00Z",
+      start_time_known: true,
       end_time: "2026-08-06T17:30:00Z",
       timezone: "Europe/Zurich",
       discipline: "strength",
@@ -1683,6 +1684,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       ...NO_WELLNESS,
       local_date: "2026-08-05",
       start_time: "2026-08-05T05:14:00Z",
+      start_time_known: true,
       end_time: "2026-08-05T07:53:00Z",
       timezone: "Europe/Zurich",
       discipline: "cycling",
@@ -1712,6 +1714,7 @@ function seedSessions(): Schemas["SessionRead"][] {
       ...NO_WELLNESS,
       local_date: "2026-08-03",
       start_time: "2026-08-03T16:02:00Z",
+      start_time_known: true,
       end_time: "2026-08-03T17:02:00Z",
       // The offset form a head unit's local_timestamp implies.
       timezone: "UTC+02:00",
@@ -2043,6 +2046,7 @@ export function ingestedSessionFixture(
     ...NO_WELLNESS,
     local_date: "2026-08-07",
     start_time: start.toISOString().replace(".000", ""),
+    start_time_known: true,
     end_time: new Date(start.getTime() + elapsed * 1000)
       .toISOString()
       .replace(".000", ""),
@@ -2174,6 +2178,7 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
       // Started at 06:00 UTC, so the UTC day and the local day agree.
       local_date: stamp(start).slice(0, 10),
       start_time: stamp(start),
+      start_time_known: true,
       end_time: stamp(new Date(start.getTime() + elapsed * 1000)),
       timezone: "UTC",
       discipline: "cycling" as const,
@@ -2788,6 +2793,7 @@ export function seedMergeCandidate(): Schemas["SessionRead"] {
     // Twelve minutes after the outdoor ride's 07:53 local finish: one ride,
     // recorded as two files, well inside the six hours a merge will bridge.
     start_time: "2026-08-05T08:05:00Z",
+    start_time_known: true,
     end_time: "2026-08-05T08:41:00Z",
     timezone: "Europe/Zurich",
     discipline: "cycling",

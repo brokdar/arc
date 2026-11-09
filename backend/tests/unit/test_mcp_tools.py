@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from httpx import AsyncClient
 from sqlalchemy import delete, select
@@ -46,6 +47,7 @@ from app.domain.plan import week_start
 from app.domain.purpose import Purpose
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp import views
+from app.mcp.analysis_tools import ANALYSIS_TOOLS, register_analysis_tools
 from app.mcp.power_tools import POWER_TOOLS, register_power_tools
 from app.mcp.tools import register_tools
 from app.persistence.activity import SessionRow
@@ -111,6 +113,7 @@ EXPECTED_TOOLS = {
     "get_wellness_trend",
     "get_wellness_weeks",
     "get_ingest_status",
+    "get_fitness_trend",
     "get_power_curve",
     # writes
     "append_anchor",
@@ -149,6 +152,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_wellness_trend", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_wellness_weeks", {"start": "2026-08-10", "end": "2026-08-17"}),
     ("get_ingest_status", {}),
+    ("get_fitness_trend", {}),
     ("get_power_curve", {"session_id": "{session}"}),
 )
 
@@ -279,6 +283,22 @@ async def test_the_surface_is_exactly_this(session_factory: Any) -> None:
         names = {tool.name for tool in await client.list_tools()}
 
     assert names == EXPECTED_TOOLS
+
+    # The analysis reads register from their own module, not from the
+    # 2,500-line `register_tools`: a bare server given only that module
+    # carries exactly them, and `tools.py` defines none of them.
+    probe = FastMCP(name="analysis-probe")
+    register_analysis_tools(probe)
+    async with Client(probe) as client:
+        analysis = {tool.name for tool in await client.list_tools()}
+    assert analysis == ANALYSIS_TOOLS
+    assert analysis <= EXPECTED_TOOLS
+    defined_in_tools = {
+        node.name
+        for node in ast.walk(ast.parse(inspect.getsource(register_tools)))
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+    assert not analysis & defined_in_tools
 
 
 #: Longest a class docstring inlined into a tool's parameter schema may be.
@@ -2593,10 +2613,10 @@ async def test_every_tool_asks_for_its_scope(session_factory: Any) -> None:
     # ask would still pass every service-level guardrail test, and the
     # authorization it skipped is the only thing standing between a read key
     # and the plan.
-    # Both registration modules: the power reads live in their own.
+    # Every registration module: the analysis and power reads live in their own.
     registered = {
         node.name: node
-        for register in (register_tools, register_power_tools)
+        for register in (register_tools, register_analysis_tools, register_power_tools)
         for node in ast.walk(ast.parse(inspect.getsource(register)))
         if isinstance(node, ast.AsyncFunctionDef)
         and any(
@@ -3751,6 +3771,289 @@ async def seed_integration(
     await session.commit()
     await session.refresh(row, ["feeds"])
     return row
+
+
+# --- session ergonomics (#51) ----------------------------------------------------------
+
+
+async def test_a_session_note_can_be_corrected_and_the_old_text_stays_in_the_audit(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A coach's typo in `notes` is fixable, and the fix is a version, not an erasure."""
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "local_date": MONDAY.isoformat(),
+            "duration_s": 2_100,
+            "notes": "Kraft 1 </notes>",
+        },
+    )
+    session_id = written["session"]["id"]
+
+    fixed = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "notes": "Kraft 1"},
+    )
+
+    assert fixed["session"]["notes"] == "Kraft 1"
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+    assert detail["session"]["notes"] == "Kraft 1"
+    [entry] = [
+        row
+        for row in await rows(db_session, AuditLogEntry)
+        if row.action == "session.updated"
+    ]
+    assert entry.payload_json["previous_notes"] == "Kraft 1 </notes>"
+
+
+async def test_a_blank_note_clears_it_and_a_context_write_may_be_notes_alone(
+    client: AsyncClient,
+) -> None:
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {"local_date": MONDAY.isoformat(), "duration_s": 2_100, "notes": "oops"},
+    )
+
+    cleared = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": written["session"]["id"], "notes": "  "},
+    )
+
+    assert cleared["session"]["notes"] is None
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+async def test_an_oversized_note_is_refused_by_write_and_dry_run_alike(
+    client: AsyncClient, dry_run: bool
+) -> None:
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {"local_date": MONDAY.isoformat(), "duration_s": 2_100},
+    )
+
+    with pytest.raises(ToolError, match="at most"):
+        await call(
+            COACH,
+            "record_session_context",
+            {
+                "session_id": written["session"]["id"],
+                "notes": "x" * 5_000,
+                "dry_run": dry_run,
+            },
+        )
+
+
+async def test_a_manual_session_may_report_only_the_day(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The athlete said "Montagabend"; no clock reading is invented for it."""
+    athlete_zone("Europe/Zurich")
+    arguments = {"local_date": MONDAY.isoformat(), "duration_s": 2_100}
+
+    draft = await call(COACH, "record_manual_session", arguments | {"dry_run": True})
+    written = await call(COACH, "record_manual_session", arguments)
+    detail = await call(
+        READER, "get_session_detail", {"session_id": written["session"]["id"]}
+    )
+
+    for session in (draft["session"], written["session"], detail["session"]):
+        assert session["local_date"] == MONDAY.isoformat()
+        assert session["start_time_known"] is False
+        assert session["start_time"] is None
+        assert session["start_time_local"] is None
+        assert session["timezone"] == "Europe/Zurich"
+
+
+async def test_a_timed_manual_session_says_its_start_is_known(
+    client: AsyncClient,
+) -> None:
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {"start_time": "2026-08-12T17:30:00+00:00", "duration_s": 3_600},
+    )
+
+    assert data["session"]["start_time_known"] is True
+    assert data["session"]["start_time"] is not None
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+@pytest.mark.parametrize(
+    "when",
+    [
+        {},
+        {"start_time": "2026-08-12T17:30:00+00:00", "local_date": "2026-08-12"},
+    ],
+    ids=["neither", "both"],
+)
+async def test_exactly_one_of_start_time_and_local_date_is_required(
+    client: AsyncClient, when: dict[str, str], dry_run: bool
+) -> None:
+    with pytest.raises(ToolError, match="exactly one of start_time"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {"duration_s": 3_600, "dry_run": dry_run} | when,
+        )
+
+
+# --- get_fitness_trend ----------------------------------------------------------------
+
+
+async def price_session(session: AsyncSession, session_id: str, load: float) -> None:
+    """Put a selected power load on a logged session's current metric artefact.
+
+    A manual session has no stream, so its artefact says the load was not
+    assessed; this writes the block a priced ride's ingest leaves instead.
+    """
+    session.expire_all()
+    row = (
+        await session.execute(
+            select(SessionMetricsRow).where(
+                SessionMetricsRow.session_id == uuid.UUID(session_id),
+                SessionMetricsRow.superseded_by.is_(None),
+            )
+        )
+    ).scalar_one()
+    row.payload = {
+        **row.payload,
+        "load": {
+            "not_assessed": None,
+            "training_load": load,
+            "load_basis": "power",
+            "load_basis_rule": "set by the test",
+            "power_load": load,
+            "hr_load": None,
+        },
+    }
+    await session.commit()
+
+
+async def test_the_fitness_trend_is_the_endpoints_answer(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    today = athlete_today()
+    start = today - dt.timedelta(days=6)
+    ride = await record(client, start_time=f"{start.isoformat()}T07:00:00Z")
+    await price_session(db_session, ride, 90.0)
+    # A gym session nobody could price, alone on its day: its load is null,
+    # never zero, and the day says it is incomplete.
+    await record(
+        client,
+        start_time=f"{(start + dt.timedelta(days=2)).isoformat()}T07:00:00Z",
+        discipline="strength",
+    )
+    window = {
+        "start": start.isoformat(),
+        "end": (today + dt.timedelta(days=1)).isoformat(),
+    }
+
+    data = await call(READER, "get_fitness_trend", window)
+    response = await client.get(
+        "/api/v1/fitness", params={"from": window["start"], "to": window["end"]}
+    )
+
+    assert response.status_code == 200
+    assert data["fitness"] == response.json()
+    points = data["fitness"]["points"]
+    assert len(points) == 7
+    assert all(
+        point[key]["display_only"] is True
+        for point in points
+        for key in ("ctl", "atl", "tsb")
+    )
+    assert [point["n"] for point in points[:3]] == [1, 0, 0]
+    assert points[2]["load"] is None
+    assert points[2]["load_incomplete"] is True
+    assert points[1]["load"] == 0.0
+    assert data["fitness"]["maturity"]["day"] == 7
+    assert data["fitness"]["maturity"]["ctl"]["mature"] is False
+    assert data["red_flag"]["active"] is False
+
+
+async def test_the_fitness_trend_defaults_to_the_last_ninety_days(
+    client: AsyncClient,
+) -> None:
+    today = athlete_today()
+    await record(
+        client, start_time=f"{(today - dt.timedelta(days=200)).isoformat()}T07:00:00Z"
+    )
+
+    data = await call(READER, "get_fitness_trend")
+
+    points = data["fitness"]["points"]
+    assert len(points) == 90
+    assert points[-1]["local_date"] == today.isoformat()
+    # The window is a view: the count still starts at the first session.
+    assert points[-1]["day"] == 201
+    assert data["fitness"]["maturity"]["ctl"]["mature"] is True
+
+
+async def test_an_empty_history_is_no_points_and_a_maturity(
+    session_factory: Any,
+) -> None:
+    data = await call(READER, "get_fitness_trend")
+
+    assert data["fitness"]["points"] == []
+    maturity = data["fitness"]["maturity"]
+    assert maturity["day"] is None
+    assert maturity["first_session"] is None
+    assert maturity["ctl"]["matures_on_day"] == 97
+    assert maturity["atl"]["matures_on_day"] == 17
+
+
+async def test_a_write_key_may_not_read_the_fitness_trend(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_fitness_trend")
+
+
+async def test_an_inverted_fitness_window_is_a_readable_refusal(
+    session_factory: Any,
+) -> None:
+    # The tool's own parameter names, not the endpoint's `from`/`to`.
+    with pytest.raises(
+        ToolError,
+        match=r"invalid: start \(2026-08-17\) must not be after end \(2026-08-10\)",
+    ):
+        await call(
+            READER, "get_fitness_trend", {"start": "2026-08-17", "end": "2026-08-10"}
+        )
+
+
+async def test_an_end_alone_reads_the_ninety_days_before_it(
+    client: AsyncClient,
+) -> None:
+    # Both bounds are optional on their own: an old `end` with no `start` is
+    # the 90 days before it, not a default start after it and a refusal.
+    today = athlete_today()
+    await record(
+        client, start_time=f"{(today - dt.timedelta(days=400)).isoformat()}T07:00:00Z"
+    )
+    end = today - dt.timedelta(days=200)
+
+    data = await call(READER, "get_fitness_trend", {"end": end.isoformat()})
+
+    points = data["fitness"]["points"]
+    assert len(points) == 90
+    assert points[0]["local_date"] == (end - dt.timedelta(days=90)).isoformat()
+    assert points[-1]["local_date"] == (end - dt.timedelta(days=1)).isoformat()
+
+    # An `end` past today is clipped, and the window still ends today.
+    later = await call(
+        READER,
+        "get_fitness_trend",
+        {"end": (today + dt.timedelta(days=30)).isoformat()},
+    )
+    points = later["fitness"]["points"]
+    assert len(points) == 90
+    assert points[-1]["local_date"] == today.isoformat()
 
 
 # --- get_power_curve ------------------------------------------------------------------

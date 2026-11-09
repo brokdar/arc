@@ -35,6 +35,7 @@ from app.domain.activity import (
     RecordingKind,
     SessionDiscipline,
     check_temperature,
+    day_anchor,
     parse_timezone,
     session_date,
 )
@@ -62,9 +63,16 @@ ENTITY_TYPE = "session"
 #: Fields `update` accepts. Two kinds, still deliberately short: corrections
 #: of what the pipeline guessed (`discipline`, `timezone`) and the
 #: athlete-reported **context of the measurement** (`rpe`, `temperature_c`,
-#: #23). Measurements themselves stay uneditable — this is not an editor of
-#: history.
-UPDATABLE_FIELDS = ("discipline", "timezone", "rpe", "temperature_c")
+#: #23, and `notes`, #51). Measurements themselves stay uneditable — this is
+#: not an editor of history.
+#:
+#: `notes` is context rather than measurement because nothing in the pipeline
+#: ever writes it: every character was typed by the athlete or by the coach on
+#: their behalf, and a typo or a pasted tool-call fragment there (issue #51)
+#: was otherwise a permanent artefact that reads like a prompt injection to the
+#: next agent. Correcting it loses nothing, because the audit row of the edit
+#: carries the text it replaced (see `update`).
+UPDATABLE_FIELDS = ("discipline", "timezone", "rpe", "temperature_c", "notes")
 
 #: The fields a session cannot be without: an explicit null for one of these
 #: is refused rather than stored. The context fields are *clearable* — a
@@ -213,7 +221,7 @@ class SessionService:
         """Apply corrections and measurement context to one session.
 
         Patch semantics: a field not in ``updates`` is untouched; an explicit
-        ``None`` clears a context field (`rpe`, `temperature_c`) and is
+        ``None`` clears a context field (`rpe`, `temperature_c`, `notes`) and is
         refused for a field a session cannot be without
         (:data:`NON_CLEARABLE_FIELDS`).
 
@@ -250,6 +258,13 @@ class SessionService:
             if updates.get("temperature_c") is not None:
                 check_temperature(float(updates["temperature_c"]))
         rpe = updates.get("rpe")
+        # Blank is "nobody wrote anything", the same empty state as null, so
+        # both store null: a row holding "  " would read as a note that says
+        # nothing. Stripped before the bound so padding cannot trip it.
+        notes = updates.get("notes")
+        notes = (str(notes).strip() or None) if notes is not None else None
+        if notes is not None and len(notes) > MAX_NOTES_LENGTH:
+            raise ValidationError(f"Notes are at most {MAX_NOTES_LENGTH} characters")
         if rpe is not None and not MIN_RPE <= float(rpe) <= MAX_RPE:
             raise ValidationError(f"RPE is on a {MIN_RPE:g}-{MAX_RPE:g} scale")
         if dry_run:
@@ -285,6 +300,10 @@ class SessionService:
             value = updates["temperature_c"]
             row.temperature_c = None if value is None else float(value)
             changed["temperature_c"] = row.temperature_c
+        previous_notes = row.notes
+        if "notes" in updates:
+            row.notes = notes
+            changed["notes"] = notes
 
         row = await self._repository.add(row)
         await self._audit.record(
@@ -292,7 +311,12 @@ class SessionService:
             action="session.updated",
             entity_type=ENTITY_TYPE,
             entity_id=row.id,
-            payload=changed | {"changed": sorted(changed)},
+            payload=changed
+            | {"changed": sorted(changed)}
+            # The correction is a new version of the notes, not a deletion of
+            # the old one: the text it replaced stays readable in the audit
+            # trail, which is what lets `notes` be editable at all.
+            | ({"previous_notes": previous_notes} if "notes" in updates else {}),
         )
         await commit(self._session)
         await refresh(self._session, row)
@@ -359,7 +383,8 @@ class SessionService:
         self,
         *,
         actor: Actor,
-        start_time: dt.datetime,
+        start_time: dt.datetime | None = None,
+        local_date: dt.date | None = None,
         timezone: str | None = None,
         duration_s: int,
         discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
@@ -389,8 +414,22 @@ class SessionService:
         day, which then failed to match the planned session on the right one
         (issue #62).
 
+        Exactly one of ``start_time`` and ``local_date`` is given. A report
+        like "Kraft 1, Montagabend, 35 min" has a day and no clock reading, and
+        requiring one made the coach invent 19:00 and disclose the invention
+        in the note (issue #51). With ``local_date`` the session is stored at
+        that day's local midnight (:func:`app.domain.activity.day_anchor`) with
+        ``start_time_known`` false, and every read surface says so rather than
+        presenting the anchor as a time. Both given is refused instead of
+        reconciled: if they disagree there is no right answer, and if they
+        agree one of them was redundant.
+
+        The check lives here, not in either adapter, so the write and the MCP
+        dry run cannot disagree about it.
+
         Raises:
-            ValidationError: When the timezone is unresolvable, the duration,
+            ValidationError: When the timezone is unresolvable, neither or both
+                of ``start_time`` and ``local_date`` are given, the duration,
                 RPE or temperature is out of range, or a set is malformed.
             NotFoundError: When a set names a catalogue exercise that does not
                 exist.
@@ -399,9 +438,19 @@ class SessionService:
         if not dry_run:
             await check_write_cap(self._session, actor)
         timezone = timezone or athlete_timezone()
+        if (start_time is None) == (local_date is None):
+            raise ValidationError(
+                "give exactly one of start_time (when it started, with an "
+                "offset) or local_date (the day, when no time was reported)"
+            )
+        start_time_known = start_time is not None
         with domain_rules():
             parse_timezone(timezone)
-            local_date = session_date(start_time, timezone)
+            if start_time is None:
+                assert local_date is not None  # noqa: S101 — narrowed above
+                start_time = day_anchor(local_date, timezone)
+            else:
+                local_date = session_date(start_time, timezone)
         _check_manual(
             start_time=start_time,
             duration_s=duration_s,
@@ -416,6 +465,7 @@ class SessionService:
         draft = SessionRow(
             start_time=start_time,
             end_time=start_time + dt.timedelta(seconds=duration_s),
+            start_time_known=start_time_known,
             timezone=timezone,
             local_date=local_date,
             discipline=discipline,
@@ -441,6 +491,7 @@ class SessionService:
             entity_id=row.id,
             payload={
                 "local_date": local_date.isoformat(),
+                "start_time_known": start_time_known,
                 "discipline": discipline.value,
                 "duration_s": duration_s,
                 "rpe": rpe,

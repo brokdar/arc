@@ -189,6 +189,7 @@ def to_list_item(
         id=row.id,
         local_date=row.local_date,
         start_time=row.start_time,
+        start_time_known=row.start_time_known,
         timezone=row.timezone,
         discipline=row.discipline,
         classification_source=row.classification_source,
@@ -325,6 +326,7 @@ def to_read(
         id=row.id,
         local_date=row.local_date,
         start_time=row.start_time,
+        start_time_known=row.start_time_known,
         end_time=row.end_time,
         timezone=row.timezone,
         discipline=row.discipline,
@@ -524,6 +526,7 @@ async def create_manual_session(
     row = await service.create_manual(
         actor=actor,
         start_time=payload.start_time,
+        local_date=payload.local_date,
         timezone=payload.timezone,
         duration_s=payload.duration_s,
         discipline=payload.discipline,

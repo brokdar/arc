@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing `.env` now runs that check instead of only leaving it alone.
   `*.bak` is gitignored.
 
+### Fitness, fatigue and form on a page
+
+- `/fitness` charts CTL, ATL and form from the rides arc already holds, so
+  "am I getting fitter" no longer needs intervals.icu. The coach reads the same
+  series through `get_fitness_trend`. The three numbers are display-only: a
+  test fails if a deterministic rule module imports them.
+- History no load model could price shows as "not assessed", never as 0, and
+  each series stays unassessed until its own load is priced. A priced gym
+  session no longer vouches for a fitness no ride has fed.
+- `get_fitness_trend` with only an old `end` now defaults `start` to the 90
+  days before it instead of refusing the call.
+
 ### Local HTTPS
 
 - **A guided path to local HTTPS** (#88). `just trust-ca` exports Caddy's local
@@ -81,6 +93,13 @@ this round of changes, measured against the baseline now recorded in
   Manual sessions are recordable over MCP (`record_manual_session`), which
   makes strength scorable; the exercise catalogue gained the single-leg calf
   raise and reverse fly (#26).
+- **Manual-session paper cuts** (#51). `record_session_context` takes `notes`,
+  so a coach-typed slip is corrected by writing the note again; the text it
+  replaces stays in the audit row. `record_manual_session` takes `local_date`
+  instead of `start_time` when the athlete only named a day; the session is
+  filed on that day and reads back with `start_time_known: false` and no
+  invented clock time. The tool description now says a manual session spends
+  three writes of the hourly budget.
 - **Road-ride ceilings read 30 s averages** (#50). The endurance and recovery
   templates judged `discipline` on raw samples, so 1–5 s spikes at junctions
   summed to "391 s above FTP" on a ride whose best minute was FTP, and the

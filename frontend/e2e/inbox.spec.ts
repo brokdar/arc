@@ -323,6 +323,7 @@ function sessionRead(id: string) {
     id,
     local_date: "2026-08-07",
     start_time: "2026-08-07T05:00:00Z",
+    start_time_known: true,
     end_time: "2026-08-07T06:45:00Z",
     timezone: "UTC",
     discipline: "cycling",

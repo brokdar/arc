@@ -30,7 +30,15 @@ from app.domain.activity import parse_timezone
 from app.domain.anchors import AnchorType, AnchorVersion
 from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
+from app.domain.pmc import (
+    FitnessTrend,
+    SeriesMaturity,
+    atl_explanation,
+    ctl_explanation,
+    tsb_explanation,
+)
 from app.domain.purpose import discipline_of
+from app.domain.session_analysis import explanation_to_json
 from app.domain.templates import PurposeTemplate
 from app.domain.wellness import (
     INPUT_TIERS,
@@ -308,6 +316,19 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
     }
 
 
+def _local_clock(row: SessionRow) -> str | None:
+    """The local start, or null when only the day was reported.
+
+    `start_time` is null in the same two views. Null rather than the stored midnight anchor: rendering it would hand the
+    coach the invented time the day-only variant exists to avoid. Both
+    `session_summary` and the dry-run draft go through here, so a draft and
+    the row it becomes agree.
+    """
+    if not row.start_time_known:
+        return None
+    return start_time_local(row.start_time, row.timezone)
+
+
 def start_time_local(start_time: dt.datetime, timezone: str) -> str:
     """One session's start on the athlete's own clock, offset included.
 
@@ -345,8 +366,9 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
     return {
         "id": str(row.id),
         "local_date": row.local_date.isoformat(),
-        "start_time": row.start_time.isoformat(),
-        "start_time_local": start_time_local(row.start_time, row.timezone),
+        "start_time": row.start_time.isoformat() if row.start_time_known else None,
+        "start_time_known": row.start_time_known,
+        "start_time_local": _local_clock(row),
         "timezone": row.timezone,
         "discipline": row.discipline.value,
         "recording_kind": row.recording_kind.value,
@@ -356,6 +378,9 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
         "training_load": None if summary is None else summary.training_load,
         "rpe": row.rpe,
         "temperature_c": row.temperature_c,
+        # Readable so that it is correctable: a note the coach cannot see is a
+        # note it cannot fix, and the write's own echo has to show what stands.
+        "notes": row.notes,
     }
 
 
@@ -387,8 +412,9 @@ def manual_session_draft(row: SessionRow) -> dict[str, Any]:
     been matched.
     """
     return {
-        "start_time": row.start_time.isoformat(),
-        "start_time_local": start_time_local(row.start_time, row.timezone),
+        "start_time": row.start_time.isoformat() if row.start_time_known else None,
+        "start_time_known": row.start_time_known,
+        "start_time_local": _local_clock(row),
         "local_date": row.local_date.isoformat(),
         "timezone": row.timezone,
         "discipline": row.discipline.value,
@@ -1335,4 +1361,76 @@ def _feed_status(feed: FeedStatus) -> dict[str, Any]:
             feed.last_verified_at.isoformat() if feed.last_verified_at else None
         ),
         "account_label": feed.account_label,
+    }
+
+
+# --- fitness ------------------------------------------------------------------
+
+
+def _display_only(value: float) -> dict[str, Any]:
+    """One day's display-only value, stamped (`app.domain.authority`)."""
+    return {"value": value, "display_only": True}
+
+
+def _series_maturity(series: SeriesMaturity) -> dict[str, Any]:
+    """One average's maturity, stamped."""
+    return {
+        "display_only": True,
+        "mature": series.mature,
+        "seeded": series.seeded,
+        "matures_on_day": series.matures_on_day,
+        "matures_on": _iso(series.matures_on),
+        "first_priced_session": _iso(series.first_priced),
+    }
+
+
+def _iso(day: dt.date | None) -> str | None:
+    """A nullable date as the endpoint serializes it."""
+    return None if day is None else day.isoformat()
+
+
+def fitness_trend(trend: FitnessTrend) -> dict[str, Any]:
+    """The fitness series, in **the same shape `GET /fitness` serves**.
+
+    Not compacted, unlike most of this module: the coach is meant to read the
+    numbers the athlete is looking at, and `test_mcp_tools.py` asserts this
+    equals the endpoint's body for the same window. The window, not the shape,
+    is what keeps it small — the tool defaults to the last 90 days.
+    """
+    return {
+        "points": [
+            {
+                "local_date": point.local_date.isoformat(),
+                "day": point.day,
+                "ctl": _display_only(point.ctl),
+                "atl": _display_only(point.atl),
+                "tsb": _display_only(point.tsb),
+                "load": point.load.load,
+                "fitness_load": point.load.fitness_load,
+                "n": point.load.n,
+                "uncounted": point.load.uncounted,
+                "load_incomplete": point.load.load_incomplete,
+            }
+            for point in trend.points
+        ],
+        "maturity": {
+            "first_session": _iso(trend.maturity.first_session),
+            "as_of": trend.maturity.as_of.isoformat(),
+            "day": trend.maturity.day,
+            "ctl": _series_maturity(trend.maturity.ctl),
+            "atl": _series_maturity(trend.maturity.atl),
+            "tsb": {
+                "display_only": True,
+                "first_assessed": _iso(trend.maturity.tsb.first_assessed),
+            },
+        },
+        "form_lag_days": trend.form_lag_days,
+        "explanations": {
+            key: explanation_to_json(explanation) | {"display_only": True}
+            for key, explanation in (
+                ("ctl", ctl_explanation()),
+                ("atl", atl_explanation()),
+                ("tsb", tsb_explanation(trend.form_lag_days)),
+            )
+        },
     }

@@ -204,6 +204,16 @@ include-name = "GET /api/v1/wellness/trend"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
+# `GET /fitness` refuses `from` after `to` — a rule between two parameters a
+# schema cannot express. Pinned in `test_fitness_api.py`. No upper bound needs
+# narrowing: the series is computed from the first session whatever the window,
+# and a `to` past today is clipped rather than refused.
+
+[[operations]]
+include-name = "GET /api/v1/fitness"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
 # `POST /agent-notes/{note_id}/dispute` takes one field, `rating`, and
 # `DisputeRating` deliberately has two members — so the operation has four
 # distinct schema-valid bodies in total: either rating, an explicit null, or the

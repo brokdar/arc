@@ -1912,6 +1912,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         session_id: str,
         rpe: float | None = None,
         temperature_c: float | None = None,
+        notes: str | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Record the conditions one recorded session was performed under.
@@ -1930,11 +1931,18 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           −30…50 °C are refused as implausible (a Fahrenheit number will be
           caught by this — convert first).
 
+        * `notes` is free text about the session — the one field here that you
+          may have typed yourself, which is why it can be corrected: a slip
+          that left a stray fragment in a note is fixed by writing the note
+          again. The replaced text is kept in the audit trail, so a correction
+          is a new version, not an erasure. Send the whole corrected note (it
+          replaces, it does not append), or a blank string to clear it.
+
         This writes *context only*. The measured record — recordings,
         streams, computed metrics — stays unwritable from here, and the
-        athlete's verdict stays theirs. Give at least one of the two fields;
-        a call with neither is refused. Setting a field again overwrites it;
-        neither can be cleared from this surface. Every answer carries
+        athlete's verdict stays theirs. Give at least one field; a call with
+        none is refused. Setting a field again overwrites it; `rpe` and
+        `temperature_c` cannot be cleared from this surface. Every answer carries
         `budget_remaining` — how many writes the hourly cap still admits,
         after this one if it was real (a dry run is free, so there it is the
         current standing).
@@ -1943,6 +1951,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             session_id: The recorded session this context is about.
             rpe: The athlete's reported session RPE, 0-10.
             temperature_c: Ambient temperature in °C, −30…50.
+            notes: The session's note, replacing any existing one; blank
+                clears it.
             dry_run: Run every check and return what would be set, writing
                 nothing and costing no rate-cap budget. `session` then shows
                 the row as it still stands, and `would_set` what a real call
@@ -1952,16 +1962,18 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         """
         actor = require_scope(Scope.WRITE)
         with tool_errors():
-            if rpe is None and temperature_c is None:
+            if rpe is None and temperature_c is None and notes is None:
                 raise ValueError(
-                    "give at least one of rpe or temperature_c — a context "
-                    "write with neither would record nothing"
+                    "give at least one of rpe, temperature_c or notes — a "
+                    "context write with none would record nothing"
                 )
             updates: dict[str, Any] = {}
             if rpe is not None:
                 updates["rpe"] = rpe
             if temperature_c is not None:
                 updates["temperature_c"] = temperature_c
+            if notes is not None:
+                updates["notes"] = notes
             async with session_scope() as session:
                 identifier = views.as_uuid(session_id, field="session_id")
                 row = await SessionService.from_session(session).update(
@@ -1982,8 +1994,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
 
     @mcp.tool
     async def record_manual_session(
-        start_time: str,
         duration_s: int,
+        start_time: str | None = None,
+        local_date: str | None = None,
         timezone: str | None = None,
         discipline: SessionDiscipline = SessionDiscipline.STRENGTH,
         rpe: float | None = None,
@@ -2032,9 +2045,23 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         cap still admits, after this one if it was real (a dry run is free,
         so there it is the current standing).
 
+        **Time of day**: give `start_time` when the athlete said when they
+        started, and `local_date` (`2026-08-10`) when they only named the day
+        — "Montagabend" is a day, not a 19:00. Exactly one of the two; do not
+        invent a clock reading to fill the other. A day-only session is filed
+        on that day, matches the plan like any other, and reads back with
+        `start_time` null and `start_time_known` false.
+
+        A manual session costs three writes of the hourly budget, not one:
+        the session, its strength metrics and its match each leave an audit
+        row, and every audit row spends budget.
+
         Args:
             start_time: When it started, ISO datetime **with a timezone
-                offset** (e.g. `2026-08-12T17:30:00+02:00`).
+                offset** (e.g. `2026-08-12T17:30:00+02:00`). Omit when only
+                the day is known.
+            local_date: The day, ISO date in the session's timezone, when no
+                start time was reported. Omit when you have `start_time`.
             duration_s: Wall-clock length in seconds, 60 s to 24 h.
             timezone: The athlete-local timezone (IANA name, `UTC+02:00`, or
                 `UTC`) — it fixes which day the session belongs to. **Omit it
@@ -2062,7 +2089,16 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             async with session_scope() as session:
                 row = await SessionService.from_session(session).create_manual(
                     actor=actor,
-                    start_time=views.as_datetime(start_time, field="start_time"),
+                    start_time=(
+                        None
+                        if start_time is None
+                        else views.as_datetime(start_time, field="start_time")
+                    ),
+                    local_date=(
+                        None
+                        if local_date is None
+                        else views.as_date(local_date, field="local_date")
+                    ),
                     timezone=timezone,
                     duration_s=duration_s,
                     discipline=discipline,

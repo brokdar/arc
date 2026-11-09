@@ -454,3 +454,21 @@ def session_date(start_utc: dt.datetime, tz: str) -> dt.date:
             "be read as local time on whichever machine happened to run this"
         )
     return start_utc.astimezone(parse_timezone(tz)).date()
+
+
+def day_anchor(day: dt.date, tz: str) -> dt.datetime:
+    """The aware-UTC instant a day-only session is stored at: local midnight.
+
+    A session the athlete dated but never timed still needs a ``start_time``
+    for the queries that order and window by it. Midnight is chosen over
+    noon or "evening" because it is the one value that cannot be mistaken for
+    a report: nobody trains at 00:00, so the anchor is recognisably an anchor,
+    and ``sessions.start_time_known`` says so explicitly for anything that
+    would otherwise display it. In a zone that skips midnight on a DST change
+    the instant lands on the first valid time of the same local day.
+
+    Raises:
+        ValueError: When ``tz`` is unresolvable.
+    """
+    local = dt.datetime.combine(day, dt.time.min, tzinfo=parse_timezone(tz))
+    return local.astimezone(dt.UTC)

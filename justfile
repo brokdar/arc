@@ -236,6 +236,15 @@ wellness-trend-fixture:
 	cd backend && uv run python scripts/emit_wellness_trend_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-wellness-trend.ts
 
+# Regenerate the frontend's fitness-series fixture from the real domain.
+# Run after changing app/domain/pmc.py or the fitness read shape, and commit the
+# result: every CTL, ATL, form value and maturity verdict in it is the EWMA's own
+# over the stored history the script holds, and a hand-typed curve would let a
+# component test agree with numbers no history can produce.
+pmc-fixture:
+	cd backend && uv run python scripts/emit_pmc_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-pmc.ts
+
 # Regenerate the frontend's power-curve fixtures from the real domain.
 # Run after changing app/domain/power_curve.py, the power-curve read shape or
 # the metrics fixture's stream, and commit the result: every best is the

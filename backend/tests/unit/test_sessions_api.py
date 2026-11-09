@@ -567,3 +567,58 @@ async def test_a_session_carries_the_weight_governing_its_date(
         "effective_date": "2026-05-01",
         "on": "2026-05-11",
     }
+
+
+# --- day-only sessions and correctable notes (#51) -----------------------------------
+
+
+async def test_a_day_only_manual_session_is_filed_on_that_day_untimed(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    athlete_zone("Pacific/Auckland")
+    payload = a_manual_session(local_date="2026-05-11")
+    del payload["start_time"], payload["timezone"]
+
+    response = await client.post(MANUAL, json=payload)
+
+    assert response.status_code == 201, response.text
+    session = response.json()
+    assert session["local_date"] == "2026-05-11"
+    assert session["start_time_known"] is False
+    assert session["timezone"] == "Pacific/Auckland"
+    # The anchor is the athlete's local midnight, not UTC's.
+    assert session["start_time"] == "2026-05-10T12:00:00Z"
+    listed = (await client.get(SESSIONS)).json()["items"][0]
+    assert listed["start_time_known"] is False
+
+
+async def test_a_timed_manual_session_is_known(client: AsyncClient) -> None:
+    session = (await client.post(MANUAL, json=a_manual_session())).json()
+
+    assert session["start_time_known"] is True
+
+
+@pytest.mark.parametrize(
+    "extra", [{}, {"local_date": "2026-05-11"}], ids=["none", "both"]
+)
+async def test_a_manual_session_needs_exactly_one_of_start_time_and_local_date(
+    client: AsyncClient, extra: dict[str, str]
+) -> None:
+    payload = a_manual_session(**extra)
+    if not extra:
+        del payload["start_time"]
+
+    response = await client.post(MANUAL, json=payload)
+
+    assert response.status_code == 422
+
+
+async def test_a_session_note_is_patchable_and_blank_clears_it(
+    client: AsyncClient,
+) -> None:
+    session = (await client.post(MANUAL, json=a_manual_session())).json()
+
+    fixed = await client.patch(f"{SESSIONS}/{session['id']}", json={"notes": "Fixed"})
+    assert fixed.json()["notes"] == "Fixed"
+    cleared = await client.patch(f"{SESSIONS}/{session['id']}", json={"notes": None})
+    assert cleared.json()["notes"] is None
