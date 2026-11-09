@@ -779,3 +779,14 @@ async def test_an_unplanned_recording_shows_only_in_the_completed_counters(
     assert payload["completed_session_count"] == 1
     assert payload["completed_duration_s"] == 3_600
     assert session_id not in json.dumps(payload)
+
+
+# Pins an edge case found by Schemathesis fuzzing — keep it: a week that would
+# run past 9999-12-31 overflowed `date` arithmetic into a 500.
+async def test_a_week_that_would_outrun_the_calendar_is_a_422_not_a_500(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(WEEK, params={"start": "9999-12-31"})
+
+    assert response.status_code == 422, response.text
+    assert (await client.get(WEEK, params={"start": "9999-12-25"})).status_code == 200

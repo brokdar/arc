@@ -38,6 +38,7 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
+from app.core.exceptions import ValidationError
 from app.domain.activity import SessionMatchStatus, as_planned_discipline
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
@@ -423,6 +424,15 @@ class PlanService:
                 not a per-card ``try``.
         """
         first = start if start is not None else week_start(athlete_today())
+        # A week has seven days, and the calendar ends before the last few
+        # dates can begin one: refuse it rather than overflow into a 500
+        # (found by Schemathesis, `?start=9999-12-31`).
+        latest = dt.date.max - dt.timedelta(days=WEEK_DAYS - 1)
+        if first > latest:
+            raise ValidationError(
+                f"start ({first.isoformat()}) leaves no room for seven days; "
+                f"the latest week begins {latest.isoformat()}"
+            )
         dates = week_dates(first)
         rows, total = await self._sessions.list(
             start=first, end=dates[-1], limit=MAX_WEEK_SESSIONS

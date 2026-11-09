@@ -20,8 +20,8 @@ coverage.xml
 # Environments
 .env
 .env.local
-# Backups the tooling writes before it rewrites .env (`just set-password`
-# leaves .env.set-password.bak): each holds a previous secrets file.
+# Backups of .env (`.env.bak`, `.env.set-password.bak`): each is a copy of a
+# secrets file, one `git add -A` from being committed.
 *.bak
 .envrc
 .venv

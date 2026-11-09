@@ -698,7 +698,7 @@ def _rolling_mean(
     marker: Marker, readings: Sequence[Reading], *, on: dt.date
 ) -> RollingMean:
     """The mean over the half-open window ``[on - 6, on + 1)``, with its n."""
-    first = on - dt.timedelta(days=ROLLING_MEAN_DAYS - 1)
+    first = days_before(on, ROLLING_MEAN_DAYS - 1)
     window = [reading for reading in readings if first <= reading.local_date <= on]
     if not window:
         return RollingMean(mean=None, mean_native=None, n=0)
@@ -732,7 +732,7 @@ def baseline_for(
     are reported either way, so the answer to "when will this be usable" is in
     the object rather than in someone's head.
     """
-    first = on - dt.timedelta(days=BASELINE_WINDOW_DAYS - 1)
+    first = days_before(on, BASELINE_WINDOW_DAYS - 1)
     window = [reading for reading in readings if first <= reading.local_date <= on]
     usable = eligible(marker, window)
     counts = Count(have=len(usable), need=MIN_BASELINE_READINGS)
@@ -874,6 +874,22 @@ def trend_for(
         baseline=baseline,
         by_context=contexts,
     )
+
+
+def days_before(day: dt.date, days: int) -> dt.date:
+    """``day`` minus ``days``, clamped at :data:`datetime.date.min`.
+
+    A look-back window anchored at the calendar's first day has nothing before
+    it, and the honest answer is a window that starts there — not the
+    ``OverflowError`` plain ``date`` arithmetic raises, which a schema-valid
+    ``?start=0001-01-01`` turned into a 500 (found by Schemathesis).
+    """
+    return day - dt.timedelta(days=min(days, (day - dt.date.min).days))
+
+
+def days_after(day: dt.date, days: int) -> dt.date:
+    """``day`` plus ``days``, clamped at :data:`datetime.date.max`."""
+    return day + dt.timedelta(days=min(days, (dt.date.max - day).days))
 
 
 def _dates(start: dt.date, end: dt.date) -> tuple[dt.date, ...]:
