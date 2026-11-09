@@ -77,6 +77,8 @@ schemathesis-report/
 # docstring or test it lands in, so the plan itself must never be committed —
 # a tracked copy is a second source of truth that drifts from the code.
 /*-plan.md
+# A plan cut into one file per pull request lives in a directory instead.
+/plan/
 # The run-local copy `parse-plan.mjs` takes of the plan it was given, so the
 # whole run survives the working copy being edited or deleted mid-flight — which
 # happened, five minutes into one, on 16 Aug 2026.
