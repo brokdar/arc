@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dev tooling
+
+- **`just set-password` writes `.env` itself** (#89). It prompts twice with no
+  echo, hashes with the same bcrypt call as `hash-password`, and rewrites the
+  `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
+  lines byte-identical, temp file plus rename, previous file kept at the
+  gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
+
 ### An agent surface that can read back what it wrote (#17–#26)
 
 An external coaching agent (claude-opus-5) migrated a real athlete into arc

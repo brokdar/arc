@@ -24,8 +24,14 @@ worktree-init:
 	(cd backend && uv sync)
 	(cd frontend && bun install)
 
-# The printed line is single-quoted because bcrypt hashes are full of `$`,
-# which .env parsers and your shell would otherwise expand.
+# `set-password` is the way to change the password: it owns the single quotes
+# a bcrypt hash needs (full of `$`, which .env parsers and your shell expand).
+# `hash-password` stays as the print-only escape hatch for scripting; its line
+# is single-quoted for the same reason.
+
+# Set the login password: prompt twice, rewrite AUTH__PASSWORD_HASH in .env
+set-password:
+	uv run --project backend python scripts/set-password.py
 
 # Print an AUTH__PASSWORD_HASH line for .env, for a password you type
 hash-password:
