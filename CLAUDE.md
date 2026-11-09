@@ -55,6 +55,10 @@ at the code site, in a test that fails when it is violated, or in
 
 Everything goes through the `justfile`; `just` alone lists the recipes.
 The one recipe needing an environment variable: `E2E_PASSWORD=... just smoke`.
+Toolchain versions (uv, bun, node, gh, just, prek) are pinned in `mise.toml`/`mise.lock` —
+`mise install && mise run bootstrap` sets up a fresh host checkout (including
+the pinned `git-cliff`, the git hooks and both projects' dependencies); `.devcontainer/` does
+the same thing inside a container.
 
 ## Worktrees
 

@@ -2,14 +2,41 @@
 	"name": "arc",
 	"image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
 	"features": {
-		"ghcr.io/devcontainers/features/docker-in-docker:4": {
+		// Docker-outside-of-docker, not docker-in-docker: every `just` recipe
+		// that needs Docker (infra, up, test-int, smoke, images) only ever talks
+		// to ONE shared daemon per the Worktrees section of CLAUDE.md ("Docker is
+		// not per-worktree"). A nested dockerd would give this container its own
+		// isolated daemon — working against that constraint instead of honouring
+		// it — plus it would need its own buildx/QEMU setup for the cross-arch
+		// `just images` build. Sharing the host's Docker Desktop daemon needs
+		// neither: it already has buildx and multi-arch emulation configured.
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
 			"moby": false
 		},
 		"ghcr.io/devcontainers/features/github-cli:1": {},
-		"ghcr.io/devcontainers/features/node:2": {},
+		// Pinned to match the Node version `frontend/Dockerfile`'s runtime stage
+		// ships (node:24-alpine) — an unpinned feature resolves to whatever LTS
+		// is current on rebuild day, which can silently diverge from production.
+		"ghcr.io/devcontainers/features/node:2": {
+			"version": "24"
+		},
 		"ghcr.io/shyim/devcontainers-features/bun:0": {},
 		"ghcr.io/va-h/devcontainers-features/uv:1": {}
 	},
+	// Mirrors the host path exactly (docker-outside-of-docker only shares the
+	// socket, not the filesystem): docker-compose.yml's bind mounts (./data,
+	// ./caddy/Caddyfile) are resolved by the HOST daemon against whatever
+	// directory `docker compose` was run from, so that directory has to be the
+	// same path on both sides.
+	"workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind,consistency=cached",
+	"workspaceFolder": "${localWorkspaceFolder}",
+	// Host networking, not forwardPorts: compose (run on the host daemon,
+	// outside this container) publishes service ports onto the host's own
+	// network namespace, not this container's — without this, `just dev-api`'s
+	// `POSTGRES__HOST=localhost` would point at the wrong loopback and nothing
+	// would be there. This also makes every port already reachable at
+	// localhost, so there is nothing left to forward.
+	"runArgs": ["--network=host"],
 	"mounts": [
 		// Claude Code's login, session history, plugins and auto-memory. Without
 		// this they live in the container's writable layer and every rebuild
@@ -17,30 +44,6 @@
 		"type=volume,source=${localWorkspaceFolderBasename}-claude-home,target=/home/vscode/.claude"
 	],
 	"postCreateCommand": "bash .devcontainer/startup.sh",
-	"forwardPorts": [
-		80,
-		8000,
-		5432,
-		3000
-	],
-	"portsAttributes": {
-		"80": {
-			"label": "arc (Caddy)",
-			"onAutoForward": "silent"
-		},
-		"8000": {
-			"label": "API Service",
-			"onAutoForward": "silent"
-		},
-		"5432": {
-			"label": "PostgreSQL Database",
-			"onAutoForward": "silent"
-		},
-		"3000": {
-			"label": "Frontend Service",
-			"onAutoForward": "silent"
-		}
-	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
@@ -59,7 +62,6 @@
 				"eamodio.gitlens",
 				"redhat.vscode-yaml",
 				"GitHub.copilot-chat",
-				"GitHub.codespaces",
 				"Anthropic.claude-code"
 			]
 		}

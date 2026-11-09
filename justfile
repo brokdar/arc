@@ -290,9 +290,10 @@ rebuild-streams *args:
 # --- Deployment images -------------------------------------------------------
 # The release workflow publishes multi-arch images on version tags; these two
 # recipes are the path for UNRELEASED builds: cross-build locally (buildx +
-# QEMU, both preinstalled in the devcontainer's docker), then ship the tarball
-# straight to a docker host over ssh — no registry, no tag required. A small
-# ARM server must pull or receive images, never build them.
+# QEMU, both preinstalled by Docker Desktop — the devcontainer shares this
+# daemon via docker-outside-of-docker rather than running its own), then ship
+# the tarball straight to a docker host over ssh — no registry, no tag
+# required. A small ARM server must pull or receive images, never build them.
 
 # Cross-build the three images: just images [tag] [platform]
 images tag="dev" platform="linux/arm64":

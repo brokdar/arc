@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
   lines byte-identical, temp file plus rename, previous file kept at the
   gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
+- **The dev toolchain runs on the host through mise.** `mise.toml` and
+  `mise.lock` pin uv, bun, node, gh, just and prek; `mise install && mise run
+  bootstrap` sets up a fresh checkout (git-cliff, the git hooks, both projects'
+  dependencies). Declaring `just` and `prek` there fixes the `No version is set
+  for shim` failure worktrees hit when mise shimmed them without a version. The
+  two pins must equal `tools/requirements.txt`, and a unit test fails if they
+  drift. The devcontainer swaps docker-in-docker for docker-outside-of-docker,
+  sharing the host daemon.
 - **The scratch-repo test suites no longer write a git identity to disk.** The
   three that build throwaway repositories took their `user.email` from
   `git config`; run from a commit hook, which exports `GIT_DIR`, that wrote
