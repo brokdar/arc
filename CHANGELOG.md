@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dev tooling
 
+- **`just e2e` builds first.** It now depends on `build`, so it can no longer
+  fail on a missing `.next` or test one left from another commit. CI is
+  unchanged: its shards run `bunx playwright test` on the build artifact.
+  Related to #58.
 - **`just set-password` writes `.env` itself** (#89). It prompts twice with no
   echo, hashes with the same bcrypt call as `hash-password`, and rewrites the
   `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
@@ -31,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two pins must equal `tools/requirements.txt`, and a unit test fails if they
   drift. The devcontainer swaps docker-in-docker for docker-outside-of-docker,
   sharing the host daemon.
+- **The scratch-repo test suites no longer write a git identity to disk.** The
+  three that build throwaway repositories took their `user.email` from
+  `git config`; run from a commit hook, which exports `GIT_DIR`, that wrote
+  `t <t@t>` into the real `.git/config`. They now use `GIT_AUTHOR_*` and
+  `GIT_COMMITTER_*`, unset every other `GIT_*` variable, and stop if they
+  cannot enter their temp directory.
 
 ### Config preflight
 

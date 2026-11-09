@@ -6,15 +6,19 @@ set -uo pipefail
 # so a suite that builds its own repository in a temp directory silently operates
 # on the REAL one instead — which is how this passed standalone and failed inside
 # a commit. Unset them before touching git at all.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_QUARANTINE_PATH
+# Every GIT_* there is, not a hand-picked list (see docker-lock.test.sh).
+for _v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done
+# Identity through the environment, never `git config`: a config write that
+# lands in the wrong repository outlives the run — one did, and authored 30
+# real commits as `t <t@t>`.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-migration-required.sh"
 ROOT="$(mktemp -d)"
 PASS=0; FAIL=0
 
-cd "$ROOT"
-git init -q -b throwaway . && git config user.email t@t && git config user.name t
+cd "$ROOT" || exit 1
+git init -q -b throwaway .
 mkdir -p backend/app/persistence/alembic/versions
 
 cat > backend/app/persistence/wellness.py <<'PY'
