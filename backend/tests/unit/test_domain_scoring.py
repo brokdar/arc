@@ -71,6 +71,7 @@ from app.domain.workout import (
     StepRole,
     flatten,
 )
+from app.services.templates import purpose_templates
 
 WORK = StepSelector.of_role(StepRole.WORK)
 
@@ -488,6 +489,59 @@ def test_a_percentage_ceiling_resolves_against_the_pinned_anchor() -> None:
 
     assert isinstance(result.assessment, Measured)
     assert result.assessment.value == 1.0
+
+
+def template_ceiling(purpose: Purpose) -> Ceiling:
+    """The ceiling a purpose template ships, as an athlete is judged against it."""
+    (ceiling,) = (
+        criterion
+        for criterion in purpose_templates()[purpose].default_criteria
+        if isinstance(criterion, Ceiling)
+    )
+    return ceiling
+
+
+@pytest.mark.parametrize(
+    ("purpose", "base_w", "spike_w"),
+    [(Purpose.ENDURANCE, 150.0, 400.0), (Purpose.RECOVERY, 90.0, 300.0)],
+)
+def test_junction_spikes_do_not_break_a_road_ride_ceiling(
+    purpose: Purpose, base_w: float, spike_w: float
+) -> None:
+    # Issue #50: a stop-and-go ride at FTP 200 W. 98 sprints of 4 s, one every
+    # 30 s: 392 s above the cap in raw samples (endurance: 200 W, recovery:
+    # 120 W), yet no 30 s window averages above it. A ceiling on raw samples
+    # counted that as sustained work and called an easy ride `over`.
+    ride = watts((spike_w, 4), (base_w, 26)) * 98
+    result = axis(
+        discipline_inputs(
+            template_ceiling(purpose),
+            power=ride,
+            anchors={AnchorType.FTP: 200.0},
+        ),
+        ScoringAxis.DISCIPLINE,
+    )
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.value == 1.0
+    assert result.criteria[0].passed is True
+
+
+def test_a_sustained_excursion_still_breaks_the_endurance_ceiling() -> None:
+    # Smoothing forgives spikes, not tempo: 10 minutes at 260 W is 600 s above
+    # a 200 W FTP however it is averaged, against an allowance of 300 s.
+    result = axis(
+        discipline_inputs(
+            template_ceiling(Purpose.ENDURANCE),
+            power=watts((150.0, 1_200), (260.0, 600), (150.0, 600)),
+            anchors={AnchorType.FTP: 200.0},
+        ),
+        ScoringAxis.DISCIPLINE,
+    )
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.value < 1.0
+    assert result.criteria[0].passed is False
 
 
 def test_a_percentage_ceiling_with_no_pinned_anchor_cannot_be_checked() -> None:

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dev tooling
+
+- **`just set-password` writes `.env` itself** (#89). It prompts twice with no
+  echo, hashes with the same bcrypt call as `hash-password`, and rewrites the
+  `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
+  lines byte-identical, temp file plus rename, previous file kept at the
+  gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
+
 ### An agent surface that can read back what it wrote (#17–#26)
 
 An external coaching agent (claude-opus-5) migrated a real athlete into arc
@@ -56,6 +64,12 @@ this round of changes, measured against the baseline now recorded in
   filed on that day and reads back with `start_time_known: false` and no
   invented clock time. The tool description now says a manual session spends
   three writes of the hourly budget.
+- **Road-ride ceilings read 30 s averages** (#50). The endurance and recovery
+  templates judged `discipline` on raw samples, so 1–5 s spikes at junctions
+  summed to "391 s above FTP" on a ride whose best minute was FTP, and the
+  verdict came back `over`. Both ceilings now smooth over 30 s, the window NP
+  uses; sustained excursions are still flagged. Sessions planned earlier keep
+  the criteria they froze.
 
 ### Metric accuracy against the head unit
 

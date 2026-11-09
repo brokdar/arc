@@ -5,7 +5,7 @@
 #
 # Non-interactive use (CI, provisioning): set ARC_INIT_PASSWORD to skip the
 # prompt. With no TTY and no ARC_INIT_PASSWORD the placeholder hash is left in
-# place and you finish the job later with `just hash-password`.
+# place and you finish the job later with `just set-password`.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -177,9 +177,8 @@ else
   echo "  AUTH__PASSWORD_HASH        STILL A PLACEHOLDER (no terminal to prompt on)"
   echo
   echo "Next:"
-  echo "  1. just hash-password        → prints an AUTH__PASSWORD_HASH= line"
-  echo "  2. replace that line in .env (keep the single quotes)"
-  echo "  3. just up                   → the stack comes up on http://localhost"
+  echo "  1. just set-password         → asks twice, writes AUTH__PASSWORD_HASH in .env"
+  echo "  2. just up                   → the stack comes up on http://localhost"
 fi
 
 if [ "$hash_is_placeholder" -eq 0 ] && grep -q 'change-me' "$ENV_FILE"; then
