@@ -66,15 +66,15 @@ Use the client from `lib/api/client.ts` — `$api.useQuery` / `$api.useMutation`
 in client components, `apiClient` in server components and route handlers. It
 sends credentials, because the API authenticates with a session cookie.
 
-`NEXT_PUBLIC_API_BASE_URL` is baked in at build time. Empty means *same
-origin* — the browser calls `/api/...` on whatever host served the page and
+`NEXT_PUBLIC_API_BASE_URL` is baked in at build time. Empty means _same
+origin_ — the browser calls `/api/...` on whatever host served the page and
 Caddy forwards it — which is how the Docker stack builds this app. An absolute
 URL is for running without the proxy (bare-metal `bun dev` against a local
 API), which is the default outside Docker.
 
 ## Testing
 
-- **Component tests** (Vitest + Testing Library, jsdom): mock the *network*
+- **Component tests** (Vitest + Testing Library, jsdom): mock the _network_
   with the typed MSW handlers in `tests/mocks/handlers.ts` (openapi-msw), so a
   handler that contradicts the API contract fails type-checking. Never mock
   `lib/api/client.ts`. Untyped responses only via `http.untyped`, for
@@ -82,7 +82,7 @@ API), which is the default outside Docker.
 - **Playwright, two modes** (`playwright.config.ts`):
   - default — UI-only, against `bun run start`, no backend; `@fullstack` specs
     are excluded. This is `just e2e`.
-  - `E2E_FULLSTACK=1` — runs *only* `@fullstack` specs against the running
+  - `E2E_FULLSTACK=1` — runs _only_ `@fullstack` specs against the running
     Compose stack through Caddy on `http://localhost`, logging in once in a
     `setup` project and replaying the session via `storageState`. This is
     `just smoke`, and it needs `E2E_PASSWORD` to match the password behind
