@@ -119,6 +119,7 @@ from app.services.guardrails import current_profile, remaining_write_budget
 from app.services.history import HistoryService
 from app.services.matching import MatchingService
 from app.services.metrics import SessionMetricsService, summarise
+from app.services.note_search import NoteSearchService
 from app.services.plan import PlanService
 from app.services.proposals import ProposalService
 from app.services.scoring import ScoringService
@@ -203,6 +204,23 @@ def tool_errors() -> Iterator[None]:
 def _limit(limit: int) -> int:
     """Clamp a caller-supplied page size into what the surface will serve."""
     return max(1, min(limit, MAX_LIMIT))
+
+
+def _query(query: str | None) -> str | None:
+    """Check a caller-supplied search term, trimmed; None passes through.
+
+    Blank is refused rather than ignored: an empty substring matches
+    everything, so a caller whose query variable came out empty would get the
+    unfiltered list and read it as "every session mentions that".
+
+    Raises:
+        ValueError: When it is present but blank.
+    """
+    if query is None:
+        return None
+    if not query.strip():
+        raise ValueError("query must not be blank")
+    return query.strip()
 
 
 def _offset(offset: int) -> int:
@@ -879,6 +897,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         start: str | None = None,
         end: str | None = None,
         discipline: SessionDiscipline | None = None,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -895,6 +914,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             start: Earliest local date, `YYYY-MM-DD`, inclusive.
             end: Latest local date, `YYYY-MM-DD`, inclusive.
             discipline: `cycling`, `strength` or `other`.
+            query: Text to find in **the athlete's own session notes** —
+                case-insensitive, literal (`%` and `_` are ordinary
+                characters). Only the note as it reads now is searched, not
+                wordings the athlete has since replaced. What you and the
+                athlete wrote elsewhere is `search_notes`.
             limit: How many to return, newest first.
             offset: How many to skip. `total` says how many the filters
                 matched, so `offset + limit < total` means there is more.
@@ -910,6 +934,7 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     else views.as_date(start, field="start"),
                     end=None if end is None else views.as_date(end, field="end"),
                     discipline=discipline,
+                    query=_query(query),
                     offset=_offset(offset),
                     limit=_limit(limit),
                 )
@@ -980,6 +1005,56 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 items = [
                     views.workout(row, step_count=step_count_of(row)) for row in rows
                 ]
+                return {
+                    **views.page(
+                        items,
+                        total=total,
+                        limit=_limit(limit),
+                        offset=_offset(offset),
+                    ),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def search_notes(
+        query: str, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
+        """Find what has been *said* about training — your notes and proposals.
+
+        Text search over **your own agent notes** (evaluations and
+        annotations) and **proposal rationales and resolution notes** (your
+        reasons, and the athlete's answer to them). For "when did we last
+        discuss the FTP test" or "why was that proposal rejected" — questions
+        that otherwise mean walking weeks and sessions by hand.
+
+        Not what this is for: the athlete's own session notes are
+        `list_sessions` with `query`, which returns sessions; and
+        `search_history` is a date-range weekly summary, not a text search.
+
+        Each hit is `{source, item}`. `source` is `agent_note` (`item` is the
+        note, as `get_session_detail` shows it, including `dispute`) or
+        `proposal` (`item` is the summary row `list_proposals` serves; a
+        match in either its rationale or its resolution note finds it, and
+        both come back). Newest first across both. `total` counts every
+        match, so `offset + limit < total` means there is more.
+
+        Matching is case-insensitive and literal: `%` and `_` are ordinary
+        characters, and a blank query is refused.
+
+        Args:
+            query: Text to find.
+            limit: How many hits to return.
+            offset: How many to skip.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                hits, total = await NoteSearchService.from_session(session).search(
+                    query, offset=_offset(offset), limit=_limit(limit)
+                )
+                items = [views.note_hit(hit) for hit in hits]
                 return {
                     **views.page(
                         items,

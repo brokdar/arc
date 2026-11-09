@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### MCP
+
+- **The coach can search what has been written** (#52). `list_sessions` takes
+  a `query` over the athlete's current session notes, and a new `search_notes`
+  tool searches agent notes plus proposal rationales and resolution notes,
+  newest first. Matching is case-insensitive and literal (`%`, `_` and `\\` are
+  ordinary characters). Replaced notes are not searched. `search_history` is
+  unchanged.
+
 ### Dev tooling
 
 - **`just set-password` writes `.env` itself** (#89). It prompts twice with no

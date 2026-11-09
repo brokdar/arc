@@ -84,6 +84,7 @@ from app.services.connections import (
 )
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary, measured_channels
+from app.services.note_search import NoteHit
 from app.services.plan import CompletedSession, PlanWeek, WeekSession
 from app.services.proposals import ProposalOutcome
 from app.services.wellness import (
@@ -756,6 +757,16 @@ def note(row: AgentNoteRow) -> dict[str, Any]:
         "created_at": None if row.created_at is None else row.created_at.isoformat(),
         "cites": list(row.cites),
         "dispute": None if row.dispute is None else row.dispute.value,
+    }
+
+
+def note_hit(hit: NoteHit) -> dict[str, Any]:
+    """One `search_notes` hit: which kind of row, and the row as its own read shows it."""
+    return {
+        "source": hit.source,
+        "item": note(hit.row)
+        if isinstance(hit.row, AgentNoteRow)
+        else proposal(hit.row),
     }
 
 

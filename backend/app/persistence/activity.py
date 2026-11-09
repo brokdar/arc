@@ -56,6 +56,7 @@ from app.domain.anchors import Provenance
 from app.domain.streams import AnomalyKind, StreamChannel
 from app.persistence.db import Base, flush, refresh
 from app.persistence.exercises import MAX_SLUG_LENGTH
+from app.persistence.search import contains
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest free-text note on a session or a logged set.
@@ -393,10 +394,18 @@ class SessionRepository:
         start: dt.date | None = None,
         end: dt.date | None = None,
         discipline: SessionDiscipline | None = None,
+        query: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[Sequence[SessionRow], int]:
         """Return a page of sessions, newest first, plus the total.
+
+        ``query`` is a case-insensitive literal substring of the session's
+        **current** `notes` (`app.persistence.search`). Sessions with no note
+        never match. Earlier wordings live only in audit rows
+        (`previous_notes`) and are deliberately not searched: a hit on text the
+        athlete has since replaced would answer a question about a note that
+        no longer exists.
 
         Newest first because this is a log of what has happened, unlike the
         planned-session list, which is a calendar and reads forwards.
@@ -409,6 +418,8 @@ class SessionRepository:
             criteria.append(SessionRow.local_date <= end)
         if discipline is not None:
             criteria.append(SessionRow.discipline == discipline)
+        if query is not None:
+            criteria.append(contains(SessionRow.notes, query))
         total = await self._session.scalar(
             select(func.count()).select_from(SessionRow).where(*criteria)
         )
