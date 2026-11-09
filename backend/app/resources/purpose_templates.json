@@ -10,7 +10,7 @@
           "channel": "power",
           "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 0.6 },
           "max_seconds_above": 120,
-          "smoothing_s": 0
+          "smoothing_s": 30
         }
       ]
     },
@@ -35,7 +35,7 @@
           "channel": "power",
           "limit": { "kind": "percent_of_anchor", "anchor_type": "ftp", "pct": 1.0 },
           "max_seconds_above": 300,
-          "smoothing_s": 0
+          "smoothing_s": 30
         }
       ]
     },
