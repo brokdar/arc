@@ -63,7 +63,7 @@ class AuthSettings(BaseModel):
     """Authentication settings for the single-user login."""
 
     password_hash: SecretStr = SecretStr("")
-    """bcrypt hash of the single user's password (`just hash-password`)."""
+    """bcrypt hash of the single user's password (`just set-password`)."""
 
     session: SessionSettings = SessionSettings()
 

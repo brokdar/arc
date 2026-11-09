@@ -121,6 +121,11 @@ STANDSTILL = (400, 425)
 #: test would still pass.
 FREEWHEEL = (1_130, 1_170)
 
+#: The one repaired power region the stream carries, as a `[start, end)` row
+#: range. `emit_power_curve_fixture.py` imports it, so the session's curve and
+#: its chart mark the same seconds as unclean.
+POWER_REPAIR = (512, 515)
+
 
 #: How far ahead of its own speed column the fixture's odometer runs.
 #:
@@ -284,8 +289,8 @@ def build() -> tuple[dict[str, Any], dict[str, Any]]:
         "anomalies": [
             {
                 "channel": "power",
-                "start_index": 512,
-                "end_index": 515,
+                "start_index": POWER_REPAIR[0],
+                "end_index": POWER_REPAIR[1],
                 "kind": "spike_clipped",
                 "substituted_value": 298.0,
             }

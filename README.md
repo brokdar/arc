@@ -28,8 +28,12 @@ just up     # full stack in Docker → http://localhost
 
 Open http://localhost and log in with the password you chose. There is one
 user and no sign-up: `just init` stored a bcrypt hash of that password in
-`.env` as `AUTH__PASSWORD_HASH`, and nothing else. To change it later, run
-`just hash-password` and paste the line it prints over the one in `.env`.
+`.env` as `AUTH__PASSWORD_HASH`, and nothing else. To change it later, or
+if you forgot it, run `just set-password` from the shell of the host: it asks
+twice, rewrites that line in `.env` (single-quoted, previous file kept at
+`.env.set-password.bak`) and tells you to run `docker compose restart api`.
+There is deliberately no reset in the app; shell access is the proof it is
+you. `just hash-password` still prints the line without touching anything.
 
 After pulling a new version, run `just env-check`: it compares `.env` with the
 settings the code reads and names any key that is missing, no longer used, or

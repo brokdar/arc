@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dev tooling
+
+- **`just set-password` writes `.env` itself** (#89). It prompts twice with no
+  echo, hashes with the same bcrypt call as `hash-password`, and rewrites the
+  `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other
+  lines byte-identical, temp file plus rename, previous file kept at the
+  gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
+
 ### Config preflight
 
 - **A broken `.env` stops the stack with a sentence** (#87). `python -m app.preflight`
@@ -62,6 +70,12 @@ this round of changes, measured against the baseline now recorded in
   Manual sessions are recordable over MCP (`record_manual_session`), which
   makes strength scorable; the exercise catalogue gained the single-leg calf
   raise and reverse fly (#26).
+- **Road-ride ceilings read 30 s averages** (#50). The endurance and recovery
+  templates judged `discipline` on raw samples, so 1–5 s spikes at junctions
+  summed to "391 s above FTP" on a ride whose best minute was FTP, and the
+  verdict came back `over`. Both ceilings now smooth over 30 s, the window NP
+  uses; sustained excursions are still flagged. Sessions planned earlier keep
+  the criteria they froze.
 
 ### Metric accuracy against the head unit
 
