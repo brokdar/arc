@@ -37,6 +37,35 @@ user and no sign-up: `just init` stored a bcrypt hash of that password in
 > one and the api crash-loops on `InvalidPasswordError`. Wipe the volume too:
 > `docker compose down -v && just up`.
 
+## HTTPS
+
+`CADDY_SITE_ADDRESS` decides how Caddy serves arc:
+
+- unset, or `:80`: plain HTTP on port 80, no TLS. What `just up` gives you.
+- a bare hostname (`arc.example.com`, `arc.localhost`): automatic HTTPS on 443,
+  and port 80 redirects to it. A real domain gets a public certificate. A
+  `.localhost` name gets one from Caddy's own private CA.
+- an explicit `http://` prefix (`http://arc.localhost`): plain HTTP even for a
+  hostname. The prefix, not the name, is what turns TLS off.
+
+A request for a hostname Caddy does not serve (say `http://localhost` against an
+`arc.localhost` deployment) gets a one-line plain-text answer naming the address
+that is served, instead of a redirect into a failed TLS handshake.
+
+For a private-CA hostname the browser has to trust that CA, or it stops on a
+certificate warning. That includes the Dropbox connect flow: its return leg is a
+fresh navigation carrying an authorization code, and it lands on the warning
+page. With the stack up:
+
+```bash
+just trust-ca
+```
+
+It copies Caddy's root certificate to `caddy-root-ca.crt` (gitignored) and prints
+the commands to trust it on Linux, macOS, WSL2 and Firefox, which keeps its own
+store. It installs nothing itself. Run it again after `docker compose down -v`,
+which makes Caddy mint a new CA.
+
 ## Services
 
 | Service | URL | Notes |

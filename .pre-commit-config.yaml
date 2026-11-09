@@ -150,6 +150,15 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/docker-lock(\.test)?\.sh$
+      # `just trust-ca` is the only guided step on the local-HTTPS path, and its
+      # failure modes (stack down, no CA yet) must read as advice, not as a raw
+      # Docker error. A stub `docker` stands in for the real one.
+      - id: trust-ca-test
+        name: trust-ca-test
+        entry: ./scripts/trust-ca.test.sh
+        language: script
+        pass_filenames: false
+        files: ^(scripts/trust-ca(\.test)?\.sh|caddy/Caddyfile|README\.md|\.env\.example)$
       # This checkout has core.fileMode=false, so git ignores the +x bit: a hook
       # script added without `git update-index --chmod=+x` is committed 100644,
       # `git status` shows nothing, and it exits 126 for everyone else.

@@ -78,6 +78,10 @@ schemathesis-report/
 # whole run survives the working copy being edited or deleted mid-flight — which
 # happened, five minutes into one, on 16 Aug 2026.
 .claude/plan-snapshots/
+# Caddy's local root CA, exported by `just trust-ca` (caddy-root-ca.crt), and the
+# name an earlier hand extraction used. Public material, but never repo content.
+caddy-root-ca.crt
+caddy-local-ca.crt
 # Mutual exclusion for the Docker-bound tiers, shared across worktrees.
 .claude/docker.lock/
 

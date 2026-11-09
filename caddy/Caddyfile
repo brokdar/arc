@@ -40,3 +40,25 @@
 		reverse_proxy frontend:3000
 	}
 }
+
+# Port 80, any host this site does not name. With CADDY_SITE_ADDRESS set to a
+# hostname, Caddy answers port 80 for EVERY host with a 308 to https://, and the
+# handshake then dies for names it holds no certificate for — so
+# `http://localhost` against an `arc.localhost` deployment looked like a broken
+# application. This site is more specific than that redirect only for hosts the
+# real site does not claim (the real host keeps its 308), and it answers them
+# with a sentence naming what IS served.
+#
+# 200, not 421: a browser shows a 200 body plainly and replaces a 4xx with its
+# own error page, which would hide the one line that explains the mistake.
+# Static `respond` only — an unserved hostname must never reach a backend.
+#
+# Inert by construction when CADDY_SITE_ADDRESS is the default `:80`: that site
+# already answers every host on port 80 and wins (verified against Caddy 2.11,
+# including `:80` and `http://arc.localhost`). There is no port-443 twin: with
+# no certificate for the unmatched name there is no handshake to answer inside,
+# so this plain-HTTP answer is the only reachable surface.
+http:// {
+	header Content-Type "text/plain; charset=utf-8"
+	respond "arc does not serve this hostname. It is served at {$CADDY_SITE_ADDRESS::80} - open that address instead (a bare hostname is https://)." 200
+}

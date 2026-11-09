@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Local HTTPS
+
+- **A guided path to local HTTPS** (#88). `just trust-ca` exports Caddy's local
+  root CA from the running stack to the gitignored `caddy-root-ca.crt` and
+  prints the trust commands for Linux, macOS, WSL2 and Firefox; it installs
+  nothing. The README gains an HTTPS section covering hostname versus `:80`
+  versus an explicit `http://` prefix (which turns TLS off even for a hostname)
+  and why the trust step matters for the Dropbox return leg. A hostname Caddy
+  does not serve now gets a plain-text answer naming the served address instead
+  of a 308 into a failed handshake; the real hostname keeps its redirect.
+
 ### An agent surface that can read back what it wrote (#17–#26)
 
 An external coaching agent (claude-opus-5) migrated a real athlete into arc
