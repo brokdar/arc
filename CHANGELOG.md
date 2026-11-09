@@ -49,6 +49,13 @@ this round of changes, measured against the baseline now recorded in
   Manual sessions are recordable over MCP (`record_manual_session`), which
   makes strength scorable; the exercise catalogue gained the single-leg calf
   raise and reverse fly (#26).
+- **Manual-session paper cuts** (#51). `record_session_context` takes `notes`,
+  so a coach-typed slip is corrected by writing the note again; the text it
+  replaces stays in the audit row. `record_manual_session` takes `local_date`
+  instead of `start_time` when the athlete only named a day; the session is
+  filed on that day and reads back with `start_time_known: false` and no
+  invented clock time. The tool description now says a manual session spends
+  three writes of the hourly budget.
 
 ### Metric accuracy against the head unit
 

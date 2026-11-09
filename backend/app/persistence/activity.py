@@ -40,6 +40,7 @@ from sqlalchemy import (
     false,
     func,
     select,
+    true,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -84,6 +85,15 @@ class SessionRow(Base):
     #: and the overlap-duplicate check (B-2) both query on it.
     start_time: Mapped[dt.datetime] = mapped_column(UtcDateTime, index=True)
     end_time: Mapped[dt.datetime] = mapped_column(UtcDateTime)
+    #: Whether `start_time` is a time somebody reported. False only for a
+    #: manual session the athlete dated but never timed ("Monday evening"): its
+    #: `start_time` is then the **local midnight** of `local_date`, an anchor
+    #: the row needs because the column is not null, and not a clock reading
+    #: anything may display or reason about. Server default true because every
+    #: row that predates this column was timed.
+    start_time_known: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true()
+    )
     #: The athlete-local timezone at the start, best-effort from the file:
     #: an IANA name when the source gives one, else ``UTC+02:00``, else
     #: ``UTC``. Athlete-overridable, and the override re-derives `local_date`.
