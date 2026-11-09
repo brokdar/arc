@@ -150,6 +150,15 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/docker-lock(\.test)?\.sh$
+      # `just trust-ca` is the only guided step on the local-HTTPS path, and its
+      # failure modes (stack down, no CA yet) must read as advice, not as a raw
+      # Docker error. A stub `docker` stands in for the real one.
+      - id: trust-ca-test
+        name: trust-ca-test
+        entry: ./scripts/trust-ca.test.sh
+        language: script
+        pass_filenames: false
+        files: ^(scripts/trust-ca(\.test)?\.sh|caddy/Caddyfile|README\.md|\.env\.example)$
       # `just set-password` rewrites the secrets file the stack boots from; a
       # regression locks the operator out. Real bcrypt, throwaway .env files.
       - id: set-password-test

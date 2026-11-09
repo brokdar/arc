@@ -68,6 +68,10 @@ dev-web:
 up:
 	docker compose up --build -d
 
+# Export Caddy's local CA from the running stack and print how to trust it
+trust-ca:
+	bash scripts/trust-ca.sh
+
 # Stop the Docker stack
 down:
 	docker compose down
