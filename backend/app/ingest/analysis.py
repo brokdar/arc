@@ -46,6 +46,7 @@ from app.ingest.parquet import (
     read_streams,
     stream_path,
 )
+from app.ingest.power_curve import session_power_curve
 from app.persistence.activity import (
     RecordingRepository,
     RecordingRow,
@@ -55,6 +56,7 @@ from app.persistence.activity import (
 )
 from app.persistence.metrics import SessionMetricsRow
 from app.services.metrics import SessionMetricsService
+from app.services.power_curve import PowerCurveService
 
 logger = get_logger(__name__)
 
@@ -346,11 +348,13 @@ class SessionAnalyser:
         sessions: SessionRepository,
         recordings: RecordingRepository,
         metrics: SessionMetricsService,
+        power_curves: PowerCurveService,
     ) -> None:
         self._session = session
         self._sessions = sessions
         self._recordings = recordings
         self._metrics = metrics
+        self._power_curves = power_curves
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -360,6 +364,7 @@ class SessionAnalyser:
             sessions=SessionRepository(session),
             recordings=RecordingRepository(session),
             metrics=SessionMetricsService.from_session(session),
+            power_curves=PowerCurveService.from_session(session),
         )
 
     async def compute(
@@ -383,6 +388,11 @@ class SessionAnalyser:
         artefact: its logged sets produce the strength block and every
         stream-derived slot carries its reason.
 
+        The session's power curve is replaced on the way, from the same stored
+        stream: this is the one place a stream meets analysis, so it is the
+        one hook that keeps the curve in step with every ingest, recompute and
+        rebuild.
+
         Raises:
             NotFoundError: When no session has that id.
         """
@@ -393,6 +403,10 @@ class SessionAnalyser:
         anchors = await self._metrics.current_anchors()
         sex = await self._metrics.athlete_sex()
         durations, columns, segments = await self._recorded(session_row)
+        curve = await session_power_curve(
+            session_row, lambda row: load_streams(row, self._recordings)
+        )
+        await self._power_curves.store(session_id, curve, actor=actor)
 
         analysis = analyse_session(
             SessionInputs(

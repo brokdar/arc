@@ -26,6 +26,7 @@ from app.api.routes.matching import router as matches_router
 from app.api.routes.matching import session_router as session_matches_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
+from app.api.routes.power_curve import router as power_curve_router
 from app.api.routes.proposals import router as proposals_router
 from app.api.routes.purposes import router as purposes_router
 from app.api.routes.scoring import planned_router as planned_reasons_router
@@ -202,6 +203,7 @@ def create_app() -> FastAPI:
     api.include_router(session_matches_router)
     api.include_router(scores_router)
     api.include_router(planned_reasons_router)
+    api.include_router(power_curve_router)
     app.include_router(api)
 
     return app
