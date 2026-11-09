@@ -421,6 +421,21 @@ class SessionRepository:
         )
         return list(result.scalars()), total or 0
 
+    async def all_oldest_first(self) -> Sequence[SessionRow]:
+        """Every session, oldest first.
+
+        Unpaged on purpose, for the one read that needs the whole history: the
+        fitness series (`app.services.fitness`) is an average that starts on
+        the first session ever recorded, and a page of it would be a different
+        average. One athlete's lifetime of sessions is a few thousand rows.
+        """
+        result = await self._session.execute(
+            select(SessionRow).order_by(
+                SessionRow.local_date.asc(), SessionRow.start_time.asc()
+            )
+        )
+        return list(result.scalars())
+
     async def by_ids(
         self, session_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, SessionRow]:

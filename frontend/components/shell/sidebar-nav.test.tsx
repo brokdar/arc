@@ -63,6 +63,7 @@ describe("SidebarNav", () => {
       ["Sessions", "/sessions"],
       ["Inbox", "/inbox"],
       ["Workouts", "/workouts"],
+      ["Fitness", "/fitness"],
       ["Proposals", "/proposals"],
       ["Settings", "/settings"],
     ] as const) {
@@ -91,9 +92,11 @@ describe("SidebarNav", () => {
     );
   });
 
-  it("lists all nine sections the app is going to have", () => {
+  it("lists all nine sections the app has", () => {
     renderNav();
 
+    // Fitness takes the row the `/analysis` placeholder held; Power joins it
+    // when its page lands, on its own line.
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       "Today",
       "Calendar",
@@ -101,13 +104,43 @@ describe("SidebarNav", () => {
       "Sessions",
       "Inbox",
       "Workouts",
-      "Analysis",
+      "Fitness",
       "Proposals",
       "Settings",
     ]);
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
+  });
+
+  it("keeps Fitness lit on a route inside it", () => {
+    pathname.current = "/fitness/anything";
+    renderNav();
+
+    expect(screen.getByRole("link", { name: "Fitness" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("links Fitness as a ready row with no arrival note", () => {
+    pathname.current = "/calendar";
+    renderNav();
+
+    const fitness = screen.getByRole("link", { name: "Fitness" });
+    expect(fitness).toHaveAttribute("href", "/fitness");
+    // A ready row carries no `arrives` tooltip, in the data or on the page.
+    expect(fitness).not.toHaveAttribute("title");
+    const item = NAV_ITEMS.find((entry) => entry.href === "/fitness");
+    expect(item?.ready).toBe(true);
+    expect(item?.arrives).toBeUndefined();
+  });
+
+  it("no longer carries the /analysis placeholder", () => {
+    renderNav();
+
+    expect(NAV_ITEMS.some((item) => item.href === "/analysis")).toBe(false);
+    expect(screen.queryByText("Analysis")).not.toBeInTheDocument();
   });
 
   it("marks the section the current active item apart from a hover", () => {
@@ -158,35 +191,46 @@ describe("the count of what is waiting", () => {
 });
 
 describe("a section whose page has not landed", () => {
-  const unready = NAV_ITEMS.filter((item) => !item.ready);
+  // Every section in `NAV_ITEMS` has landed, so the dimmed treatment is held to
+  // its contract against a stand-in — the branch stays for the next section a
+  // release previews before its page exists.
+  const preview = {
+    href: "/later",
+    label: "Later",
+    icon: NAV_ITEMS[0]?.icon ?? (() => <span />),
+    ready: false,
+    arrives: "Arrives after the MVP",
+  } as const;
 
-  it("previews the one section that has not landed", () => {
-    expect(unready.map((item) => item.label)).toEqual(["Analysis"]);
+  function renderWith(items: typeof NAV_ITEMS) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <SidebarNav items={items} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("has none in the shipped nav", () => {
+    expect(NAV_ITEMS.filter((item) => !item.ready)).toEqual([]);
   });
 
-  it.each(unready)("renders $label dimmed and inert", (item) => {
-    renderNav();
+  it("renders an unready section dimmed and inert", () => {
+    renderWith([...NAV_ITEMS, preview]);
 
     // Present, so the shape of the app is visible …
-    const entry = screen.getByText(item.label);
+    const entry = screen.getByText(preview.label);
     // … but not a link to a route that would 404 …
     expect(
-      screen.queryByRole("link", { name: item.label }),
+      screen.queryByRole("link", { name: preview.label }),
     ).not.toBeInTheDocument();
     // … and dimmed, which is the mockup's own treatment.
     const row = entry.closest("[data-ready='false']");
     expect(row).toHaveClass("text-ink-disabled");
     expect(row).toHaveAttribute("aria-disabled", "true");
-  });
-
-  it.each(unready)("says when $label actually arrives", (item) => {
-    renderNav();
-
-    const row = screen.getByText(item.label).closest("[data-ready='false']");
-    // Names a work package that exists, not "the next slice of" whatever the
-    // current one happens to be.
-    expect(item.arrives).toMatch(/WP-[45678]|after the MVP/);
-    expect(row).toHaveAttribute("title", item.arrives as string);
+    expect(row).toHaveAttribute("title", preview.arrives);
   });
 
   it("never leaves an arrival note on a page that shipped", () => {

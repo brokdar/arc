@@ -206,6 +206,16 @@
   --color-chart-reference: rgb(255 255 255 / 0.22);
   --color-chart-grid: rgb(255 255 255 / 0.05);
 
+  /* --- Fitness chart ----------------------------------------------------- */
+  /* Fitness, fatigue and form on one canvas (`components/fitness`). Not
+     purple — the reservation above holds, and `fitness-chart.test.tsx`
+     checks it the way `purpose.test.ts` does. Fitness is a slow blue, fatigue
+     a warm orange that reads as "cost", form a neutral sand so a negative
+     value is not mistaken for a verdict. */
+  --color-chart-fitness: #5aa6e8;
+  --color-chart-fatigue: #e3874f;
+  --color-chart-form: #c8bd82;
+
   /* --- Radii ------------------------------------------------------------ */
   --radius: 9px;
   --radius-badge: 4px;

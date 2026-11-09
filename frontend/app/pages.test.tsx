@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import CalendarPage from "@/app/(app)/calendar/page";
+import FitnessPage from "@/app/(app)/fitness/page";
 import InboxPage from "@/app/(app)/inbox/page";
 import AppLayout from "@/app/(app)/layout";
 import ProposalsPage from "@/app/(app)/proposals/page";
@@ -144,6 +145,21 @@ describe("route shells", () => {
 
     expect(
       await screen.findByRole("heading", { name: "Inbox", level: 1 }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the fitness page", async () => {
+    render(
+      <Guarded>
+        <FitnessPage />
+      </Guarded>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Fitness", level: 1 }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("figure", { name: /Fitness, fatigue and form/ }),
     ).toBeInTheDocument();
   });
 

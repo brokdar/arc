@@ -128,8 +128,8 @@ export function InboxIcon(props: IconProps) {
   );
 }
 
-/** Analysis — a trend line with two turns. */
-export function AnalysisIcon(props: IconProps) {
+/** Fitness — a trend line with two turns. */
+export function FitnessIcon(props: IconProps) {
   return (
     <Glyph {...props}>
       <path

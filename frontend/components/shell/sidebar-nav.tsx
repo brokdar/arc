@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import {
-  AnalysisIcon,
   CalendarIcon,
   CoachIcon,
+  FitnessIcon,
   type IconProps,
   InboxIcon,
   SessionsIcon,
@@ -65,14 +65,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/sessions", label: "Sessions", icon: SessionsIcon, ready: true },
   { href: "/inbox", label: "Inbox", icon: InboxIcon, ready: true },
   { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
-  {
-    href: "/analysis",
-    label: "Analysis",
-    icon: AnalysisIcon,
-    ready: false,
-    arrives:
-      "Per-session analysis is on each session page; the aggregate surface — power curves, trends — arrives after the MVP",
-  },
+  // The aggregate analysis surface, one page per question rather than one
+  // "Analysis" placeholder: Fitness here, and Power on its own row when its
+  // page lands. The dimmed `/analysis` row this replaces was a dead link.
+  { href: "/fitness", label: "Fitness", icon: FitnessIcon, ready: true },
   // The row the mockup reserved for "Coach", resolved into the one coach
   // surface that is a *place*: the queue of plan changes waiting on an answer.
   // The coach's other output — its notes on a session or a week — is
@@ -81,7 +77,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/settings", label: "Settings", icon: SettingsIcon, ready: true },
 ];
 
-export function SidebarNav() {
+export interface SidebarNavProps {
+  /** The rows to draw — `NAV_ITEMS` everywhere but a test of the dimmed row. */
+  readonly items?: readonly NavItem[];
+}
+
+export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
   const pathname = usePathname();
   // One page of one, asked for its `total`: the nav needs the count and not
   // the proposals, and the alternative — a full page fetched on every screen
@@ -111,7 +112,7 @@ export function SidebarNav() {
       </Link>
 
       <ul className="flex flex-col gap-px">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           // Prefix match, so `/workouts/new` still lights up "Workouts": a
           // nested route is somewhere *inside* a section, not somewhere else.
