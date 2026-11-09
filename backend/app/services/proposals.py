@@ -158,11 +158,17 @@ class ProposalService:
         self,
         *,
         status: ProposalStatus | None = None,
+        query: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[Sequence[PlanProposalRow], int]:
-        """Return a page of proposals, newest first, plus the total."""
-        return await self._repository.list(status=status, offset=offset, limit=limit)
+        """Return a page of proposals, newest first, plus the total.
+
+        ``query`` matches the rationale or the resolution note.
+        """
+        return await self._repository.list(
+            status=status, query=query, offset=offset, limit=limit
+        )
 
     async def get(self, proposal_id: uuid.UUID) -> PlanProposalRow:
         """Return one proposal.

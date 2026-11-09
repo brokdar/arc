@@ -14,10 +14,9 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, String, select
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 
 from app.domain.agent_notes import (
     MAX_MODEL_ID_CHARS,
@@ -26,6 +25,7 @@ from app.domain.agent_notes import (
     NoteKind,
 )
 from app.persistence.db import Base, flush, refresh
+from app.persistence.search import contains
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Width of the stored actor string (`app.domain.actor.Actor`), as everywhere
@@ -123,6 +123,27 @@ class AgentNoteRepository:
     async def for_week(self, plan_week: dt.date) -> Sequence[AgentNoteRow]:
         """Every note about one plan week, oldest first."""
         return await self._list(AgentNoteRow.plan_week == plan_week)
+
+    async def search(
+        self, query: str, *, limit: int
+    ) -> tuple[Sequence[AgentNoteRow], int]:
+        """The newest ``limit`` notes whose text contains ``query``, and the count.
+
+        Newest first, unlike the reads above: a search is "when did we last say
+        this", and the latest answer is the one that matters. Case-insensitive
+        and literal (`app.persistence.search`).
+        """
+        criterion = contains(AgentNoteRow.text, query)
+        total = await self._session.scalar(
+            select(func.count()).select_from(AgentNoteRow).where(criterion)
+        )
+        result = await self._session.execute(
+            select(AgentNoteRow)
+            .where(criterion)
+            .order_by(AgentNoteRow.created_at.desc(), AgentNoteRow.id.desc())
+            .limit(limit)
+        )
+        return result.scalars().all(), total or 0
 
     async def _list(self, where: Any) -> Sequence[AgentNoteRow]:
         """Run one ordered lookup.

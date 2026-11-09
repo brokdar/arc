@@ -32,7 +32,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import String, Uuid, func, select
+from sqlalchemy import String, Uuid, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,6 +42,7 @@ from app.domain.proposals import (
     ProposalStatus,
 )
 from app.persistence.db import Base, flush, refresh
+from app.persistence.search import contains
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
 #: Longest actor string stored on a proposal. Matches `audit_log.actor`: it is
@@ -106,10 +107,16 @@ class PlanProposalRepository:
         self,
         *,
         status: ProposalStatus | None = None,
+        query: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[Sequence[PlanProposalRow], int]:
         """Return a page of proposals, newest first, plus the total.
+
+        ``query`` is a case-insensitive literal substring of the rationale
+        **or** the resolution note — the coach's reasons and the athlete's
+        answer to them, which is the pair a "why did we drop that" question
+        wants. The stored diff is not searched.
 
         Newest first because this is an inbox: the thing to answer is the
         thing that just arrived, not the one from three weeks ago.
@@ -117,6 +124,13 @@ class PlanProposalRepository:
         criteria: list[Any] = []
         if status is not None:
             criteria.append(PlanProposalRow.status == status)
+        if query is not None:
+            criteria.append(
+                or_(
+                    contains(PlanProposalRow.rationale, query),
+                    contains(PlanProposalRow.resolution_note, query),
+                )
+            )
         total = await self._session.scalar(
             select(func.count()).select_from(PlanProposalRow).where(*criteria)
         )

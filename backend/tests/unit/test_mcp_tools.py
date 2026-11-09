@@ -103,6 +103,7 @@ EXPECTED_TOOLS = {
     "get_workout_library",
     "get_workout",
     "search_history",
+    "search_notes",
     "list_proposals",
     "get_proposal",
     "get_exercise_catalogue",
@@ -142,6 +143,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_workout_library", {}),
     ("get_workout", {"workout_id": "{workout}"}),
     ("search_history", {"start": "2026-08-10", "end": "2026-08-16"}),
+    ("search_notes", {"query": "x"}),
     ("list_proposals", {}),
     ("get_proposal", {"proposal_id": "{proposal}"}),
     ("get_exercise_catalogue", {}),
@@ -4120,3 +4122,105 @@ async def test_a_malformed_session_id_is_refused_by_name(session_factory: Any) -
 async def test_the_power_curve_needs_a_read_key(session_factory: Any) -> None:
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "get_power_curve", {"session_id": str(uuid.uuid7())})
+
+
+# --- text search (#52) -----------------------------------------------------------
+
+
+async def test_list_sessions_finds_a_session_by_its_note(client: AsyncClient) -> None:
+    hit = await record(client, notes="Fluid deficit on the last climb")
+    await record(client, notes="felt great")
+    await record(client)
+
+    data = await call(READER, "list_sessions", {"query": "FLUID"})
+
+    assert data["total"] == 1
+    assert [item["id"] for item in data["items"]] == [hit]
+
+
+@pytest.mark.parametrize("term", ["%", "_", "\\", "100%", "a_c"])
+async def test_a_search_term_is_a_literal_not_a_pattern(
+    client: AsyncClient, term: str
+) -> None:
+    # Unescaped, `%` and `_` match anything and `\` would eat the next character.
+    await record(client, notes="abc and plain words")
+    literal = await record(client, notes=f"before {term} after")
+
+    data = await call(READER, "list_sessions", {"query": term})
+
+    assert [item["id"] for item in data["items"]] == [literal]
+
+
+async def test_session_search_sees_the_current_note_only(client: AsyncClient) -> None:
+    session_id = await record(client, notes="old wording about cramps")
+    await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "notes": "new wording about headwind"},
+    )
+
+    stale = await call(READER, "list_sessions", {"query": "cramps"})
+    fresh = await call(READER, "list_sessions", {"query": "headwind"})
+
+    assert stale["total"] == 0, "audit rows keep previous_notes; search must not"
+    assert fresh["total"] == 1
+
+
+async def test_a_blank_query_is_refused_by_name(client: AsyncClient) -> None:
+    with pytest.raises(ToolError, match="query"):
+        await call(READER, "list_sessions", {"query": "  "})
+    with pytest.raises(ToolError, match="query"):
+        await call(READER, "search_notes", {"query": ""})
+
+
+async def test_search_notes_finds_agent_notes_and_proposals_newest_first(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    session_id = await record(client)
+    await evaluate(session_id, "Hydration looked short on this ride.")
+    await annotate_week(MONDAY, "unrelated week comment")
+    filed = await filed_proposal(rationale="Protect legs: hydration week ahead.")
+    rejected = await client.post(
+        f"{PROPOSALS}/{filed['proposal']['id']}/reject",
+        json={"reason": "Too much, I am away"},
+    )
+    assert rejected.status_code == 200, rejected.text
+
+    data = await call(READER, "search_notes", {"query": "HYDRATION"})
+
+    assert data["total"] == 2
+    assert [hit["source"] for hit in data["items"]] == ["proposal", "agent_note"]
+    assert data["items"][0]["item"]["id"] == filed["proposal"]["id"]
+    assert data["items"][1]["item"]["session_id"] == session_id
+
+    # The athlete's answer is searchable too, and returns the proposal whole.
+    by_reason = await call(READER, "search_notes", {"query": "i am away"})
+    assert by_reason["total"] == 1
+    assert by_reason["items"][0]["item"]["resolution_note"] == "Too much, I am away"
+
+
+async def test_search_notes_pages_across_both_sources(client: AsyncClient) -> None:
+    await append_ftp(client)
+    session_id = await record(client)
+    await evaluate(session_id, "tempo note one")
+    await filed_proposal(rationale="tempo plan")
+    await annotate_week(MONDAY, "tempo note two")
+
+    first = await call(READER, "search_notes", {"query": "tempo", "limit": 2})
+    second = await call(
+        READER, "search_notes", {"query": "tempo", "limit": 2, "offset": 2}
+    )
+
+    ids = [hit["item"]["id"] for hit in first["items"] + second["items"]]
+    assert first["total"] == second["total"] == 3
+    assert len(ids) == len(set(ids)) == 3
+
+
+async def test_search_notes_treats_wildcards_literally(client: AsyncClient) -> None:
+    session_id = await record(client)
+    await evaluate(session_id, "completed 100% of the intervals")
+    await evaluate(session_id, "no wildcard here")
+
+    assert (await call(READER, "search_notes", {"query": "%"}))["total"] == 1
+    assert (await call(READER, "search_notes", {"query": "_"}))["total"] == 0

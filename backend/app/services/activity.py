@@ -181,12 +181,21 @@ class SessionService:
         start: dt.date | None = None,
         end: dt.date | None = None,
         discipline: SessionDiscipline | None = None,
+        query: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[Sequence[SessionRow], int]:
-        """A page of completed sessions, newest first, plus the total."""
+        """A page of completed sessions, newest first, plus the total.
+
+        ``query`` matches the session's current notes; see the repository.
+        """
         return await self._repository.list(
-            start=start, end=end, discipline=discipline, offset=offset, limit=limit
+            start=start,
+            end=end,
+            discipline=discipline,
+            query=query,
+            offset=offset,
+            limit=limit,
         )
 
     async def get(self, session_id: uuid.UUID) -> SessionRow:
