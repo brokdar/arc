@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines byte-identical, temp file plus rename, previous file kept at the
   gitignored `.env.set-password.bak`. `just hash-password` is unchanged.
 
+### Config preflight
+
+- **A broken `.env` stops the stack with a sentence** (#87). `python -m app.preflight`
+  runs in front of `alembic upgrade head` (api) and the MCP server, builds
+  `Settings`, and on failure prints one line per problem, key first and
+  remedy last, then exits 1 with no traceback. It is silent on success and
+  never prints a value. `just env-check` gives the same verdict on a file on
+  demand and adds what a running process cannot see: required keys with no
+  live line, keys no setting reads any more, an unquoted bcrypt hash, and an
+  `MCP__API_KEYS` entry with `write` but not `read`. `just init` on an
+  existing `.env` now runs that check instead of only leaving it alone.
+  `*.bak` is gitignored.
+
 ### An agent surface that can read back what it wrote (#17–#26)
 
 An external coaching agent (claude-opus-5) migrated a real athlete into arc

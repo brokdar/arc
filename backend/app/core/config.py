@@ -446,6 +446,42 @@ class Settings(BaseSettings):
         return self
 
 
+def settings_env_keys(
+    model: type[BaseModel] = Settings, prefix: str = ""
+) -> frozenset[str]:
+    """Every env key the settings model consumes, nested `__` form.
+
+    The one derivation of "which keys are real", shared by the `.env.example`
+    completeness test and `app.preflight`'s unknown-key check. A second
+    hand-written list would drift from the model; this one cannot.
+    """
+    keys: set[str] = set()
+    for name, field in model.model_fields.items():
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            keys |= settings_env_keys(annotation, f"{prefix}{name.upper()}__")
+        else:
+            keys.add(f"{prefix}{name.upper()}")
+    return frozenset(keys)
+
+
+#: Keys with no safe default: a `.env` without a live line for each cannot run
+#: the stack. The first four are what `_no_insecure_defaults_in_production`
+#: refuses to boot without; `MCP__API_KEYS` is not enforced by `Settings`
+#: (the API boots without it) but the `mcp` service exits 1 without it, and
+#: `docker compose up` starts that service. Matches the REQUIRED block of
+#: `.env.example`; `tests/unit/test_preflight.py` pins both ends.
+REQUIRED_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "POSTGRES__PASSWORD",
+        "AUTH__PASSWORD_HASH",
+        "AUTH__SESSION__SECRET_KEY",
+        "SECRETS__ENCRYPTION_KEY",
+        "MCP__API_KEYS",
+    }
+)
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return the process-wide settings singleton."""

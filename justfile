@@ -56,6 +56,10 @@ dev-api: infra
 dev-mcp: infra
 	cd backend && POSTGRES__HOST=localhost uv run python -m app.mcp.main
 
+# Check .env against the settings model: missing, unknown and malformed keys
+env-check *args:
+	cd backend && uv run python -m app.preflight --file {{args}}
+
 # Run the Next.js dev server
 dev-web:
 	cd frontend && bun dev

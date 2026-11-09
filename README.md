@@ -35,6 +35,11 @@ twice, rewrites that line in `.env` (single-quoted, previous file kept at
 There is deliberately no reset in the app; shell access is the proof it is
 you. `just hash-password` still prints the line without touching anything.
 
+After pulling a new version, run `just env-check`: it compares `.env` with the
+settings the code reads and names any key that is missing, no longer used, or
+malformed, before a restart finds out. The api and mcp containers run the same
+check at boot and stop with one line per problem instead of a traceback.
+
 > **Re-running `just init` on a machine that already ran the stack?** It mints
 > a *new* random `POSTGRES__PASSWORD`, but Postgres only applies that when the
 > cluster is first created — the existing `postgres-data` volume keeps the old

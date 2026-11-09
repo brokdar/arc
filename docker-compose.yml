@@ -40,7 +40,10 @@ services:
 
   api:
     restart: unless-stopped
-    command: bash -c "alembic upgrade head && fastapi run app/main.py"
+    # Preflight first: a bad .env then ends the container with one sentence
+    # naming the key, not a pydantic traceback out of alembic/env.py. `&&` so
+    # that even a preflight that crashes stops the chain before Alembic runs.
+    command: bash -c "python -m app.preflight && alembic upgrade head && fastapi run app/main.py"
     ports:
       # Loopback only: the public path is Caddy's /api/* and /health routes.
       - "127.0.0.1:8000:8000"
@@ -90,7 +93,8 @@ services:
     # Caddy has no depends_on for mcp and serves 502 for /mcp meanwhile,
     # so the rest of the stack is unaffected.
     restart: on-failure:3
-    command: python -m app.mcp.main
+    # `exec` keeps the server PID 1 for signals, as it was before preflight.
+    command: bash -c "python -m app.preflight && exec python -m app.mcp.main"
     ports:
       # Loopback only: the public path is Caddy's /mcp* route.
       - "127.0.0.1:8001:8001"
