@@ -1310,3 +1310,22 @@ async def test_answering_when_nothing_was_asked_is_refused_by_name(
 
     assert response.status_code == 404, response.text
     assert (await client.get(f"{DAYS}/{TODAY.isoformat()}")).status_code == 404
+
+
+# Pins an edge case found by Schemathesis fuzzing — keep it: it guards a 500 at
+# the calendar's edge. The trend read anchors on `end - 1 day` and looks sixty
+# days back from there, and `date` arithmetic raises OverflowError past year 1.
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("0001-01-01", "0001-01-01"),
+        ("0001-01-01", "0001-01-02"),
+        ("9999-12-31", "9999-12-31"),
+    ],
+)
+async def test_a_trend_at_the_calendars_edge_answers_rather_than_500s(
+    client: AsyncClient, start: str, end: str
+) -> None:
+    response = await client.get(TREND, params={"start": start, "end": end})
+
+    assert response.status_code == 200, response.text
