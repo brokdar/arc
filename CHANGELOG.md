@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dev tooling
 
+- **`just e2e` builds first.** It now depends on `build`, so it can no longer
+  fail on a missing `.next` or test one left from another commit. CI is
+  unchanged: its shards run `bunx playwright test` on the build artifact.
+  Related to #58.
 - **`just set-password` writes `.env` itself** (#89). It prompts twice with no
   echo, hashes with the same bcrypt call as `hash-password`, and rewrites the
   `AUTH__PASSWORD_HASH` line in place: single-quoted by the writer, other

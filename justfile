@@ -124,7 +124,16 @@ build:
 	cd frontend && bun run build
 
 # Run Playwright end-to-end tests (UI-only, no backend needed)
-e2e:
+#
+# Depends on `build`: the suite serves `frontend/.next`, so without the
+# dependency a missing build failed outright and a build left from another
+# commit was tested silently (issue #58). `next build` is incremental, so an
+# up-to-date tree costs little. CI is unaffected: its e2e shards call
+# `bunx playwright test` on the `next-build` artifact the `build` job made, and
+# never run this recipe, so there is no double build and sharding is unchanged.
+# Displaced: a bare `e2e` that trusted whatever `.next` was lying around; run
+# `cd frontend && bun run test:e2e` to get that back deliberately.
+e2e: build
 	cd frontend && bun run test:e2e
 
 # E2E_PASSWORD must be the password whose bcrypt hash is in .env as
