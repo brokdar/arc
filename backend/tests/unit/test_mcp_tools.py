@@ -3773,6 +3773,135 @@ async def seed_integration(
     return row
 
 
+# --- session ergonomics (#51) ----------------------------------------------------------
+
+
+async def test_a_session_note_can_be_corrected_and_the_old_text_stays_in_the_audit(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A coach's typo in `notes` is fixable, and the fix is a version, not an erasure."""
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "local_date": MONDAY.isoformat(),
+            "duration_s": 2_100,
+            "notes": "Kraft 1 </notes>",
+        },
+    )
+    session_id = written["session"]["id"]
+
+    fixed = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": session_id, "notes": "Kraft 1"},
+    )
+
+    assert fixed["session"]["notes"] == "Kraft 1"
+    detail = await call(READER, "get_session_detail", {"session_id": session_id})
+    assert detail["session"]["notes"] == "Kraft 1"
+    [entry] = [
+        row
+        for row in await rows(db_session, AuditLogEntry)
+        if row.action == "session.updated"
+    ]
+    assert entry.payload_json["previous_notes"] == "Kraft 1 </notes>"
+
+
+async def test_a_blank_note_clears_it_and_a_context_write_may_be_notes_alone(
+    client: AsyncClient,
+) -> None:
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {"local_date": MONDAY.isoformat(), "duration_s": 2_100, "notes": "oops"},
+    )
+
+    cleared = await call(
+        COACH,
+        "record_session_context",
+        {"session_id": written["session"]["id"], "notes": "  "},
+    )
+
+    assert cleared["session"]["notes"] is None
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+async def test_an_oversized_note_is_refused_by_write_and_dry_run_alike(
+    client: AsyncClient, dry_run: bool
+) -> None:
+    written = await call(
+        COACH,
+        "record_manual_session",
+        {"local_date": MONDAY.isoformat(), "duration_s": 2_100},
+    )
+
+    with pytest.raises(ToolError, match="at most"):
+        await call(
+            COACH,
+            "record_session_context",
+            {
+                "session_id": written["session"]["id"],
+                "notes": "x" * 5_000,
+                "dry_run": dry_run,
+            },
+        )
+
+
+async def test_a_manual_session_may_report_only_the_day(
+    client: AsyncClient, athlete_zone: Callable[[str], None]
+) -> None:
+    """The athlete said "Montagabend"; no clock reading is invented for it."""
+    athlete_zone("Europe/Zurich")
+    arguments = {"local_date": MONDAY.isoformat(), "duration_s": 2_100}
+
+    draft = await call(COACH, "record_manual_session", arguments | {"dry_run": True})
+    written = await call(COACH, "record_manual_session", arguments)
+    detail = await call(
+        READER, "get_session_detail", {"session_id": written["session"]["id"]}
+    )
+
+    for session in (draft["session"], written["session"], detail["session"]):
+        assert session["local_date"] == MONDAY.isoformat()
+        assert session["start_time_known"] is False
+        assert session["start_time"] is None
+        assert session["start_time_local"] is None
+        assert session["timezone"] == "Europe/Zurich"
+
+
+async def test_a_timed_manual_session_says_its_start_is_known(
+    client: AsyncClient,
+) -> None:
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {"start_time": "2026-08-12T17:30:00+00:00", "duration_s": 3_600},
+    )
+
+    assert data["session"]["start_time_known"] is True
+    assert data["session"]["start_time"] is not None
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry_run"])
+@pytest.mark.parametrize(
+    "when",
+    [
+        {},
+        {"start_time": "2026-08-12T17:30:00+00:00", "local_date": "2026-08-12"},
+    ],
+    ids=["neither", "both"],
+)
+async def test_exactly_one_of_start_time_and_local_date_is_required(
+    client: AsyncClient, when: dict[str, str], dry_run: bool
+) -> None:
+    with pytest.raises(ToolError, match="exactly one of start_time"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {"duration_s": 3_600, "dry_run": dry_run} | when,
+        )
+
+
 # --- get_fitness_trend ----------------------------------------------------------------
 
 

@@ -63,6 +63,7 @@ function session(metrics: Record<string, unknown> | null) {
     id: SESSION_ID,
     local_date: "2026-08-05",
     start_time: "2026-08-05T05:14:00Z",
+    start_time_known: true,
     end_time: "2026-08-05T05:34:00Z",
     timezone: "Europe/Zurich",
     discipline: "cycling",

@@ -150,6 +150,10 @@ class SessionListItem(BaseModel):
     #: day it began.
     local_date: dt.date
     start_time: dt.datetime
+    #: False for a manual session that was dated but never timed: its
+    #: ``start_time`` is then the local midnight of ``local_date``, an anchor
+    #: to order by and not a time to show.
+    start_time_known: bool
     #: IANA name, ``UTC±HH:MM``, or ``UTC``. Athlete-overridable.
     timezone: str
     discipline: SessionDiscipline
@@ -256,6 +260,10 @@ class SessionUpdate(BaseModel):
     temperature_c: float | None = Field(
         default=None, ge=MIN_TEMPERATURE_C, le=MAX_TEMPERATURE_C
     )
+    #: Free text about the session — athlete's words or the coach's line on
+    #: their behalf. Context, not measurement, so it is correctable (#51); the
+    #: text replaced stays in the audit row. ``null`` or blank clears it.
+    notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)
     discipline: SessionDiscipline | SkipJsonSchema[None] = None
     # The bound rides on the *string* branch, not on the union. `Field(
     # max_length=...)` beside a `X | SkipJsonSchema[None]` default is applied
@@ -314,8 +322,17 @@ class ManualSessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     #: When it started. Must carry an offset: a naive instant would be read
-    #: as local time on whichever machine happened to receive it.
-    start_time: AwareDatetime = Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)
+    #: as local time on whichever machine happened to receive it. Give this
+    #: **or** ``local_date``, exactly one — the service enforces it, for the
+    #: reason `LoggedSetCreate` gives. The bound rides on the datetime branch
+    #: for the reason `SessionUpdate.timezone` spells out.
+    start_time: (
+        Annotated[AwareDatetime, Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)]
+        | SkipJsonSchema[None]
+    ) = None
+    #: The day, when the athlete reported no time ("Monday evening"). Stored
+    #: at that day's local midnight and flagged `start_time_known=false`.
+    local_date: dt.date | SkipJsonSchema[None] = None
     #: The athlete-local timezone at the time, which fixes the session's date.
     #: Omitted, the service fills in the athlete's configured zone
     #: (`MATCHING__TIMEZONE`) — it used to default to ``"UTC"`` here, which

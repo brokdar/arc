@@ -4023,6 +4023,11 @@ export interface components {
       discipline: components["schemas"]["SessionDiscipline"];
       /** Duration S */
       duration_s: number;
+      /**
+       * Local Date
+       * Format: date
+       */
+      local_date?: string;
       /** Notes */
       notes?: string | null;
       /** Rpe */
@@ -4033,7 +4038,7 @@ export interface components {
        * Start Time
        * Format: date-time
        */
-      start_time: string;
+      start_time?: string;
       /** Temperature C */
       temperature_c?: number | null;
       /**
@@ -5795,6 +5800,8 @@ export interface components {
        * Format: date-time
        */
       start_time: string;
+      /** Start Time Known */
+      start_time_known: boolean;
       status: components["schemas"]["SessionMatchStatus"];
       /** Temperature C */
       temperature_c: number | null;
@@ -5934,6 +5941,8 @@ export interface components {
        * Format: date-time
        */
       start_time: string;
+      /** Start Time Known */
+      start_time_known: boolean;
       status: components["schemas"]["SessionMatchStatus"];
       /** Temperature C */
       temperature_c: number | null;
@@ -6070,6 +6079,8 @@ export interface components {
     SessionUpdate: {
       /** Discipline */
       discipline?: components["schemas"]["SessionDiscipline"];
+      /** Notes */
+      notes?: string | null;
       /** Rpe */
       rpe?: number | null;
       /** Temperature C */

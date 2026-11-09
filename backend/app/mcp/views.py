@@ -316,6 +316,19 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
     }
 
 
+def _local_clock(row: SessionRow) -> str | None:
+    """The local start, or null when only the day was reported.
+
+    `start_time` is null in the same two views. Null rather than the stored midnight anchor: rendering it would hand the
+    coach the invented time the day-only variant exists to avoid. Both
+    `session_summary` and the dry-run draft go through here, so a draft and
+    the row it becomes agree.
+    """
+    if not row.start_time_known:
+        return None
+    return start_time_local(row.start_time, row.timezone)
+
+
 def start_time_local(start_time: dt.datetime, timezone: str) -> str:
     """One session's start on the athlete's own clock, offset included.
 
@@ -353,8 +366,9 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
     return {
         "id": str(row.id),
         "local_date": row.local_date.isoformat(),
-        "start_time": row.start_time.isoformat(),
-        "start_time_local": start_time_local(row.start_time, row.timezone),
+        "start_time": row.start_time.isoformat() if row.start_time_known else None,
+        "start_time_known": row.start_time_known,
+        "start_time_local": _local_clock(row),
         "timezone": row.timezone,
         "discipline": row.discipline.value,
         "recording_kind": row.recording_kind.value,
@@ -364,6 +378,9 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
         "training_load": None if summary is None else summary.training_load,
         "rpe": row.rpe,
         "temperature_c": row.temperature_c,
+        # Readable so that it is correctable: a note the coach cannot see is a
+        # note it cannot fix, and the write's own echo has to show what stands.
+        "notes": row.notes,
     }
 
 
@@ -395,8 +412,9 @@ def manual_session_draft(row: SessionRow) -> dict[str, Any]:
     been matched.
     """
     return {
-        "start_time": row.start_time.isoformat(),
-        "start_time_local": start_time_local(row.start_time, row.timezone),
+        "start_time": row.start_time.isoformat() if row.start_time_known else None,
+        "start_time_known": row.start_time_known,
+        "start_time_local": _local_clock(row),
         "local_date": row.local_date.isoformat(),
         "timezone": row.timezone,
         "discipline": row.discipline.value,

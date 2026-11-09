@@ -3677,6 +3677,11 @@
             "title": "Duration S",
             "type": "integer"
           },
+          "local_date": {
+            "format": "date",
+            "title": "Local Date",
+            "type": "string"
+          },
           "notes": {
             "anyOf": [
               {
@@ -3737,7 +3742,7 @@
             "type": "string"
           }
         },
-        "required": ["start_time", "duration_s"],
+        "required": ["duration_s"],
         "title": "ManualSessionCreate",
         "type": "object"
       },
@@ -7519,6 +7524,10 @@
             "title": "Start Time",
             "type": "string"
           },
+          "start_time_known": {
+            "title": "Start Time Known",
+            "type": "boolean"
+          },
           "status": {
             "$ref": "#/components/schemas/SessionMatchStatus"
           },
@@ -7542,6 +7551,7 @@
           "id",
           "local_date",
           "start_time",
+          "start_time_known",
           "timezone",
           "discipline",
           "classification_source",
@@ -7870,6 +7880,10 @@
             "title": "Start Time",
             "type": "string"
           },
+          "start_time_known": {
+            "title": "Start Time Known",
+            "type": "boolean"
+          },
           "status": {
             "$ref": "#/components/schemas/SessionMatchStatus"
           },
@@ -7918,6 +7932,7 @@
           "id",
           "local_date",
           "start_time",
+          "start_time_known",
           "timezone",
           "discipline",
           "classification_source",
@@ -8139,6 +8154,19 @@
           "discipline": {
             "$ref": "#/components/schemas/SessionDiscipline",
             "title": "Discipline"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
           },
           "rpe": {
             "anyOf": [
