@@ -24,8 +24,14 @@ worktree-init:
 	(cd backend && uv sync)
 	(cd frontend && bun install)
 
-# The printed line is single-quoted because bcrypt hashes are full of `$`,
-# which .env parsers and your shell would otherwise expand.
+# `set-password` is the way to change the password: it owns the single quotes
+# a bcrypt hash needs (full of `$`, which .env parsers and your shell expand).
+# `hash-password` stays as the print-only escape hatch for scripting; its line
+# is single-quoted for the same reason.
+
+# Set the login password: prompt twice, rewrite AUTH__PASSWORD_HASH in .env
+set-password:
+	uv run --project backend python scripts/set-password.py
 
 # Print an AUTH__PASSWORD_HASH line for .env, for a password you type
 hash-password:
@@ -231,6 +237,15 @@ pmc-fixture:
 	cd backend && uv run python scripts/emit_pmc_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-pmc.ts
 
+# Regenerate the frontend's power-curve fixtures from the real domain.
+# Run after changing app/domain/power_curve.py, the power-curve read shape or
+# the metrics fixture's stream, and commit the result: every best is the
+# domain's own window search over the same stream `RIDE_STREAMS` carries, and a
+# hand-typed curve could put a 5 s best below the minute's.
+power-curve-fixture:
+	cd backend && uv run python scripts/emit_power_curve_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-power-curve.ts
+
 # --- Maintenance -------------------------------------------------------------
 
 # Re-parse every original under data/originals/, rewrite its stream file and
@@ -238,6 +253,7 @@ pmc-fixture:
 # The path for "the parser learned something new": recompute alone reads the
 # stored parquet, so a stream written before a channel existed can never gain
 # that channel without this. Originals are read-only and are never moved.
+# The recompute also backfills each session's power curve (`session_mmp`).
 # Pass --no-recompute to rewrite streams only, or --recording <uuid> for one.
 #
 # ORDERING: deploy the new image FIRST, rebuild SECOND, and never roll the

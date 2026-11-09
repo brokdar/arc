@@ -79,6 +79,7 @@ import {
   zonesFixture,
 } from "@/tests/mocks/fixtures";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
+import { powerHandlers } from "@/tests/mocks/handlers-power";
 
 /**
  * Typed MSW handlers: paths, params, and response bodies are all inferred
@@ -1779,3 +1780,4 @@ export const appKeyHandlers = [
 handlers.push(...appKeyHandlers);
 
 handlers.push(...fitnessHandlers);
+handlers.push(...powerHandlers);
