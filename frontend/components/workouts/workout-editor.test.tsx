@@ -401,6 +401,10 @@ describe("the strength builder", () => {
       within(first).getByLabelText("Per side"),
       "yes",
     );
+    // A per-side round is one set — the left and the right together — which
+    // is what the week rail and completion count; the hint says so where the
+    // rounds are typed.
+    expect(within(first).getByText("left + right = 1 set")).toBeInTheDocument();
     await userEvent.type(within(first).getByLabelText(/Value/), "15");
 
     await userEvent.click(

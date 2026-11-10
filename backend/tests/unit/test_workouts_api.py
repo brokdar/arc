@@ -247,9 +247,9 @@ async def test_per_side_and_a_hold_survive_the_library_round_trip(
     assert row["per_side"] is True
     assert hold["duration_s"] == 45
     assert hold["reps"] is None
-    # Six working sets from the rows, three from the holds — `total_sets` is
-    # the working-set count, not the round count.
-    assert created["summary"]["total_sets"] == 9
+    # Three sets from the rows — each per-side round one left-right pair —
+    # and three from the holds.
+    assert created["summary"]["total_sets"] == 6
 
 
 async def test_writing_a_pre_per_side_document_does_not_store_the_new_keys(

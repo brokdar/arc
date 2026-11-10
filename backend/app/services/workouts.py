@@ -67,7 +67,7 @@ class WorkoutSummary:
         if isinstance(body, StrengthWorkout):
             self.step_count = len(body.prescriptions)
             self.total_duration_s: int | None = None
-            self.total_sets: int | None = body.total_sets
+            self.total_sets: float | None = body.total_sets
         else:
             self.step_count = len(flatten(body))
             self.total_duration_s = total_duration_s(body)

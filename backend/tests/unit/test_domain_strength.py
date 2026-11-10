@@ -6,7 +6,9 @@ from typing import Any
 
 import pytest
 
+from app.domain.activity import SetSide
 from app.domain.athlete import Discipline
+from app.domain.metrics import PerformedSet, StrengthVolume, strength_volume
 from app.domain.strength import (
     SLUG_PATTERN,
     Exercise,
@@ -16,7 +18,10 @@ from app.domain.strength import (
     StrengthGroup,
     StrengthSet,
     StrengthWorkout,
+    check_sidedness,
     exercise_ids,
+    logged_set_units,
+    logged_sides_worked,
     parse_catalogue,
     strength_workout_from_json,
     strength_workout_to_json,
@@ -91,28 +96,109 @@ def test_total_sets_counts_every_line() -> None:
 
 
 def test_a_bilateral_line_works_the_rounds_it_prescribes() -> None:
-    assert squat(sets=3, reps=8).working_sets == 3
-    assert squat(sets=3, reps=8).total_reps == 24
+    line = squat(sets=3, reps=8)
+
+    assert line.working_sets == 3.0
+    assert type(line.working_sets) is float
+    assert line.total_reps == 24
 
 
-def test_a_per_side_round_is_two_working_sets() -> None:
-    # Issue #25's own case, by number: three rounds of eleven single-arm reps
-    # is six worked sets and 66 reps, not three and 33. `sets` stays what the
-    # athlete wrote on the card.
+def test_pair_counts_once() -> None:
+    """AC-26: a left-plus-right pair is one set; its reps count both sides.
+
+    Displaces "one per-side round is two working sets": a left and a right set
+    of split squats inflated completion and volume counts to twice what the
+    athlete would call the session, and per-muscle set counting cannot be
+    honest on top of that. Reps and kilograms are still worked by both legs,
+    so `total_reps` keeps counting both sides — 3 × 8 per side is 48 reps.
+    """
     line = StrengthSet(
-        exercise_id="single_arm_dumbbell_row",
+        exercise_id="bulgarian_split_squat",
         sets=3,
-        reps=11,
+        reps=8,
         per_side=True,
-        load=Load(LoadKind.KG, 15.0),
+        load=Load(LoadKind.KG, 30.0),
     )
 
     assert line.sets == 3
-    assert line.working_sets == 6
-    assert line.total_reps == 66
+    assert line.working_sets == 3.0
+    assert type(line.working_sets) is float
+    assert line.total_reps == 48
 
 
-def test_total_sets_counts_working_sets_not_rounds() -> None:
+def test_logged_side_rows_count_as_pairs() -> None:
+    """AC-26: L8 R8 three times is 3.0 sets; one more lone left makes 3.5."""
+    pairs = [
+        PerformedSet(reps=8, load_kg=30.0, side=side)
+        for _ in range(3)
+        for side in (SetSide.LEFT, SetSide.RIGHT)
+    ]
+
+    session = strength_volume(pairs)
+    assert isinstance(session, StrengthVolume)
+    assert session.sets_completed == 3.0
+    assert type(session.sets_completed) is float
+    # Every one of the six rows lifted 8 × 30 kg with one leg: the volume is
+    # the sum of the rows, not of the pairs.
+    assert session.volume_load_kg == 6 * 8 * 30.0
+
+    longer = strength_volume(
+        [*pairs, PerformedSet(reps=8, load_kg=30.0, side=SetSide.LEFT)]
+    )
+    assert isinstance(longer, StrengthVolume)
+    assert longer.sets_completed == 3.5
+    assert longer.volume_load_kg == 7 * 8 * 30.0
+
+
+def test_a_legacy_per_side_row_is_one_set_with_its_reps_twice() -> None:
+    """A `per_side` row stored before `side` existed is a whole pair.
+
+    It was backfilled to `side = both` (migration 0026): the row says "8 each
+    side" in one line, so it is one set — the same as an L row plus an R row —
+    and its reps reach the volume load twice, once per limb.
+    """
+    session = strength_volume([PerformedSet(reps=8, load_kg=30.0, per_side=True)])
+
+    assert isinstance(session, StrengthVolume)
+    assert session.sets_completed == 1.0
+    assert session.volume_load_kg == 2 * 8 * 30.0
+    assert logged_set_units(SetSide.BOTH) == 1.0
+    assert logged_sides_worked(per_side=True, side=SetSide.BOTH) == 2
+
+
+def test_a_lone_side_is_half_a_set_worked_by_one_limb() -> None:
+    for side in (SetSide.LEFT, SetSide.RIGHT):
+        assert logged_set_units(side) == 0.5
+        assert logged_sides_worked(per_side=False, side=side) == 1
+    assert logged_set_units(SetSide.BOTH) == 1.0
+    assert logged_sides_worked(per_side=False, side=SetSide.BOTH) == 1
+
+
+def test_a_movement_that_is_not_unilateral_refuses_one_side() -> None:
+    bench = Exercise(
+        id="bench_press", name="Bench Press", category=ExerciseCategory.PRESS
+    )
+
+    with pytest.raises(ValueError, match="both sides at once"):
+        check_sidedness(bench.unilateral, per_side=False, side=SetSide.LEFT)
+    with pytest.raises(ValueError, match="both sides at once"):
+        check_sidedness(bench.unilateral, per_side=True, side=SetSide.BOTH)
+    check_sidedness(bench.unilateral, per_side=False, side=SetSide.BOTH)
+
+
+def test_a_row_is_one_side_or_a_pair_never_both() -> None:
+    # `per_side` says the row holds both sides; `left` says it holds one. The
+    # two together have no count to give, so the write is refused rather than
+    # one of them silently winning.
+    with pytest.raises(ValueError, match="one side or a pair"):
+        check_sidedness(True, per_side=True, side=SetSide.LEFT)
+    # A free-text movement has no catalogue opinion, but the rule still holds.
+    with pytest.raises(ValueError, match="one side or a pair"):
+        check_sidedness(None, per_side=True, side=SetSide.RIGHT)
+    check_sidedness(None, per_side=False, side=SetSide.RIGHT)
+
+
+def test_total_sets_counts_pairs_not_limbs() -> None:
     per_side = StrengthWorkout(
         groups=(
             StrengthGroup(
@@ -129,7 +215,8 @@ def test_total_sets_counts_working_sets_not_rounds() -> None:
         )
     )
 
-    assert per_side.total_sets == 8
+    assert per_side.total_sets == 4.0
+    assert type(per_side.total_sets) is float
 
 
 # --- reps or a hold, never both -----------------------------------------------
@@ -154,7 +241,8 @@ def test_a_per_side_hold_holds_for_both_sides() -> None:
         load=Load.bodyweight(),
     )
 
-    assert side_plank.working_sets == 4
+    # Two pairs, and each of the four sides held for thirty seconds.
+    assert side_plank.working_sets == 2.0
     assert side_plank.total_hold_s == 120
 
 

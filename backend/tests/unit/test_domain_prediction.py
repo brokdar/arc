@@ -434,9 +434,10 @@ def test_sets_without_kilograms_count_toward_the_total_but_not_the_volume() -> N
 
 def test_a_per_side_line_counts_both_limbs() -> None:
     # AC-18, issue #25's own arithmetic by number: three rounds of eleven
-    # single-arm reps at 15 kg is 990 kg over six working sets, not 495 over
-    # three. The load is what one arm moves (`app.domain.strength.Load`), so
-    # there is no per-implement multiplier on top of the doubled set count.
+    # single-arm reps at 15 kg is 990 kg, not 495 — both arms lift. The set
+    # count is three, not six: each round is one left-right pair (the pair
+    # rule, `StrengthSet.working_sets`). The load is what one arm moves
+    # (`app.domain.strength.Load`), so there is no per-implement multiplier.
     workout = strength_workout(
         StrengthSet(
             exercise_id="single_arm_dumbbell_row",
@@ -450,7 +451,7 @@ def test_a_per_side_line_counts_both_limbs() -> None:
     volume = predict_strength_volume(workout)
 
     assert volume.volume_load_kg == pytest.approx(990.0)
-    assert volume.total_sets == 6
+    assert volume.total_sets == 3.0
     assert volume.coverage == 1.0
     assert volume.total_hold_s is None
 
@@ -475,9 +476,10 @@ def test_a_timed_hold_reports_seconds_and_no_volume_load() -> None:
     volume = predict_strength_volume(workout)
 
     assert volume.volume_load_kg == pytest.approx(1_500.0)
-    assert volume.total_sets == 3 + 4
+    # Two per-side plank rounds are two sets (pairs), holding 2 × 2 × 30 s.
+    assert volume.total_sets == 3 + 2
     assert volume.total_hold_s == 120
-    assert volume.coverage == pytest.approx(3 / 7)
+    assert volume.coverage == pytest.approx(3 / 5)
 
 
 def test_seconds_held_are_not_kilograms() -> None:

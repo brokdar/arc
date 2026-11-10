@@ -548,8 +548,9 @@ async def test_a_logged_per_side_row_moves_the_load_twice(
     data_root: Path, client: AsyncClient
 ) -> None:
     # AC-18 on the performed side, by the same numbers as the prescription:
-    # three rounds of eleven single-arm reps at 15 kg is 990 kg over six
-    # working sets. One row per round, and `load_kg` is what one arm moved.
+    # three rounds of eleven single-arm reps at 15 kg is 990 kg over three
+    # sets — each `per_side` row a left-right pair, one set whose reps both
+    # arms did. One row per round, and `load_kg` is what one arm moved.
     created = await client.post(
         MANUAL,
         json={
@@ -571,7 +572,7 @@ async def test_a_logged_per_side_row_moves_the_load_twice(
     metrics = (await client.get(f"{SESSIONS}/{created.json()['id']}")).json()["metrics"]
 
     assert metrics["strength"]["volume_load_kg"] == pytest.approx(990.0)
-    assert metrics["strength"]["sets_completed"] == 6
+    assert metrics["strength"]["sets_completed"] == 3.0
     assert metrics["strength"]["coverage"] == pytest.approx(1.0)
 
 
@@ -598,9 +599,10 @@ async def test_a_logged_hold_reports_its_seconds_and_no_kilograms(
     metrics = (await client.get(f"{SESSIONS}/{created.json()['id']}")).json()["metrics"]
 
     assert metrics["strength"]["volume_load_kg"] == pytest.approx(500.0)
-    assert metrics["strength"]["sets_completed"] == 1 + 1 + 2
+    # The per-side plank is one set (a pair) holding for both sides' seconds.
+    assert metrics["strength"]["sets_completed"] == 1 + 1 + 1
     assert metrics["strength"]["total_hold_s"] == 45 + 60
-    assert metrics["strength"]["coverage"] == pytest.approx(1 / 4)
+    assert metrics["strength"]["coverage"] == pytest.approx(1 / 3)
 
 
 @pytest.mark.parametrize(

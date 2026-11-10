@@ -177,12 +177,12 @@ class StrengthSetSchema(BaseModel):
     #: Slug of a catalogue exercise; see `GET /api/v1/exercises`.
     exercise_id: Annotated[PostgresText, Field(min_length=1, max_length=80)]
     #: Rounds prescribed — what the athlete writes on the card. A ``per_side``
-    #: round is **two** working sets, which is the unit volume and completion
-    #: are counted in.
+    #: round is **one** set (a left-right pair) in every set count, and both
+    #: sides' reps count in volume.
     sets: int
-    #: Reps per working set. Exactly one of ``reps`` and ``duration_s``.
+    #: Reps per set, on each side for a ``per_side`` line. Exactly one of ``reps`` and ``duration_s``.
     reps: int | None = None
-    #: Seconds held per working set, for a timed set.
+    #: Seconds held per set (each side, for a ``per_side`` line), for a timed set.
     duration_s: int | None = None
     #: Whether each round is performed one side at a time. Refused on a
     #: movement the catalogue does not mark unilateral.
@@ -257,8 +257,9 @@ class WorkoutSummarySchema(BaseModel):
     #: Total prescribed seconds, or null when any step is distance-based or
     #: the workout is a strength workout.
     total_duration_s: int | None
-    #: Total prescribed working sets, for a strength workout.
-    total_sets: int | None
+    #: Total prescribed sets, for a strength workout — a left-right pair counts once, so a number in half units
+    #: (see ``PredictedVolumeRead.total_sets``).
+    total_sets: float | None
 
 
 class WorkoutCreate(BaseModel):

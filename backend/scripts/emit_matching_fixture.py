@@ -90,10 +90,11 @@ THRESHOLD_PLANNED_S = 3900.0
 THRESHOLD_WORK_STEPS = 2
 
 #: `predict_strength_volume(...).total_sets` over each strength prescription,
-#: and `len(session.logged_sets)` on the gym session.
-STRENGTH_PLANNED_SETS = 5
-CORE_PLANNED_SETS = 4
-GYM_LOGGED_SETS = 3
+#: and `Σ logged_working_sets` over the gym session's rows (a left-right pair is
+#: one set, a lone side ½ — none of these rows is one side).
+STRENGTH_PLANNED_SETS = 5.0
+CORE_PLANNED_SETS = 4.0
+GYM_LOGGED_SETS = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +139,9 @@ def endurance(
     )
 
 
-def strength(*, planned_sets: int, logged_sets: int, actual_s: float) -> MatchEvidence:
+def strength(
+    *, planned_sets: float, logged_sets: float, actual_s: float
+) -> MatchEvidence:
     """The strength half of it: sets against sets, and no seconds either side."""
     return MatchEvidence(
         planned_units=planned_sets,

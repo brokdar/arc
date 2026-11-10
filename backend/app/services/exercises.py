@@ -106,7 +106,7 @@ class ExerciseService:
         the prescription so a stored document stays self-describing when the
         catalogue changes under it, and this is what stops the two disagreeing
         in the direction that matters — a bench press claimed as per-side
-        would double the session's working sets and its volume load.
+        would double the session's volume load.
 
         The opposite direction is deliberately *not* checked. A unilateral
         movement prescribed without `per_side` is a legal thing to write —

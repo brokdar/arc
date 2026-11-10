@@ -111,9 +111,9 @@ LIFT: dict[str, Any] = {
     ],
 }
 
-#: Three rounds of eleven single-arm reps — six working sets, 990 kg. Issue
-#: #25's own case, prescribed here so the scoring path can be checked against
-#: the number the domain test asserts.
+#: Three rounds of eleven single-arm reps — three sets (each a left-right
+#: pair), 990 kg. Issue #25's own case, prescribed here so the scoring path can
+#: be checked against the number the domain test asserts.
 PER_SIDE_LIFT: dict[str, Any] = {
     "discipline": "strength",
     "groups": [
@@ -130,6 +130,36 @@ PER_SIDE_LIFT: dict[str, Any] = {
         }
     ],
 }
+
+
+#: AC-27's prescription: 3 × 8 @ 30 kg per side — three sets of left-right
+#: pairs, 3 × 8 × 30 × 2 = 1,440 kg.
+SPLIT_SQUAT: dict[str, Any] = {
+    "discipline": "strength",
+    "groups": [
+        {
+            "items": [
+                {
+                    "exercise_id": "bulgarian_split_squat",
+                    "sets": 3,
+                    "reps": 8,
+                    "per_side": True,
+                    "load": {"kind": "kg", "value": 30.0},
+                }
+            ]
+        }
+    ],
+}
+
+
+def side_row(side: str) -> dict[str, Any]:
+    """One side of one split-squat set, as the gym screen logs it."""
+    return {
+        "exercise_id": "bulgarian_split_squat",
+        "side": side,
+        "reps": 8,
+        "load_kg": 30.0,
+    }
 
 
 # --- helpers -------------------------------------------------------------------
@@ -967,10 +997,9 @@ async def test_a_strength_session_is_scored_on_its_sets(client: AsyncClient) -> 
 async def test_a_per_side_session_is_complete_when_every_round_is_logged(
     client: AsyncClient,
 ) -> None:
-    # AC-21. Prescribed and logged sets have to be counted in the same unit or
-    # completion is double or half: three per-side rounds are six working sets
-    # on the prescription, and three per-side logged rows are six on the other
-    # side. One row per round, not one per limb.
+    # AC-21, under the pair rule. A legacy `per_side` row says "11 each side"
+    # in one line, so it is one pair — one set — exactly as each prescribed
+    # per-side round is. Three against three.
     await plan(client, purpose="max_strength", structure=PER_SIDE_LIFT)
     done = await record(
         client,
@@ -993,31 +1022,78 @@ async def test_a_per_side_session_is_complete_when_every_round_is_logged(
     assert axis(document, ScoringAxis.SETS_LOAD)["value"] == pytest.approx(1.0)
 
 
-async def test_logging_one_side_of_each_round_does_not_settle_as_the_session(
-    client: AsyncClient,
-) -> None:
-    # The other side of AC-21: the shared unit is only honest if a shortfall
-    # still reads as one. Three rounds prescribed per side is six working
-    # sets; three rows logged *without* `per_side` is three, so the matcher
-    # sees half the prescribed work and declines to settle the link by itself.
-    # Before `per_side`, the two sides counted three against three and this
-    # was indistinguishable from a completed session.
-    await plan(client, purpose="max_strength", structure=PER_SIDE_LIFT)
+async def test_six_side_rows_complete_three_per_side_sets(client: AsyncClient) -> None:
+    """AC-27: L, R three times answers 3 × 8 @ 30 kg per side in full.
+
+    Completion was 1.0 before the pair rule too — six against six, because
+    both sides were doubled — so the number that proves the recount is the
+    explanation's: three sets prescribed and three logged, not six and six.
+    The predicted volume load is unchanged at 1,440 kg: kilograms are still
+    lifted by both legs.
+    """
+    planned = await plan(client, purpose="max_strength", structure=SPLIT_SQUAT)
     done = await record(
         client,
         duration_s=3_600,
         discipline="strength",
-        sets=[
-            {"exercise_id": "single_arm_dumbbell_row", "reps": 11, "load_kg": 15.0}
-            for _ in range(3)
-        ],
+        sets=[side_row(side) for _ in range(3) for side in ("left", "right")],
     )
 
-    # Pinned by value, not by `!= AUTO_HIGH`: half the prescribed work is a
-    # similarity of exactly 0.5, and an inequality would go on passing if the
-    # ratio drifted to a third or a sixth for some other reason.
+    document = await score(client, done["id"])
+
+    completion = axis(document, ScoringAxis.COMPLETION)
+    assert completion["value"] == pytest.approx(1.0)
+    assert completion["explanation"]["inputs"]["sets prescribed"] == "3"
+    assert completion["explanation"]["inputs"]["sets logged"] == "3"
+    assert planned["predicted_volume"]["volume_load_kg"] == pytest.approx(1_440.0)
+    assert planned["predicted_volume"]["total_sets"] == 3.0
+
+
+async def test_logging_only_the_left_side_completes_half_the_session(
+    client: AsyncClient,
+) -> None:
+    """AC-27 edge: three lone left sides are 1.5 of 3 sets — completion 0.5.
+
+    Also the shortfall case the shared unit exists for: half the prescribed
+    work is a similarity of exactly 0.5, so the matcher proposes rather than
+    links, and the score is read after the athlete confirms. Pinned by value:
+    an inequality would keep passing if the ratio drifted to a third.
+    """
+    await plan(client, purpose="max_strength", structure=SPLIT_SQUAT)
+    done = await record(
+        client,
+        duration_s=3_600,
+        discipline="strength",
+        sets=[side_row("left") for _ in range(3)],
+    )
     assert done["match"]["similarity"] == pytest.approx(0.5)
     assert done["match"]["status"] == MatchLinkStatus.PENDING.value
+
+    confirmed = await client.post(f"{MATCHES}/{done['match']['id']}/confirm")
+    assert confirmed.status_code == 200, confirmed.text
+
+    document = await score(client, done["id"])
+    completion = axis(document, ScoringAxis.COMPLETION)
+    assert completion["value"] == pytest.approx(0.5)
+    assert completion["explanation"]["inputs"]["sets logged"] == "1.5"
+
+
+async def test_matching_evidence_counts_pairs_on_both_sides(
+    client: AsyncClient,
+) -> None:
+    """AC-27 edge: the structure component compares 3.0 sets with 3.0 sets."""
+    await plan(client, purpose="max_strength", structure=SPLIT_SQUAT)
+    done = await record(
+        client,
+        duration_s=3_600,
+        discipline="strength",
+        sets=[side_row(side) for _ in range(3) for side in ("left", "right")],
+    )
+
+    link = (await client.get(f"{MATCHES}/{done['match']['id']}")).json()
+    [structure] = link["breakdown"]["components"]
+    assert structure["basis"] == "sets"
+    assert (structure["planned"], structure["actual"]) == (3.0, 3.0)
 
 
 # --- the stream seam, end to end ----------------------------------------------------

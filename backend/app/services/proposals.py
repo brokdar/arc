@@ -906,7 +906,7 @@ def _costs(
     }
 
 
-def _sizes(duration_s: int | None, total_sets: int | None) -> dict[str, Any]:
+def _sizes(duration_s: int | None, total_sets: float | None) -> dict[str, Any]:
     """How much of it there is, as JSON. At most one is ever populated.
 
     Seconds for a ride and working sets for a lift: the sizes that survive the

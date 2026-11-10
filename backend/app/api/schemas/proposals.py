@@ -78,8 +78,8 @@ class ProposalSessionSnapshot(BaseModel):
     #: Prescribed seconds; null for strength and for a ride with a
     #: distance-based step.
     duration_s: int | None
-    #: Prescribed working sets; null for endurance.
-    total_sets: int | None
+    #: Prescribed sets (a left-right pair counts once, so a number in half units); null for endurance.
+    total_sets: float | None
 
 
 class ProposalChangeDiff(BaseModel):

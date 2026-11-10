@@ -297,8 +297,11 @@ class MatchEvidence:
         actual_intensity: The recorded counterpart of it.
         intensity_basis: Which of the two the pair is in; ``None`` when no
             pair could be formed.
-        planned_units: Prescribed work steps, or prescribed working sets.
-        performed_units: Detected work intervals, or logged sets.
+        planned_units: Prescribed work steps, or prescribed sets — a
+            per-side round one set (a left-right pair), so a number in half
+            units.
+        performed_units: Detected work intervals, or logged sets in the same
+            unit: a lone logged side is ½.
         structure_basis: Which of the two the pair counts; ``None`` when
             neither could be counted.
     """
@@ -308,8 +311,8 @@ class MatchEvidence:
     planned_intensity: float | None = None
     actual_intensity: float | None = None
     intensity_basis: IntensityBasis | None = None
-    planned_units: int | None = None
-    performed_units: int | None = None
+    planned_units: float | None = None
+    performed_units: float | None = None
     structure_basis: StructureBasis | None = None
 
 
@@ -350,7 +353,7 @@ def _structure_term(evidence: MatchEvidence) -> Term:
         return "the prescribed and performed work units are not both countable"
     if planned < MIN_STRUCTURE_UNITS:
         return (
-            f"the prescription has {planned} work unit(s), fewer than the "
+            f"the prescription has {planned:g} work unit(s), fewer than the "
             f"{MIN_STRUCTURE_UNITS} a structure hint needs to mean anything"
         )
     if performed <= 0:

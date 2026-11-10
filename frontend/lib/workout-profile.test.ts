@@ -365,9 +365,11 @@ describe("totals", () => {
     ).toBe(7);
   });
 
-  it("counts a per-side round as the two working sets it is", () => {
+  it("counts a per-side round once, as the left-right pair it is", () => {
     // The client's number has to agree with `summary.total_sets` from the
-    // backend — they sit next to each other on the week rail.
+    // backend — they sit next to each other on the week rail — and the
+    // backend counts a left plus a right as one set
+    // (`app.domain.strength.StrengthSet.working_sets`).
     expect(
       totalSets({
         discipline: "strength",
@@ -391,7 +393,7 @@ describe("totals", () => {
           },
         ],
       }),
-    ).toBe(6);
+    ).toBe(3);
   });
 
   it("has no opinion about the other discipline", () => {

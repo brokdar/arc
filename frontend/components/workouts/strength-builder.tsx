@@ -181,10 +181,6 @@ function ItemRow({
   // before the catalogue changed under it can be corrected here rather than
   // stranded behind a control it can no longer reach.
   const perSideOffered = unilateral(item.exerciseId) || item.perSide;
-  // What the athlete wrote is rounds; what everything downstream counts is
-  // working sets. The hint says so at the point of entry rather than leaving
-  // the difference to be discovered on the week rail.
-  const workingSets = (Number(item.sets) || 0) * 2;
 
   return (
     <FieldRow
@@ -216,7 +212,10 @@ function ItemRow({
 
       <Field
         label="Rounds"
-        hint={item.perSide ? `${workingSets} sets` : undefined}
+        // A per-side round is one set — its left and right together — in every
+        // count downstream (`app.domain.strength.StrengthSet.working_sets`),
+        // while both sides' reps count in volume. Said where rounds are typed.
+        hint={item.perSide ? "left + right = 1 set" : undefined}
         htmlFor={`${base}-sets`}
         className="w-[70px]"
       >

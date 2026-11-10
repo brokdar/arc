@@ -28,6 +28,7 @@ from app.persistence.planned_sessions import (
     PlannedSessionRow,
 )
 from app.services.planned_sessions import set_match_probe, set_rescore_trigger
+from tests.unit.mcp_harness import connected_as, server_for
 
 SESSIONS = "/api/v1/planned-sessions"
 ANCHORS = "/api/v1/anchors"
@@ -150,6 +151,29 @@ KG_LIFT: dict[str, Any] = {
         }
     ],
 }
+
+
+#: Three sets of eight per side: three left-right pairs, so ``total_sets`` is
+#: 3.0, not the six it was while each side counted as a set of its own.
+PER_SIDE_LIFT: dict[str, Any] = {
+    "discipline": "strength",
+    "groups": [
+        {
+            "items": [
+                {
+                    "exercise_id": "bulgarian_split_squat",
+                    "sets": 3,
+                    "reps": 8,
+                    "per_side": True,
+                    "load": {"kind": "kg", "value": 30.0},
+                }
+            ]
+        }
+    ],
+}
+
+#: A read-only MCP key, for reading the coach's view of the same session.
+READER = f"reader:read:{'a1b2c3d4' * 4}"
 
 
 @pytest.fixture
@@ -1240,6 +1264,45 @@ async def test_an_e1rm_lift_has_sets_but_no_kilograms(client: AsyncClient) -> No
         "total_hold_s": None,
         "coverage": 0.0,
     }
+
+
+async def test_a_per_side_line_counts_its_pairs(client: AsyncClient) -> None:
+    """AC-28: a 3 × 8 per-side line is ``total_sets: 3.0`` on every surface.
+
+    Asserted on the response text as well as the parsed body: ``3 == 3.0`` in
+    Python, and the contract is that a count is a number in half units, so the
+    wire must carry ``3.0`` — an integer field would round a lone side away.
+    """
+    planned = await plan(client, purpose="max_strength", structure=PER_SIDE_LIFT)
+
+    response = await client.get(f"{SESSIONS}/{planned['id']}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["intent"]["summary"]["total_sets"] == 3.0
+    assert body["predicted_volume"]["total_sets"] == 3.0
+    assert body["predicted_volume"]["volume_load_kg"] == pytest.approx(1_440.0)
+    assert response.text.count('"total_sets":3.0') == 2
+
+    async with connected_as(server_for(READER), READER) as mcp:
+        week = (await mcp.call_tool("get_plan_week", {"start": "2026-08-10"})).data
+    [card] = week["week"]["sessions"]
+    assert card["id"] == planned["id"]
+    assert card["total_sets"] == 3.0
+    assert type(card["total_sets"]) is float
+
+
+async def test_a_bilateral_line_keeps_its_count_rendered_as_a_number(
+    client: AsyncClient,
+) -> None:
+    """AC-28 edge: five ordinary sets stay five — on the wire as ``5.0``."""
+    planned = await plan(client, purpose="max_strength", structure=KG_LIFT)
+
+    response = await client.get(f"{SESSIONS}/{planned['id']}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["intent"]["summary"]["total_sets"] == 5
+    assert response.text.count('"total_sets":5.0') == 2
 
 
 async def test_a_ride_predicts_a_load_and_no_volume(client: AsyncClient) -> None:

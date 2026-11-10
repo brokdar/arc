@@ -108,8 +108,9 @@ class WeekSession:
     #: endurance one with a distance-based step — there is no duration to show
     #: rather than a zero.
     planned_duration_s: int | None
-    #: Prescribed working sets, for a strength session; ``None`` otherwise.
-    total_sets: int | None
+    #: Prescribed sets (a per-side pair once), for a strength session;
+    #: ``None`` otherwise.
+    total_sets: float | None
     #: Flattened steps (endurance) or prescription lines (strength).
     step_count: int
     #: The one-line intent, the athlete's own words.
@@ -238,8 +239,9 @@ class PlanWeekDiscipline:
     #: and how many could not.
     load_sessions_counted: int
     load_sessions_uncounted: int
-    #: Prescribed working sets; ``None`` for a discipline that has none.
-    total_sets: int | None
+    #: Prescribed sets (a per-side pair once); ``None`` for a discipline
+    #: that has none.
+    total_sets: float | None
     #: Recorded sessions of this discipline in the window.
     completed_session_count: int
     #: Their duration; ``None`` — never 0 — when there were none.

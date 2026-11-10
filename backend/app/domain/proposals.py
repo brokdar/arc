@@ -680,8 +680,8 @@ def intensifies(  # noqa: PLR0911 — one branch per signal, each with its own s
     after_purpose: Purpose,
     before_load: float | None = None,
     after_load: float | None = None,
-    before_sets: int | None = None,
-    after_sets: int | None = None,
+    before_sets: float | None = None,
+    after_sets: float | None = None,
     before_duration_s: int | None = None,
     after_duration_s: int | None = None,
 ) -> str | None:
@@ -734,9 +734,9 @@ def intensifies(  # noqa: PLR0911 — one branch per signal, each with its own s
             discipline uses (TSS-equivalent or kilograms), or ``None``.
         after_load: The predicted cost the change would leave, on the **same**
             axis, or ``None``.
-        before_sets: Prescribed working sets in force, or ``None`` (an
+        before_sets: Prescribed sets in force (half units), or ``None`` (an
             endurance prescription has none).
-        after_sets: Prescribed working sets the change would leave.
+        after_sets: Prescribed sets the change would leave.
         before_duration_s: Prescribed duration in force, or ``None`` (a
             strength prescription has none, and so does a ride with a
             distance-based step).
@@ -768,7 +768,7 @@ def intensifies(  # noqa: PLR0911 — one branch per signal, each with its own s
             f"{after_load:.1f} {unit}"
         )
     if before_sets is not None and after_sets is not None and after_sets > before_sets:
-        return f"it raises the prescribed sets from {before_sets} to {after_sets}"
+        return f"it raises the prescribed sets from {before_sets:g} to {after_sets:g}"
     if (
         before_duration_s is not None
         and after_duration_s is not None

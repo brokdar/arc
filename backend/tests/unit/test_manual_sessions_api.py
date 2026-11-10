@@ -321,6 +321,30 @@ async def test_one_side_of_a_two_sided_movement_is_refused(
     assert "both sides at once" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        a_set(exercise_id="bulgarian_split_squat", per_side=True, side="left"),
+        {
+            "exercise_name": "Cossack squat",
+            "reps": 6,
+            "per_side": True,
+            "side": "right",
+        },
+    ],
+)
+async def test_a_set_is_one_side_or_a_pair_never_both(
+    client: AsyncClient, entry: dict[str, Any]
+) -> None:
+    # `per_side` says the row holds a left-right pair (one set); `side: left`
+    # says it holds one side (half a set). Together they have no count, so
+    # the write is refused instead of one of them silently winning.
+    response = await client.post(MANUAL, json=a_session(sets=[entry]))
+
+    assert response.status_code == 422, response.text
+    assert "one side or a pair" in response.json()["detail"]
+
+
 async def test_a_replaced_movement_must_be_in_the_catalogue(
     client: AsyncClient,
 ) -> None:

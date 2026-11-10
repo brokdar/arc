@@ -362,13 +362,22 @@ class ScoringInputs:
     #: Endurance: prescribed and recorded seconds.
     planned_duration_s: int | None = None
     actual_duration_s: float | None = None
-    #: Strength: prescribed and logged working sets.
-    planned_sets: int | None = None
-    performed_sets: int | None = None
-    #: One entry per **prescribed set**, in execution order: the kilograms it
-    #: asked for, or ``None`` when it was prescribed some other way.
+    #: Strength: prescribed and logged sets, a left-right pair counting once
+    #: and a lone logged side ½ (`app.domain.strength.StrengthSet.working_sets`)
+    #: — numbers in half units.
+    planned_sets: float | None = None
+    performed_sets: float | None = None
+    #: One entry per **side worked** of each prescribed set, in execution
+    #: order: the kilograms it asked for, or ``None`` when it was prescribed
+    #: some other way. A per-side round is two entries, because the load it
+    #: names is the load on each side and each side is compared.
     prescribed_loads_kg: tuple[float | None, ...] = ()
-    #: One entry per **logged set**, in the order they were logged.
+    #: How many sets each entry of :attr:`prescribed_loads_kg` stands for —
+    #: ½ for one side of a pair, 1 otherwise — so the load agreement is
+    #: counted in the same unit as :attr:`planned_sets`. Empty means 1 each.
+    prescribed_load_units: tuple[float, ...] = ()
+    #: One entry per **side worked** of each logged set, in the order they
+    #: were logged.
     performed_loads_kg: tuple[float | None, ...] = ()
     #: The cleaned 1 Hz columns, nulls preserved.
     channels: Mapping[Channel, Sequence[float | None]] = dataclass_field(
@@ -545,8 +554,8 @@ def _completion_from_sets(inputs: ScoringInputs) -> Assessment:
         explanation=MetricExplanation(
             formula="completion = min(1, sets logged / sets prescribed)",
             inputs={
-                "sets prescribed": f"{planned}",
-                "sets logged": f"{inputs.performed_sets}",
+                "sets prescribed": f"{planned:g}",
+                "sets logged": f"{inputs.performed_sets:g}",
                 "ratio": f"{ratio:.3f}",
             },
             assumptions=(
@@ -1240,10 +1249,10 @@ def _score_sets_load(
                     "fraction of comparable sets within the prescribed tolerance"
                 ),
                 inputs={
-                    "sets prescribed": f"{planned}",
-                    "sets logged": f"{inputs.performed_sets}",
-                    "sets comparable by weight": f"{comparable}",
-                    "sets within tolerance": f"{within}",
+                    "sets prescribed": f"{planned:g}",
+                    "sets logged": f"{inputs.performed_sets:g}",
+                    "sets comparable by weight": f"{comparable:g}",
+                    "sets within tolerance": f"{within:g}",
                     "tolerance": (
                         "none prescribed" if tolerance is None else f"±{tolerance:.0%}"
                     ),
@@ -1258,28 +1267,35 @@ def _score_sets_load(
 
 def _load_agreement(
     inputs: ScoringInputs, tolerance: float | None
-) -> tuple[int, int, int, int]:
-    """``(within, comparable, lighter, heavier)`` over the positional pairs."""
+) -> tuple[float, float, float, float]:
+    """``(within, comparable, lighter, heavier)`` over the positional pairs.
+
+    In sets: each pair adds the units its prescribed entry stands for, so one
+    side of a per-side round is ½ and the counts agree with
+    :attr:`ScoringInputs.planned_sets`.
+    """
     if tolerance is None:
-        return 0, 0, 0, 0
-    within = comparable = light = heavy = 0
+        return 0.0, 0.0, 0.0, 0.0
+    within = comparable = light = heavy = 0.0
+    units = inputs.prescribed_load_units
     pairs = zip(inputs.prescribed_loads_kg, inputs.performed_loads_kg, strict=False)
-    for prescribed, performed in pairs:
+    for index, (prescribed, performed) in enumerate(pairs):
         if prescribed is None or performed is None or prescribed <= 0:
             continue
-        comparable += 1
+        weight = units[index] if index < len(units) else 1.0
+        comparable += weight
         ratio = performed / prescribed
         if abs(ratio - 1.0) <= tolerance:
-            within += 1
+            within += weight
         elif ratio < 1.0:
-            light += 1
+            light += weight
         else:
-            heavy += 1
+            heavy += weight
     return within, comparable, light, heavy
 
 
 def _sets_completed_outcome(
-    index: int, criterion: SetsCompleted, performed: int, planned: int
+    index: int, criterion: SetsCompleted, performed: float, planned: float
 ) -> CriterionOutcome:
     """Check one ``sets_completed`` criterion."""
     fraction = performed / planned
@@ -1290,7 +1306,7 @@ def _sets_completed_outcome(
         observed=fraction,
         required=criterion.min_fraction,
         detail=(
-            f"{performed} of {planned} prescribed sets logged ({fraction:.0%}), "
+            f"{performed:g} of {planned:g} prescribed sets logged ({fraction:.0%}), "
             f"against a floor of {criterion.min_fraction:.0%}"
         ),
     )
@@ -1300,7 +1316,7 @@ def _load_within_outcome(
     index: int,
     criterion: LoadWithin,
     load_fraction: float | None,
-    comparable: int,
+    comparable: float,
 ) -> CriterionOutcome:
     """Check one ``load_within`` criterion.
 
@@ -1322,7 +1338,7 @@ def _load_within_outcome(
         observed=load_fraction,
         required=1.0,
         detail=(
-            f"{round(load_fraction * comparable)} of {comparable} comparable "
+            f"{load_fraction * comparable:g} of {comparable:g} comparable "
             f"sets within ±{criterion.pct_tolerance:.0%} of the prescribed load"
         ),
     )
