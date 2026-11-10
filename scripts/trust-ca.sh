@@ -74,3 +74,4 @@ Chrome and Edge use the OS store; restart the browser after adding the CA.
 Run this again after \`docker compose down -v\`: that deletes the volume, Caddy
 mints a new CA, and the one you trusted no longer signs anything.
 EOF
+# probe
