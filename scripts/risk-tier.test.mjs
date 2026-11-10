@@ -256,7 +256,6 @@ group("the live .github/CODEOWNERS, through the classifier");
     "backend/app/main.py",
     "backend/app/mcp/auth.py",
     "backend/app/mcp/main.py",
-    "backend/app/persistence/alembic/versions/anything.py",
     "caddy/Caddyfile",
     "docker-compose.yml",
     ".github/workflows/zizmor.yml",
@@ -268,7 +267,7 @@ group("the live .github/CODEOWNERS, through the classifier");
   ]) {
     ok(`${p} is owned`, ownedBy(p, entries) !== null);
   }
-  for (const p of ["backend/app/services/athlete.py", "frontend/components/x.tsx", "docs/a.md", "CLAUDE.md", "backend/tests/unit/test_auth.py", "justfile", ".env.example", ".pre-commit-config.yaml", ".agents/skills/alembic/SKILL.md", "scripts/bootstrap-env.sh"]) {
+  for (const p of ["backend/app/services/athlete.py", "backend/app/persistence/alembic/versions/anything.py", "backend/app/api/routers.py", "frontend/components/x.tsx", "docs/a.md", "CLAUDE.md", "backend/tests/unit/test_auth.py", "justfile", ".env.example", ".pre-commit-config.yaml", ".agents/skills/alembic/SKILL.md", "scripts/bootstrap-env.sh"]) {
     ok(`${p} is not owned`, ownedBy(p, entries) === null);
   }
 }
