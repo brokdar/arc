@@ -225,3 +225,26 @@ def test_kg_lb_factor_is_the_international_pound() -> None:
 def test_conversions_round_trip(value: float) -> None:
     assert abs(lb_to_kg(kg_to_lb(value)) - value) <= 1e-9
     assert abs(kg_to_lb(lb_to_kg(value)) - value) <= 1e-9
+
+
+def test_gym_holds_equipment_only():
+    """`DEFAULT_GYM` is exempt from the rule registry's literal walk.
+
+    The exemption is safe only while a gym describes equipment (bar, plates,
+    dumbbell and stack steps). A new field could carry a training number
+    such as a progression step past the walk unseen, so adding one has to be
+    a deliberate change to this list, and that number belongs in
+    `app.domain.rules` instead.
+    """
+    import dataclasses
+
+    from app.domain.loading import Gym
+
+    assert [f.name for f in dataclasses.fields(Gym)] == [
+        "bar_kg",
+        "plate_pairs",
+        "dumbbell_step_kg",
+        "dumbbell_max_kg",
+        "stack_step_kg",
+        "stack_max_kg",
+    ]

@@ -29,6 +29,8 @@ from enum import StrEnum
 from functools import cache
 from typing import Final, NamedTuple
 
+from app.domain.rules import STARTING_STEP_EASY, STARTING_STEP_GOOD
+
 #: Kilograms in one international avoirdupois pound — exact by definition
 #: (1959 agreement), so a kg↔lb round trip loses only float precision.
 KG_PER_LB: Final = 0.45359237
@@ -43,10 +45,20 @@ MAX_PERCENT_OF_SET: Final = 1.5
 MAX_PLATE_KINDS: Final = 12
 MAX_PAIRS_PER_KIND: Final = 20
 
+#: Weights are compared in whole grams so float noise cannot split a tie.
+GRAMS_PER_KG: Final = 1000
+
+#: A plate pair puts one plate on each of the bar's two sides.
+BAR_SIDES: Final = 2
+
 #: How much heavier `starting_step` goes for each answer to "how did that
 #: feel?". "hard" is not a percentage: it is one loadable step down, so it can
-#: never land on the weight the athlete just found too hard.
-STARTING_STEP_INCREASE: Final = {"easy": 0.20, "good": 0.10}
+#: never land on the weight the athlete just found too hard. The percentages
+#: are training rules and live in the registry (`app.domain.rules`).
+STARTING_STEP_INCREASE: Final = {
+    "easy": STARTING_STEP_EASY.value,
+    "good": STARTING_STEP_GOOD.value,
+}
 STARTING_STEP_ANSWERS: Final = ("easy", "good", "hard")
 
 
@@ -71,7 +83,7 @@ class Equipment(StrEnum):
 
 
 def _grams(kg: float) -> int:
-    return round(kg * 1000)
+    return round(kg * GRAMS_PER_KG)
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +215,7 @@ def _loadable_grams(equipment: Equipment, gym: Gym) -> tuple[int, ...]:
     match equipment:
         case Equipment.BARBELL:
             bar = _grams(gym.bar_kg)
-            return tuple(sorted(bar + 2 * side for side in _barbell_sides(gym)))
+            return tuple(sorted(bar + BAR_SIDES * side for side in _barbell_sides(gym)))
         case Equipment.DUMBBELL:
             step, top = _grams(gym.dumbbell_step_kg), _grams(gym.dumbbell_max_kg)
         case Equipment.STACK:
@@ -215,7 +227,7 @@ def loadable_weights(
     equipment: Equipment = Equipment.BARBELL, gym: Gym = DEFAULT_GYM
 ) -> tuple[float, ...]:
     """Every weight `gym` can load on `equipment`, lightest first, in kg."""
-    return tuple(grams / 1000 for grams in _loadable_grams(equipment, gym))
+    return tuple(grams / GRAMS_PER_KG for grams in _loadable_grams(equipment, gym))
 
 
 def _check_target(target_kg: float) -> None:
@@ -256,8 +268,8 @@ def loading_for(
     kg, capped = _nearest(target_kg, loadable_weights(equipment, gym))
     plates = None
     if equipment is Equipment.BARBELL:
-        side = (_grams(kg) - _grams(gym.bar_kg)) // 2
-        plates = tuple(grams / 1000 for grams in _barbell_sides(gym)[side])
+        side = (_grams(kg) - _grams(gym.bar_kg)) // BAR_SIDES
+        plates = tuple(grams / GRAMS_PER_KG for grams in _barbell_sides(gym)[side])
     return Loading(kg=kg, capped=capped, plates_per_side=plates)
 
 
