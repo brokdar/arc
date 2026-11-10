@@ -176,6 +176,21 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/set-password(\.test\.sh|\.py)$
+      # CODEOWNERS is the owner lane, and a line that names a renamed file is
+      # protection that silently stopped existing. The edit that breaks it is a
+      # rename ANYWHERE, so this runs on every commit; it costs milliseconds.
+      - id: check-codeowners
+        name: check-codeowners
+        entry: ./scripts/check-codeowners.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+      - id: check-codeowners-test
+        name: check-codeowners-test
+        entry: ./scripts/check-codeowners.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/check-codeowners(\.test)?\.sh$
       # This checkout has core.fileMode=false, so git ignores the +x bit: a hook
       # script added without `git update-index --chmod=+x` is committed 100644,
       # `git status` shows nothing, and it exits 126 for everyone else.
