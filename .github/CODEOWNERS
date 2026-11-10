@@ -31,31 +31,38 @@
 # Migrations run against the athlete's only database; a bad one is data loss.
 /backend/app/persistence/alembic/     @brokdar
 
-# What is exposed, and how it is deployed.
+# What is exposed, and how it is deployed (the compose file and the proxy; the
+# Dockerfiles and `.env.example` are not owned, see the end).
 /caddy/                               @brokdar
 /docker-compose.yml                   @brokdar
-/.env.example                         @brokdar
-/backend/Dockerfile                   @brokdar
-/frontend/Dockerfile                  @brokdar
 
-# The gate and the agents: CI, this file, hooks, toolchain pins, the agent
-# definitions, workflows, rules and settings, and every repo-tooling script —
-# the gate's own pieces (migration heuristic, api-sync, ci-status, the identity
-# wrapper scripts/as-agent.sh, this file's checker) all live in scripts/.
+# The gate and the agents: CI, this file, hooks, the agent definitions, rules
+# and settings, and the scripts that ARE the gate or the agent identity
+# (migration heuristic, api-sync, ci-status, as-agent.sh, the lane classifier
+# and merge breaker, this file's checker, the repo setup) with their tests.
 /.github/                             @brokdar
 /.claude/                             @brokdar
-# The real text of most skills lives in .agents/skills, and .claude/skills/<name>
-# is a symlink to it. GitHub matches the path that was edited, so owning .claude/
-# alone leaves every symlinked skill editable without review.
-/.agents/                             @brokdar
-/.pre-commit-config.yaml              @brokdar
-/justfile                             @brokdar
-/mise.toml                            @brokdar
-/mise.lock                            @brokdar
 /backend/schemathesis.toml            @brokdar
-/scripts/                             @brokdar
+/scripts/as-agent.sh                  @brokdar
+/scripts/as-agent.test.sh             @brokdar
+/scripts/risk-tier.mjs                @brokdar
+/scripts/risk-tier.test.mjs           @brokdar
+/scripts/review-breaker.mjs           @brokdar
+/scripts/review-breaker.test.mjs      @brokdar
+/scripts/check-codeowners.sh          @brokdar
+/scripts/check-codeowners.test.sh     @brokdar
+/scripts/check-migration-required.sh  @brokdar
+/scripts/check-migration-required.test.sh @brokdar
+/scripts/check-api-schema-sync.sh     @brokdar
+/scripts/check-api-schema-sync.test.sh @brokdar
+/scripts/ci-status.mjs                @brokdar
+/scripts/ci-status.test.mjs           @brokdar
+/scripts/setup-repo.sh                @brokdar
+/scripts/workflow-guards.test.mjs     @brokdar
 
-# DELIBERATELY NOT OWNED, and the hole it leaves: `backend/pyproject.toml`
+# DELIBERATELY NOT OWNED, and the hole it leaves: `justfile` (its `gate` recipe),
+# `.pre-commit-config.yaml`, `mise.toml`, `.agents/` (skill text agents follow),
+# the Dockerfiles, `.env.example`, the other scripts, `backend/pyproject.toml`
 # (the import-linter contracts, pytest options, ruff rules), `frontend/package.json`
 # (the scripts the gate runs), the lint and test configs, `backend/app/core/config.py`
 # (session cookie settings) and `backend/tests/`. An agent PR that edits one can
