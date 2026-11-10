@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { NAV_ITEMS, type NavItem } from "@/components/shell/sidebar-nav";
+import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 export interface BottomNavProps {
@@ -27,11 +28,12 @@ export interface BottomNavProps {
  */
 export function BottomNav({ items = NAV_ITEMS }: BottomNavProps = {}) {
   const pathname = usePathname();
+  const t = useT();
   const tabs = items.filter((item) => item.phone && item.ready);
 
   return (
     <nav
-      aria-label="Sections (phone)"
+      aria-label={t("nav.sectionsPhone")}
       className="shrink-0 border-hairline border-t bg-chrome pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       <ul className="flex">
@@ -52,7 +54,7 @@ export function BottomNav({ items = NAV_ITEMS }: BottomNavProps = {}) {
                 )}
               >
                 <Icon />
-                {item.label}
+                {t(item.label)}
               </Link>
             </li>
           );

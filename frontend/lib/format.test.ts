@@ -7,11 +7,13 @@ import {
   formatDurationHm,
   formatDurationWords,
   formatMinutesPrime,
+  formatNumber,
   formatPercent,
   formatRelativeTime,
   formatSets,
   formatUtcStamp,
   formatUtcStampYear,
+  formatWeight,
   localStamp,
   parseDurationInput,
   parseNumberInput,
@@ -226,5 +228,31 @@ describe("formatRelativeTime", () => {
 
   it("holds the slot rather than inventing an age", () => {
     expect(formatRelativeTime("not a timestamp", now)).toBe("—");
+  });
+});
+
+describe("locale-aware numbers", () => {
+  it("writes a decimal comma in German and a point in English", () => {
+    expect(formatWeight(102.5, "de")).toBe("102,5 kg");
+    expect(formatWeight(102.5, "en")).toBe("102.5 kg");
+  });
+
+  it("keeps a plate's quarter and drops float noise", () => {
+    expect(formatWeight(41.25, "de")).toBe("41,25 kg");
+    expect(formatWeight(0.1 + 0.2, "en")).toBe("0.3 kg");
+    expect(formatWeight(100, "de")).toBe("100 kg");
+  });
+
+  it("names the unit it was given", () => {
+    expect(formatWeight(225, "en", "lb")).toBe("225 lb");
+  });
+
+  it("groups thousands the way each language does", () => {
+    expect(formatNumber(12500, "de")).toBe("12.500");
+    expect(formatNumber(12500, "en")).toBe("12,500");
+  });
+
+  it("an unknown locale formats as English", () => {
+    expect(formatNumber(1.5, "fr")).toBe("1.5");
   });
 });

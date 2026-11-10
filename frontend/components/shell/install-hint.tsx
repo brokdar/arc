@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { useI18n } from "@/lib/i18n/provider";
+
 const DISMISSED_KEY = "arc:install-hint-dismissed";
 
 /** iPhone/iPad Safari, not yet running from the home screen. */
@@ -32,6 +34,7 @@ function dismissed(): boolean {
  * device only.
  */
 export function InstallHint() {
+  const { t, rich } = useI18n();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -52,18 +55,19 @@ export function InstallHint() {
   return (
     <aside
       role="note"
-      aria-label="Install arc"
+      aria-label={t("install.label")}
       className="flex items-start gap-3 rounded-card border border-hairline bg-card px-3.5 py-2.5 text-ink-secondary text-sm"
     >
       <p className="min-w-0 flex-1">
-        Install arc: tap <span className="text-ink">Share</span>, then{" "}
-        <span className="text-ink">Add to Home Screen</span>. Then log in inside
-        the installed app — it does not share Safari&apos;s sign-in.
+        {rich("install.steps", {
+          share: <span className="text-ink">{t("install.share")}</span>,
+          addToHome: <span className="text-ink">{t("install.addToHome")}</span>,
+        })}
       </p>
       <button
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss install hint"
+        aria-label={t("install.dismiss")}
         className="min-h-11 min-w-11 shrink-0 text-ink-muted hover:text-ink"
       >
         ×

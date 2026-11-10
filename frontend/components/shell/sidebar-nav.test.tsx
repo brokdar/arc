@@ -4,6 +4,8 @@ import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { NAV_ITEMS, SidebarNav } from "@/components/shell/sidebar-nav";
+import { translate } from "@/lib/i18n/catalogue";
+import { LocaleProvider } from "@/lib/i18n/provider";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -32,13 +34,15 @@ vi.mock("next/link", () => ({
  * cached count, and a client shared between tests would carry the previous
  * test's answer into the next one's first paint.
  */
-function renderNav() {
+function renderNav(locale = "en") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <SidebarNav />
+      <LocaleProvider locale={locale}>
+        <SidebarNav />
+      </LocaleProvider>
     </QueryClientProvider>,
   );
 }
@@ -97,7 +101,7 @@ describe("SidebarNav", () => {
 
     // Fitness takes the row the `/analysis` placeholder held; Power joins it
     // when its page lands, on its own line.
-    expect(NAV_ITEMS.map((item) => item.label)).toEqual([
+    expect(NAV_ITEMS.map((item) => translate("en", item.label))).toEqual([
       "Today",
       "Calendar",
       "Wellness",
@@ -109,7 +113,7 @@ describe("SidebarNav", () => {
       "Settings",
     ]);
     for (const item of NAV_ITEMS) {
-      expect(screen.getByText(item.label)).toBeInTheDocument();
+      expect(screen.getByText(translate("en", item.label))).toBeInTheDocument();
     }
   });
 
@@ -172,6 +176,21 @@ describe("the count of what is waiting", () => {
     ).toHaveAttribute("href", "/proposals");
   });
 
+  it("speaks the section and the count in German with locale de", async () => {
+    renderNav("de");
+
+    expect(
+      await screen.findByRole("link", {
+        name: "Vorschläge — 1 warten auf dich",
+      }),
+    ).toHaveAttribute("href", "/proposals");
+    expect(screen.getByRole("navigation", { name: "Bereiche" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Heute" })).toHaveAttribute(
+      "href",
+      "/today",
+    );
+  });
+
   it("draws no badge when nothing is waiting", async () => {
     server.use(
       http.get("/api/v1/proposals", ({ response }) =>
@@ -194,9 +213,11 @@ describe("a section whose page has not landed", () => {
   // Every section in `NAV_ITEMS` has landed, so the dimmed treatment is held to
   // its contract against a stand-in — the branch stays for the next section a
   // release previews before its page exists.
+  // Labelled with a real key, since a label is one: the row stands in for a
+  // section not yet listed, so it is drawn on its own.
   const preview = {
     href: "/later",
-    label: "Later",
+    label: "nav.inbox",
     icon: NAV_ITEMS[0]?.icon ?? (() => <span />),
     ready: false,
     arrives: "Arrives after the MVP",
@@ -218,13 +239,13 @@ describe("a section whose page has not landed", () => {
   });
 
   it("renders an unready section dimmed and inert", () => {
-    renderWith([...NAV_ITEMS, preview]);
+    renderWith([preview]);
 
     // Present, so the shape of the app is visible …
-    const entry = screen.getByText(preview.label);
+    const entry = screen.getByText("Inbox");
     // … but not a link to a route that would 404 …
     expect(
-      screen.queryByRole("link", { name: preview.label }),
+      screen.queryByRole("link", { name: "Inbox" }),
     ).not.toBeInTheDocument();
     // … and dimmed, which is the mockup's own treatment.
     const row = entry.closest("[data-ready='false']");

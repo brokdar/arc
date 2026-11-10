@@ -1,0 +1,92 @@
+{
+  "nav": {
+    "sections": "Bereiche",
+    "sectionsPhone": "Bereiche (Handy)",
+    "waiting": "{label} — {count} warten auf dich",
+    "today": "Heute",
+    "calendar": "Kalender",
+    "wellness": "Befinden",
+    "sessions": "Einheiten",
+    "inbox": "Eingang",
+    "workouts": "Workouts",
+    "fitness": "Fitness",
+    "proposals": "Vorschläge",
+    "settings": "Einstellungen"
+  },
+  "install": {
+    "label": "arc installieren",
+    "steps": "So installierst du arc: Tippe auf {share}, dann auf {addToHome}. Melde dich danach in der App an. Sie teilt die Anmeldung nicht mit Safari.",
+    "share": "Teilen",
+    "addToHome": "Zum Home-Bildschirm",
+    "dismiss": "Hinweis schließen"
+  },
+  "offline": {
+    "ready": "Offline bereit",
+    "readySynced": "Offline bereit · Stand {time}"
+  },
+  "weekdays": {
+    "mon": "Mo",
+    "tue": "Di",
+    "wed": "Mi",
+    "thu": "Do",
+    "fri": "Fr",
+    "sat": "Sa",
+    "sun": "So"
+  },
+  "units": {
+    "setsOne": "{count} Satz",
+    "setsOther": "{count} Sätze"
+  },
+  "today": {
+    "title": "Heute",
+    "date": "{weekday} {date}",
+    "plan": "Einheit planen",
+    "loading": "Heute wird geladen…",
+    "loadFailed": "Heute kam nicht an. Ist die API da?",
+    "planned": "geplant {duration}",
+    "profile": "Belastungsprofil",
+    "prescription": "Vorgabe",
+    "superset": "Supersatz",
+    "targets": "Ziele",
+    "targetsStrength": "Hier zählen Sätze und Wiederholungen, keine Kanäle.",
+    "targetsNone": "Für diese Vorgabe gibt es keine Ziele.",
+    "criteria": "Erfolgskriterien",
+    "criteriaNone": "Für diese Einheit gibt es keine Kriterien.",
+    "watchFor": "Worauf achten",
+    "watchForNone": "Nichts notiert. Schreib es dazu, wenn du die Einheit planst oder änderst.",
+    "intentVersion": "Absicht v{version}",
+    "edit": "Einheit bearbeiten",
+    "restDay": "Ruhetag",
+    "restTitle": "Heute ist nichts geplant.",
+    "restBody": "Ruhe gehört zum Plan wie alles andere. Stimmt das nicht, plan etwas. Es steht dann hier und im Kalender.",
+    "openWeek": "Woche öffnen",
+    "thisWeek": "Diese Woche",
+    "calendar": "Kalender",
+    "rest": "Ruhe"
+  },
+  "wellness": {
+    "title": "Befinden",
+    "history": "Verlauf",
+    "loading": "Lädt…",
+    "editToday": "Heute ändern",
+    "recordMorning": "Heute Morgen eintragen",
+    "recordFromMemory": "Aus dem Kopf eintragen",
+    "notActionable": "Eingetragen, aber heute nicht verwertbar: {reasons}. Die Werte sind echt. Sie sagen heute nur nichts über deine Form.",
+    "asked": "arc hat nach heute Morgen gefragt und noch nichts gehört. Schlaf, Ruhepuls, HRV, Gewicht und wie du dich fühlst. Was du eben hast.",
+    "openUntil": "Offen bis {time}. Danach ist der Tag zu, und arc fragt nicht mehr.",
+    "closed": "Der Morgen ist ohne Antwort zu. arc hat gefragt, aber nichts kam. Heute fragt arc nicht mehr.",
+    "nothingYet": "Heute Morgen ist noch nichts da. Schlaf, Ruhepuls, HRV, Gewicht und wie du dich fühlst. Was du eben hast.",
+    "notRecorded": "nicht eingetragen",
+    "recorded": "eingetragen"
+  },
+  "onboarding": {
+    "firstRun": {
+      "question": "Hast du schon einmal mit Gewichten trainiert?",
+      "why": "Davon hängt ab, wie viel arc dich im Gym fragt. Du kannst das jederzeit in den Einstellungen ändern.",
+      "never": "Nie",
+      "aLittle": "Ein wenig",
+      "regularly": "Regelmäßig",
+      "skip": "Überspringen"
+    }
+  }
+}

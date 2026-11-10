@@ -120,8 +120,12 @@ export function weekDates(startIsoDate: string): string[] {
   return Array.from({ length: 7 }, (_, index) => addDays(startIsoDate, index));
 }
 
+/** The weekday of an ISO date as 0 = Monday … 6 = Sunday. */
+export function weekdayIndex(isoDate: string): number {
+  return (parseIsoDate(isoDate).getUTCDay() + 6) % 7;
+}
+
 /** Short weekday label for an ISO date (`Mon`), Monday-first. */
 export function weekdayLabel(isoDate: string): string {
-  const index = (parseIsoDate(isoDate).getUTCDay() + 6) % 7;
-  return WEEKDAY_LABELS[index] ?? "";
+  return WEEKDAY_LABELS[weekdayIndex(isoDate)] ?? "";
 }

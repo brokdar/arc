@@ -1,0 +1,92 @@
+{
+  "nav": {
+    "sections": "Sections",
+    "sectionsPhone": "Sections (phone)",
+    "waiting": "{label} — {count} waiting on you",
+    "today": "Today",
+    "calendar": "Calendar",
+    "wellness": "Wellness",
+    "sessions": "Sessions",
+    "inbox": "Inbox",
+    "workouts": "Workouts",
+    "fitness": "Fitness",
+    "proposals": "Proposals",
+    "settings": "Settings"
+  },
+  "install": {
+    "label": "Install arc",
+    "steps": "Install arc: tap {share}, then {addToHome}. Then log in inside the installed app — it does not share Safari's sign-in.",
+    "share": "Share",
+    "addToHome": "Add to Home Screen",
+    "dismiss": "Dismiss install hint"
+  },
+  "offline": {
+    "ready": "Ready offline",
+    "readySynced": "Ready offline · synced {time}"
+  },
+  "weekdays": {
+    "mon": "Mon",
+    "tue": "Tue",
+    "wed": "Wed",
+    "thu": "Thu",
+    "fri": "Fri",
+    "sat": "Sat",
+    "sun": "Sun"
+  },
+  "units": {
+    "setsOne": "{count} set",
+    "setsOther": "{count} sets"
+  },
+  "today": {
+    "title": "Today",
+    "date": "{weekday} {date}",
+    "plan": "Plan a session",
+    "loading": "Loading today…",
+    "loadFailed": "Could not load today. Is the API reachable?",
+    "planned": "planned {duration}",
+    "profile": "Workout profile",
+    "prescription": "Prescription",
+    "superset": "Superset",
+    "targets": "Targets",
+    "targetsStrength": "This session is prescribed in sets and reps, not in channels.",
+    "targetsNone": "No channel targets on this prescription.",
+    "criteria": "Success criteria",
+    "criteriaNone": "No criteria on this session.",
+    "watchFor": "Watch for",
+    "watchForNone": "Nothing noted. Add what to watch for when you plan or revise the session.",
+    "intentVersion": "intent v{version}",
+    "edit": "Edit session",
+    "restDay": "Rest day",
+    "restTitle": "Nothing planned today.",
+    "restBody": "Rest is prescribed as much as anything else is. If that is wrong, plan something — it will appear here and on the calendar.",
+    "openWeek": "Open the week",
+    "thisWeek": "This week",
+    "calendar": "Calendar",
+    "rest": "Rest"
+  },
+  "wellness": {
+    "title": "Wellness",
+    "history": "History",
+    "loading": "Loading…",
+    "editToday": "Edit today",
+    "recordMorning": "Record this morning",
+    "recordFromMemory": "Record it from memory",
+    "notActionable": "Recorded, but not actionable today: {reasons}. The numbers are real; they just do not say anything about readiness this morning.",
+    "asked": "arc asked about this morning and has not heard back. Sleep, resting heart rate, HRV, weight and how you feel — whatever you have.",
+    "openUntil": "Open until {time}; after that the day closes unanswered and is not asked again.",
+    "closed": "This morning closed unanswered — arc asked and nothing was recorded. It will not ask again for today.",
+    "nothingYet": "Nothing recorded this morning. Sleep, resting heart rate, HRV, weight and how you feel — whatever you have.",
+    "notRecorded": "not recorded",
+    "recorded": "recorded"
+  },
+  "onboarding": {
+    "firstRun": {
+      "question": "Have you lifted before?",
+      "why": "It sets how much arc asks you in the gym. You can change it any time in Settings.",
+      "never": "Never",
+      "aLittle": "A little",
+      "regularly": "Regularly",
+      "skip": "Skip"
+    }
+  }
+}
