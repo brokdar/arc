@@ -2303,6 +2303,47 @@ async def test_the_catalogue_serves_the_home_gym_movements(
     assert by_id["single_leg_calf_raise"]["unilateral"] is True
 
 
+async def test_the_catalogue_tool_serves_the_tags(session_factory: Any) -> None:
+    data = await call(READER, "get_exercise_catalogue", {"query": "barbell bench"})
+
+    bench = next(item for item in data["items"] if item["id"] == "bench_press")
+    assert bench["muscles"]["pec_sternal"] == 1.0
+    assert bench["mechanic"] == "multi_joint"
+    assert bench["pattern"] == "horizontal_push"
+    assert bench["equipment"] == ["barbell", "bench", "rack"]
+    assert bench["load_type"] == "barbell"
+    assert bench["restrictions"] == ["long_breath_hold", "supine_loaded"]
+
+
+async def test_the_catalogue_tool_filters_like_the_api(
+    session_factory: Any, client: AsyncClient
+) -> None:
+    # The same service behind both adapters, so the same filters agree.
+    filters = {
+        "group": "quads",
+        "equipment": "dumbbell",
+        "pattern": "lunge",
+        "mechanic": "multi_joint",
+    }
+    data = await call(READER, "get_exercise_catalogue", {**filters, "limit": 200})
+    page = (
+        await client.get("/api/v1/exercises", params={**filters, "limit": 200})
+    ).json()
+
+    assert data["total"] > 0
+    assert [item["id"] for item in data["items"]] == [
+        item["id"] for item in page["items"]
+    ]
+    assert all(item["pattern"] == "lunge" for item in data["items"])
+
+
+async def test_the_catalogue_tool_refuses_an_unknown_group(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError):
+        await call(READER, "get_exercise_catalogue", {"group": "wings"})
+
+
 # --- notes -------------------------------------------------------------------------
 
 

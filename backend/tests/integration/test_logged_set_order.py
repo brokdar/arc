@@ -289,7 +289,10 @@ def test_downgrading_renumbers_positions_a_reorder_left_duplicated(
 
 def test_alembic_check_reports_no_drift_after_0026(alembic_config: Config) -> None:
     command.upgrade(alembic_config, "head")
-    assert ScriptDirectory.from_config(alembic_config).get_current_head() == (
-        LOGGED_SET_MODEL
-    )
+    # 0026 is on the chain to head — not necessarily head itself, or every
+    # later migration would have to edit this test.
+    script = ScriptDirectory.from_config(alembic_config)
+    assert LOGGED_SET_MODEL in {
+        revision.revision for revision in script.walk_revisions("base", "heads")
+    }
     command.check(alembic_config)

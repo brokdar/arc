@@ -2303,6 +2303,78 @@
         "title": "ExerciseCategory",
         "type": "string"
       },
+      "ExerciseEquipment": {
+        "description": "Something a movement, as named, needs in the room.\n\nAn entry's equipment is **everything** it needs, not a list of\nalternatives: a Bulgarian split squat is ``dumbbell`` *and* ``bench``.\nAlternatives arrive with variations in a later step. ``bodyweight`` means\n\"needs nothing\" and therefore stands alone.\n\nNot :class:`app.domain.loading.Equipment`, which is how a *weight* is made\nup (bar and plates, rack steps, a stack); that question is\n:class:`LoadType`.",
+        "enum": [
+          "barbell",
+          "trap_bar",
+          "safety_bar",
+          "dumbbell",
+          "kettlebell",
+          "cable",
+          "machine",
+          "bench",
+          "rack",
+          "pull_up_bar",
+          "dip_bars",
+          "band",
+          "box",
+          "sled",
+          "landmine",
+          "ab_wheel",
+          "jump_rope",
+          "battle_ropes",
+          "rower",
+          "ski_erg",
+          "air_bike",
+          "bodyweight"
+        ],
+        "title": "ExerciseEquipment",
+        "type": "string"
+      },
+      "ExerciseNoteRead": {
+        "description": "The athlete's note on one exercise.\n\n``text`` is empty and ``updated_at`` null when there is no note \u2014 every\nexercise has a note slot, so \"nothing written\" is a value, not a 404.",
+        "properties": {
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": ["exercise_id", "text", "updated_at"],
+        "title": "ExerciseNoteRead",
+        "type": "object"
+      },
+      "ExerciseNoteWrite": {
+        "additionalProperties": false,
+        "description": "Replace the note on an exercise; an empty ``text`` deletes it.",
+        "properties": {
+          "text": {
+            "maxLength": 500,
+            "pattern": "^[^\\x00]*$",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": ["text"],
+        "title": "ExerciseNoteWrite",
+        "type": "object"
+      },
       "ExerciseRead": {
         "description": "One catalogue movement as returned by the API.",
         "properties": {
@@ -2314,13 +2386,46 @@
             "title": "Created At",
             "type": "string"
           },
+          "equipment": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseEquipment"
+            },
+            "title": "Equipment",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "load_type": {
+            "$ref": "#/components/schemas/LoadType"
+          },
+          "mechanic": {
+            "$ref": "#/components/schemas/Mechanic"
+          },
+          "muscles": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/MuscleRegion"
+            },
+            "title": "Muscles",
+            "type": "object"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/MovementPattern"
+          },
+          "restrictions": {
+            "items": {
+              "$ref": "#/components/schemas/Restriction"
+            },
+            "title": "Restrictions",
+            "type": "array"
           },
           "unilateral": {
             "title": "Unilateral",
@@ -2337,6 +2442,12 @@
           "name",
           "category",
           "unilateral",
+          "muscles",
+          "mechanic",
+          "pattern",
+          "equipment",
+          "load_type",
+          "restrictions",
           "created_at",
           "updated_at"
         ],
@@ -3502,6 +3613,21 @@
         "required": ["kind"],
         "title": "LoadSchema",
         "type": "object"
+      },
+      "LoadType": {
+        "description": "How the load of the movement is made up, which decides what is loadable.\n\n``barbell``, ``dumbbell`` and ``stack`` are the three implements\n`app.domain.loading` rounds for, spelled the same. ``plate_loaded`` is a\nmachine or sled loaded with plates and no bar; ``bodyweight`` moves the\nathlete's own body (weight may be added); ``unloaded`` has no load to\nprogress \u2014 a stretch, an erg.",
+        "enum": [
+          "barbell",
+          "dumbbell",
+          "stack",
+          "kettlebell",
+          "plate_loaded",
+          "band",
+          "bodyweight",
+          "unloaded"
+        ],
+        "title": "LoadType",
+        "type": "string"
       },
       "LoadWithinSchema": {
         "additionalProperties": false,
@@ -4685,6 +4811,12 @@
         "title": "MatchUnassessedRead",
         "type": "object"
       },
+      "Mechanic": {
+        "description": "Multi-joint or single-joint, as the direction's glossary uses the words.\n\nDecides the default main lift (the first multi-joint movement of each\npattern) and, with the main muscle group, which exercises progress in\nsmall steps.",
+        "enum": ["multi_joint", "single_joint"],
+        "title": "Mechanic",
+        "type": "string"
+      },
       "MetricExplanationRead": {
         "description": "Why a computed number is the number. Travels with it; not page copy.",
         "properties": {
@@ -4911,6 +5043,105 @@
         "required": ["reasons"],
         "title": "MissedReasonsUpdate",
         "type": "object"
+      },
+      "MovementPattern": {
+        "description": "What the movement does, at the grain a swap needs.\n\nFiner than :class:`ExerciseCategory`: a swap for a lat pulldown wants a\nvertical pull, not any pull. The five main-lift patterns (squat, hinge,\nlunge, push, pull) are recovered by reading ``horizontal_push`` and\n``vertical_push`` as push, and likewise for pull.",
+        "enum": [
+          "squat",
+          "hinge",
+          "lunge",
+          "horizontal_push",
+          "vertical_push",
+          "horizontal_pull",
+          "vertical_pull",
+          "chest_fly",
+          "shoulder_raise",
+          "rear_delt",
+          "shrug",
+          "elbow_flexion",
+          "elbow_extension",
+          "knee_flexion",
+          "knee_extension",
+          "calf_raise",
+          "anti_extension",
+          "anti_rotation",
+          "anti_lateral_flexion",
+          "trunk_flexion",
+          "rotation",
+          "carry",
+          "jump",
+          "mobility",
+          "conditioning"
+        ],
+        "title": "MovementPattern",
+        "type": "string"
+      },
+      "MuscleGroup": {
+        "description": "One of the 16 groups counts and the map are shown in.\n\nMember order is the direction's order, which is also display order;\n:data:`GROUP_LABELS` holds the words an athlete reads.",
+        "enum": [
+          "chest",
+          "front_shoulders",
+          "side_rear_shoulders",
+          "upper_back",
+          "lats",
+          "lower_back",
+          "biceps",
+          "triceps",
+          "forearms",
+          "abs_obliques",
+          "glutes",
+          "quads",
+          "hamstrings",
+          "adductors",
+          "calves",
+          "neck"
+        ],
+        "title": "MuscleGroup",
+        "type": "string"
+      },
+      "MuscleRegion": {
+        "description": "One of the 37 internal muscle regions. Append-only \u2014 see the module.",
+        "enum": [
+          "pec_clavicular",
+          "pec_sternal",
+          "serratus_anterior",
+          "delt_anterior",
+          "delt_lateral",
+          "delt_posterior",
+          "rotator_cuff",
+          "lats",
+          "teres_major",
+          "traps_upper",
+          "traps_middle",
+          "traps_lower",
+          "rhomboids",
+          "erector_spinae",
+          "quadratus_lumborum",
+          "biceps",
+          "brachialis",
+          "brachioradialis",
+          "triceps_long",
+          "triceps_lateral_medial",
+          "forearm_flexors",
+          "forearm_extensors",
+          "rectus_abdominis",
+          "obliques",
+          "transversus_abdominis",
+          "glute_max",
+          "glute_med_min",
+          "hip_flexors",
+          "adductors",
+          "tfl_abductors",
+          "quads_rectus_femoris",
+          "quads_vasti",
+          "hamstrings",
+          "gastrocnemius",
+          "soleus",
+          "tibialis_anterior",
+          "neck"
+        ],
+        "title": "MuscleRegion",
+        "type": "string"
       },
       "NotAssessedPowerCurveRead": {
         "description": "Why a session has no power curve, naming the missing input.",
@@ -7448,6 +7679,25 @@
         ],
         "title": "ResolvedTargetRead",
         "type": "object"
+      },
+      "Restriction": {
+        "description": "What a movement asks of the body that a safety filter may rule out.\n\nThe direction's list (\u00a712), verbatim. A tag says the movement *involves*\nthe demand, never that it is unsafe.",
+        "enum": [
+          "deep_knee_flexion",
+          "deep_hip_flexion",
+          "hip_rotation_loaded",
+          "loaded_spinal_flexion",
+          "impact",
+          "long_breath_hold",
+          "unsupported_single_leg",
+          "overhead",
+          "supine_loaded",
+          "prone",
+          "advanced",
+          "power"
+        ],
+        "title": "Restriction",
+        "type": "string"
       },
       "RollingMeanRead": {
         "description": "The trailing seven-day mean, with the `n` it was computed over.\n\n`mean` is null exactly when `n` is zero \u2014 that is a genuine absence, not a\nwithheld number, and the two are told apart by the `n` beside it.",
@@ -13378,7 +13628,7 @@
     },
     "/api/v1/exercises": {
       "get": {
-        "description": "List catalogue exercises, by family then name.",
+        "description": "List catalogue exercises, by family then name; every filter narrows.",
         "operationId": "exercises-list_exercises",
         "parameters": [
           {
@@ -13402,6 +13652,46 @@
               "pattern": "^[^\\x00]*$",
               "title": "Q",
               "type": "string"
+            }
+          },
+          {
+            "description": "Only exercises whose main muscles roll up to this group.",
+            "in": "query",
+            "name": "group",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MuscleGroup",
+              "description": "Only exercises whose main muscles roll up to this group."
+            }
+          },
+          {
+            "description": "Only exercises with this movement pattern.",
+            "in": "query",
+            "name": "pattern",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MovementPattern",
+              "description": "Only exercises with this movement pattern."
+            }
+          },
+          {
+            "description": "Only exercises whose equipment includes this item.",
+            "in": "query",
+            "name": "equipment",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExerciseEquipment",
+              "description": "Only exercises whose equipment includes this item."
+            }
+          },
+          {
+            "description": "Only multi-joint or only single-joint exercises.",
+            "in": "query",
+            "name": "mechanic",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Mechanic",
+              "description": "Only multi-joint or only single-joint exercises."
             }
           },
           {
@@ -13553,6 +13843,176 @@
           }
         ],
         "summary": "Get Exercise",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exercises/{exercise_id}/note": {
+      "get": {
+        "description": "Get the athlete's note on an exercise; empty text when there is none.",
+        "operationId": "exercises-get_exercise_note",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExerciseNoteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Exercise Note",
+        "tags": ["exercises"]
+      },
+      "put": {
+        "description": "Replace the note on an exercise; an empty text deletes it.",
+        "operationId": "exercises-put_exercise_note",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExerciseNoteWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExerciseNoteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Put Exercise Note",
         "tags": ["exercises"]
       }
     },

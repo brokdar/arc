@@ -16,21 +16,52 @@ The catalogue is reference data, so seeding writes **one** audit row, and only
 when it actually changed something.
 """
 
+import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.domain.actor import Actor
-from app.domain.strength import Exercise, ExerciseCategory
+from app.domain.muscles import MuscleGroup, MuscleRegion, main_groups
+from app.domain.strength import (
+    Exercise,
+    ExerciseCategory,
+    ExerciseEquipment,
+    Mechanic,
+    MovementPattern,
+)
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
-from app.persistence.exercises import ExerciseRepository, ExerciseRow
+from app.persistence.exercises import (
+    MAX_NOTE_LENGTH,
+    ExerciseNoteRepository,
+    ExerciseRepository,
+    ExerciseRow,
+    row_tags,
+)
 from app.services.templates import load_exercise_catalogue
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "exercise_catalogue"
+#: `entity_type` of a note write's audit row.
+NOTE_ENTITY_TYPE = "exercise_note"
+
+
+@dataclass(frozen=True, slots=True)
+class ExerciseNote:
+    """The athlete's note on one exercise; ``text == ""`` means there is none.
+
+    An exercise without a note reads as an empty one rather than a 404: every
+    exercise *has* a note slot, and "nothing written yet" is its normal state.
+    ``updated_at`` is None exactly when there is no note.
+    """
+
+    exercise_id: str
+    text: str
+    updated_at: dt.datetime | None
 
 
 class ExerciseService:
@@ -40,30 +71,54 @@ class ExerciseService:
         self,
         session: AsyncSession,
         repository: ExerciseRepository,
+        notes: ExerciseNoteRepository,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._repository = repository
+        self._notes = notes
         self._audit = audit
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and its repositories to one session."""
-        return cls(session, ExerciseRepository(session), AuditRepository(session))
+        return cls(
+            session,
+            ExerciseRepository(session),
+            ExerciseNoteRepository(session),
+            AuditRepository(session),
+        )
 
     async def list(
         self,
         *,
         category: ExerciseCategory | None = None,
         query: str | None = None,
+        group: MuscleGroup | None = None,
+        pattern: MovementPattern | None = None,
+        equipment: ExerciseEquipment | None = None,
+        mechanic: Mechanic | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[Sequence[ExerciseRow], int]:
-        """Return a page of the catalogue, seeding it first if it is empty."""
+        """Return a page of the catalogue, seeding it first if it is empty.
+
+        Every filter narrows (they combine with AND). ``group`` matches an
+        entry whose *main* muscles roll up to it — a helper region does not
+        make a deadlift a quad exercise — and ``equipment`` one whose
+        equipment includes it. Both are applied before paging, so ``total``
+        counts matches.
+        """
         await self.ensure_seeded()
-        return await self._repository.list(
-            category=category, query=query, offset=offset, limit=limit
-        )
+        rows = [
+            row
+            for row in await self._repository.matching(
+                category=category, query=query, mechanic=mechanic, pattern=pattern
+            )
+            if (equipment is None or equipment.value in row.equipment)
+            and (group is None or group in _main_groups(row))
+        ]
+        return rows[offset : offset + limit], len(rows)
 
     async def get(self, exercise_id: str) -> ExerciseRow:
         """Return one catalogue entry by slug.
@@ -76,6 +131,65 @@ class ExerciseService:
         if row is None:
             raise NotFoundError(f"Exercise {exercise_id!r} is not in the catalogue")
         return row
+
+    async def get_note(self, exercise_id: str) -> ExerciseNote:
+        """Return the note on one exercise, empty when none was written.
+
+        Raises:
+            NotFoundError: When no exercise has that slug.
+        """
+        await self.get(exercise_id)
+        row = await self._notes.get(exercise_id)
+        if row is None:
+            return ExerciseNote(exercise_id=exercise_id, text="", updated_at=None)
+        return ExerciseNote(
+            exercise_id=exercise_id, text=row.text, updated_at=row.updated_at
+        )
+
+    async def set_note(
+        self, exercise_id: str, text: str, *, actor: Actor
+    ) -> ExerciseNote:
+        """Write, replace or — with empty text — delete the note on an exercise.
+
+        Empty text deletes rather than storing an empty row: "no note" has one
+        representation, the absent row. Whitespace counts as text; a note of
+        three spaces is the athlete's business. Deleting a note that does not
+        exist writes nothing, not even an audit row.
+
+        Raises:
+            NotFoundError: When no exercise has that slug.
+            ValidationError: When the text is longer than the column holds.
+        """
+        if len(text) > MAX_NOTE_LENGTH:
+            raise ValidationError(
+                f"an exercise note is at most {MAX_NOTE_LENGTH} characters"
+            )
+        await self.get(exercise_id)
+        existing = await self._notes.get(exercise_id)
+        if not text:
+            if existing is None:
+                return ExerciseNote(exercise_id=exercise_id, text="", updated_at=None)
+            await self._notes.delete(existing)
+            await self._audit_note(actor, exercise_id, "exercise_note.deleted", None)
+            await commit(self._session)
+            return ExerciseNote(exercise_id=exercise_id, text="", updated_at=None)
+        row = await self._notes.put(exercise_id, text)
+        await self._audit_note(actor, exercise_id, "exercise_note.set", text)
+        await commit(self._session)
+        return ExerciseNote(
+            exercise_id=exercise_id, text=row.text, updated_at=row.updated_at
+        )
+
+    async def _audit_note(
+        self, actor: Actor, exercise_id: str, action: str, text: str | None
+    ) -> None:
+        await self._audit.record(
+            actor=actor,
+            action=action,
+            entity_type=NOTE_ENTITY_TYPE,
+            entity_id=None,
+            payload={"exercise_id": exercise_id, "text": text},
+        )
 
     async def require_all(self, exercise_ids: Sequence[str]) -> None:
         """Check that every slug is in the catalogue.
@@ -178,14 +292,7 @@ class ExerciseService:
 
         try:
             for exercise in pending:
-                await self._repository.add(
-                    ExerciseRow(
-                        id=exercise.id,
-                        name=exercise.name,
-                        category=exercise.category,
-                        unilateral=exercise.unilateral,
-                    )
-                )
+                await self._repository.add(ExerciseRow.from_domain(exercise))
         except ConflictError:
             # Two first-ever accesses raced; the winner has written the rows
             # this one was about to. The failed flush rolled the session back,
@@ -204,13 +311,23 @@ class ExerciseService:
 
 
 def _differs(row: ExerciseRow | None, exercise: Exercise) -> bool:
-    """Whether the stored row is missing or out of step with the file."""
+    """Whether the stored row is missing or out of step with the file.
+
+    Compares every column the file decides, through the same `row_tags` the
+    write uses — a tag missing from this diff would never re-seed after the
+    file changed.
+    """
     if row is None:
         return True
-    return (
-        row.name != exercise.name
-        or row.category is not exercise.category
-        or row.unilateral != exercise.unilateral
+    return any(
+        getattr(row, column) != value for column, value in row_tags(exercise).items()
+    )
+
+
+def _main_groups(row: ExerciseRow) -> frozenset[MuscleGroup]:
+    """The row's main muscle groups, through the domain roll-up."""
+    return main_groups(
+        {MuscleRegion(region): weight for region, weight in row.muscles.items()}
     )
 
 
