@@ -17,6 +17,7 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
+import { FirstRunQuestion } from "@/components/today/first-run";
 import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
@@ -106,6 +107,9 @@ export function TodayView() {
         <div className="flex min-w-0 flex-[1_1_620px] flex-col gap-3.5">
           {/* Above the session, and empty — not even a frame — when there is
               no card or a session is under way (`components/cards/card.tsx`). */}
+          {/* Before the card: on a fresh install it is the first thing arc
+              needs to know, and it is asked once (`first-run.tsx`). */}
+          <FirstRunQuestion />
           <TodayCard />
           {week.isPending ? (
             <p className="text-ink-muted text-sm">Loading today…</p>

@@ -1022,6 +1022,27 @@ async def test_the_athlete_block_names_the_clock_its_dates_are_on(
     assert data["athlete"]["today"] == athlete_today().isoformat()
 
 
+async def test_the_athlete_view_carries_training_mode_and_units(
+    client: AsyncClient,
+) -> None:
+    """The coach reads the mode and units the athlete chose, not a guess.
+
+    Before anything is stored it reads the defaults the gym screen would use.
+    """
+    fresh = await call(READER, "get_athlete")
+    assert fresh["athlete"]["training_mode"] == "simple"
+    assert fresh["athlete"]["units"] == "kg"
+
+    await client.patch(
+        "/api/v1/settings/training", json={"lifted_before": "a_little", "units": "lb"}
+    )
+
+    for tool in ("get_athlete", "get_coaching_context"):
+        data = await call(READER, tool)
+        assert data["athlete"]["training_mode"] == "standard"
+        assert data["athlete"]["units"] == "lb"
+
+
 async def test_the_context_budget_is_the_caps_standing(session_factory: Any) -> None:
     # The same number a write's dry run reports — measured over the same
     # audit rows, so what the opener says and what the cap refuses agree.

@@ -81,6 +81,10 @@ import {
 import { cardHandlers } from "@/tests/mocks/handlers-cards";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
+import {
+  patchTrainingSettings,
+  trainingSettings,
+} from "@/tests/mocks/training-settings-state";
 
 /**
  * Typed MSW handlers: paths, params, and response bodies are all inferred
@@ -126,6 +130,16 @@ export const handlers = [
       ? response(422).json({ detail: result.detail })
       : response(200).json(result.athlete);
   }),
+
+  // Training settings, stateful like the profile: the first-run question on
+  // Today reads them back after answering, so a PATCH that answered a canned
+  // body would let a component that sent the wrong answer still hide it.
+  http.get("/api/v1/settings/training", ({ response }) =>
+    response(200).json(trainingSettings()),
+  ),
+  http.patch("/api/v1/settings/training", async ({ request, response }) =>
+    response(200).json(patchTrainingSettings(await request.json())),
+  ),
 
   // The week the calendar asks for, built around whatever `start` it sends.
   http.get("/api/v1/plan/week", ({ query, response }) => {

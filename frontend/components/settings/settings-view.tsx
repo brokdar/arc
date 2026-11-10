@@ -12,6 +12,7 @@ import {
 } from "@/components/settings/anchors";
 import { IntegrationsPanel } from "@/components/settings/integrations/integrations-panel";
 import { ProfileForm } from "@/components/settings/profile-form";
+import { TrainingSettingsPanel } from "@/components/settings/training-settings";
 import { ZonesPreview } from "@/components/settings/zones-preview";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import type { WritableAnchorType } from "@/lib/anchors";
@@ -87,6 +88,10 @@ export function SettingsView() {
           <ProfileForm className="min-w-0 flex-[1_1_480px]" />
           <HealthPanel className="min-w-0 flex-[1_1_340px]" />
         </div>
+
+        {/* How arc behaves in the gym, beside who the athlete is: set once,
+            usually by the first-run question on Today, and revisited rarely. */}
+        <TrainingSettingsPanel />
 
         {/* Last, and deliberately: this is the panel an athlete visits twice
             — once at setup and once when a ride stops arriving — while

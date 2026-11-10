@@ -33,6 +33,7 @@ from app.api.routes.proposals import router as proposals_router
 from app.api.routes.purposes import router as purposes_router
 from app.api.routes.scoring import planned_router as planned_reasons_router
 from app.api.routes.scoring import router as scores_router
+from app.api.routes.settings_training import router as training_settings_router
 from app.api.routes.wellness import router as wellness_router
 from app.api.routes.workouts import labels_router as workout_labels_router
 from app.api.routes.workouts import router as workouts_router
@@ -212,6 +213,7 @@ def create_app() -> FastAPI:
     api.include_router(fitness_router)
     api.include_router(power_curve_router)
     api.include_router(cards_router)
+    api.include_router(training_settings_router)
     app.include_router(api)
 
     return app

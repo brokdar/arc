@@ -1780,6 +1780,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/settings/training": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Training Settings
+     * @description Get the training settings — the defaults when none are stored.
+     */
+    get: operations["settings-get_training_settings"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Training Settings
+     * @description Partially update the training settings. An empty body changes nothing.
+     */
+    patch: operations["settings-update_training_settings"];
+    trace?: never;
+  };
   "/api/v1/wellness/backfill": {
     parameters: {
       query?: never;
@@ -2451,6 +2475,15 @@ export interface components {
       | "dropout_held"
       | "dropped"
       | "resampled_only";
+    /**
+     * AskFrequency
+     * @description How often the gym screen asks how hard a set felt.
+     *
+     *     ``last_set`` asks once per exercise, after its final working set — the
+     *     rating progression reads, without a question on every set.
+     * @enum {string}
+     */
+    AskFrequency: "always" | "last_set" | "never";
     /**
      * AssessedPowerCurveRead
      * @description A session's mean-maximal power at every grid duration it is long enough for.
@@ -3942,6 +3975,12 @@ export interface components {
       resting_hr_deviation_sd: number;
     };
     /**
+     * LiftedBefore
+     * @description The answer to the first-run question "Have you lifted before?".
+     * @enum {string}
+     */
+    LiftedBefore: "never" | "a_little" | "regularly";
+    /**
      * LoadBasis
      * @description Which model produced the training load that was selected (A5.2).
      * @enum {string}
@@ -4048,6 +4087,12 @@ export interface components {
       /** Scan Interval Seconds */
       scan_interval_seconds: number;
     };
+    /**
+     * Locale
+     * @description The language and number format of the interface.
+     * @enum {string}
+     */
+    Locale: "en" | "de";
     /**
      * LoggedSetCreate
      * @description One set of a manually entered session.
@@ -6570,6 +6615,63 @@ export interface components {
       zones: components["schemas"]["ZoneTimeRead"][];
     };
     /**
+     * TrainingMode
+     * @description How much arc asks and decides during a session.
+     * @enum {string}
+     */
+    TrainingMode: "simple" | "standard" | "full";
+    /**
+     * TrainingSettingsRead
+     * @description The training settings every gym surface reads.
+     *
+     *     On a database where nothing has been stored these are the defaults:
+     *     Simple, kilograms, English, nothing seen and nothing answered.
+     */
+    TrainingSettingsRead: {
+      ask_frequency: components["schemas"]["AskFrequency"];
+      /** Before You Start Seen */
+      before_you_start_seen: boolean;
+      /** First Run Seen */
+      first_run_seen: boolean;
+      /** High Contrast */
+      high_contrast: boolean;
+      lifted_before: components["schemas"]["LiftedBefore"] | null;
+      locale: components["schemas"]["Locale"];
+      mode: components["schemas"]["TrainingMode"];
+      /** Plain Logbook */
+      plain_logbook: boolean;
+      units: components["schemas"]["Units"];
+    };
+    /**
+     * TrainingSettingsUpdate
+     * @description A partial change. Omitted fields are left alone.
+     *
+     *     No setting can be cleared, so none takes ``null`` in the contract
+     *     (`.claude/rules/api-nullability.md`); an explicit ``null`` that reaches
+     *     the service anyway is a 422 naming the field. Sending ``lifted_before``
+     *     also marks the question seen and, for a new answer, sets the mode
+     *     (`app.domain.training_mode.with_changes`), unless ``mode`` is in the same
+     *     request or Full control was chosen.
+     */
+    TrainingSettingsUpdate: {
+      /** Ask Frequency */
+      ask_frequency?: components["schemas"]["AskFrequency"];
+      /** Before You Start Seen */
+      before_you_start_seen?: boolean;
+      /** First Run Seen */
+      first_run_seen?: boolean;
+      /** High Contrast */
+      high_contrast?: boolean;
+      /** Lifted Before */
+      lifted_before?: components["schemas"]["LiftedBefore"];
+      locale?: components["schemas"]["Locale"];
+      /** Mode */
+      mode?: components["schemas"]["TrainingMode"];
+      /** Plain Logbook */
+      plain_logbook?: boolean;
+      units?: components["schemas"]["Units"];
+    };
+    /**
      * TransportKind
      * @description How the bytes reach arc.
      *
@@ -6652,6 +6754,12 @@ export interface components {
       /** Value */
       value: number | null;
     };
+    /**
+     * Units
+     * @description The unit a load is shown and entered in. Stored loads stay kilograms.
+     * @enum {string}
+     */
+    Units: "kg" | "lb";
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -12383,6 +12491,104 @@ export interface operations {
         };
       };
       /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "settings-get_training_settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrainingSettingsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "settings-update_training_settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TrainingSettingsUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrainingSettingsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Unknown setting, value outside its vocabulary, or null */
       422: {
         headers: {
           [name: string]: unknown;

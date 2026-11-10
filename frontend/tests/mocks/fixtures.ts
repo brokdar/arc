@@ -6,6 +6,7 @@ import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
 import { WELLNESS_TREND } from "./generated-wellness-trend";
+import { resetTrainingSettingsState } from "./training-settings-state";
 
 type Schemas = components["schemas"];
 
@@ -1983,6 +1984,7 @@ export function resetMockState(): void {
   resetIntegrationsState();
   resetDiscoveryState();
   resetCardState();
+  resetTrainingSettingsState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */
