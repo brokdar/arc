@@ -1,9 +1,14 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 
 import { $api } from "@/lib/api/client";
 import { todayIsoDate } from "@/lib/dates";
+import {
+  isUnreachable,
+  lastTimezone,
+  rememberTimezone,
+} from "@/lib/last-contact";
 
 /**
  * The athlete's clock, made available to the whole signed-in app.
@@ -47,13 +52,41 @@ export function AthleteClock({
   return <ClockContext value={timezone}>{children}</ClockContext>;
 }
 
+/**
+ * Read the zone from `GET /clock` and publish it.
+ *
+ * Offline — the request never reached a server — it publishes the zone that
+ * same endpoint served on this phone's last online load
+ * (`lib/last-contact.ts`). That is still the server's answer, not a guess:
+ * the zone changes only when the operator edits `.env` and restarts. With no
+ * remembered answer it refuses exactly as before, and a server that answers
+ * with an error is never papered over.
+ */
 export function ClockProvider({ children }: { children: React.ReactNode }) {
-  const { data, isPending, error } = $api.useQuery("get", "/api/v1/clock", {
-    // The athlete's zone changes when the operator edits `.env` and restarts,
-    // which is not something to poll for. Refetching it per navigation would
-    // be a request per page for a value that is constant for the session.
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+  const { data, isPending, error, fetchStatus } = $api.useQuery(
+    "get",
+    "/api/v1/clock",
+    {
+      // The athlete's zone changes when the operator edits `.env` and
+      // restarts, which is not something to poll for. Refetching it per
+      // navigation would be a request per page for a value that is constant
+      // for the session.
+      staleTime: Number.POSITIVE_INFINITY,
+    },
+  );
+
+  const served = data?.timezone;
+  useEffect(() => {
+    if (served !== undefined) rememberTimezone(served);
+  }, [served]);
+
+  const unreachable =
+    (isPending && fetchStatus === "paused") ||
+    (error !== null && isUnreachable(error));
+  const remembered = unreachable ? lastTimezone() : null;
+  if (remembered !== null) {
+    return <AthleteClock timezone={remembered}>{children}</AthleteClock>;
+  }
 
   if (isPending) {
     return <p className="p-8 text-muted-foreground">Loading…</p>;

@@ -88,3 +88,58 @@ describe("the athlete's clock", () => {
     expect(screen.queryByTestId("today")).not.toBeInTheDocument();
   });
 });
+
+describe("the athlete's clock with no network", () => {
+  // Offline is not a reason to guess: the zone the server served on the last
+  // online load is still the athlete's zone, and it is the only one used.
+  function goOffline() {
+    server.use(
+      http.untyped.get("http://localhost:8000/api/v1/clock", () =>
+        HttpResponse.error(),
+      ),
+    );
+  }
+
+  it("keeps the zone the server served on the last online load", async () => {
+    const online = renderProbe();
+    expect(await screen.findByTestId("zone")).toHaveTextContent(
+      ATHLETE_TIMEZONE,
+    );
+    online.unmount();
+
+    goOffline();
+    renderProbe();
+
+    expect(await screen.findByTestId("zone")).toHaveTextContent(
+      ATHLETE_TIMEZONE,
+    );
+    expect(screen.getByTestId("today")).toHaveTextContent(athleteToday());
+  });
+
+  it("still refuses to guess when no zone was ever served", async () => {
+    goOffline();
+    renderProbe();
+
+    expect(
+      await screen.findByText(/Could not read the athlete's timezone/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("zone")).not.toBeInTheDocument();
+  });
+
+  it("does not paper over a server that answered with an error", async () => {
+    const online = renderProbe();
+    await screen.findByTestId("zone");
+    online.unmount();
+
+    server.use(
+      http.untyped.get("http://localhost:8000/api/v1/clock", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    renderProbe();
+
+    expect(
+      await screen.findByText(/Could not read the athlete's timezone/i),
+    ).toBeInTheDocument();
+  });
+});

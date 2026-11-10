@@ -73,3 +73,79 @@ describe("AuthGuard", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 });
+
+describe("AuthGuard with no network", () => {
+  beforeEach(() => {
+    replace.mockClear();
+  });
+
+  function goOffline() {
+    server.use(
+      http.untyped.get("http://localhost:8000/api/v1/auth/session", () =>
+        HttpResponse.error(),
+      ),
+    );
+  }
+
+  it("opens the app on a phone that was signed in on its last online load", async () => {
+    const online = renderGuard();
+    await screen.findByText("secret content");
+    online.unmount();
+
+    goOffline();
+    renderGuard();
+
+    expect(await screen.findByText("secret content")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("does not open the app on a phone that was never signed in", async () => {
+    goOffline();
+    renderGuard();
+
+    expect(
+      await screen.findByText(/Could not verify your session/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("secret content")).not.toBeInTheDocument();
+  });
+
+  it("forgets the sign-in once the server says the session is gone", async () => {
+    const online = renderGuard();
+    await screen.findByText("secret content");
+    online.unmount();
+
+    server.use(
+      http.get("/api/v1/auth/session", ({ response }) =>
+        response(200).json({ authenticated: false }),
+      ),
+    );
+    const signedOut = renderGuard();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
+    signedOut.unmount();
+
+    goOffline();
+    renderGuard();
+
+    expect(
+      await screen.findByText(/Could not verify your session/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("secret content")).not.toBeInTheDocument();
+  });
+
+  it("does not open the app when the server answers with an error", async () => {
+    const online = renderGuard();
+    await screen.findByText("secret content");
+    online.unmount();
+
+    server.use(
+      http.untyped.get("http://localhost:8000/api/v1/auth/session", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    renderGuard();
+
+    expect(
+      await screen.findByText(/Could not verify your session/),
+    ).toBeInTheDocument();
+  });
+});
