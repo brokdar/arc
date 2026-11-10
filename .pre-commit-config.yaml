@@ -154,6 +154,15 @@ repos:
         language: system
         pass_filenames: false
         files: ^(scripts/risk-tier(\.test)?\.mjs|\.github/CODEOWNERS)$
+      # The breaker is the only thing that stops agents merging after they start
+      # getting it wrong, and it fails silently both ways: one that never trips is
+      # no breaker, one that trips on noise gets its issue closed unread.
+      - id: review-breaker-test
+        name: review-breaker-test
+        entry: node scripts/review-breaker.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^scripts/review-breaker(\.test)?\.mjs$
       - id: docker-lock-test
         name: docker-lock-test
         entry: ./scripts/docker-lock.test.sh

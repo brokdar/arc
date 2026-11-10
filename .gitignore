@@ -95,3 +95,10 @@ caddy-local-ca.crt
 # because git will not re-include a file inside an ignored directory.
 docs/*
 !docs/agent-eval.md
+# The rollback runbook is operational reference — what to do at the moment
+# something shipped is broken — not a working note, so it is tracked. The rest of
+# docs/review/ (audits, plans) stays local. Re-including a file inside an ignored
+# directory takes all three lines, in this order.
+!docs/review/
+docs/review/*
+!docs/review/rollback.md
