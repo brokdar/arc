@@ -159,6 +159,15 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/as-agent(\.test)?\.sh$
+      # The PreToolUse hook that makes the wrapper above the only way an agent
+      # reaches GitHub. Its suite also pins the settings.json wiring (hook
+      # registered, deny rules present), so editing either file runs it.
+      - id: agent-identity-hook-test
+        name: agent-identity-hook-test
+        entry: python3 .claude/hooks/test_require_agent_identity.py
+        language: system
+        pass_filenames: false
+        files: ^\.claude/(hooks/(require_agent_identity|test_require_agent_identity)\.py|settings\.json)$
       # `just trust-ca` is the only guided step on the local-HTTPS path, and its
       # failure modes (stack down, no CA yet) must read as advice, not as a raw
       # Docker error. A stub `docker` stands in for the real one.
