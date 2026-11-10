@@ -384,6 +384,27 @@ describe("the API is network-only", () => {
     expect(worker.fetch).not.toHaveBeenCalled();
   });
 
+  // The read above is not a navigation, so the worker would ignore it even
+  // without the network-only rule. A navigation is the request the
+  // network-first handler WOULD take and cache, so only these fail when the
+  // rule is removed.
+  it.each(["/api/v1/plan/week", "/health", "/mcp"])(
+    "leaves a navigation to %s to the network and stores nothing",
+    async (path) => {
+      const worker = boot();
+      worker.fetch.mockImplementation(async () => new Response("{}"));
+
+      const response = await worker.dispatch(
+        request(path, { mode: "navigate" }),
+      );
+
+      expect(response).toBeUndefined();
+      expect(worker.fetch).not.toHaveBeenCalled();
+      const cache = await worker.caches.open("arc-shell-build-1");
+      expect(await cache.keys()).toEqual([]);
+    },
+  );
+
   it("does not cache an API URL a page asks it to keep", async () => {
     const worker = boot();
     worker.fetch.mockImplementation(async () => new Response("{}"));
