@@ -41,7 +41,9 @@ at the code site, in a test that fails when it is violated, or in
   `AUTH__PASSWORD_HASH` exchanged at login for a signed session cookie.
   Everything under `/api/v1` except `/auth/*` hangs off a router carrying
   `Depends(require_session)` (`app/api/deps.py`), so **new routers are
-  protected by default**; `/health` stays open for probes.
+  protected by default** — add them to `GUARDED_ROUTERS` in
+  `app/api/routers.py`, not to `app/main.py` (owned; it holds only the
+  open/guarded split); `/health` stays open for probes.
 - **Reverse proxy** — `caddy/Caddyfile` fronts the stack as one origin:
   `/api/*` and `/health` → api, `/mcp*` → mcp, everything else → frontend. The
   compose frontend build therefore sets an empty `NEXT_PUBLIC_API_BASE_URL`

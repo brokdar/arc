@@ -9,35 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
 from app.api.deps import require_session
-from app.api.routes.activity import manual_router as manual_sessions_router
-from app.api.routes.activity import router as sessions_router
-from app.api.routes.agent_notes import router as agent_notes_router
-from app.api.routes.anchors import router as anchors_router
-from app.api.routes.athlete import router as athlete_router
+from app.api.routers import GUARDED_ROUTERS
 from app.api.routes.auth import router as auth_router
-from app.api.routes.cards import router as cards_router
-from app.api.routes.clock import router as clock_router
-from app.api.routes.connections import router as connections_router
-from app.api.routes.exercises import router as exercises_router
-from app.api.routes.fitness import router as fitness_router
 from app.api.routes.health import router as health_router
-from app.api.routes.ingest import router as ingest_router
-from app.api.routes.integrations import catalogue_router as integration_catalogue_router
-from app.api.routes.integrations import router as integrations_router
-from app.api.routes.matching import router as matches_router
-from app.api.routes.matching import session_router as session_matches_router
-from app.api.routes.plan import router as plan_router
-from app.api.routes.planned_sessions import router as planned_sessions_router
-from app.api.routes.power_curve import router as power_curve_router
-from app.api.routes.proposals import router as proposals_router
-from app.api.routes.purposes import router as purposes_router
-from app.api.routes.scoring import planned_router as planned_reasons_router
-from app.api.routes.scoring import router as scores_router
-from app.api.routes.settings_training import router as training_settings_router
-from app.api.routes.wellness import router as wellness_router
-from app.api.routes.workouts import labels_router as workout_labels_router
-from app.api.routes.workouts import router as workouts_router
-from app.api.routes.zones import router as zones_router
 from app.api.session import ClockStepTolerantSessionMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import ErrorDetail, register_exception_handlers
@@ -166,8 +140,12 @@ def create_app() -> FastAPI:
     open_api.include_router(auth_router)
     app.include_router(open_api)
 
-    # Everything else is behind the session cookie. Mount new routers here
-    # unless they have a deliberate reason to be public.
+    # Everything else is behind the session cookie. New routers go in
+    # `GUARDED_ROUTERS` (`app/api/routers.py`), which is mounted only here,
+    # under the guard. That file is outside the owner lane on purpose: adding
+    # a guarded router is routine work. Making one public still means editing
+    # this file, which is owned, and `test_router_protection.py` demands a 401
+    # from every endpoint not on its short open list wherever it was mounted.
     # Declared once here rather than on each route, the way 401 already is:
     # both are properties of the router, not of any one endpoint. Any write can
     # lose a race — a uniqueness pre-check overtaken, or a row deleted between
@@ -187,33 +165,8 @@ def create_app() -> FastAPI:
         dependencies=[Depends(require_session)],
         responses=shared,
     )
-    api.include_router(athlete_router)
-    api.include_router(clock_router)
-    api.include_router(anchors_router)
-    api.include_router(wellness_router)
-    api.include_router(zones_router)
-    api.include_router(exercises_router)
-    api.include_router(purposes_router)
-    api.include_router(workouts_router)
-    api.include_router(workout_labels_router)
-    api.include_router(planned_sessions_router)
-    api.include_router(proposals_router)
-    api.include_router(agent_notes_router)
-    api.include_router(plan_router)
-    api.include_router(sessions_router)
-    api.include_router(manual_sessions_router)
-    api.include_router(ingest_router)
-    api.include_router(connections_router)
-    api.include_router(integrations_router)
-    api.include_router(integration_catalogue_router)
-    api.include_router(matches_router)
-    api.include_router(session_matches_router)
-    api.include_router(scores_router)
-    api.include_router(planned_reasons_router)
-    api.include_router(fitness_router)
-    api.include_router(power_curve_router)
-    api.include_router(cards_router)
-    api.include_router(training_settings_router)
+    for router in GUARDED_ROUTERS:
+        api.include_router(router)
     app.include_router(api)
 
     return app

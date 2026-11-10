@@ -28,9 +28,6 @@
 /backend/app/mcp/identity.py          @brokdar
 /backend/app/mcp/main.py              @brokdar
 
-# Migrations run against the athlete's only database; a bad one is data loss.
-/backend/app/persistence/alembic/     @brokdar
-
 # What is exposed, and how it is deployed (the compose file and the proxy; the
 # Dockerfiles and `.env.example` are not owned, see the end).
 /caddy/                               @brokdar
@@ -69,3 +66,15 @@
 # weaken the check that judges agent PRs and merge without the operator. They are
 # unowned because owning them sends every dependency bump and every new setting
 # or test to the operator too; that trade is the operator's to make, not a default.
+#
+# Also not owned, by the operator's decision on 2026-11-10: migrations
+# (`backend/app/persistence/alembic/`) and the guarded router list
+# (`backend/app/api/routers.py`). Schema and new endpoints are routine
+# development, and owning them sent almost every feature PR to the operator.
+# What still stands between an agent and a bad migration: CI runs
+# `alembic upgrade head` and `alembic check` against real Postgres, the
+# migration heuristic (`scripts/check-migration-required.sh`, owned) fails a
+# model change without one, and docs/review/rollback.md says how to step back.
+# A router added to the guarded list is behind the session guard by
+# construction, and `test_router_protection.py` demands a 401 from every
+# endpoint off its open list; making one public still needs `app/main.py`.
