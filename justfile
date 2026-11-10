@@ -172,7 +172,7 @@ check-all: check test-int
 # (end-of-file, trailing-whitespace, check-yaml/toml/json, `check-codeowners`
 # and its suite), and the repo's own
 # tooling suites (`workflow-guards-test`, `implement-plan-sim-test`,
-# `parse-plan-test`, `ci-status-test`, `docker-lock-test`, `as-agent-test`,
+# `parse-plan-test`, `ci-status-test`, `risk-tier-test`, `docker-lock-test`, `as-agent-test`,
 # migration-required's own cases) — which run at commit time, scoped to the files they cover. So a
 # green gate can still be followed by a hook that refuses the commit.
 #

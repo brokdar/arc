@@ -44,6 +44,10 @@
 # wrapper scripts/as-agent.sh, this file's checker) all live in scripts/.
 /.github/                             @brokdar
 /.claude/                             @brokdar
+# The real text of most skills lives in .agents/skills, and .claude/skills/<name>
+# is a symlink to it. GitHub matches the path that was edited, so owning .claude/
+# alone leaves every symlinked skill editable without review.
+/.agents/                             @brokdar
 /.pre-commit-config.yaml              @brokdar
 /justfile                             @brokdar
 /mise.toml                            @brokdar

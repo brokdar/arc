@@ -144,6 +144,16 @@ repos:
         language: system
         pass_filenames: false
         files: ^scripts/ci-status(\.test)?\.mjs$
+      # Decides which review lane a change gets, and both ways of being wrong are
+      # silent: a false auto lets auth or CI through on a docs label. Pure, so it
+      # costs milliseconds. It also runs the LIVE CODEOWNERS through the
+      # classifier, so an edit that un-owns a protected path retriggers it.
+      - id: risk-tier-test
+        name: risk-tier-test
+        entry: node scripts/risk-tier.test.mjs
+        language: system
+        pass_filenames: false
+        files: ^(scripts/risk-tier(\.test)?\.mjs|\.github/CODEOWNERS)$
       - id: docker-lock-test
         name: docker-lock-test
         entry: ./scripts/docker-lock.test.sh
