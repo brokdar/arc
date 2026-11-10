@@ -394,6 +394,10 @@ def session_summary(row: SessionRow, summary: MetricSummary | None) -> dict[str,
         # Readable so that it is correctable: a note the coach cannot see is a
         # note it cannot fix, and the write's own echo has to show what stands.
         "notes": row.notes,
+        # The flag and the rating, not the athlete's reason for the flag:
+        # health and life context reaches the coach only when they opt in.
+        "dont_learn": row.dont_learn,
+        "session_rating": row.session_rating,
     }
 
 
@@ -401,10 +405,13 @@ def logged_set(row: LoggedSetRow) -> dict[str, Any]:
     """One set of a manually recorded session, as it will be read back.
 
     No row id: nothing reads a set by id on this surface, and on a dry run
-    there is none to show.
+    there is none to show. `client_id` is the set's identity, and is shown.
     """
     return {
         "set_index": row.set_index,
+        "client_id": str(row.client_id),
+        "set_kind": row.set_kind.value,
+        "side": row.side.value,
         "exercise_id": row.exercise_id,
         "exercise_name": row.exercise_name,
         "reps": row.reps,
@@ -412,6 +419,20 @@ def logged_set(row: LoggedSetRow) -> dict[str, Any]:
         "per_side": row.per_side,
         "load_kg": row.load_kg,
         "rir": row.rir,
+        "rir_capped": row.rir_capped,
+        "rpe": row.rpe,
+        "hold_quality": None if row.hold_quality is None else row.hold_quality.value,
+        "planned_line_ref": row.planned_line_ref,
+        "replaced_exercise_id": row.replaced_exercise_id,
+        "source": row.source.value,
+        "confidence": row.confidence.value,
+        "rest_s": row.rest_s,
+        "completed_at": (
+            None if row.completed_at is None else row.completed_at.isoformat()
+        ),
+        "utc_offset_min": row.utc_offset_min,
+        "pain_kind": None if row.pain_kind is None else row.pain_kind.value,
+        "pain_band": None if row.pain_band is None else row.pain_band.value,
         "notes": row.notes,
     }
 
@@ -435,6 +456,8 @@ def manual_session_draft(row: SessionRow) -> dict[str, Any]:
         "rpe": row.rpe,
         "temperature_c": row.temperature_c,
         "notes": row.notes,
+        "dont_learn": row.dont_learn,
+        "session_rating": row.session_rating,
         "sets": [logged_set(entry) for entry in row.logged_sets],
     }
 

@@ -67,6 +67,7 @@ import datetime as dt
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from enum import StrEnum
 from typing import Any
 
 from fastmcp import FastMCP
@@ -84,7 +85,16 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.logging import get_logger
-from app.domain.activity import SessionDiscipline
+from app.domain.activity import (
+    HoldQuality,
+    LoggedSetKind,
+    PainBand,
+    PainKind,
+    SessionDiscipline,
+    SetConfidence,
+    SetSide,
+    SetSource,
+)
 from app.domain.agent_notes import NoteKind
 from app.domain.anchors import (
     RESERVED_ANCHOR_TYPES,
@@ -253,8 +263,35 @@ _SET_FIELDS = frozenset(
         "load_kg",
         "rir",
         "notes",
+        "client_id",
+        "set_kind",
+        "side",
+        "planned_line_ref",
+        "replaced_exercise_id",
+        "source",
+        "confidence",
+        "rir_capped",
+        "rpe",
+        "hold_quality",
+        "rest_s",
+        "completed_at",
+        "utc_offset_min",
+        "pain_kind",
+        "pain_band",
     }
 )
+
+#: The set fields that take one word of a fixed vocabulary, and that
+#: vocabulary — named in the refusal, so a wrong word costs no round trip.
+_SET_VOCABULARIES: dict[str, type[StrEnum]] = {
+    "set_kind": LoggedSetKind,
+    "side": SetSide,
+    "source": SetSource,
+    "confidence": SetConfidence,
+    "hold_quality": HoldQuality,
+    "pain_kind": PainKind,
+    "pain_band": PainBand,
+}
 
 
 #: How many days of wellness `get_coaching_context` carries — the same seven
@@ -330,61 +367,116 @@ def _cleared(clear: list[str] | None, *, where: str = "") -> dict[str, Any]:
     return dict.fromkeys(clear or ())
 
 
+def _whole(entry: Mapping[str, Any], name: str, *, where: str) -> int | None:
+    """A whole-number set field, or None; a bool or a string is refused."""
+    value = entry.get(name)
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise ValueError(f"{where}{name} must be a whole number, got {value!r}")
+    return value
+
+
+def _number(entry: Mapping[str, Any], name: str, *, where: str) -> float | None:
+    """A numeric set field as a float, or None; a bool or a string is refused."""
+    value = entry.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        raise ValueError(f"{where}{name} must be a number, got {value!r}")
+    return float(value)
+
+
+def _flag(entry: Mapping[str, Any], name: str, *, where: str) -> bool:
+    """A true/false set field, false when absent."""
+    value = entry.get(name, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{where}{name} must be true or false, got {value!r}")
+    return value
+
+
+def _word(entry: Mapping[str, Any], name: str, *, where: str) -> Any:
+    """A set field from its fixed vocabulary, or None, refused by name."""
+    value = entry.get(name)
+    if value is None:
+        return None
+    vocabulary = _SET_VOCABULARIES[name]
+    try:
+        return vocabulary(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{where}{name} must be one of "
+            f"{', '.join(member.value for member in vocabulary)}, got {value!r}"
+        ) from exc
+
+
 def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
     """Parse a tool call's set objects into the service's input values.
 
     Field-name and type errors are caught here, in words that name the set
-    and the field: the service validates *values* (bounds, catalogue slugs),
-    but a key it does not know would otherwise be dropped on the floor and a
-    string where a number belongs would be a 500.
+    and the field: the service validates *values* (bounds, catalogue slugs,
+    whether reps left and RPE agree), but a key it does not know would
+    otherwise be dropped on the floor and a string where a number belongs
+    would be a 500.
+
+    ``source`` is parsed and then ignored by the service, which credits every
+    set an agent writes to ``coach`` — accepted rather than refused so a coach
+    relaying a set the phone logged is not stopped for naming where it came
+    from.
 
     Raises:
         ValueError: Naming the first malformed set and what is wrong with it.
     """
     inputs: list[LoggedSetInput] = []
     for index, entry in enumerate(entries or [], start=1):
+        where = f"set {index}: "
         unknown = sorted(set(entry) - _SET_FIELDS)
         if unknown:
             raise ValueError(
                 f"set {index} has unknown field(s): {', '.join(unknown)}. A "
                 f"set carries {', '.join(sorted(_SET_FIELDS))}."
             )
-        reps = entry.get("reps")
-        if reps is not None and (not isinstance(reps, int) or isinstance(reps, bool)):
-            raise ValueError(f"set {index}: reps must be an integer, got {reps!r}")
-        duration_s = entry.get("duration_s")
-        if duration_s is not None and (
-            not isinstance(duration_s, int) or isinstance(duration_s, bool)
-        ):
-            raise ValueError(
-                f"set {index}: duration_s must be a whole number of seconds, "
-                f"got {duration_s!r}"
-            )
-        per_side = entry.get("per_side", False)
-        if not isinstance(per_side, bool):
-            raise ValueError(
-                f"set {index}: per_side must be true or false, got {per_side!r}"
-            )
-        load_kg = entry.get("load_kg")
-        if load_kg is not None and (
-            not isinstance(load_kg, int | float) or isinstance(load_kg, bool)
-        ):
-            raise ValueError(
-                f"set {index}: load_kg must be a number of kilograms, got {load_kg!r}"
-            )
-        rir = entry.get("rir")
-        if rir is not None and (not isinstance(rir, int) or isinstance(rir, bool)):
-            raise ValueError(f"set {index}: rir must be an integer, got {rir!r}")
+        client_id = entry.get("client_id")
+        completed_at = entry.get("completed_at")
+        if completed_at is not None and not isinstance(completed_at, str):
+            raise ValueError(f"{where}completed_at must be an ISO datetime string")
         inputs.append(
             LoggedSetInput(
-                reps=reps,
-                duration_s=duration_s,
-                per_side=per_side,
+                reps=_whole(entry, "reps", where=where),
+                duration_s=_whole(entry, "duration_s", where=where),
+                per_side=_flag(entry, "per_side", where=where),
                 exercise_id=entry.get("exercise_id"),
                 exercise_name=entry.get("exercise_name"),
-                load_kg=None if load_kg is None else float(load_kg),
-                rir=rir,
+                load_kg=_number(entry, "load_kg", where=where),
+                rir=_whole(entry, "rir", where=where),
                 notes=entry.get("notes"),
+                client_id=(
+                    None
+                    if client_id is None
+                    else views.as_uuid(client_id, field=f"set {index} client_id")
+                ),
+                set_kind=(
+                    _word(entry, "set_kind", where=where) or LoggedSetKind.WORKING
+                ),
+                side=_word(entry, "side", where=where) or SetSide.BOTH,
+                planned_line_ref=entry.get("planned_line_ref"),
+                replaced_exercise_id=entry.get("replaced_exercise_id"),
+                source=_word(entry, "source", where=where),
+                confidence=(
+                    _word(entry, "confidence", where=where) or SetConfidence.HIGH
+                ),
+                rir_capped=_flag(entry, "rir_capped", where=where),
+                rpe=_number(entry, "rpe", where=where),
+                hold_quality=_word(entry, "hold_quality", where=where),
+                rest_s=_whole(entry, "rest_s", where=where),
+                completed_at=(
+                    None
+                    if completed_at is None
+                    else views.as_datetime(
+                        completed_at, field=f"set {index} completed_at"
+                    )
+                ),
+                utc_offset_min=_whole(entry, "utc_offset_min", where=where),
+                pain_kind=_word(entry, "pain_kind", where=where),
+                pain_band=_word(entry, "pain_band", where=where),
             )
         )
     return inputs
@@ -2092,6 +2184,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         temperature_c: float | None = None,
         notes: str | None = None,
         sets: list[dict[str, Any]] | None = None,
+        session_rating: int | None = None,
+        dont_learn: bool = False,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         """Record a session that has no device file — a gym session, usually.
@@ -2130,6 +2224,48 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           such rounds. For a two-handed set held with two implements it is the
           total.
 
+        What else a set can say, all optional:
+
+        * **`set_kind`**: `working` (the default), `warmup` — which counts
+          nowhere, so mark every warm-up the athlete mentions — or `top`,
+          `backoff`, `amrap`, `drop`, `myo`, `failure`,
+          `lengthened_partial`;
+        * **`side`**: `both` (the default), or `left` / `right` when the
+          athlete logged the two sides of a one-side movement as separate
+          rows. Refused on a movement the catalogue does not mark unilateral;
+        * **effort, as reported — never the target**: `rir` (reps left), or
+          `rir: 4, rir_capped: true` for "4 or more", or `rpe` 6-10 in half
+          steps. With both, they must agree (`rir == floor(10 - rpe)`). If the
+          athlete did not say, leave them out: a planned "2 reps left" is not
+          a report, and copying it in would teach progression something that
+          never happened;
+        * `client_id` (a uuid, minted for you when absent),
+          `planned_line_ref` (the planned line the set answered),
+          `replaced_exercise_id` (the catalogue movement it stood in for),
+          `confidence` (`high` / `low`), `hold_quality` on a hold (`clean` /
+          `shaky` / `fell`), `rest_s`, `completed_at` (ISO with offset) and
+          `utc_offset_min`, `pain_kind` (`ache` / `sharp`) with `pain_band`
+          (`0-3`, `4-5`, `6+`);
+        * `source` is always stored as `coach` for a set you write, whatever
+          you send.
+
+        Example `sets` — a warm-up, two working squats, and a split squat
+        logged one side at a time:
+
+        ```json
+        [
+          {"exercise_id": "back_squat", "set_kind": "warmup", "reps": 10,
+           "load_kg": 20},
+          {"exercise_id": "back_squat", "reps": 5, "load_kg": 100, "rir": 2},
+          {"exercise_id": "back_squat", "reps": 5, "load_kg": 100, "rir": 4,
+           "rir_capped": true},
+          {"exercise_id": "split_squat", "side": "left", "reps": 8,
+           "load_kg": 16, "rpe": 8},
+          {"exercise_id": "split_squat", "side": "right", "reps": 8,
+           "load_kg": 16, "rpe": 8}
+        ]
+        ```
+
         Every answer carries `budget_remaining` — how many writes the hourly
         cap still admits, after this one if it was real (a dry run is free,
         so there it is the current standing).
@@ -2166,6 +2302,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
             temperature_c: Ambient temperature in °C, −30…50.
             notes: The athlete's own words about the session.
             sets: The sets they reported, in order, as above.
+            session_rating: The athlete's answer to "How hard was the whole
+                session?", a whole number 1-10. Omit it unless they said —
+                it is never guessed.
+            dont_learn: True when the athlete asked that this session not
+                teach arc anything (an off day kept in history but out of
+                progression). Their reason stays private to them and is not
+                taken or returned here.
             dry_run: Run every check — timezone, bounds, every catalogue
                 slug — and return the session that would be stored, writing
                 nothing and costing no rate-cap budget. No `id` and no
@@ -2195,6 +2338,8 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                     temperature_c=temperature_c,
                     notes=notes,
                     sets=_logged_sets(sets),
+                    session_rating=session_rating,
+                    dont_learn=dont_learn,
                     dry_run=dry_run,
                 )
                 if dry_run:

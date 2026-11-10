@@ -344,6 +344,9 @@ def to_read(
         load_basis=metrics.load.load_basis if metrics is not None else None,
         distance_km=(metrics.speed.distance_km.value if metrics is not None else None),
         notes=row.notes,
+        dont_learn=row.dont_learn,
+        dont_learn_reason=row.dont_learn_reason,
+        session_rating=row.session_rating,
         recordings=[
             to_recording(recording, anomaly_count=repairs.get(recording.id, 0))
             for recording in row.recordings
@@ -418,6 +421,21 @@ def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
             load_kg=entry.load_kg,
             rir=entry.rir,
             notes=entry.notes,
+            client_id=entry.client_id,
+            set_kind=entry.set_kind,
+            side=entry.side,
+            planned_line_ref=entry.planned_line_ref,
+            replaced_exercise_id=entry.replaced_exercise_id,
+            source=entry.source,
+            confidence=entry.confidence,
+            rir_capped=entry.rir_capped,
+            rpe=entry.rpe,
+            hold_quality=entry.hold_quality,
+            rest_s=entry.rest_s,
+            completed_at=entry.completed_at,
+            utc_offset_min=entry.utc_offset_min,
+            pain_kind=entry.pain_kind,
+            pain_band=entry.pain_band,
         )
         for entry in payload.sets
     ]
@@ -534,6 +552,9 @@ async def create_manual_session(
         temperature_c=payload.temperature_c,
         notes=payload.notes,
         sets=_sets(payload),
+        dont_learn=payload.dont_learn,
+        dont_learn_reason=payload.dont_learn_reason,
+        session_rating=payload.session_rating,
     )
     return await one_to_read(service, metrics, matching, wellness, row)
 

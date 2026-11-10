@@ -30,12 +30,24 @@ from app.domain.activity import (
     MAX_TEMPERATURE_C,
     MIN_TEMPERATURE_C,
     ClassificationSource,
+    HoldQuality,
+    LoggedSetKind,
+    PainBand,
+    PainKind,
     RecordingKind,
     SessionDiscipline,
     SessionMatchStatus,
+    SetConfidence,
+    SetSide,
+    SetSource,
 )
 from app.domain.metrics import LoadBasis
-from app.persistence.activity import MAX_NOTES_LENGTH, MAX_TIMEZONE_LENGTH
+from app.persistence.activity import (
+    MAX_DONT_LEARN_REASON_LENGTH,
+    MAX_NOTES_LENGTH,
+    MAX_PLANNED_LINE_REF_LENGTH,
+    MAX_TIMEZONE_LENGTH,
+)
 from app.persistence.exercises import MAX_SLUG_LENGTH
 from app.services.activity import (
     EARLIEST_SESSION,
@@ -45,12 +57,20 @@ from app.services.activity import (
     MAX_LOAD_KG,
     MAX_MANUAL_DURATION_S,
     MAX_REPS,
+    MAX_REST_S,
     MAX_RIR,
     MAX_RPE,
+    MAX_SESSION_RATING,
+    MAX_SET_RPE,
     MAX_SETS,
+    MAX_UTC_OFFSET_MIN,
     MIN_MANUAL_DURATION_S,
     MIN_RIR,
     MIN_RPE,
+    MIN_SESSION_RATING,
+    MIN_SET_RPE,
+    MIN_UTC_OFFSET_MIN,
+    SET_RPE_STEP,
 )
 
 #: A timezone as it is written: bounded to the width of the column holding it.
@@ -137,9 +157,34 @@ class LoggedSetRead(BaseModel):
     per_side: bool
     #: External load. For a per-side row, the load on **that side**.
     load_kg: float | None
-    #: Reps in reserve, as reported after the set.
+    #: Reps in reserve, as reported after the set — never the target. Null
+    #: is "not rated".
     rir: int | None
     notes: str | None
+    #: The set's own identity (uuid7), minted on the phone or by the server.
+    #: Unique within its session.
+    client_id: uuid.UUID
+    set_kind: LoggedSetKind
+    side: SetSide
+    #: The prescription line this set answered, when it answered one.
+    planned_line_ref: str | None
+    #: The catalogue movement this set was swapped in for.
+    replaced_exercise_id: str | None
+    source: SetSource
+    confidence: SetConfidence
+    #: True for "4+ reps left": ``rir`` is then 4 and a floor, not a count.
+    rir_capped: bool
+    #: RPE as reported, 6-10 in half steps.
+    rpe: float | None
+    #: The rating of a timed hold.
+    hold_quality: HoldQuality | None
+    #: Rest before this set, seconds.
+    rest_s: int | None
+    #: When the set was logged, UTC, and the device's UTC offset then.
+    completed_at: dt.datetime | None
+    utc_offset_min: int | None
+    pain_kind: PainKind | None
+    pain_band: PainBand | None
 
 
 class SessionListItem(BaseModel):
@@ -205,6 +250,12 @@ class SessionRead(SessionListItem):
     recordings: list[RecordingRead]
     #: Sets logged by hand, in order. Empty for a device session.
     logged_sets: list[LoggedSetRead]
+    #: "Don't learn from today": kept in history, out of progression.
+    dont_learn: bool
+    #: The athlete's private reason for ``dont_learn``.
+    dont_learn_reason: str | None
+    #: "How hard was the whole session?" 1-10, or null when skipped.
+    session_rating: int | None
     #: The metric version in force, or null when nothing has been computed —
     #: which is a state the page has an action for, not an error.
     metrics: SessionMetricsRead | None
@@ -307,8 +358,42 @@ class LoggedSetCreate(BaseModel):
     #: working sets. Refused on a movement the catalogue marks bilateral.
     per_side: bool = False
     load_kg: float | None = Field(default=None, ge=0, le=MAX_LOAD_KG)
+    #: Reps in reserve as reported — never the planned target. Omit when the
+    #: set was not rated. "4+" is ``rir: 4, rir_capped: true``.
     rir: int | None = Field(default=None, ge=MIN_RIR, le=MAX_RIR)
     notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)
+    #: The phone-minted uuid7. A set uploaded twice with the same id is stored
+    #: once; omitted, the server mints one.
+    client_id: uuid.UUID | None = None
+    set_kind: LoggedSetKind = LoggedSetKind.WORKING
+    #: A single side is refused on a movement the catalogue marks bilateral.
+    side: SetSide = SetSide.BOTH
+    planned_line_ref: PostgresText | None = Field(
+        default=None, min_length=1, max_length=MAX_PLANNED_LINE_REF_LENGTH
+    )
+    replaced_exercise_id: str | None = Field(default=None, max_length=MAX_SLUG_LENGTH)
+    #: Omitted, a typed-in set is a ``recap``. ``coach`` is the agent's alone.
+    source: SetSource | None = None
+    confidence: SetConfidence = SetConfidence.HIGH
+    #: "4+ reps left" — needs ``rir: 4`` (a service rule, for the reason the
+    #: class docstring gives).
+    rir_capped: bool = False
+    #: With ``rir`` it must agree: ``rir == floor(10 - rpe)``.
+    rpe: float | None = Field(
+        default=None, ge=MIN_SET_RPE, le=MAX_SET_RPE, multiple_of=SET_RPE_STEP
+    )
+    #: Only on a timed hold.
+    hold_quality: HoldQuality | None = None
+    rest_s: int | None = Field(default=None, ge=0, le=MAX_REST_S)
+    completed_at: (
+        Annotated[AwareDatetime, Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)] | None
+    ) = None
+    utc_offset_min: int | None = Field(
+        default=None, ge=MIN_UTC_OFFSET_MIN, le=MAX_UTC_OFFSET_MIN
+    )
+    pain_kind: PainKind | None = None
+    #: Needs ``pain_kind``.
+    pain_band: PainBand | None = None
 
 
 class ManualSessionCreate(BaseModel):
@@ -358,3 +443,13 @@ class ManualSessionCreate(BaseModel):
     )
     notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)
     sets: list[LoggedSetCreate] = Field(default_factory=list, max_length=MAX_SETS)
+    #: "Don't learn from today": keep it in history, out of progression.
+    dont_learn: bool = False
+    #: The private reason for ``dont_learn``; refused without it.
+    dont_learn_reason: PostgresText | None = Field(
+        default=None, max_length=MAX_DONT_LEARN_REASON_LENGTH
+    )
+    #: "How hard was the whole session?" 1-10. Omit when skipped.
+    session_rating: int | None = Field(
+        default=None, ge=MIN_SESSION_RATING, le=MAX_SESSION_RATING
+    )

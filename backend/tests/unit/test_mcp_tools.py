@@ -2171,6 +2171,122 @@ async def test_a_naive_manual_start_time_is_refused_by_name(
         )
 
 
+async def manual_session_example() -> list[dict[str, Any]]:
+    """The `sets` example in `record_manual_session`'s description, parsed.
+
+    Read from the description the coach is served and parsed rather than
+    matched as text, so the example the coach copies is one the tool accepts —
+    the test below calls the tool with it.
+    """
+    async with connected_as(server_for(COACH, READER), READER) as session:
+        tools = {tool.name: tool for tool in await session.list_tools()}
+    description = tools["record_manual_session"].description or ""
+    found = re.search(r"Example `sets`.*?```json\n(.*?)```", description, re.S)
+    assert found is not None, "record_manual_session must carry a `sets` example"
+    return json.loads(found.group(1))
+
+
+async def test_record_manual_session_writes_and_returns_the_new_set_fields(
+    client: AsyncClient,
+) -> None:
+    """AC-25: the docstring's own example — a warm-up and a one-side pair."""
+    sets = await manual_session_example()
+    kinds = [entry.get("set_kind", "working") for entry in sets]
+    sides = [entry.get("side", "both") for entry in sets]
+    assert "warmup" in kinds
+    assert [side for side in sides if side != "both"] == ["left", "right"]
+
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "duration_s": 3_600,
+            "session_rating": 7,
+            "dont_learn": True,
+            "sets": sets,
+        },
+    )
+
+    assert data["session"]["session_rating"] == 7
+    assert data["session"]["dont_learn"] is True
+    # The athlete's reason is private: never on the coach's surface.
+    assert "dont_learn_reason" not in data["session"]
+    returned = data["sets"]
+    assert [entry["set_kind"] for entry in returned] == kinds
+    assert [entry["side"] for entry in returned] == sides
+    for sent, back in zip(sets, returned, strict=True):
+        if "client_id" in sent:
+            assert back["client_id"] == sent["client_id"]
+        else:
+            assert uuid.UUID(back["client_id"]).version == 7
+    for key in (
+        "planned_line_ref",
+        "replaced_exercise_id",
+        "source",
+        "confidence",
+        "rir_capped",
+        "rpe",
+        "hold_quality",
+        "rest_s",
+        "completed_at",
+        "utc_offset_min",
+        "pain_kind",
+        "pain_band",
+    ):
+        assert all(key in entry for entry in returned), key
+
+
+async def test_a_coach_written_set_is_the_coachs_whatever_it_says(
+    client: AsyncClient,
+) -> None:
+    data = await call(
+        COACH,
+        "record_manual_session",
+        {
+            "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+            "duration_s": 3_600,
+            "sets": [
+                {"exercise_id": "back_squat", "reps": 5, "source": "app"},
+                {"exercise_id": "back_squat", "reps": 5, "source": "import"},
+                {"exercise_id": "back_squat", "reps": 5},
+            ],
+        },
+    )
+
+    assert [entry["source"] for entry in data["sets"]] == ["coach"] * 3
+
+
+async def test_a_coach_set_field_of_the_wrong_vocabulary_is_refused_by_name(
+    client: AsyncClient,
+) -> None:
+    with pytest.raises(ToolError, match=r"set 1: side must be one of both, left"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {
+                "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+                "duration_s": 3_600,
+                "sets": [{"exercise_id": "split_squat", "reps": 5, "side": "up"}],
+            },
+        )
+
+
+async def test_a_coach_rpe_off_the_half_step_scale_is_refused(
+    client: AsyncClient,
+) -> None:
+    with pytest.raises(ToolError, match=r"rpe is 6-10 in steps of 0.5, got 8.3"):
+        await call(
+            COACH,
+            "record_manual_session",
+            {
+                "start_time": f"{MONDAY.isoformat()}T17:30:00+02:00",
+                "duration_s": 3_600,
+                "sets": [{"exercise_id": "back_squat", "reps": 5, "rpe": 8.3}],
+            },
+        )
+
+
 # --- the catalogue additions (#26) ---------------------------------------------------
 
 
