@@ -15,6 +15,7 @@ from app.api.routes.agent_notes import router as agent_notes_router
 from app.api.routes.anchors import router as anchors_router
 from app.api.routes.athlete import router as athlete_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.cards import router as cards_router
 from app.api.routes.clock import router as clock_router
 from app.api.routes.connections import router as connections_router
 from app.api.routes.exercises import router as exercises_router
@@ -44,6 +45,7 @@ from app.core.scheduler import create_scheduler
 from app.ingest.feeds import register_feed_poll_job
 from app.ingest.inbox import register_inbox_job
 from app.ingest.scoring import install_stream_loader
+from app.services.cards import register_card_expiry_job
 from app.services.matching import register_missed_sessions_job
 from app.services.proposals import register_proposal_expiry_job
 from app.services.scoring import register_prompt_expiry_job
@@ -96,6 +98,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # unique constraint on `wellness_prompts.local_date` — not this schedule —
     # is what makes "one prompt a day" true.
     register_wellness_prompt_job(app.state.scheduler)
+    # The suggestion-card expiry sweep. Hourly and idempotent; reads already
+    # hide a card whose seven days since first display are up.
+    register_card_expiry_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)
@@ -206,6 +211,7 @@ def create_app() -> FastAPI:
     api.include_router(planned_reasons_router)
     api.include_router(fitness_router)
     api.include_router(power_curve_router)
+    api.include_router(cards_router)
     app.include_router(api)
 
     return app

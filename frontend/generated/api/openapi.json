@@ -1413,6 +1413,126 @@
         "title": "CadenceMetricsRead",
         "type": "object"
       },
+      "CardAct": {
+        "additionalProperties": false,
+        "description": "The athlete's answer to a card. \"Not now\" is ``snooze``.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/CardAction"
+          }
+        },
+        "required": ["action"],
+        "title": "CardAct",
+        "type": "object"
+      },
+      "CardAction": {
+        "description": "The three answers. \"Not now\" in the UI is ``SNOOZE``.",
+        "enum": ["accept", "dismiss", "snooze"],
+        "title": "CardAction",
+        "type": "string"
+      },
+      "CardPriority": {
+        "description": "How urgent a card is; lower surfaces first.\n\n``SAFETY`` is priority 1 and outside the budget. ``TODAY`` is about the\nsession in front of the athlete, ``SUNDAY`` about the week ahead, and\n``DIGEST`` can wait for whenever there is room.",
+        "enum": [1, 2, 3, 4],
+        "title": "CardPriority",
+        "type": "integer"
+      },
+      "CardRead": {
+        "description": "One card as the athlete sees it.",
+        "properties": {
+          "because": {
+            "title": "Because",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "first_shown": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Shown"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/CardPriority"
+          },
+          "snoozed_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snoozed Until"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CardState"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "priority",
+          "state",
+          "headline",
+          "because",
+          "payload",
+          "first_shown",
+          "expires_at",
+          "snoozed_until"
+        ],
+        "title": "CardRead",
+        "type": "object"
+      },
+      "CardState": {
+        "description": "Where a card stands.\n\n``QUEUED`` has never been shown; ``SHOWN`` and ``SNOOZED`` have, and stay\nanswerable until they expire. The last three are terminal.",
+        "enum": [
+          "queued",
+          "shown",
+          "snoozed",
+          "accepted",
+          "dismissed",
+          "expired"
+        ],
+        "title": "CardState",
+        "type": "string"
+      },
       "CatalogueEntry": {
         "description": "One integration arc can actually deliver.",
         "properties": {
@@ -11832,6 +11952,152 @@
         },
         "summary": "Read Session",
         "tags": ["auth"]
+      }
+    },
+    "/api/v1/cards": {
+      "get": {
+        "description": "The visible card, if any: at most one, none during an active session.",
+        "operationId": "cards-list_cards",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CardRead"
+                  },
+                  "title": "Response Cards-List Cards",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Cards",
+        "tags": ["cards"]
+      }
+    },
+    "/api/v1/cards/{card_id}/act": {
+      "post": {
+        "description": "Accept, dismiss or snooze (\"Not now\") one card.",
+        "operationId": "cards-act_on_card",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CardAct"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CardRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such card"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The card was already answered or has expired"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed answer"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Act On Card",
+        "tags": ["cards"]
       }
     },
     "/api/v1/clock": {

@@ -41,6 +41,7 @@ from app.core.clock import athlete_today
 from app.core.config import get_settings
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
+from app.domain.cards import CardPriority
 from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.domain.integrations import IntegrationKind
 from app.domain.plan import week_start
@@ -49,6 +50,7 @@ from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp import views
 from app.mcp.analysis_tools import ANALYSIS_TOOLS, register_analysis_tools
 from app.mcp.power_tools import POWER_TOOLS, register_power_tools
+from app.mcp.strength_tools import STRENGTH_TOOLS, register_strength_tools
 from app.mcp.tools import register_tools
 from app.persistence.activity import SessionRow
 from app.persistence.agent_notes import AgentNoteRow
@@ -64,6 +66,7 @@ from app.persistence.integrations import IntegrationRow
 from app.persistence.metrics import SessionMetricsRow
 from app.persistence.proposals import PlanProposalRow
 from app.persistence.workouts import MAX_NAME_LENGTH, WorkoutRow
+from app.services.cards import NOTE, CardService
 from app.services.wellness import WellnessService
 from app.services.workouts import WorkoutService
 from tests.unit.golden_fit import golden
@@ -116,6 +119,7 @@ EXPECTED_TOOLS = {
     "get_ingest_status",
     "get_fitness_trend",
     "get_power_curve",
+    "get_cards",
     # writes
     "append_anchor",
     "create_workout",
@@ -156,6 +160,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_ingest_status", {}),
     ("get_fitness_trend", {}),
     ("get_power_curve", {"session_id": "{session}"}),
+    ("get_cards", {}),
 )
 
 
@@ -2618,7 +2623,12 @@ async def test_every_tool_asks_for_its_scope(session_factory: Any) -> None:
     # Every registration module: the analysis and power reads live in their own.
     registered = {
         node.name: node
-        for register in (register_tools, register_analysis_tools, register_power_tools)
+        for register in (
+            register_tools,
+            register_analysis_tools,
+            register_power_tools,
+            register_strength_tools,
+        )
         for node in ast.walk(ast.parse(inspect.getsource(register)))
         if isinstance(node, ast.AsyncFunctionDef)
         and any(
@@ -4224,3 +4234,80 @@ async def test_search_notes_treats_wildcards_literally(client: AsyncClient) -> N
 
     assert (await call(READER, "search_notes", {"query": "%"}))["total"] == 1
     assert (await call(READER, "search_notes", {"query": "_"}))["total"] == 0
+
+
+# --- get_cards (strength_tools) --------------------------------------------------------
+
+
+async def test_the_strength_tools_register_from_their_own_module(
+    session_factory: Any,
+) -> None:
+    # Strength tools are not appended to the 2,600-line `register_tools`.
+    defined_in_tools = {
+        node.name
+        for node in ast.walk(ast.parse(inspect.getsource(register_tools)))
+        if isinstance(node, ast.AsyncFunctionDef)
+    }
+
+    assert STRENGTH_TOOLS <= EXPECTED_TOOLS
+    assert not STRENGTH_TOOLS & defined_in_tools
+    assert "get_cards" in {tool for tool, _ in READ_TOOLS}
+
+
+def _instants(card: dict[str, Any]) -> dict[str, Any]:
+    """One card with its timestamps parsed, so `Z` and `+00:00` compare equal."""
+    return {
+        key: dt.datetime.fromisoformat(value)
+        if key in {"first_shown", "expires_at", "snoozed_until"} and value
+        else value
+        for key, value in card.items()
+    }
+
+
+async def test_get_cards_is_the_endpoints_visible_list(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    service = CardService.from_session(db_session)
+    await service.create(
+        actor=Actor.system(),
+        kind=NOTE,
+        priority=CardPriority.DIGEST,
+        headline="Später",
+        because="Ein Satz über Übungen — mit Umlauten.",
+        payload={"nested": [[1, 2], {"ü": "ß"}]},
+    )
+    await service.create(
+        actor=Actor.system(),
+        kind=NOTE,
+        priority=CardPriority.SAFETY,
+        headline="Stop and rest",
+        because="You reported sharp pain.",
+    )
+
+    before = await call(READER, "get_cards")
+    response = await client.get("/api/v1/cards")
+    assert response.status_code == 200, response.text
+    endpoint = response.json()
+    after = await call(READER, "get_cards")
+
+    assert len(endpoint) == 1
+    assert endpoint[0]["headline"] == "Stop and rest"
+    assert [_instants(c) for c in after["cards"]] == [_instants(c) for c in endpoint]
+    # The coach's read is the same card, but writes nothing: before the athlete
+    # looked it was not yet shown.
+    assert [c["id"] for c in before["cards"]] == [c["id"] for c in endpoint]
+    assert before["cards"][0]["first_shown"] is None
+    assert "red_flag" in after
+
+
+async def test_get_cards_on_an_empty_queue_is_an_empty_list(
+    session_factory: Any,
+) -> None:
+    data = await call(READER, "get_cards")
+
+    assert data["cards"] == []
+
+
+async def test_get_cards_needs_a_read_key(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_cards")

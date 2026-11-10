@@ -50,6 +50,7 @@ from app.domain.activity import (
     RecordingKind,
     SessionContext,
     SessionDiscipline,
+    SessionLifecycle,
     SessionMatchStatus,
 )
 from app.domain.anchors import Provenance
@@ -77,7 +78,7 @@ MAX_SOURCE_LENGTH = 200
 
 
 class SessionRow(Base):
-    """One completed session: what the athlete actually did."""
+    """One session: what the athlete actually did, or is doing (`lifecycle`)."""
 
     __tablename__ = "sessions"
 
@@ -125,6 +126,16 @@ class SessionRow(Base):
     )
     recording_kind: Mapped[RecordingKind] = mapped_column(
         enum_column(RecordingKind), index=True
+    )
+    #: Between Start and Finish (`active`) or done (`finished`). Every row
+    #: before the gym screen is finished, hence the server default and no
+    #: backfill. Read by the card service: no card is shown while any session
+    #: is active.
+    lifecycle: Mapped[SessionLifecycle] = mapped_column(
+        enum_column(SessionLifecycle),
+        default=SessionLifecycle.FINISHED,
+        server_default=SessionLifecycle.FINISHED.value,
+        index=True,
     )
     #: Session RPE, 0-10, for manual strength entry (B-6). Null for a device
     #: session unless the athlete adds one.

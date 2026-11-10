@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.ingest.feeds import FEED_POLL_JOB_ID
 from app.ingest.inbox import INBOX_JOB_ID
 from app.main import create_app
+from app.services.cards import EXPIRY_JOB_ID as CARD_EXPIRY_JOB_ID
 from app.services.wellness import PROMPT_SWEEP_JOB_ID
 
 
@@ -86,5 +87,21 @@ async def test_the_daily_wellness_prompt_sweep_is_registered_at_startup(
         )
         # ``coalesce`` and one instance: the sweep is idempotent, and two of
         # them over one day must not race to raise the same prompt.
+        assert job.max_instances == 1
+        assert job.coalesce is True
+
+
+async def test_the_card_expiry_sweep_is_registered_at_startup(data_root: Path) -> None:
+    # Reads already hide an expired card; the sweep is what writes `expired`
+    # and its audit row, so it has to be running.
+    app = create_app()
+
+    async with LifespanManager(app):
+        job = app.state.scheduler.get_job(CARD_EXPIRY_JOB_ID)
+
+        assert job is not None
+        assert job.trigger.interval.total_seconds() == (
+            get_settings().cards.expiry_interval_seconds
+        )
         assert job.max_instances == 1
         assert job.coalesce is True

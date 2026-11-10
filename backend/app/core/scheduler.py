@@ -20,6 +20,8 @@ of those, inverting the dependency direction the layering exists to keep:
 the composition root, is allowed to know the whole set.
 """
 
+from collections.abc import Awaitable, Callable
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.schedulers.base import BaseScheduler
 
@@ -62,3 +64,42 @@ def current_scheduler() -> BaseScheduler | None:
     re-timing the first one's corpse.
     """
     return _scheduler if _scheduler is not None and _scheduler.running else None
+
+
+async def run_sweep(name: str, sweep: Callable[[], Awaitable[int]]) -> None:
+    """Run one maintenance sweep, logging ``<name>_ran`` with its count.
+
+    Never raises: an APScheduler job that raises stops running, and a sweep
+    that failed once must still run next hour. Shared by the expiry sweeps
+    (proposals, cards) so each owns only its own transaction.
+    """
+    try:
+        count = await sweep()
+        logger.info(f"{name}_ran", count=count)
+    except Exception:  # noqa: BLE001 — a scheduler job that raises stops running
+        logger.exception(f"{name}_failed")
+
+
+def add_sweep_job(
+    scheduler: BaseScheduler,
+    job: Callable[[], Awaitable[None]],
+    *,
+    job_id: str,
+    seconds: int,
+) -> None:
+    """Register an idempotent interval sweep on ``scheduler``.
+
+    ``coalesce`` and ``max_instances=1`` because a sweep is idempotent and two
+    of them over one backlog would race for nothing; ``replace_existing`` so
+    a second application boot in one process re-times rather than duplicates.
+    """
+    scheduler.add_job(
+        job,
+        "interval",
+        seconds=seconds,
+        id=job_id,
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info("sweep_registered", job_id=job_id, seconds=seconds)
