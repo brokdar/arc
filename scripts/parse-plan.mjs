@@ -20,7 +20,14 @@
 // the cheapest moment to find it. `plan-template.md` promises this.
 //
 // Usage:
-//   node scripts/parse-plan.mjs <plan.md> [--no-remote] [--no-snapshot]
+//   node scripts/parse-plan.mjs <plan.md> [--no-remote] [--no-snapshot] [--compact | --pr=<branch>]
+//
+// `--compact` drops each PR's long prose (why, delivers, reuses, decisions and
+// the criteria text) and keeps what the workflow's guards and scheduler read,
+// plus `acIds`. `--pr=<branch>` prints that one PR in full. The parse seat has
+// to copy stdout into its structured output, and a 24-PR plan printed whole is
+// ~76 KB: on 2026-10-11 a 109 KB copy was stopped by a classifier, so the
+// workflow reads the skeleton once and each PR's detail in its own small copy.
 //
 // Exit codes:  0 ok (JSON on stdout) · 2 plan defects · 3 remote state
 // unavailable · 4 usage.
@@ -376,6 +383,30 @@ export function annotate(prs, ghPrs, mainSubjects) {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
+const USAGE = "usage: parse-plan.mjs <plan.md> [--no-remote] [--no-snapshot] [--compact | --pr=<branch>]\n";
+
+// The skeleton `--compact` prints per PR. Everything the workflow reads before a
+// PR's own seats run stays (guards, scheduling, mergedness); the criteria are
+// reduced to their ids so a dropped criterion in the later per-PR copy is caught
+// by count and by id.
+const AC_ID_RE = /\*\*(AC-\d+)\*\*/;
+export function compactPr(p) {
+  const { why, delivers, reuses, decisions, acceptance, ...rest } = p;
+  return { ...rest, acIds: acceptance.map((a) => (a.match(AC_ID_RE) || [])[1] || "?") };
+}
+export function detailPr(p) {
+  return {
+    title: p.title,
+    branch: p.branch,
+    why: p.why,
+    delivers: p.delivers,
+    reuses: p.reuses,
+    decisions: p.decisions,
+    triggers: p.triggers,
+    acceptance: p.acceptance,
+  };
+}
+
 function main(argv) {
   const args = argv.filter((a) => !a.startsWith("--"));
   // `--no-remote=true` used to be filtered out of `args` and not recognised as
@@ -383,7 +414,17 @@ function main(argv) {
   const flag = (name) => argv.some((a) => a === `--${name}` || a.startsWith(`--${name}=`));
   const planArg = args[0];
   if (!planArg) {
-    process.stderr.write("usage: parse-plan.mjs <plan.md> [--no-remote] [--no-snapshot]\n");
+    process.stderr.write(USAGE);
+    return 4;
+  }
+  const prOpt = argv.find((a) => a.startsWith("--pr="));
+  const onlyPr = prOpt ? prOpt.slice("--pr=".length) : null;
+  if (prOpt && !onlyPr) {
+    process.stderr.write(USAGE);
+    return 4;
+  }
+  if (onlyPr && flag("compact")) {
+    process.stderr.write("--compact and --pr= are exclusive\n" + USAGE);
     return 4;
   }
   const planPath = resolve(planArg);
@@ -408,6 +449,17 @@ function main(argv) {
         "\n",
     );
     return 2;
+  }
+  // One PR's detail needs no remote state and no snapshot: it is read FROM the
+  // run's snapshot, and re-snapshotting would copy the snapshot onto itself.
+  if (onlyPr) {
+    const hit = parsed.prs.find((p) => p.branch === onlyPr);
+    if (!hit) {
+      process.stderr.write(`No PR with branch ${onlyPr} in ${basename(planPath)}\n`);
+      return 4;
+    }
+    process.stdout.write(JSON.stringify(detailPr(hit)) + "\n");
+    return 0;
   }
 
   let ghPrs = [];
@@ -481,7 +533,9 @@ function main(argv) {
 
   const out = {
     ...parsed,
-    prs: annotate(parsed.prs, ghPrs, mainSubjects),
+    prs: flag("compact")
+      ? annotate(parsed.prs, ghPrs, mainSubjects).map(compactPr)
+      : annotate(parsed.prs, ghPrs, mainSubjects),
     planSnapshot,
     planSha: createHash("sha256").update(text).digest("hex").slice(0, 12),
     // The workflow cross-checks this against `prs.length`: the parse seat has to
@@ -496,5 +550,8 @@ function main(argv) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  process.exit(main(process.argv.slice(2)));
+  // `exitCode`, never `process.exit()`: exit() ends the process before a PIPED
+  // stdout drains, so `parse-plan.mjs big-plan.md | anything` received exactly
+  // the first 65,536 bytes — invalid JSON — with exit 0.
+  process.exitCode = main(process.argv.slice(2));
 }

@@ -54,7 +54,7 @@ const EXPORTS = [
   "badTitles", "unsafeTitles", "positionalOffenders", "badBranches",
   "duplicateBranches", "acceptanceless", "unknownDependencies",
   "migrationCollisions", "groupsOf", "blocksSomething", "missingPrerequisites",
-  "echoProblems", "titleProblem", "normalizePrs", "duplicateTitles",
+  "echoProblems", "detailProblems", "titleProblem", "normalizePrs", "duplicateTitles",
 ];
 const G = new Function(`${block}\nreturn {${EXPORTS.join(",")}};`)();
 
@@ -375,8 +375,8 @@ group("missingPrerequisites — what the next group cannot start without");
 group("echoProblems — a truncated copy of the plan JSON is detected");
 {
   const good = { prCount: 2, planSnapshot: "/x/plan.md", prs: [
-    { title: "feat(a): a", branch: "feat/a", why: "w", delivers: "d" },
-    { title: "feat(b): b", branch: "feat/b", why: "w", delivers: "d" },
+    { title: "feat(a): a", branch: "feat/a", acIds: ["AC-1"] },
+    { title: "feat(b): b", branch: "feat/b", acIds: ["AC-2", "AC-3"] },
   ] };
   ok("a faithful echo has no problems", G.echoProblems(good).length === 0, JSON.stringify(G.echoProblems(good)));
   ok(
@@ -390,21 +390,41 @@ group("echoProblems — a truncated copy of the plan JSON is detected");
     G.echoProblems({ ...good, prs: [{ ...good.prs[0], branch: "" }, good.prs[1]] }).some((s) => s.includes("title or branch")),
   );
   ok(
-    "a PR that lost its why is caught",
-    G.echoProblems({ ...good, prs: [{ ...good.prs[0], why: "" }, good.prs[1]] }).some((s) => s.includes("why/delivers")),
+    "a criterion that lost its AC-n id is caught",
+    G.echoProblems({ ...good, prs: [{ ...good.prs[0], acIds: ["AC-1", "?"] }, good.prs[1]] }).some((s) => s.includes("no AC-n id")),
   );
+  // An empty list is the acceptanceless guard's to refuse, with its own message.
+  ok("an empty criteria list is left to acceptanceless", G.echoProblems({ ...good, prs: [{ ...good.prs[0], acIds: [] }, good.prs[1]] }).length === 0);
   ok(
     "a missing prCount is not treated as a mismatch",
     G.echoProblems({ planSnapshot: "/x", prs: good.prs }).length === 0,
   );
   // A long-lived plan legitimately has its shipped sections trimmed to a heading.
   ok(
-    "a MERGED PR with no why/delivers is not a corrupt echo",
+    "a MERGED PR with no criterion ids is not a corrupt echo",
     G.echoProblems({
       ...good,
       prs: [{ title: "feat(a): a", branch: "feat/a", merged: true }, good.prs[1]],
     }).length === 0,
   );
+}
+
+// ── the per-PR detail copy, checked against the skeleton ─────────────────────
+group("detailProblems — a PR's copied section must match its skeleton");
+{
+  const sk = { title: "feat(a): a", branch: "feat/a", acIds: ["AC-1", "AC-2"] };
+  const d = {
+    ok: true, exitCode: 0, title: "feat(a): a", branch: "feat/a", why: "w", delivers: "d",
+    acceptance: ["- [ ] **AC-1** one\n- Edge: x", "- [ ] **AC-2** two\n- Edge: y"],
+  };
+  ok("a faithful copy has no problems", G.detailProblems(sk, d).length === 0, JSON.stringify(G.detailProblems(sk, d)));
+  ok("a dead seat is caught", G.detailProblems(sk, null).length === 1);
+  ok("a refused parse is caught with its stderr", G.detailProblems(sk, { ok: false, exitCode: 4, stderr: "No PR" }).some((s) => s.includes("No PR")));
+  ok("a dropped criterion is caught", G.detailProblems(sk, { ...d, acceptance: d.acceptance.slice(0, 1) }).some((s) => s.includes("do not match")));
+  ok("reordered criteria are caught", G.detailProblems(sk, { ...d, acceptance: [...d.acceptance].reverse() }).some((s) => s.includes("do not match")));
+  ok("another PR's section is caught", G.detailProblems(sk, { ...d, branch: "feat/b" }).some((s) => s.includes("feat/b")));
+  ok("a changed title is caught", G.detailProblems(sk, { ...d, title: "feat(a): other" }).some((s) => s.includes("title")));
+  ok("a lost why is caught", G.detailProblems(sk, { ...d, why: "" }).some((s) => s.includes("why/delivers")));
 }
 
 // ── the whole script must be loadable by the runtime ─────────────────────────
