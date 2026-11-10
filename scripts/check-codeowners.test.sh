@@ -58,5 +58,16 @@ for i in $(seq -w 1 20000); do printf '100644 %s\tzz/file-%s.txt\n' "$empty" "$i
 git commit -qm many
 case_ "an early match in a long listing still passes"  0 "all 2 entries" -- "/backend/app/api/session.py @brokdar" "/caddy/ @brokdar"
 
+# The ruleset record: a fresh repo built from a setup script that says `false`
+# has CODEOWNERS and no owner lane.
+mkdir -p scripts
+printf '"require_code_owner_review": true,\n' > scripts/setup-repo.sh
+case_ "setup-repo.sh declaring the review passes"      0 "all 1 entries" -- "/caddy/ @brokdar"
+printf '"require_code_owner_review": false,\n' > scripts/setup-repo.sh
+case_ "setup-repo.sh declaring false is refused"       1 "no owner lane" -- "/caddy/ @brokdar"
+printf 'nothing about it\n' > scripts/setup-repo.sh
+case_ "setup-repo.sh silent on it is refused"          1 "no owner lane" -- "/caddy/ @brokdar"
+rm scripts/setup-repo.sh
+
 printf '\n  %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
