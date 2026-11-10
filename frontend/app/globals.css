@@ -275,6 +275,121 @@
   color-scheme: dark;
 }
 
+/*
+ * High contrast, for a gym lit by glare or by almost nothing.
+ *
+ * The training setting `high_contrast` puts `data-contrast="high"` on `<html>`
+ * (`useDocumentContrast` in lib/training-settings.ts), and this set re-points
+ * the tokens above. It is still the dark theme — a light inversion would have
+ * to re-derive every semantic colour, and a white screen in a dim basement is
+ * its own glare — so contrast is bought by pushing the surfaces toward black,
+ * the inks toward white and the hairlines up, until every content ink clears
+ * 7:1 on every surface rather than only the top one.
+ *
+ * Every literal colour token in `@theme` is restated here, changed or not,
+ * and tests/ink-contrast.test fails a token that exists in one set only: a
+ * token added above and forgotten here would silently keep its default-set
+ * value in high contrast, which is the one place nobody looks.
+ *
+ * The hues (status, zones, charts, coach) are restated unchanged on purpose.
+ * They are measured against the purple reservation and against each other in
+ * lib/scoring.test, purpose.test and fitness-chart.test; the darker surfaces
+ * already raise their contrast, and a brighter copy would need all of that
+ * re-proven for no gain in what the athlete can read.
+ *
+ * Inside `forced-colors: none` only. With a forced palette on (Windows High
+ * Contrast and its kin) the operating system's colours are already in
+ * control, and re-pointing our tokens on top of them would fight the setting
+ * the athlete made for exactly this reason.
+ */
+@media (forced-colors: none) {
+  :root[data-contrast="high"] {
+    /* Surfaces */
+    --color-canvas: #000000;
+    --color-chrome: #050607;
+    --color-chrome-active: #1f242c;
+    --color-card: #0a0b0d;
+    --color-card-hover: #101217;
+    --color-panel: #08090b;
+    --color-inset: #060708;
+    --color-raised: #1d2128;
+    --color-raised-hover: #262b33;
+    --color-well: #22262d;
+    --color-missed-surface: #07080a;
+
+    /* Hairlines — roughly doubled, so a card's edge survives glare */
+    --color-hairline-faint: rgb(255 255 255 / 0.1);
+    --color-hairline: rgb(255 255 255 / 0.14);
+    --color-hairline-card: rgb(255 255 255 / 0.18);
+    --color-hairline-strong: rgb(255 255 255 / 0.26);
+
+    /* Ink — every content rung ≥ 7:1 on every surface, still in order */
+    --color-ink: #ffffff;
+    --color-ink-secondary: #e4e7eb;
+    --color-ink-muted: #c4c9d0;
+    --color-ink-faint: #a9afb8;
+    --color-ink-disabled: #5f6670; /* inactive controls only — never content */
+
+    /* Accent */
+    --color-accent: #6fa4ff;
+    --color-accent-hover: #8fb8ff;
+    --color-accent-ink: #000000;
+    --color-accent-quiet: #cbdaf2;
+    --color-accent-surface: #0b1018;
+    --color-accent-surface-hover: #111826;
+    --color-accent-border: rgb(111 164 255 / 0.7);
+    --color-accent-wash: rgb(111 164 255 / 0.14);
+
+    /* Status — unchanged hues */
+    --color-status-completed: #4fb477;
+    --color-status-under: #d9a441;
+    --color-status-missed: #e05c5c;
+    --color-status-over: #a78bfa;
+    --color-status-pending: #6b7280;
+    --color-status-recorded: #4f9db4;
+    --color-status-abandoned: #d9663c;
+    --color-status-different: #c86fa8;
+    --color-status-unplanned: #7d8fa8;
+
+    /* Tinted strips — the tint and its edge both stronger */
+    --color-danger-surface: rgb(224 92 92 / 0.12);
+    --color-danger-border: rgb(224 92 92 / 0.6);
+    --color-missed-border: rgb(224 92 92 / 0.65);
+    --color-warn-surface: rgb(217 164 65 / 0.13);
+    --color-warn-border: rgb(217 164 65 / 0.6);
+
+    /* Coach — unchanged hues, brighter ink on a darker ground */
+    --color-coach: #b49bff;
+    --color-coach-strong: #c7b6ff;
+    --color-coach-ink: #e6e3f2;
+    --color-coach-surface: #0c0d12;
+    --color-coach-tint: rgb(167 139 250 / 0.24);
+    --color-coach-border: rgb(167 139 250 / 0.4);
+
+    /* Zone ramp — unchanged */
+    --color-zone-1: #667284;
+    --color-zone-2: #4a8fc7;
+    --color-zone-3: #56a36b;
+    --color-zone-4: #d19a3e;
+    --color-zone-5: #e0603c;
+    --color-zone-6: #cf3f57;
+    --color-zone-7: #ad3f74;
+
+    /* Stream charts — neutrals stepped up with the hairlines */
+    --color-chart-power-fill: rgb(224 96 60 / 0.22);
+    --color-chart-elevation-fill: rgb(255 255 255 / 0.08);
+    --color-chart-band: rgb(255 255 255 / 0.12);
+    --color-chart-mark: rgb(255 255 255 / 0.26);
+    --color-chart-reference: rgb(255 255 255 / 0.36);
+    --color-chart-grid: rgb(255 255 255 / 0.09);
+
+    /* Fitness chart — unchanged */
+    --color-chart-fitness: #5aa6e8;
+    --color-chart-fatigue: #e3874f;
+    --color-chart-form: #c8bd82;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

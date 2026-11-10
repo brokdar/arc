@@ -25,6 +25,7 @@ import { HTTP_STATUS } from "@/lib/api-errors";
 const CONTACT_KEY = "arc:last-contact";
 const TIMEZONE_KEY = "arc:athlete-timezone";
 const LOCALE_KEY = "arc:locale";
+const CONTRAST_KEY = "arc:high-contrast";
 
 function read(key: string): string | null {
   try {
@@ -85,6 +86,16 @@ export function rememberLocale(locale: string): void {
  */
 export function lastLocale(): string | null {
   return read(LOCALE_KEY);
+}
+
+/** Record the `high_contrast` setting `GET /settings/training` served. */
+export function rememberHighContrast(on: boolean): void {
+  write(CONTRAST_KEY, on ? "true" : "false");
+}
+
+/** Whether the settings last served on this phone asked for high contrast. */
+export function lastHighContrast(): boolean {
+  return read(CONTRAST_KEY) === "true";
 }
 
 /**
