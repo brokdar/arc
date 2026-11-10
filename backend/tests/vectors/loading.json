@@ -1,0 +1,985 @@
+{
+  "gym": {
+    "bar_kg": 20.0,
+    "plate_pairs": [
+      [
+        25.0,
+        4
+      ],
+      [
+        20.0,
+        2
+      ],
+      [
+        10.0,
+        2
+      ],
+      [
+        5.0,
+        2
+      ],
+      [
+        2.5,
+        2
+      ],
+      [
+        1.25,
+        2
+      ]
+    ],
+    "dumbbell_step_kg": 2.0,
+    "dumbbell_max_kg": 50.0,
+    "stack_step_kg": 5.0,
+    "stack_max_kg": 150.0
+  },
+  "cases": [
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        101.3,
+        "barbell"
+      ],
+      "expect": {
+        "value": 102.5
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        101.2,
+        "barbell"
+      ],
+      "expect": {
+        "value": 100.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        101.25,
+        "barbell"
+      ],
+      "expect": {
+        "value": 100.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        12.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        20.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        21.25,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        21.2500001,
+        "barbell"
+      ],
+      "expect": {
+        "value": 22.5
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.30000000000000004,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        101.25000000000001,
+        "barbell"
+      ],
+      "expect": {
+        "value": 102.5
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        62.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": 62.5
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        374.9,
+        "barbell"
+      ],
+      "expect": {
+        "value": 375.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        375.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 375.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        500.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 375.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 2.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.5,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 2.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        12.9,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 12.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        13.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 12.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        13.1,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 14.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        49.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 48.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        49.1,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 50.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        80.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 50.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.30000000000000004,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 2.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        1.0,
+        "stack"
+      ],
+      "expect": {
+        "value": 5.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        37.4,
+        "stack"
+      ],
+      "expect": {
+        "value": 35.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        37.5,
+        "stack"
+      ],
+      "expect": {
+        "value": 35.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        37.6,
+        "stack"
+      ],
+      "expect": {
+        "value": 40.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        150.0,
+        "stack"
+      ],
+      "expect": {
+        "value": 150.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        151.0,
+        "stack"
+      ],
+      "expect": {
+        "value": 150.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        0.30000000000000004,
+        "stack"
+      ],
+      "expect": {
+        "value": 5.0
+      }
+    },
+    {
+      "fn": "nearest_loadable",
+      "args": [
+        -1.0,
+        "barbell"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        101.3,
+        "barbell"
+      ],
+      "expect": {
+        "value": {
+          "kg": 102.5,
+          "capped": false,
+          "plates_per_side": [
+            20.0,
+            20.0,
+            1.25
+          ]
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        12.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": {
+          "kg": 20.0,
+          "capped": false,
+          "plates_per_side": []
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        1000.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": {
+          "kg": 375.0,
+          "capped": true,
+          "plates_per_side": [
+            25.0,
+            25.0,
+            25.0,
+            25.0,
+            20.0,
+            20.0,
+            10.0,
+            10.0,
+            5.0,
+            5.0,
+            2.5,
+            2.5,
+            1.25,
+            1.25
+          ]
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        13.1,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": {
+          "kg": 14.0,
+          "capped": false,
+          "plates_per_side": null
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        1000.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": {
+          "kg": 50.0,
+          "capped": true,
+          "plates_per_side": null
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        37.6,
+        "stack"
+      ],
+      "expect": {
+        "value": {
+          "kg": 40.0,
+          "capped": false,
+          "plates_per_side": null
+        }
+      }
+    },
+    {
+      "fn": "loading_for",
+      "args": [
+        1000.0,
+        "stack"
+      ],
+      "expect": {
+        "value": {
+          "kg": 150.0,
+          "capped": true,
+          "plates_per_side": null
+        }
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        20.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": []
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        12.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": []
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        22.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          1.25
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        60.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          20.0
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        70.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          25.0
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        100.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          20.0,
+          20.0
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        102.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          20.0,
+          20.0,
+          1.25
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        142.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          25.0,
+          25.0,
+          10.0,
+          1.25
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        375.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": [
+          25.0,
+          25.0,
+          25.0,
+          25.0,
+          20.0,
+          20.0,
+          10.0,
+          10.0,
+          5.0,
+          5.0,
+          2.5,
+          2.5,
+          1.25,
+          1.25
+        ]
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        14.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "plates_per_side",
+      "args": [
+        40.0,
+        "stack"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        20.0,
+        "easy",
+        "barbell"
+      ],
+      "expect": {
+        "value": 25.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        40.0,
+        "good",
+        "barbell"
+      ],
+      "expect": {
+        "value": 45.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        40.0,
+        "hard",
+        "barbell"
+      ],
+      "expect": {
+        "value": 37.5
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        20.0,
+        "hard",
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        60.0,
+        "easy",
+        "barbell"
+      ],
+      "expect": {
+        "value": 72.5
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        0.30000000000000004,
+        "good",
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        40.0,
+        "meh",
+        "barbell"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        2.0,
+        "good",
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 2.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        10.0,
+        "easy",
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 12.0
+      }
+    },
+    {
+      "fn": "starting_step",
+      "args": [
+        30.0,
+        "hard",
+        "stack"
+      ],
+      "expect": {
+        "value": 25.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        102.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": 100.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        20.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        21.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        375.0,
+        "barbell"
+      ],
+      "expect": {
+        "value": 372.5
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        14.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 12.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        2.0,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 2.0
+      }
+    },
+    {
+      "fn": "step_down",
+      "args": [
+        40.0,
+        "stack"
+      ],
+      "expect": {
+        "value": 35.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        102.5,
+        0.925,
+        "barbell"
+      ],
+      "expect": {
+        "value": 95.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        100.0,
+        1.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": 150.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        100.0,
+        0.5,
+        "barbell"
+      ],
+      "expect": {
+        "value": 50.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        60.0,
+        0.30000000000000004,
+        "barbell"
+      ],
+      "expect": {
+        "value": 20.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        337.5,
+        0.30000000000000004,
+        "barbell"
+      ],
+      "expect": {
+        "value": 102.5
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        337.5,
+        0.3,
+        "barbell"
+      ],
+      "expect": {
+        "value": 100.0
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        102.5,
+        0.0,
+        "barbell"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        102.5,
+        1.5000001,
+        "barbell"
+      ],
+      "expect": {
+        "error": true
+      }
+    },
+    {
+      "fn": "percent_of_set",
+      "args": [
+        30.0,
+        0.8,
+        "dumbbell"
+      ],
+      "expect": {
+        "value": 24.0
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        0.0
+      ],
+      "expect": {
+        "value": 0.0
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        1.0
+      ],
+      "expect": {
+        "value": 2.2046226218487757
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        0.45359237
+      ],
+      "expect": {
+        "value": 1.0
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        20.0
+      ],
+      "expect": {
+        "value": 44.09245243697551
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        102.5
+      ],
+      "expect": {
+        "value": 225.9738187394995
+      }
+    },
+    {
+      "fn": "kg_to_lb",
+      "args": [
+        0.30000000000000004
+      ],
+      "expect": {
+        "value": 0.6613867865546328
+      }
+    },
+    {
+      "fn": "lb_to_kg",
+      "args": [
+        0.0
+      ],
+      "expect": {
+        "value": 0.0
+      }
+    },
+    {
+      "fn": "lb_to_kg",
+      "args": [
+        1.0
+      ],
+      "expect": {
+        "value": 0.45359237
+      }
+    },
+    {
+      "fn": "lb_to_kg",
+      "args": [
+        45.0
+      ],
+      "expect": {
+        "value": 20.41165665
+      }
+    },
+    {
+      "fn": "lb_to_kg",
+      "args": [
+        225.0
+      ],
+      "expect": {
+        "value": 102.05828325
+      }
+    },
+    {
+      "fn": "lb_to_kg",
+      "args": [
+        0.30000000000000004
+      ],
+      "expect": {
+        "value": 0.13607771100000002
+      }
+    }
+  ]
+}
