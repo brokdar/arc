@@ -71,6 +71,22 @@ const MAX_GATE_LOOPS = 2;
 // code. Cheap seats were 4–14 turns each on sonnet in the 16 Aug 2026 runs.
 const CHEAP = { model: "sonnet", effort: "low" };
 
+// Every GitHub WRITE a seat makes — `git push`, `gh pr create|edit|comment|merge`
+// — is written into its prompt as `scripts/as-agent.sh <command>`, so it lands as
+// `brokdar-agent[bot]` and not as the operator. Until 2026-11 every agent PR was
+// authored by the operator's own login, so nothing could tell the two apart, the
+// operator could not approve an agent PR (GitHub refuses an author's approval),
+// and a CODEOWNERS review was one the agent could satisfy by being the owner.
+// The wrapper refuses (exit 3) rather than fall back; this note tells the seat
+// what that means. `implement-plan.sim.test.mjs` fails if any prompt names one of
+// those commands without the wrapper. Reads (`gh pr view`, `gh pr checks`,
+// `git ls-remote`) stay unwrapped: they change nothing and need no identity.
+const AS_AGENT_NOTE = `IDENTITY. Every push, and every PR create, edit, comment or merge, in these steps runs through
+\`scripts/as-agent.sh\` (from the worktree), which acts as the agent's own GitHub identity,
+\`brokdar-agent[bot]\`. If it exits 3 it has REFUSED — there is no agent identity on this host — and
+the command was not run: STOP and report its message verbatim. NEVER re-run the command without the
+wrapper; that would act as the operator, which is precisely what it exists to prevent.`;
+
 if (!PLAN) {
   log("No plan given. Pass { plan: '<slug>-plan.md' }. Aborting.");
   return { error: "no-plan" };
@@ -980,7 +996,7 @@ function pushPrompt(parsed, p, gate) {
 1. Push. The pre-push hooks take MINUTES — they re-run the type-checkers, both unit suites, the
    production build and the repository's own tooling suites — and a foreground push has hit the tool
    timeout before, so start it in the background and poll:
-     \`cd ${wt} && git push -u origin ${p.branch} > /tmp/push-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
+     \`cd ${wt} && scripts/as-agent.sh git push -u origin ${p.branch} > /tmp/push-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
    then poll for completion and read the log's tail. Never \`--no-verify\`.
    If the push fails, REPORT it with the tail and set \`ok: false\`. Do not reconfigure anything —
    not \`git remote\`, not \`git config\`, not \`~/.ssh\` — they are shared with every other worktree
@@ -988,14 +1004,14 @@ function pushPrompt(parsed, p, gate) {
 2. ${
      p.prExists && p.prNumber
        ? `This branch ALREADY has pull request #${p.prNumber} — this run is building onto it, so do NOT
-   run \`gh pr create\`, which would fail. Confirm it with \`gh pr view ${p.prNumber} --json number,state,title\`,
-   update its body if the work has moved on (\`gh pr edit ${p.prNumber} --body-file <path>\`), and report
+   open another one, which would fail. Confirm it with \`gh pr view ${p.prNumber} --json number,state,title\`,
+   update its body if the work has moved on (\`cd ${wt} && scripts/as-agent.sh gh pr edit ${p.prNumber} --body-file <path>\`), and report
    its number.`
        : `Open the PR with EXACTLY this title — it is a required CI check that it be a lowercase-start,
    no-trailing-period Conventional Commit, and squash-merge makes it the commit subject on main:
      ${p.title}
    Write the body to a file and pass \`--body-file\`; it is full of backticks and brackets:
-     \`gh pr create --base main --title "${p.title}" --body-file <path>\`
+     \`cd ${wt} && scripts/as-agent.sh gh pr create --base main --title "${p.title}" --body-file <path>\`
    Follow \`.github/pull_request_template.md\`: pick ONE of Why/What-changed (feature) or Root
    cause/The fix/Impact (bug fix) and delete the other. No checklist — \`just gate\` and CI are
    the evidence, not a hand-ticked list.`
@@ -1009,6 +1025,8 @@ function pushPrompt(parsed, p, gate) {
    Do not invent a link, and do not close an issue this PR only partially addresses.
 4. Report the PR number, URL and the pushed SHA.
 
+${AS_AGENT_NOTE}
+
 Do NOT merge and do NOT enable auto-merge — a later step decides that.`;
 }
 
@@ -1018,11 +1036,13 @@ function repushPrompt(p, pr, gate) {
 \`${gate.sha}\` in \`${wt}\` and the gate passed.
 
 Start the push in the background and poll its log (the pre-push hooks take minutes):
-  \`cd ${wt} && git push > /tmp/repush-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
+  \`cd ${wt} && scripts/as-agent.sh git push > /tmp/repush-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
 Never \`--no-verify\`; never reconfigure git, the remote, or anything under \`~\`.
 
-If the failing check was \`pr-title\`, also fix it with \`gh pr edit ${pr.number} --title …\`, keeping it
-a lowercase-start Conventional Commit with no trailing period.
+If the failing check was \`pr-title\`, also fix it with \`cd ${wt} && scripts/as-agent.sh gh pr edit ${pr.number} --title …\`,
+keeping it a lowercase-start Conventional Commit with no trailing period.
+
+${AS_AGENT_NOTE}
 
 Report the pushed SHA. Do not merge.`;
 }
@@ -1086,7 +1106,7 @@ record it \`PREEXISTING — reproduces on <main-sha>\` in \`checks\`, list its n
 do NOT count it as this PR's failure. That distinction halted a whole DAG once over four e2e tests
 that were already broken on main.
 
-Then post ONE comment with \`gh pr comment ${pr.number} --body-file <path>\` stating: that CI did not
+Then post ONE comment with \`cd ${wt} && scripts/as-agent.sh gh pr comment ${pr.number} --body-file <path>\` stating: that CI did not
 run because no workflow registered for the head SHA; the commit SHA these checks ran against; and
 every check as PASS / FAIL / NOT_RUN / PREEXISTING with the reason for anything not PASS.
 
@@ -1098,6 +1118,8 @@ this PR. ⚠️ \`notRun\` MUST list every check you could not run — all of th
 "it probably would have passed". That field decides whether this PR may merge without a human: a
 verification that skipped the Docker tiers is green on the gate alone, which the pre-push hook already
 ran, so it proves nothing new.
+
+${AS_AGENT_NOTE}
 
 Do not change any code and do not merge. Plan snapshot, if you need it: ${parsed.planSnapshot}`;
 }
@@ -1120,9 +1142,16 @@ ${
   doMerge
     ? `2. Merge. Other pull requests in this plan DEPEND on this being on main before they can start.
    \`main\` is protected: squash-only, PR required.
-     \`gh pr merge ${pr.number} --squash --auto\`
+   FIRST, the owner lane. A PR touching a path in \`.github/CODEOWNERS\` needs the OPERATOR's approving
+   review, which no agent can give. Run \`gh pr view ${pr.number} --json reviewDecision\` BEFORE any merge
+   command: if it says \`REVIEW_REQUIRED\`, that is the owner lane working as designed. Do NOT run
+   merge command at all — not even with \`--auto\`, which would arm an auto-merge that fires the moment the
+   operator approves, while the report says it was not merged. Report \`merged: false\` with "awaiting the
+   operator's code-owner review (owner lane)" and go straight to step 3. Never approve it yourself.
+   Otherwise merge:
+     \`cd ${wt} && scripts/as-agent.sh gh pr merge ${pr.number} --squash --auto\`
    If auto-merge is not enabled for the repository the command errors — then confirm the checks are
-   currently passing (\`gh pr checks ${pr.number}\`) and merge directly with \`gh pr merge ${pr.number} --squash\`.${
+   currently passing (\`gh pr checks ${pr.number}\`) and merge directly with \`cd ${wt} && scripts/as-agent.sh gh pr merge ${pr.number} --squash\`.${
      localCiNote
        ? `
    ⚠️ CI never ran on this PR; it was verified locally. Before merging, READ the verification comment
@@ -1137,6 +1166,7 @@ ${
    merged — never optimistically. If it will not merge (conflicts, a failing required check, a
    blocked branch), report \`merged: false\` with the exact reason. Do NOT force anything and do NOT
    change branch protection.
+   ${AS_AGENT_NOTE.replace(/\n/g, "\n   ")}
 3. `
     : "2. "
 }Remove the worktree, which holds ~1.4 GB of installed dependencies it no longer needs:

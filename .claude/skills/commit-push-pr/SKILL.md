@@ -8,7 +8,7 @@ description: >
   subject on `main` and the PR description becomes its body — and the changelog
   is built from them. Omits test/validation plans; CI covers that.
 argument-hint: "[issue-number]"
-allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git switch:*), Bash(git commit:*), Bash(git push:*), Bash(just:*), Bash(gh pr create:*), Bash(gh pr view:*), Bash(gh pr edit:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh api:*), Read, Write, Edit
+allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git switch:*), Bash(git commit:*), Bash(scripts/as-agent.sh git push:*), Bash(just:*), Bash(scripts/as-agent.sh gh pr create:*), Bash(gh pr view:*), Bash(scripts/as-agent.sh gh pr edit:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh api:*), Read, Write, Edit
 ---
 
 # Commit, push, open a PR
@@ -46,8 +46,17 @@ git switch -c <what-it-achieves>      # e.g. coaching-loop-reads
 ```
 
 Check `git branch -vv` before pushing: a branch may already exist on the remote,
-or have no upstream at all. Push accordingly — `git push -u origin HEAD` the
-first time, plain `git push` after.
+or have no upstream at all. Push accordingly —
+`scripts/as-agent.sh git push -u origin HEAD` the first time,
+`scripts/as-agent.sh git push` after.
+
+**Every push and every `gh pr create` / `gh pr edit` goes through
+`scripts/as-agent.sh`**, which acts as the agent's own GitHub identity,
+`brokdar-agent[bot]`, instead of the operator's login (the script's header says
+why that matters: an agent PR authored by the operator is one the operator
+cannot approve and a code-owner review the agent satisfies by being the owner).
+If it exits 3 it refused — no agent identity on this host — and ran nothing:
+report its message and stop. **Never retry the command without the wrapper.**
 
 **`git push` runs the pre-push hooks**: `backend-pyrefly`,
 `backend-import-linter`, `backend-unit-tests`, `frontend-type-check`,
@@ -106,8 +115,8 @@ non-conventional subject on `main` is **dropped from `just changelog` with no
 error** — the change would simply be missing from the release.
 
 The check is **required**: `protect-main` lists the `pr-title` status check, so
-a red check blocks the merge. If it fails, retitle the PR (`gh pr edit --title
-"..."`) — the workflow re-runs on `edited`.
+a red check blocks the merge. If it fails, retitle the PR (`scripts/as-agent.sh gh pr edit
+--title "..."`) — the workflow re-runs on `edited`.
 
 For a revert PR, GitHub's auto-generated `Revert "..."` title will fail the
 check — retitle it `revert: <what was reverted>`.
@@ -221,12 +230,12 @@ gh api repos/<owner>/<repo>/pulls/<n> -H "Accept: application/vnd.github.html+js
 ```
 
 Zero is correct. Anything else means a paragraph is hard-wrapped; rewrite the
-body file and `gh pr edit <n> --body-file <path>`.
+body file and `scripts/as-agent.sh gh pr edit <n> --body-file <path>`.
 
 ## 6. Open it
 
 ```bash
-gh pr create --base main --title "<conventional title>" --body-file <path>
+scripts/as-agent.sh gh pr create --base main --title "<conventional title>" --body-file <path>
 ```
 
 `--body-file`, never inline `--body "..."` — the body is full of backticks and

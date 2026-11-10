@@ -776,6 +776,77 @@ group("prompt contracts — the merging finish seat");
   ok("  …and it did merge, since nothing was skipped", localMerge.result.merged.length === 1);
 }
 
+group("every GitHub write goes out as the agent, never as the operator");
+{
+  // Every agent PR used to be authored by the operator's login, which made an
+  // owner lane unenforceable. `scripts/as-agent.sh` puts on the bot identity, and
+  // it only works if every prompt that names a write names it THROUGH the
+  // wrapper — one bare `git push` in one seat is the operator's SSH key again.
+  // So scan every prompt from runs that reach every writing seat.
+  // Wider than the verbs implement-plan uses today: a `git -C <dir> push`, a
+  // `gh pr review|close|ready|reopen` or a `gh issue create|comment|edit|close` is
+  // the operator's login exactly as a bare `git push` is, and a prompt that grows
+  // one later must fail here, not in review.
+  const WRITE = /(\S+\s)?(git (?:-C \S+ )?push|gh pr (?:create|edit|comment|merge|review|close|ready|reopen)|gh issue (?:create|comment|edit|close|reopen))\b/g;
+  const prs = [prOf({ branch: "feat/a" }), prOf({ branch: "feat/b", title: "feat(b): b", depends: ["feat/a"] })];
+  const runs = {
+    plain: await simulate({ plan: planOf([prOf()]), argsIn: { plan: "p.md" } }),
+    merging: await simulate({ plan: planOf(prs), argsIn: { plan: "p.md" } }),
+    ciFix: await simulate({
+      plan: planOf([prOf()]),
+      replies: {
+        "feat/a:ci": { exitCode: 1, status: "RED", failing: ["fuzz"], detail: "x", invocations: 1 },
+        "feat/a:gate-ci1": { gateExit: 0, gateTail: "GATE OK", committed: true, sha: "f1xsha", files: ["a.py"], detail: "ok" },
+        "feat/a:ci-push1": { ok: true, number: 126, url: "u", sha: "f1xsha", detail: "pushed" },
+      },
+      argsIn: { plan: "p.md" },
+    }),
+    localCi: await simulate({
+      plan: planOf(prs),
+      replies: {
+        "feat/a:ci": { exitCode: 2, status: "NO_RUNS", failing: [], detail: "none", invocations: 1 },
+        "feat/a:local-ci": { status: "GREEN", checks: ["gate: PASS"], notRun: [], preexisting: [], commented: true, detail: "ok" },
+      },
+      argsIn: { plan: "p.md" },
+    }),
+    // An open PR is only built onto on re-entry, which is what `onlyBranch` is.
+    existingPr: await simulate({
+      plan: planOf([prOf({ prExists: true, prNumber: 42 })]),
+      argsIn: { plan: "p.md", onlyBranch: "feat/a" },
+    }),
+  };
+  const bare = [];
+  const wrapped = new Set();
+  for (const [run, sim] of Object.entries(runs)) {
+    for (const c of sim.calls) {
+      for (const m of c.prompt.matchAll(WRITE)) {
+        if ((m[1] || "").trim() === "scripts/as-agent.sh") wrapped.add(`${c.label.split(":")[1]}:${m[2]}`);
+        else bare.push(`${run}/${c.label}: …${c.prompt.slice(Math.max(0, m.index - 30), m.index + 40).replace(/\n/g, " ")}…`);
+      }
+      if (WRITE.test(c.prompt) && !/IDENTITY\. Every/.test(c.prompt)) {
+        bare.push(`${run}/${c.label}: names a write but not what an as-agent refusal means`);
+      }
+      WRITE.lastIndex = 0;
+    }
+  }
+  ok("no prompt names a GitHub write without scripts/as-agent.sh", bare.length === 0, bare.join("\n        "));
+  for (const seat of ["pr:git push", "pr:gh pr create", "ci-push1:git push", "local-ci:gh pr comment", "merge-and-cleanup:gh pr merge"]) {
+    ok(`  …and the ${seat.replace(":", " seat's ")} IS wrapped (the scan reached it)`, wrapped.has(seat), [...wrapped].join(", "));
+  }
+  ok("  …including the edit of an already-open PR", wrapped.has("pr:gh pr edit"), [...wrapped].join(", "));
+  const m = promptFor(runs.merging, "feat/a:merge-and-cleanup");
+  ok("the merging seat treats a code-owner block as the owner lane, not a failure", /REVIEW_REQUIRED/.test(m) && /code-owner review/.test(m));
+  ok("  …and never approves the PR itself", /Never approve it yourself/.test(m));
+  // Arming auto-merge on an owner-lane PR makes it merge the instant the operator
+  // approves, while the report says it did not merge — so the check must come first.
+  ok(
+    "  …and checks the review decision BEFORE it names any merge command",
+    m.indexOf("reviewDecision") !== -1 && m.indexOf("reviewDecision") < m.indexOf("gh pr merge"),
+    `${m.indexOf("reviewDecision")} vs ${m.indexOf("gh pr merge")}`,
+  );
+  ok("  …and is told not to arm --auto on one", /not even with `--auto`/.test(m));
+}
+
 
 // ── 14. the review's own findings, encoded ───────────────────────────────────
 group("every scheduled PR is accounted for, however it fails");
@@ -975,7 +1046,7 @@ group("re-entry onto a branch that already has a PR does not try to create one")
   });
   const push = promptFor(sim, "feat/a:pr");
   ok("the push seat is told the PR already exists", /ALREADY has pull request #42/.test(push), push.slice(0, 400));
-  ok("  …and is told NOT to run gh pr create", /do NOT\n   run `gh pr create`/.test(push) || /do NOT.*gh pr create/s.test(push));
+  ok("  …and is told NOT to open another", /do NOT\s+open another one/.test(push) && !/gh pr create/.test(push), push.slice(0, 600));
   ok("the run says it is building onto it", /already has a pull request; building onto it/.test(sim.log));
 }
 

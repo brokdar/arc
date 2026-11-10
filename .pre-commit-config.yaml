@@ -150,6 +150,15 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/docker-lock(\.test)?\.sh$
+      # The wrapper every agent push, PR and merge goes through. Its failure is
+      # invisible — the PR opens either way, just as the operator — so its two
+      # promises (acts as the bot, never falls back) are proven offline here.
+      - id: as-agent-test
+        name: as-agent-test
+        entry: ./scripts/as-agent.test.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/as-agent(\.test)?\.sh$
       # `just trust-ca` is the only guided step on the local-HTTPS path, and its
       # failure modes (stack down, no CA yet) must read as advice, not as a raw
       # Docker error. A stub `docker` stands in for the real one.
