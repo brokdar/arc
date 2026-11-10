@@ -1,0 +1,55 @@
+name: Review breaker
+
+# Daily check that agents are not getting merges wrong. If most of the last 20
+# agent-lane merges to main were reverted or patched within a week, it opens an
+# issue labelled `automerge-breaker`; while one is open, scripts/as-agent.sh
+# refuses `gh pr merge`, so no agent merges. Only the operator re-enables it, by
+# closing the issue. While an issue is open it also disarms auto-merge on every open
+# PR, since GitHub would land those with no further merge call. It files again only
+# on a merge the last closed issue did not list, so closing it sticks. See
+# scripts/review-breaker.mjs for what counts as bad and
+# docs/review/rollback.md for undoing a bad merge.
+#
+# It is an issue and not a repository variable because GITHUB_TOKEN cannot write
+# variables, and a token that could would be a secret to manage for one boolean.
+#
+# Nothing here runs PR code: it reads main's history through the API and runs main's
+# own script. `workflow_dispatch` lets the operator run it by hand.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  breaker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # to open the breaker issue and create its label
+      pull-requests: write # to disarm auto-merge on open PRs while merging is paused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Assess the last merges
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Until the script has landed on main there is nothing to run, and a
+          # daily red run would only teach everyone to ignore this workflow.
+          if [ ! -f scripts/review-breaker.mjs ]; then
+            echo "scripts/review-breaker.mjs is not on main yet; nothing to assess."
+            exit 0
+          fi
+          node scripts/review-breaker.mjs --repo "$REPO" --open-issue
