@@ -779,7 +779,7 @@ def test_one_repetition_is_not_a_pace_to_fade_across() -> None:
 
 def strength_inputs(
     *,
-    performed_sets: int | None = 6,
+    performed_sets: float | None = 6,
     performed_loads: tuple[float | None, ...] = (100.0,) * 6,
     criteria: tuple[SuccessCriterion, ...] = (
         SetsCompleted(min_fraction=1.0),
@@ -820,6 +820,39 @@ def test_half_the_sets_at_the_right_weight_is_half_the_axis() -> None:
 
     assert isinstance(result.assessment, Measured)
     assert result.assessment.value == pytest.approx(0.5)
+
+
+def test_one_side_of_a_pair_weighs_half_a_set_in_the_load_agreement() -> None:
+    """Load agreement counts in the pair unit completion uses.
+
+    Three per-side rounds at 30 kg are six side entries of ½ set each. Five
+    sides logged at the weight and one 20 % light is 2.5 of 3 sets within
+    tolerance — counted in sets, so the explanation agrees with "sets
+    prescribed: 3" rather than reporting six comparable "sets".
+    """
+    result = axis(
+        ScoringInputs(
+            purpose=Purpose.MAX_STRENGTH,
+            axes=(ScoringAxis.COMPLETION, ScoringAxis.SETS_LOAD),
+            criteria=(SetsCompleted(min_fraction=1.0), LoadWithin(pct_tolerance=0.1)),
+            planned_sets=3.0,
+            performed_sets=3.0,
+            prescribed_loads_kg=(30.0,) * 6,
+            prescribed_load_units=(0.5,) * 6,
+            performed_loads_kg=(30.0,) * 5 + (24.0,),
+        ),
+        ScoringAxis.SETS_LOAD,
+    )
+
+    assert isinstance(result.assessment, Measured)
+    assert result.assessment.value == pytest.approx(2.5 / 3)
+    inputs = result.assessment.explanation.inputs
+    assert inputs["sets prescribed"] == "3"
+    assert inputs["sets comparable by weight"] == "3"
+    assert inputs["sets within tolerance"] == "2.5"
+    _, load_within = result.criteria
+    assert load_within.detail is not None
+    assert load_within.detail.startswith("2.5 of 3 comparable sets")
 
 
 def test_a_session_with_no_comparable_weight_keeps_the_sets_term_alone() -> None:

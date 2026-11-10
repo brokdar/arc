@@ -48,6 +48,7 @@ from app.domain.activity import (
     session_date,
 )
 from app.domain.actor import Actor, ActorKind
+from app.domain.strength import check_sidedness
 from app.persistence.activity import (
     MAX_DONT_LEARN_REASON_LENGTH,
     MAX_NOTES_LENGTH,
@@ -147,9 +148,9 @@ class LoggedSetInput:
         reps: Repetitions performed, or ``None`` for a timed hold. Exactly one
             of ``reps`` and ``duration_s`` is given.
         duration_s: Seconds held, for a timed set.
-        per_side: Whether the row is one side of a bilateral movement, making
-            it two working sets. Refused on a movement the catalogue marks
-            bilateral, so a logged row and the catalogue cannot disagree.
+        per_side: Whether the row holds both sides of a one-side movement in
+            one line: one set, its reps worked twice. Refused on a movement
+            the catalogue marks bilateral, and beside a single ``side``.
         load_kg: External load, when there was one (bodyweight sets have
             none). For a per-side row, the load on **that side** — the same
             convention `app.domain.strength.Load` declares.
@@ -700,10 +701,10 @@ class SessionService:
     ) -> LoggedSetRow:
         """Build one set row, resolving a catalogue reference to its name.
 
-        The catalogue cross-check for ``per_side`` and a single ``side`` lives
-        here rather than in the domain because the domain cannot reach the
-        catalogue: a prescription is stored JSON and stays self-describing, and
-        the service is the only layer that can see both it and
+        The sidedness rule is the domain's
+        (`app.domain.strength.check_sidedness`); the catalogue lookup it needs
+        is done here, because the domain cannot reach the catalogue and the
+        service is the only layer that can see both the set and
         `Exercise.unilateral`.
 
         **Effort is stored per set, as reported.** The gym screen asks once per
@@ -724,7 +725,9 @@ class SessionService:
         Raises:
             ValidationError: When the set names neither a catalogue movement
                 nor a free-text one, or both, claims ``per_side`` or a single
-                side on a movement the catalogue marks bilateral, replaces
+                side on a movement the catalogue marks bilateral, claims both
+                ``per_side`` and a single side
+                (`app.domain.strength.check_sidedness`), replaces
                 itself, or claims to be the coach's when no agent wrote it.
             NotFoundError: When the catalogue has no such movement, or no
                 such replaced movement.
@@ -735,20 +738,20 @@ class SessionService:
                 "exercise_name: a set names a catalogue movement or names its "
                 "own, not both and not neither."
             )
+        unilateral: bool | None = None
         if entry.exercise_id is not None:
             catalogue = await self._exercises.get(entry.exercise_id)
             name = catalogue.name
-            one_side = entry.per_side or entry.side is not SetSide.BOTH
-            if one_side and not catalogue.unilateral:
-                raise ValidationError(
-                    f"Set {index + 1}: {catalogue.name} ({entry.exercise_id}) is "
-                    "performed with both sides at once, so it cannot be logged "
-                    "per side or for one side."
-                )
+            label = f"{catalogue.name} ({entry.exercise_id})"
+            unilateral = catalogue.unilateral
         else:
-            name = (entry.exercise_name or "").strip()
+            name = label = (entry.exercise_name or "").strip()
             if not name:
                 raise ValidationError(f"Set {index + 1} has an empty exercise name")
+        try:
+            check_sidedness(unilateral, per_side=entry.per_side, side=entry.side)
+        except ValueError as error:
+            raise ValidationError(f"Set {index + 1}: {label}: {error}.") from error
         if entry.replaced_exercise_id is not None:
             if entry.replaced_exercise_id == entry.exercise_id:
                 raise ValidationError(

@@ -209,7 +209,7 @@ class SessionResolution:
         duration_s: Prescribed seconds, or ``None`` for a strength session and
             for a ride any step of which is distance-based. See
             :func:`_extent`.
-        total_sets: Prescribed working sets, or ``None`` for an endurance
+        total_sets: Prescribed sets (a per-side pair once), or ``None`` for an endurance
             session.
     """
 
@@ -218,7 +218,7 @@ class SessionResolution:
     predicted_load: PredictedLoad | None
     predicted_volume: PredictedVolume | None
     duration_s: int | None = None
-    total_sets: int | None = None
+    total_sets: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +243,7 @@ class PrescriptionPreview:
         predicted_volume: Kilograms for a strength prescription, else
             ``None``. Never add one to the other.
         duration_s: Prescribed seconds, or ``None``. See :func:`_extent`.
-        total_sets: Prescribed working sets, or ``None``.
+        total_sets: Prescribed sets (a per-side pair once), or ``None``.
     """
 
     purpose: Purpose
@@ -255,7 +255,7 @@ class PrescriptionPreview:
     predicted_load: PredictedLoad | None
     predicted_volume: PredictedVolume | None
     duration_s: int | None = None
-    total_sets: int | None = None
+    total_sets: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1167,7 +1167,7 @@ def _price(
     return predict_endurance_load(body, anchors), None
 
 
-def _extent(body: WorkoutBody) -> tuple[int | None, int | None]:
+def _extent(body: WorkoutBody) -> tuple[int | None, float | None]:
     """How much of it there is, on whichever axis the discipline has one.
 
     Prescribed seconds for a ride, prescribed working sets for a lift. Both

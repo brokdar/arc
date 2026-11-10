@@ -1932,10 +1932,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         Three rules about a strength item that decide what the numbers mean:
 
         * **`sets` counts rounds.** `per_side: true` says each round is
-          performed one side at a time, so three rounds of eleven is **six**
-          working sets and six is what volume and completion count. Set it
-          only on movements the catalogue marks `unilateral`; on any other it
-          is refused by name.
+          performed one side at a time: three rounds of eleven is **three**
+          sets (each a left-right pair) in completion and set counts, and
+          66 reps in volume. Set it only on movements the catalogue marks
+          `unilateral`; on any other it is refused by name.
         * **`kg` is the load moved in one rep as prescribed.** For a per-side
           item that is the load on *that side* — one 15 kg dumbbell is `15`,
           and the example above is 990 kg of volume. For a two-handed item
@@ -2214,9 +2214,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * a set carries **`reps` or `duration_s`, never both and never
           neither** — a 45-second plank is `{"duration_s": 45}`, not
           `{"reps": 1}`;
-        * **`per_side: true`** says the row is one side of a two-sided
-          movement, so it counts as two working sets. One row per round, not
-          one per limb: eleven reps each arm is a single
+        * **`per_side: true`** says the row holds both sides of a one-side
+          movement in one line, so it counts as one set with its reps worked
+          twice: eleven reps each arm is a single
           `{"reps": 11, "per_side": true}`. It is refused on a movement the
           catalogue does not mark unilateral;
         * **`load_kg` on a per-side set is the load on that side** — one
@@ -2232,7 +2232,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           `lengthened_partial`;
         * **`side`**: `both` (the default), or `left` / `right` when the
           athlete logged the two sides of a one-side movement as separate
-          rows. Refused on a movement the catalogue does not mark unilateral;
+          rows: each is half a set, so a left and a right make one. Refused
+          on a movement the catalogue does not mark unilateral, and together
+          with `per_side` (a row is one side or a pair, not both);
         * **effort, as reported — never the target**: `rir` (reps left), or
           `rir: 4, rir_capped: true` for "4 or more", or `rpe` 6-10 in half
           steps. With both, they must agree (`rir == floor(10 - rpe)`). If the

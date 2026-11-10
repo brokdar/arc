@@ -62,6 +62,7 @@ from app.domain.activity import (
 )
 from app.domain.anchors import Provenance
 from app.domain.streams import AnomalyKind, StreamChannel
+from app.domain.strength import logged_set_units, logged_sides_worked
 from app.persistence.db import Base, flush, refresh
 from app.persistence.exercises import MAX_SLUG_LENGTH
 from app.persistence.search import contains
@@ -418,10 +419,12 @@ class LoggedSetRow(Base):
     reps: Mapped[int | None] = mapped_column(Integer)
     #: Seconds held, for a timed set. Null for a rep-based one.
     duration_s: Mapped[int | None] = mapped_column(Integer)
-    #: Whether the row is one side of a bilateral movement, making it **two**
-    #: working sets. Carried on the logged row as well as the prescription
-    #: because completion divides logged sets by prescribed sets, and the two
-    #: have to be the same unit or the ratio is nonsense.
+    #: Whether the row holds both sides of a one-side movement written as one
+    #: line ("8 each side"): one set, its reps worked twice. A single side is
+    #: `side` instead, and the two together are refused. Carried on the logged
+    #: row as well as the prescription because completion divides logged sets
+    #: by prescribed sets, and the two have to be the same unit or the ratio is
+    #: nonsense (`app.domain.strength.logged_set_units`).
     per_side: Mapped[bool] = mapped_column(
         Boolean, server_default=false(), default=False
     )
@@ -458,8 +461,11 @@ class LoggedSetRow(Base):
     )
 
 
-def logged_working_sets(row: LoggedSetRow) -> int:
-    """How many working sets one logged row is: a per-side row is two.
+def logged_working_sets(row: LoggedSetRow) -> float:
+    """How many sets one logged row counts as: a lone side is ½, else 1.
+
+    The rule itself is `app.domain.strength.logged_set_units` — a left-right
+    pair is one set.
 
     Here rather than in a service for the reason `session_duration_s` gives
     just below: three callers need the same answer — the matcher's evidence,
@@ -469,7 +475,16 @@ def logged_working_sets(row: LoggedSetRow) -> int:
     of this rule is `app.domain.strength.StrengthSet.working_sets`, and the
     two exist to be the same number.
     """
-    return 2 if row.per_side else 1
+    return logged_set_units(row.side)
+
+
+def logged_sides(row: LoggedSetRow) -> int:
+    """How many sides one logged row's reps and load were worked by.
+
+    `app.domain.strength.logged_sides_worked` over the row: two for a
+    ``per_side`` row that holds the pair in one line, one otherwise.
+    """
+    return logged_sides_worked(per_side=row.per_side, side=row.side)
 
 
 def session_duration_s(row: SessionRow) -> float:

@@ -381,16 +381,17 @@ describe("the strength card", () => {
     ).toBeInTheDocument();
   });
 
-  it("counts sets in working sets, and the note says so", () => {
-    // `sets_completed` counts a per-side row twice, so three logged rows read
-    // as six. The note promised "every set logged", which is the count of
-    // rows the athlete typed — a different number.
+  it("counts a left and a right as one set, and the note says so", () => {
+    // Three rounds of eleven single-arm rows at 15 kg logged as six side
+    // rows: 990 kg (every side lifted) over three sets, because the backend
+    // counts a left-right pair once (`app.domain.metrics.PerformedSet`). The
+    // note says so, since the athlete typed six rows.
     render(
       <StrengthCard
         strength={{
           not_assessed: null,
           volume_load_kg: 990,
-          sets_completed: 6,
+          sets_completed: 3,
           total_hold_s: null,
           coverage: 1,
           explanation: null,
@@ -398,8 +399,10 @@ describe("the strength card", () => {
       />,
     );
 
-    expect(screen.getByText("6")).toBeInTheDocument();
-    expect(screen.getByText(/a per-side row counts twice/)).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(
+      screen.getByText(/a left and a right side make one set/),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Held")).not.toBeInTheDocument();
   });
 });

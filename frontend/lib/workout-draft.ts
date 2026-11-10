@@ -189,13 +189,13 @@ export type StrengthItemMode = "reps" | "hold";
 export interface DraftStrengthItem {
   readonly id: string;
   readonly exerciseId: string;
-  /** Rounds, as written on the card. A per-side round is two working sets. */
+  /** Rounds, as written on the card. A per-side round is one set (L + R). */
   readonly sets: string;
   readonly mode: StrengthItemMode;
   readonly reps: string;
-  /** Seconds held per working set, when the mode is `hold`. */
+  /** Seconds held per set (each side, per side), when the mode is `hold`. */
   readonly durationS: string;
-  /** Each round performed one side at a time — two working sets, not one. */
+  /** Each round performed one side at a time — one set, both sides' reps. */
   readonly perSide: boolean;
   readonly loadKind: LoadKind;
   readonly loadValue: string;

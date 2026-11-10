@@ -261,6 +261,7 @@ def scored_steps(
         ScoredStep(
             step_index=pair.step_index,
             repetition=by_index[pair.step_index].repetition,
+            block=by_index[pair.step_index].block,
             confidence=pair.confidence,
             start_index=intervals[pair.interval_index].start_index,
             end_index=intervals[pair.interval_index].end_index,

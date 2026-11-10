@@ -89,7 +89,7 @@ export const SCORED_PAIRS: Readonly<
           {
             step_index: 7,
             interval_index: 2,
-            confidence: 0.4247200177010503,
+            confidence: 0.4275738266957633,
             reason: "alignment_low_confidence",
           },
         ],
@@ -172,16 +172,21 @@ export const SCORED_PAIRS: Readonly<
             value: 1.0,
             explanation: {
               formula:
-                "pacing = 1 while fade \u2264 5 %, falling to 0 at 25 % fade, where fade = 1 \u2212 NP(last rep) / NP(first rep)",
+                "pacing = the lowest score of any repeat block, where a block scores 1 while its fade \u2264 5 %, falling to 0 at 25 % fade, and fade = 1 \u2212 NP(last rep) / NP(first rep) of that block",
               inputs: {
-                "repetitions aligned": "3",
-                "NP of the first repetition": "301 W",
-                "NP of the last repetition": "291 W",
+                "repeat blocks measured": "1",
+                "worst block": "1",
+                "repetitions in it": "3",
+                "NP of its first repetition": "301 W",
+                "NP of its last repetition": "291 W",
                 ratio: "0.967",
+                "score by block": "block 1 100%",
               },
               assumptions: [
                 "a repetition ridden harder than the first is not penalised",
                 "only repetitions the alignment kept are compared",
+                "each repeat block is compared against itself: two blocks prescribe different efforts, and the first sprint against the last threshold interval is not a fade",
+                "the worst block is the axis; averaging a block that fell apart against one that held would hide it",
               ],
               citation:
                 "Allen & Coggan, Training and Racing with a Power Meter",
@@ -228,7 +233,7 @@ export const SCORED_PAIRS: Readonly<
           {
             step_index: 5,
             interval_index: 2,
-            confidence: 0.4247200177010503,
+            confidence: 0.4275738266957633,
             reason: "alignment_low_confidence",
           },
         ],
@@ -311,16 +316,21 @@ export const SCORED_PAIRS: Readonly<
             value: 1.0,
             explanation: {
               formula:
-                "pacing = 1 while fade \u2264 5 %, falling to 0 at 25 % fade, where fade = 1 \u2212 NP(last rep) / NP(first rep)",
+                "pacing = the lowest score of any repeat block, where a block scores 1 while its fade \u2264 5 %, falling to 0 at 25 % fade, and fade = 1 \u2212 NP(last rep) / NP(first rep) of that block",
               inputs: {
-                "repetitions aligned": "3",
-                "NP of the first repetition": "301 W",
-                "NP of the last repetition": "291 W",
+                "repeat blocks measured": "1",
+                "worst block": "1",
+                "repetitions in it": "3",
+                "NP of its first repetition": "301 W",
+                "NP of its last repetition": "291 W",
                 ratio: "0.967",
+                "score by block": "block 1 100%",
               },
               assumptions: [
                 "a repetition ridden harder than the first is not penalised",
                 "only repetitions the alignment kept are compared",
+                "each repeat block is compared against itself: two blocks prescribe different efforts, and the first sprint against the last threshold interval is not a fade",
+                "the worst block is the axis; averaging a block that fell apart against one that held would hide it",
               ],
               citation:
                 "Allen & Coggan, Training and Racing with a Power Meter",
@@ -367,7 +377,7 @@ export const SCORED_PAIRS: Readonly<
           {
             step_index: 5,
             interval_index: 2,
-            confidence: 0.4247200177010503,
+            confidence: 0.4275738266957633,
             reason: "alignment_low_confidence",
           },
         ],
@@ -450,16 +460,21 @@ export const SCORED_PAIRS: Readonly<
             value: 1.0,
             explanation: {
               formula:
-                "pacing = 1 while fade \u2264 5 %, falling to 0 at 25 % fade, where fade = 1 \u2212 NP(last rep) / NP(first rep)",
+                "pacing = the lowest score of any repeat block, where a block scores 1 while its fade \u2264 5 %, falling to 0 at 25 % fade, and fade = 1 \u2212 NP(last rep) / NP(first rep) of that block",
               inputs: {
-                "repetitions aligned": "3",
-                "NP of the first repetition": "301 W",
-                "NP of the last repetition": "291 W",
+                "repeat blocks measured": "1",
+                "worst block": "1",
+                "repetitions in it": "3",
+                "NP of its first repetition": "301 W",
+                "NP of its last repetition": "291 W",
                 ratio: "0.967",
+                "score by block": "block 1 100%",
               },
               assumptions: [
                 "a repetition ridden harder than the first is not penalised",
                 "only repetitions the alignment kept are compared",
+                "each repeat block is compared against itself: two blocks prescribe different efforts, and the first sprint against the last threshold interval is not a fade",
+                "the worst block is the axis; averaging a block that fell apart against one that held would hide it",
               ],
               citation:
                 "Allen & Coggan, Training and Racing with a Power Meter",

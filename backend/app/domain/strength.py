@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from app.domain.activity import SetSide
 from app.domain.coding import (
     as_bool,
     as_enum,
@@ -115,7 +116,8 @@ class Exercise:
         name: Display name.
         category: Movement family.
         unilateral: Whether the movement is performed one side at a time —
-            which is what makes "3 x 8" mean six working sets, not three.
+            which is what lets "3 x 8" be prescribed per side: three sets of
+            left-right pairs, 48 reps.
     """
 
     id: str
@@ -187,13 +189,11 @@ class Load:
 class StrengthSet:
     """One line of a strength prescription.
 
-    **``sets`` counts rounds, not working sets.** It is what the athlete writes
-    on the card — "3 × 11 single-arm row" is three rounds — and a per-side round
-    is two working sets, one per limb. The two numbers are kept apart rather
-    than reconciled at every reader: :attr:`sets` stays the prescription as
-    written, and :attr:`working_sets` is the unit volume, completion and
-    alignment all count in. Before ``per_side`` existed the two were the same
-    number, and a unilateral session reported half the work it asked for.
+    **``sets`` counts rounds; a per-side round is one set worked twice.** "3 ×
+    11 single-arm row" is three rounds, and each round is a left-right pair:
+    one set in every count (:attr:`working_sets`), two sides in every sum of
+    work (:attr:`total_reps`, :attr:`total_hold_s`, volume load). See
+    :attr:`working_sets` for why the pair, not the limb, is the unit.
 
     **A line prescribes reps or a hold, never both.** A 45-second plank is
     ``duration_s=45``, not ``reps=1`` with an apologetic note — the note is not
@@ -205,12 +205,12 @@ class StrengthSet:
         sets: Number of **rounds** prescribed.
         load: How heavy. For a per-side line this is the load on **one** side —
             see :class:`Load`.
-        reps: Reps per working set, or ``None`` for a timed hold. Exactly one
+        reps: Reps per set (each side, per side), or ``None`` for a timed hold. Exactly one
             of ``reps`` and ``duration_s`` is given.
-        duration_s: Seconds held per working set, or ``None`` for a rep-based
+        duration_s: Seconds held per set (each side), or ``None`` for a rep-based
             set.
-        per_side: Whether each round is performed one side at a time, making it
-            two working sets. Stored on the prescription rather than looked up
+        per_side: Whether each round is performed one side at a time — one set
+            of a left-right pair, its reps worked by both sides. Stored on the prescription rather than looked up
             from :attr:`Exercise.unilateral` at read time: a prescription is
             stored JSON and has to stay self-describing when the catalogue
             changes under it. The *service* refuses ``per_side`` on a movement
@@ -261,26 +261,45 @@ class StrengthSet:
             )
 
     @property
-    def working_sets(self) -> int:
-        """Sets actually worked: a per-side round is two, one per limb.
+    def working_sets(self) -> float:
+        """Sets this line counts as: a left-right pair is **one** set.
 
-        The unit every count downstream is in — predicted volume, the week
-        rail's set count, completion scoring and the prescribed/logged
-        alignment. Issue #25's case: ``sets=3, reps=11, per_side=True`` is six
-        working sets, not three.
+        Set counts use pairs; a lone logged side is ½
+        (:func:`logged_set_units`); reps, holds and volume load count both
+        sides (:attr:`sides`). This displaces the earlier rule that a per-side
+        round was two working sets, one per limb: a left and a right set of
+        split squats then inflated completion, matching and the week rail's
+        set count to twice what the athlete would call the session, and
+        per-muscle set counting — which asks "how many hard sets did this
+        muscle get" — cannot be honest when one side of a pair is a set of its
+        own. The limb still does the work, so the multiplier moved to the
+        sums: ``3 × 8 per side`` is 3.0 sets and 48 reps.
+
+        A float with 0.5 resolution because the logged side of the same unit
+        has halves (a lone left set), and completion divides the two.
+        `test_domain_strength.py::test_pair_counts_once` pins the rule.
         """
-        return self.sets * 2 if self.per_side else self.sets
+        return float(self.sets)
+
+    @property
+    def sides(self) -> int:
+        """How many sides each round works: two per side, one otherwise.
+
+        The multiplier for sums of work — reps, seconds held, kilograms —
+        never for counts of sets (:attr:`working_sets`).
+        """
+        return 2 if self.per_side else 1
 
     @property
     def total_reps(self) -> int | None:
-        """Prescribed reps across every working set, or ``None`` for a hold."""
+        """Prescribed reps across every round and side, or ``None`` for a hold."""
         if self.reps is None:
             return None
-        return self.working_sets * self.reps
+        return self.sets * self.sides * self.reps
 
     @property
     def total_hold_s(self) -> int | None:
-        """Prescribed seconds held across every working set, or ``None``.
+        """Prescribed seconds held across every round and side, or ``None``.
 
         Reported beside volume load rather than folded into it: a hold has no
         reps to multiply by kilograms, and seconds and kilograms are no more
@@ -288,7 +307,7 @@ class StrengthSet:
         """
         if self.duration_s is None:
             return None
-        return self.working_sets * self.duration_s
+        return self.sets * self.sides * self.duration_s
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,12 +363,70 @@ class StrengthWorkout:
         return tuple(item for group in self.groups for item in group.items)
 
     @property
-    def total_sets(self) -> int:
-        """Prescribed **working** sets across the whole workout.
+    def total_sets(self) -> float:
+        """Prescribed sets across the whole workout, a per-side pair counting once.
 
-        Working sets, not rounds: see :attr:`StrengthSet.working_sets`.
+        See :attr:`StrengthSet.working_sets`.
         """
-        return sum(item.working_sets for item in self.prescriptions)
+        return sum((item.working_sets for item in self.prescriptions), 0.0)
+
+
+# --- logged sides --------------------------------------------------------------
+
+
+def logged_set_units(side: SetSide) -> float:
+    """How many sets one logged row counts as, in the prescription's unit.
+
+    The logged half of :attr:`StrengthSet.working_sets`: a row that worked one
+    side (``left`` / ``right``) is half of a left-right pair, so ½; a row that
+    worked both — at once, or one after the other written as one ``per_side``
+    row ("8 each side", every such row stored before ``side`` existed) — is a
+    whole set. L8 R8 L8 R8 L8 R8 is therefore 3.0, and one more L8 is 3.5.
+
+    ``per_side`` takes no part: a row with a single ``side`` is refused at
+    write time when it also claims ``per_side`` (:func:`check_sidedness`), and
+    a stored row that somehow carries both is counted by the side it names.
+    """
+    return 1.0 if side is SetSide.BOTH else 0.5
+
+
+def logged_sides_worked(*, per_side: bool, side: SetSide) -> int:
+    """How many sides one logged row's reps, seconds and kilograms were worked by.
+
+    Two only for a ``per_side`` row that holds the pair in one line; a single
+    side and an ordinary bilateral set are each worked once. The multiplier
+    for volume load and seconds held, never for set counts
+    (:func:`logged_set_units`).
+    """
+    return 2 if per_side and side is SetSide.BOTH else 1
+
+
+def check_sidedness(unilateral: bool | None, *, per_side: bool, side: SetSide) -> None:
+    """Refuse a logged row whose sidedness has no count, or no catalogue sense.
+
+    Args:
+        unilateral: The catalogue's :attr:`Exercise.unilateral` for the
+            movement, or ``None`` for a free-text movement the catalogue has
+            no opinion on.
+        per_side: Whether the row claims to hold a left-right pair.
+        side: Which side the row worked.
+
+    Raises:
+        ValueError: When the row claims both ``per_side`` and a single side —
+            a pair and half a pair at once — or claims either on a movement the
+            catalogue marks bilateral, where a single side would halve the
+            session's set count and ``per_side`` would double its volume.
+    """
+    if per_side and side is not SetSide.BOTH:
+        raise ValueError(
+            "a set is one side or a pair, not both: send side left/right for "
+            "one side, or per_side for both sides written as one row"
+        )
+    if unilateral is False and (per_side or side is not SetSide.BOTH):
+        raise ValueError(
+            "the movement is performed with both sides at once, so it cannot "
+            "be logged per side or for one side"
+        )
 
 
 def exercise_ids(workout: StrengthWorkout) -> frozenset[str]:

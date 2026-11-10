@@ -98,6 +98,7 @@ from app.persistence.activity import (
     LoggedSetRow,
     SessionRepository,
     SessionRow,
+    logged_sides,
     logged_working_sets,
     session_duration_s,
 )
@@ -1077,7 +1078,7 @@ def _inputs(
     }
     if isinstance(body, StrengthWorkout):
         logged = sorted(row.logged_sets, key=lambda one: one.set_index)
-        performed = _performed_loads(logged)
+        prescribed_loads, prescribed_units = _prescribed_loads(body)
         return ScoringInputs(
             purpose=purpose,
             axes=tuple(axes),
@@ -1085,9 +1086,14 @@ def _inputs(
             anchors=values,
             standalone=standalone,
             planned_sets=body.total_sets,
-            performed_sets=len(performed) if logged else None,
-            prescribed_loads_kg=_prescribed_loads(body),
-            performed_loads_kg=performed,
+            performed_sets=(
+                sum((logged_working_sets(one) for one in logged), 0.0)
+                if logged
+                else None
+            ),
+            prescribed_loads_kg=prescribed_loads,
+            prescribed_load_units=prescribed_units,
+            performed_loads_kg=_performed_loads(logged),
         )
     steps = tuple(flatten(body))
     return ScoringInputs(
@@ -1108,35 +1114,41 @@ def _inputs(
     )
 
 
-def _prescribed_loads(body: StrengthWorkout) -> tuple[float | None, ...]:
-    """One entry per prescribed **working set**, in execution order.
+def _prescribed_loads(
+    body: StrengthWorkout,
+) -> tuple[tuple[float | None, ...], tuple[float, ...]]:
+    """One entry per prescribed **side worked**, and the sets each stands for.
 
     Expanded from the prescription lines because that is the unit the logged
     sets are paired against (`app.domain.alignment.align_strength`): "3 × 8 at
     80 kg" is three sets, and comparing it to one logged set would say the
-    athlete lifted a third of what was asked. Working sets rather than rounds
-    for the same reason one step further out — a per-side round is two entries,
-    matching the two entries `_performed_loads` expands a per-side logged row
-    into, so completion for a unilateral session is neither double nor half.
+    athlete lifted a third of what was asked. Sides rather than rounds one
+    step further out: the load a per-side round names is the load on each
+    side (`app.domain.strength.Load`), so a per-side round is two entries —
+    the left and the right row the gym screen logs — each standing for ½ set,
+    and the load agreement still counts in the pair unit completion uses.
     """
     loads: list[float | None] = []
+    units: list[float] = []
     for prescription in body.prescriptions:
         load = prescription.load
         kilograms = load.value if load.kind is LoadKind.KG else None
-        loads.extend([kilograms] * prescription.working_sets)
-    return tuple(loads)
+        entries = prescription.sets * prescription.sides
+        loads.extend([kilograms] * entries)
+        units.extend([1.0 / prescription.sides] * entries)
+    return tuple(loads), tuple(units)
 
 
 def _performed_loads(logged: Sequence[LoggedSetRow]) -> tuple[float | None, ...]:
-    """One entry per logged **working set**, in execution order.
+    """One entry per logged **side worked**, in execution order.
 
-    The other half of `_prescribed_loads`' unit: a per-side row is two working
-    sets carrying the same load, because the load a per-side set names is the
-    load on one side (`app.domain.strength.Load`).
+    The other half of `_prescribed_loads`' unit: a left or a right row is one
+    entry, and a legacy ``per_side`` row holding the pair in one line is two
+    carrying the same load (`app.persistence.activity.logged_sides`).
     """
     loads: list[float | None] = []
     for row in logged:
-        loads.extend([row.load_kg] * logged_working_sets(row))
+        loads.extend([row.load_kg] * logged_sides(row))
     return tuple(loads)
 
 

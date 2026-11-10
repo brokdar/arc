@@ -529,8 +529,8 @@ function LoggedSets({ sets }: { sets: Session["logged_sets"] }) {
                       returning eye finds a number by its position. */}
                   <td className="whitespace-nowrap px-3.5 py-2 font-mono text-ink text-sm">
                     {/* Reps or a hold, never both — and `per_side` says the
-                        row was worked twice, once per limb, which is what the
-                        volume and completion numbers above are counted in. */}
+                        row holds both sides: one set, its reps lifted by each
+                        limb, which is how the volume above counts it. */}
                     {set.duration_s === null ? set.reps : `${set.duration_s} s`}
                     {set.per_side ? (
                       <span className="text-ink-faint"> per side</span>

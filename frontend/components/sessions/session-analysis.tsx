@@ -294,10 +294,10 @@ function Cell({ value, absent }: { value: number | null; absent: string }) {
  *
  * Seconds are a third axis and get their own figure when something was held:
  * a hold has no reps to multiply by kilograms, so folding its work into the
- * volume would be the `reps: 1` lie in another place. The counts are in
- * **working sets** (`app.domain.metrics.PerformedSet`), so three per-side rows
- * read as six — which is why the note says so rather than promising a count of
- * the rows the athlete typed.
+ * volume would be the `reps: 1` lie in another place. The set count pairs
+ * sides (`app.domain.metrics.PerformedSet`): six rows logged left, right, left,
+ * right… read as three, and a lone side as a half — which is why the note says
+ * so rather than promising a count of the rows the athlete typed.
  */
 export function StrengthCard({ strength }: { strength: StrengthMetrics }) {
   return (
@@ -330,7 +330,7 @@ export function StrengthCard({ strength }: { strength: StrengthMetrics }) {
             <Figure
               label="Sets completed"
               value={strength.sets_completed ?? 0}
-              note="working sets — a per-side row counts twice"
+              note="a left and a right side make one set"
             />
             {strength.total_hold_s === null ||
             strength.total_hold_s === undefined ? null : (

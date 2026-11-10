@@ -206,19 +206,20 @@ export function totalDurationS(
 export type StrengthItem = Schemas["StrengthSetSchema"];
 
 /**
- * Sets actually worked by one prescription line: a per-side round is two.
+ * Sets one prescription line counts as: a per-side round is **one** set.
  *
- * The same rule as `app.domain.strength.StrengthSet.working_sets`, restated
- * here because this file's `totalSets` has to agree with the backend's
- * `summary.total_sets` — the two numbers sit next to each other on the week
- * rail, and a client that counted rounds while the server counted working
- * sets would disagree about a unilateral session and about nothing else.
+ * The same rule as `app.domain.strength.StrengthSet.working_sets` — a
+ * left-right pair counts once, its reps on both sides — restated here because
+ * this file's `totalSets` has to agree with the backend's `summary.total_sets`:
+ * the two numbers sit next to each other on the week rail, and a client that
+ * counted each side as a set would disagree about a unilateral session and
+ * about nothing else.
  */
 export function workingSets(item: StrengthItem): number {
-  return item.per_side ? item.sets * 2 : item.sets;
+  return item.sets;
 }
 
-/** Total prescribed **working** sets of a strength structure. */
+/** Total prescribed sets of a strength structure, a per-side pair once. */
 export function totalSets(
   structure: WorkoutStructure | null | undefined,
 ): number | null {

@@ -5440,7 +5440,7 @@
           "total_sets": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -6218,7 +6218,7 @@
           },
           "total_sets": {
             "title": "Total Sets",
-            "type": "integer"
+            "type": "number"
           },
           "volume_load_kg": {
             "anyOf": [
@@ -6530,7 +6530,7 @@
           "total_sets": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -9166,7 +9166,7 @@
           "sets_completed": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -10179,7 +10179,7 @@
           "total_sets": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -11243,7 +11243,7 @@
           "total_sets": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"

@@ -1026,12 +1026,12 @@ def _evidence(
     """
     if isinstance(body, StrengthWorkout):
         return MatchEvidence(
-            # Working sets on both sides: `total_sets` counts a per-side round
-            # twice, so the logged rows have to as well or a unilateral session
-            # looks half-completed to the matcher.
+            # Pairs on both sides: `total_sets` counts a per-side round once,
+            # so a left and a right row have to make one set between them or
+            # a unilateral session looks twice-completed to the matcher.
             planned_units=predict_strength_volume(body).total_sets,
             performed_units=(
-                sum(logged_working_sets(one) for one in row.logged_sets)
+                sum((logged_working_sets(one) for one in row.logged_sets), 0.0)
                 if row.logged_sets
                 else None
             ),

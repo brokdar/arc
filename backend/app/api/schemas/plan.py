@@ -40,8 +40,9 @@ class WeekSessionRead(BaseModel):
     #: Prescribed seconds; null for a strength session and for an endurance
     #: session with a distance-based step.
     planned_duration_s: int | None
-    #: Prescribed working sets, for a strength session; null otherwise.
-    total_sets: int | None
+    #: Prescribed sets, for a strength session (a left-right pair counts once, so a number in half units);
+    #: null otherwise.
+    total_sets: float | None
     #: Flattened steps (endurance) or prescription lines (strength).
     step_count: int
     #: The one-line intent, in the athlete's own words.
@@ -130,8 +131,9 @@ class PlanWeekDisciplineRead(BaseModel):
     #: ``planned_load``, and how many could not.
     load_sessions_counted: int
     load_sessions_uncounted: int
-    #: Prescribed working sets; null for a discipline that has none.
-    total_sets: int | None
+    #: Prescribed sets (a left-right pair counts once, so a number in half units); null for a discipline that
+    #: has none.
+    total_sets: float | None
     #: Recorded sessions of this discipline in the window.
     completed_session_count: int
     #: Their duration; null — never 0 — when there were none.

@@ -60,10 +60,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
-from app.domain.activity import SessionDiscipline
+from app.domain.activity import SessionDiscipline, SetSide
 from app.domain.anchors import AnchorVersion, describe_anchor
 from app.domain.athlete import Sex
 from app.domain.streams import MOVING_SPEED_MS
+from app.domain.strength import logged_set_units, logged_sides_worked
 from app.domain.zones import Zone, ZoneModel
 
 #: The rolling window Coggan's normalized power is defined over, in seconds.
@@ -1979,16 +1980,18 @@ class PerformedSet:
     """One set as it was logged. The domain's view of a `LoggedSetRow`.
 
     Mirrors `app.domain.strength.StrengthSet` in the two ways that decide what
-    a number means: a per-side row is **two** working sets, and a row is either
+    a number means: a left-right pair is **one** set (a lone side ½) while its
+    reps, seconds and kilograms count every side worked, and a row is either
     reps or a hold. Prescribed and performed have to be counted in the same
     unit or completion is double or half — see
-    `app.domain.alignment.align_strength`.
+    `app.domain.strength.StrengthSet.working_sets`.
     """
 
     reps: int | None = None
     load_kg: float | None = None
     duration_s: int | None = None
     per_side: bool = False
+    side: SetSide = SetSide.BOTH
 
     def __post_init__(self) -> None:
         """Reject a set that is both reps and a hold, or neither.
@@ -2009,9 +2012,14 @@ class PerformedSet:
             )
 
     @property
-    def working_sets(self) -> int:
-        """Sets actually worked: a per-side row is two, one per limb."""
-        return 2 if self.per_side else 1
+    def working_sets(self) -> float:
+        """Sets this row counts as: `app.domain.strength.logged_set_units`."""
+        return logged_set_units(self.side)
+
+    @property
+    def sides(self) -> int:
+        """Sides its work was done by: `app.domain.strength.logged_sides_worked`."""
+        return logged_sides_worked(per_side=self.per_side, side=self.side)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2024,19 +2032,20 @@ class StrengthVolume:
     and performed numbers are the same quantity.
 
     Args:
-        volume_load_kg: ``Σ working_sets × reps × kg`` over the rep-based sets
+        volume_load_kg: ``Σ sides × reps × kg`` over the rep-based sets
             logged in kilograms, or ``None`` when none of them was.
-        sets_completed: Every **working** set logged, whatever its load — the
+        sets_completed: Every working set logged, whatever its load — the
             honest denominator, and a bodyweight session is still work. A
-            per-side row counts twice.
-        total_hold_s: ``Σ working_sets × duration_s`` over the timed sets, or
+            left-right pair counts once and a lone side ½, so this is a number
+            in half units.
+        total_hold_s: ``Σ sides × duration_s`` over the timed sets, or
             ``None`` when none was logged. Seconds, beside the kilograms.
         coverage: Fraction of :attr:`sets_completed` that carried kilograms.
         explanation: How the number was arrived at.
     """
 
     volume_load_kg: float | None
-    sets_completed: int
+    sets_completed: float
     total_hold_s: int | None
     coverage: float
     explanation: MetricExplanation
@@ -2052,23 +2061,23 @@ def strength_volume(sets: Sequence[PerformedSet]) -> StrengthVolume | NotAssesse
     :attr:`StrengthVolume.total_hold_s` instead. What that leaves out is
     reported as :attr:`StrengthVolume.coverage` rather than hidden.
 
-    Counted in **working sets**, the same unit
-    `app.domain.prediction.predict_strength_volume` prescribes in: a per-side
-    row is two.
+    Sets are counted in the unit
+    `app.domain.prediction.predict_strength_volume` prescribes in — a
+    left-right pair is one set, a lone side ½ — and the kilograms and seconds
+    over every side worked.
     """
     if not sets:
         return NotAssessed("no sets were logged")
-    worked = sum(entry.working_sets for entry in sets)
+    worked = sum((entry.working_sets for entry in sets), 0.0)
     counted = [
         entry for entry in sets if entry.load_kg is not None and entry.reps is not None
     ]
-    counted_sets = sum(entry.working_sets for entry in counted)
+    counted_sets = sum((entry.working_sets for entry in counted), 0.0)
     volume = sum(
-        entry.working_sets * (entry.reps or 0) * (entry.load_kg or 0.0)
-        for entry in counted
+        entry.sides * (entry.reps or 0) * (entry.load_kg or 0.0) for entry in counted
     )
     held = [entry for entry in sets if entry.duration_s is not None]
-    hold_s = sum(entry.working_sets * (entry.duration_s or 0) for entry in held)
+    hold_s = sum(entry.sides * (entry.duration_s or 0) for entry in held)
     coverage = counted_sets / worked
     return StrengthVolume(
         volume_load_kg=volume if counted else None,
@@ -2077,17 +2086,20 @@ def strength_volume(sets: Sequence[PerformedSet]) -> StrengthVolume | NotAssesse
         coverage=coverage,
         explanation=MetricExplanation(
             formula=(
-                "volume load = Σ working sets × reps × kg over the rep-based "
-                "sets logged in kilograms"
+                "volume load = Σ sides × reps × kg over the rep-based sets "
+                "logged in kilograms"
             ),
             inputs=MappingProxyType(
                 {
-                    "working sets": str(worked),
-                    "sets carrying kilograms": f"{counted_sets} ({coverage:.0%})",
+                    "working sets": f"{worked:g}",
+                    "sets carrying kilograms": f"{counted_sets:g} ({coverage:.0%})",
                 }
             ),
             assumptions=(
-                ("a per-side set counts twice: one working set per limb"),
+                (
+                    "a left and a right set are one set between them, and each "
+                    "side's reps count in the volume load"
+                ),
                 (
                     "bodyweight, unloaded and timed sets contribute no "
                     "kilograms and are left out of coverage"

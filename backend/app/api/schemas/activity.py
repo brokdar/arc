@@ -152,8 +152,8 @@ class LoggedSetRead(BaseModel):
     reps: int | None
     #: Seconds held, for a timed set.
     duration_s: int | None
-    #: Whether the row is one side of a bilateral movement — and so **two**
-    #: working sets, which is the unit volume and completion count in.
+    #: Whether the row holds both sides of a one-side movement in one line
+    #: ("8 each side") — one set, its reps counted twice in volume.
     per_side: bool
     #: External load. For a per-side row, the load on **that side**.
     load_kg: float | None
@@ -354,8 +354,10 @@ class LoggedSetCreate(BaseModel):
     reps: int | None = Field(default=None, ge=1, le=MAX_REPS)
     #: Seconds held, for a timed set.
     duration_s: int | None = Field(default=None, ge=1, le=MAX_HOLD_S)
-    #: Whether the set is one side of a bilateral movement, making it two
-    #: working sets. Refused on a movement the catalogue marks bilateral.
+    #: Whether the row holds both sides of a one-side movement in one line
+    #: ("8 each side"): one set, its reps counted twice in volume. Refused on
+    #: a movement the catalogue marks bilateral, and together with a single
+    #: ``side`` — a row is one side or a pair, not both.
     per_side: bool = False
     load_kg: float | None = Field(default=None, ge=0, le=MAX_LOAD_KG)
     #: Reps in reserve as reported — never the planned target. Omit when the
