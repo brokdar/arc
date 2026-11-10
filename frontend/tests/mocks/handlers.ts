@@ -81,6 +81,7 @@ import {
 import { cardHandlers } from "@/tests/mocks/handlers-cards";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
+import { syncHandlers } from "@/tests/mocks/handlers-sync";
 import {
   patchTrainingSettings,
   trainingSettings,
@@ -1797,3 +1798,4 @@ handlers.push(...appKeyHandlers);
 handlers.push(...fitnessHandlers);
 handlers.push(...powerHandlers);
 handlers.push(...cardHandlers);
+handlers.push(...syncHandlers);

@@ -543,7 +543,7 @@ class SessionService:
             temperature_c=temperature_c,
             sets=sets,
         )
-        _check_session_context(
+        check_session_context(
             dont_learn=dont_learn,
             dont_learn_reason=dont_learn_reason,
             session_rating=session_rating,
@@ -555,7 +555,7 @@ class SessionService:
                 return replayed
             await check_write_cap(self._session, actor)
         rows = [
-            await self._logged_set(entry, index, actor=actor)
+            await self.build_logged_set(entry, index, actor=actor)
             for index, entry in enumerate(sets)
         ]
 
@@ -603,7 +603,26 @@ class SessionService:
         )
         await commit(self._session)
         await refresh(self._session, row)
-        row = await self._recompute_strength(row, actor=actor, reason=None)
+        return await self.refresh_derived(row, actor=actor, reason=None, match=True)
+
+    async def refresh_derived(
+        self, row: SessionRow, *, actor: Actor, reason: str | None, match: bool
+    ) -> SessionRow:
+        """Recompute what a committed manual session's numbers derive from.
+
+        A new metric version always; with ``match``, matching and then the
+        proposals the session made moot. Each step is isolated from the
+        committed write before it (see :meth:`_recompute_strength`). Public
+        because the outbox (`app.services.sync`) commits a batch first and then
+        refreshes every finished session it touched, exactly as
+        `create_manual` does for one.
+
+        Returns the row to carry on with — after a failed step the handle
+        passed in is expired.
+        """
+        row = await self._recompute_strength(row, actor=actor, reason=reason)
+        if not match:
+            return row
         # Matching first, then the proposals: a link is one of the two things
         # that resolve a pending proposal, and WP-6 links a recording
         # up to a day either side of the plan entry — so resolving before the
@@ -696,10 +715,15 @@ class SessionService:
             return await self._repository.get(session_id) or row
         return outcome.session
 
-    async def _logged_set(
+    async def build_logged_set(
         self, entry: LoggedSetInput, index: int, *, actor: Actor
     ) -> LoggedSetRow:
         """Build one set row, resolving a catalogue reference to its name.
+
+        Public because two use-cases build sets: this service's
+        `create_manual` and the outbox (`app.services.sync`), which must store
+        a set exactly as a typed-in one would be and commits on its own terms.
+        The row is returned unattached; adding it is the caller's.
 
         The sidedness rule is the domain's
         (`app.domain.strength.check_sidedness`); the catalogue lookup it needs
@@ -820,7 +844,7 @@ def _latest_per_client_id(sets: Sequence[LoggedSetInput]) -> list[LoggedSetInput
     ]
 
 
-def _check_session_context(
+def check_session_context(
     *, dont_learn: bool, dont_learn_reason: str | None, session_rating: int | None
 ) -> None:
     """Bounds on the Finish screen's two answers.
@@ -879,29 +903,42 @@ def _check_manual(
     if len(sets) > MAX_SETS:
         raise ValidationError(f"A session may log at most {MAX_SETS} sets")
     for index, entry in enumerate(sets, start=1):
-        if (entry.reps is None) == (entry.duration_s is None):
-            raise ValidationError(
-                f"Set {index} needs exactly one of reps or duration_s: a set "
-                "is repetitions or it is a hold, not both and not neither."
-            )
-        if entry.reps is not None and not 1 <= entry.reps <= MAX_REPS:
-            raise ValidationError(f"Set {index}: reps must be between 1 and {MAX_REPS}")
-        if entry.duration_s is not None and not 1 <= entry.duration_s <= MAX_HOLD_S:
-            raise ValidationError(
-                f"Set {index}: duration_s must be between 1 and {MAX_HOLD_S} seconds"
-            )
-        if entry.load_kg is not None and not 0 <= entry.load_kg <= MAX_LOAD_KG:
-            raise ValidationError(
-                f"Set {index}: load must be between 0 and {MAX_LOAD_KG:g} kg"
-            )
-        if entry.rir is not None and not MIN_RIR <= entry.rir <= MAX_RIR:
-            raise ValidationError(
-                f"Set {index}: reps in reserve must be between {MIN_RIR} and {MAX_RIR}"
-            )
-        if entry.notes is not None and len(entry.notes) > MAX_NOTES_LENGTH:
-            raise ValidationError(f"Set {index}: the note is too long")
-        _check_effort(entry, index)
-        _check_set_context(entry, index)
+        check_logged_set(entry, index)
+
+
+def check_logged_set(entry: LoggedSetInput, index: int) -> None:
+    """The bounds on one set a JSON schema cannot express.
+
+    ``index`` is 1-based and only names the set in the message. Shared with
+    the outbox (`app.services.sync`), which checks each synced set as it is
+    merged.
+
+    Raises:
+        ValidationError: When any of them is violated.
+    """
+    if (entry.reps is None) == (entry.duration_s is None):
+        raise ValidationError(
+            f"Set {index} needs exactly one of reps or duration_s: a set "
+            "is repetitions or it is a hold, not both and not neither."
+        )
+    if entry.reps is not None and not 1 <= entry.reps <= MAX_REPS:
+        raise ValidationError(f"Set {index}: reps must be between 1 and {MAX_REPS}")
+    if entry.duration_s is not None and not 1 <= entry.duration_s <= MAX_HOLD_S:
+        raise ValidationError(
+            f"Set {index}: duration_s must be between 1 and {MAX_HOLD_S} seconds"
+        )
+    if entry.load_kg is not None and not 0 <= entry.load_kg <= MAX_LOAD_KG:
+        raise ValidationError(
+            f"Set {index}: load must be between 0 and {MAX_LOAD_KG:g} kg"
+        )
+    if entry.rir is not None and not MIN_RIR <= entry.rir <= MAX_RIR:
+        raise ValidationError(
+            f"Set {index}: reps in reserve must be between {MIN_RIR} and {MAX_RIR}"
+        )
+    if entry.notes is not None and len(entry.notes) > MAX_NOTES_LENGTH:
+        raise ValidationError(f"Set {index}: the note is too long")
+    _check_effort(entry, index)
+    _check_set_context(entry, index)
 
 
 def _check_effort(entry: LoggedSetInput, index: int) -> None:

@@ -1828,6 +1828,26 @@ export interface paths {
     patch: operations["settings-update_training_settings"];
     trace?: never;
   };
+  "/api/v1/sync": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Sync
+     * @description Apply the outbox's mutations once, in order, all or nothing.
+     */
+    post: operations["sync-sync"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/wellness/backfill": {
     parameters: {
       query?: never;
@@ -3250,6 +3270,36 @@ export interface components {
      */
     DisputeRating: "up" | "down";
     /**
+     * DontLearn
+     * @description Don't learn from today, toggled; the latest toggle wins.
+     */
+    DontLearn: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /** Dont Learn */
+      dont_learn: boolean;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "dont_learn";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /** Reason */
+      reason?: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+    };
+    /**
      * DropboxAppKeySubmit
      * @description The app key from the athlete's own Dropbox app registration.
      *
@@ -4219,13 +4269,6 @@ export interface components {
     /**
      * LoggedSetCreate
      * @description One set of a manually entered session.
-     *
-     *     ``reps`` and ``duration_s`` are both optional *here* and exactly one of
-     *     them is required by the service: the exactly-one-of rule cannot be stated
-     *     in a JSON schema without an ``oneOf`` the generated client would render as
-     *     two unrelated shapes, and the #17 lesson says a bound that lives only in
-     *     the API schema is a bound a dry run passes and the write then fails. One
-     *     rule, one message, one place.
      */
     LoggedSetCreate: {
       /** Client Id */
@@ -4879,6 +4922,32 @@ export interface components {
       | "soleus"
       | "tibialis_anterior"
       | "neck";
+    Mutation:
+      | components["schemas"]["SessionStart"]
+      | components["schemas"]["SessionFinish"]
+      | components["schemas"]["SetUpsert"]
+      | components["schemas"]["SetDelete"]
+      | components["schemas"]["SessionRating"]
+      | components["schemas"]["DontLearn"]
+      | components["schemas"]["NoteUpsert"];
+    /**
+     * MutationResultRead
+     * @description What the server did with one mutation.
+     */
+    MutationResultRead: {
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      status: components["schemas"]["MutationStatus"];
+    };
+    /**
+     * MutationStatus
+     * @description What the server did with one mutation.
+     * @enum {string}
+     */
+    MutationStatus: "applied" | "already_applied";
     /**
      * NotAssessedPowerCurveRead
      * @description Why a session has no power curve, naming the missing input.
@@ -4908,6 +4977,31 @@ export interface components {
      * @enum {string}
      */
     NoteKind: "evaluation" | "annotation";
+    /**
+     * NoteUpsert
+     * @description The athlete's note on one exercise; empty text removes it.
+     */
+    NoteUpsert: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /** Exercise Id */
+      exercise_id: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "note_upsert";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /** Text */
+      text: string;
+    };
     /**
      * OutsideMarkerRead
      * @description One marker sitting outside its own band, named and directed.
@@ -6077,6 +6171,21 @@ export interface components {
       value: number;
     };
     /**
+     * SchemaVersionUnsupported
+     * @description The 409 body: the phone keeps its queue and asks to be updated.
+     */
+    SchemaVersionUnsupported: {
+      /**
+       * Code
+       * @constant
+       */
+      code: "schema_version_unsupported";
+      /** Detail */
+      detail: string;
+      /** Server Schema Version */
+      server_schema_version: number;
+    };
+    /**
      * ScoreRecompute
      * @description Why a recomputation was asked for. The body is optional.
      *
@@ -6210,6 +6319,37 @@ export interface components {
      * @enum {string}
      */
     SessionDiscipline: "cycling" | "strength" | "other";
+    /**
+     * SessionFinish
+     * @description Finish a session: it is then scored, matched and counted.
+     */
+    SessionFinish: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * End Time
+       * Format: date-time
+       */
+      end_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_finish";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+    };
     /**
      * SessionIntentRead
      * @description One version of a planned session's intent.
@@ -6399,6 +6539,34 @@ export interface components {
       version: number;
     };
     /**
+     * SessionRating
+     * @description The Finish screen's whole-session rating; null clears it.
+     */
+    SessionRating: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_rating";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      /** Session Rating */
+      session_rating: number | null;
+    };
+    /**
      * SessionRead
      * @description One completed session with the recordings behind it.
      */
@@ -6524,6 +6692,39 @@ export interface components {
       version: number;
     };
     /**
+     * SessionStart
+     * @description Start a session (or, sent again, correct when it started).
+     */
+    SessionStart: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_start";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+      /** Timezone */
+      timezone?: string;
+    };
+    /**
      * SessionStatus
      * @description Where a planned session ended up.
      *
@@ -6619,6 +6820,37 @@ export interface components {
      */
     SetConfidence: "high" | "low";
     /**
+     * SetDelete
+     * @description Delete one logged set. It stays deleted unless a newer edit revives it.
+     */
+    SetDelete: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "set_delete";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      /**
+       * Set Client Id
+       * Format: uuid
+       */
+      set_client_id: string;
+    };
+    /**
      * SetSide
      * @description Which side a logged set worked: both at once, or one of them.
      * @enum {string}
@@ -6636,6 +6868,38 @@ export interface components {
      * @enum {string}
      */
     SetSource: "app" | "import" | "coach" | "recap";
+    /**
+     * SetUpsert
+     * @description Create or edit one logged set (an edit may also revive a deleted one).
+     */
+    SetUpsert: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "set_upsert";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      set: components["schemas"]["SyncSet"];
+      /**
+       * Set Client Id
+       * Format: uuid
+       */
+      set_client_id: string;
+    };
     /**
      * SetsCompletedSchema
      * @description At least this fraction of the prescribed strength sets performed.
@@ -6950,6 +7214,105 @@ export interface components {
       polarity: components["schemas"]["Polarity"];
       /** Prompt */
       prompt: string;
+    };
+    /**
+     * SyncBatch
+     * @description One upload from the outbox, applied in order, all or nothing.
+     */
+    SyncBatch: {
+      /** Mutations */
+      mutations: components["schemas"]["Mutation"][];
+      /** Schema Version */
+      schema_version: number;
+    };
+    /**
+     * SyncRejected
+     * @description The 422 body: a rejected mutation, or a malformed batch.
+     *
+     *     A rejected mutation names itself; a malformed body is the framework's
+     *     per-field list, whose ``loc`` carries the mutation's index.
+     */
+    SyncRejected: {
+      /**
+       * Code
+       * @constant
+       */
+      code?: "mutation_rejected";
+      /** Detail */
+      detail: string | unknown[];
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id?: string;
+    };
+    /**
+     * SyncResult
+     * @description One result per mutation, in the order sent.
+     */
+    SyncResult: {
+      /** Results */
+      results: components["schemas"]["MutationResultRead"][];
+      /** Schema Version */
+      schema_version: number;
+    };
+    /**
+     * SyncSet
+     * @description A logged set as the outbox sends it: only the fields it set.
+     *
+     *     The fields are `LoggedSetFields`, the same a typed-in set has, so a set is
+     *     the same set by either door; an omitted field is left as it is stored.
+     *     The set's identity is the mutation's ``set_client_id``.
+     */
+    SyncSet: {
+      /** Completed At */
+      completed_at?: string | null;
+      /** @default high */
+      confidence: components["schemas"]["SetConfidence"];
+      /** Duration S */
+      duration_s?: number | null;
+      /** Exercise Id */
+      exercise_id?: string | null;
+      /** Exercise Name */
+      exercise_name?: string | null;
+      hold_quality?: components["schemas"]["HoldQuality"] | null;
+      /** Load Kg */
+      load_kg?: number | null;
+      /** Notes */
+      notes?: string | null;
+      pain_band?: components["schemas"]["PainBand"] | null;
+      pain_kind?: components["schemas"]["PainKind"] | null;
+      /**
+       * Per Side
+       * @default false
+       */
+      per_side: boolean;
+      /** Planned Line Ref */
+      planned_line_ref?: string | null;
+      /** Replaced Exercise Id */
+      replaced_exercise_id?: string | null;
+      /** Reps */
+      reps?: number | null;
+      /** Rest S */
+      rest_s?: number | null;
+      /** Rir */
+      rir?: number | null;
+      /**
+       * Rir Capped
+       * @default false
+       */
+      rir_capped: boolean;
+      /** Rpe */
+      rpe?: number | null;
+      /** Set Index */
+      set_index?: number;
+      /** @default working */
+      set_kind: components["schemas"]["LoggedSetKind"];
+      /** @default both */
+      side: components["schemas"]["SetSide"];
+      source?: components["schemas"]["SetSource"] | null;
+      /** Utc Offset Min */
+      utc_offset_min?: number | null;
     };
     /**
      * TemperatureMetricsRead
@@ -13125,6 +13488,66 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "sync-sync": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SyncBatch"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncResult"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The batch's schema_version is not one this server understands; update the app */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SchemaVersionUnsupported"];
+        };
+      };
+      /** @description One mutation cannot be applied, or the body is malformed; nothing was applied */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncRejected"];
         };
       };
     };

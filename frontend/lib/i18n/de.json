@@ -24,6 +24,18 @@
     "ready": "Offline bereit",
     "readySynced": "Offline bereit · Stand {time}"
   },
+  "outbox": {
+    "waiting": "{count} warten auf Upload",
+    "updateRequired": "Neues arc nötig zum Senden",
+    "signedOut": "Anmelden, um hochzuladen",
+    "failed": "{count} nicht hochgeladen",
+    "failedTitle": "Nicht hochgeladen",
+    "failedHelp": "Der Server hat diese abgelehnt. Sie bleiben hier gespeichert, damit nichts verloren geht.",
+    "copy": "Kopieren",
+    "export": "Exportieren",
+    "copied": "Kopiert",
+    "clear": "Leeren"
+  },
   "weekdays": {
     "mon": "Mo",
     "tue": "Di",

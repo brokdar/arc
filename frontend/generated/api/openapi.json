@@ -1968,6 +1968,51 @@
         "title": "DisputeRating",
         "type": "string"
       },
+      "DontLearn": {
+        "additionalProperties": false,
+        "description": "Don't learn from today, toggled; the latest toggle wins.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "dont_learn": {
+            "title": "Dont Learn",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "dont_learn",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "pattern": "^[^\\x00]*$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "dont_learn"
+        ],
+        "title": "DontLearn",
+        "type": "object"
+      },
       "DropboxAppKeySubmit": {
         "description": "The app key from the athlete's own Dropbox app registration.\n\nNot a secret: a Dropbox app key is a public OAuth client id, which is why\nit is stored in the clear (see `ProviderAppRow`) and may be echoed back as\na source rather than a value.",
         "properties": {
@@ -3717,7 +3762,7 @@
       },
       "LoggedSetCreate": {
         "additionalProperties": false,
-        "description": "One set of a manually entered session.\n\n``reps`` and ``duration_s`` are both optional *here* and exactly one of\nthem is required by the service: the exactly-one-of rule cannot be stated\nin a JSON schema without an ``oneOf`` the generated client would render as\ntwo unrelated shapes, and the #17 lesson says a bound that lives only in\nthe API schema is a bound a dry run passes and the write then fails. One\nrule, one message, one place.",
+        "description": "One set of a manually entered session.",
         "properties": {
           "client_id": {
             "anyOf": [
@@ -5143,6 +5188,65 @@
         "title": "MuscleRegion",
         "type": "string"
       },
+      "Mutation": {
+        "discriminator": {
+          "mapping": {
+            "dont_learn": "#/components/schemas/DontLearn",
+            "note_upsert": "#/components/schemas/NoteUpsert",
+            "session_finish": "#/components/schemas/SessionFinish",
+            "session_rating": "#/components/schemas/SessionRating",
+            "session_start": "#/components/schemas/SessionStart",
+            "set_delete": "#/components/schemas/SetDelete",
+            "set_upsert": "#/components/schemas/SetUpsert"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SessionStart"
+          },
+          {
+            "$ref": "#/components/schemas/SessionFinish"
+          },
+          {
+            "$ref": "#/components/schemas/SetUpsert"
+          },
+          {
+            "$ref": "#/components/schemas/SetDelete"
+          },
+          {
+            "$ref": "#/components/schemas/SessionRating"
+          },
+          {
+            "$ref": "#/components/schemas/DontLearn"
+          },
+          {
+            "$ref": "#/components/schemas/NoteUpsert"
+          }
+        ]
+      },
+      "MutationResultRead": {
+        "description": "What the server did with one mutation.",
+        "properties": {
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MutationStatus"
+          }
+        },
+        "required": ["mutation_id", "status"],
+        "title": "MutationResultRead",
+        "type": "object"
+      },
+      "MutationStatus": {
+        "description": "What the server did with one mutation.",
+        "enum": ["applied", "already_applied"],
+        "title": "MutationStatus",
+        "type": "string"
+      },
       "NotAssessedPowerCurveRead": {
         "description": "Why a session has no power curve, naming the missing input.",
         "properties": {
@@ -5166,6 +5270,48 @@
         "enum": ["evaluation", "annotation"],
         "title": "NoteKind",
         "type": "string"
+      },
+      "NoteUpsert": {
+        "additionalProperties": false,
+        "description": "The athlete's note on one exercise; empty text removes it.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "exercise_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "note_upsert",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "pattern": "^[^\\x00]*$",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "kind",
+          "exercise_id",
+          "text"
+        ],
+        "title": "NoteUpsert",
+        "type": "object"
       },
       "OutsideMarkerRead": {
         "description": "One marker sitting outside its own band, named and directed.",
@@ -7749,6 +7895,27 @@
         "title": "ScaleAnchorRead",
         "type": "object"
       },
+      "SchemaVersionUnsupported": {
+        "description": "The 409 body: the phone keeps its queue and asks to be updated.",
+        "properties": {
+          "code": {
+            "const": "schema_version_unsupported",
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "server_schema_version": {
+            "title": "Server Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": ["detail", "code", "server_schema_version"],
+        "title": "SchemaVersionUnsupported",
+        "type": "object"
+      },
       "ScoreRecompute": {
         "additionalProperties": false,
         "description": "Why a recomputation was asked for. The body is optional.\n\nThe reason lands on the **new** version and is what a later reader sees\nwhen two score versions disagree.",
@@ -7970,6 +8137,46 @@
         "enum": ["cycling", "strength", "other"],
         "title": "SessionDiscipline",
         "type": "string"
+      },
+      "SessionFinish": {
+        "additionalProperties": false,
+        "description": "Finish a session: it is then scored, matched and counted.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "end_time": {
+            "format": "date-time",
+            "title": "End Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_finish",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "end_time"
+        ],
+        "title": "SessionFinish",
+        "type": "object"
       },
       "SessionIntentRead": {
         "description": "One version of a planned session's intent.\n\nCarries WP-1's versioning vocabulary verbatim, because it is one of the\nversioned artefacts invariant 1 describes.",
@@ -8469,6 +8676,54 @@
         "title": "SessionMetricsRead",
         "type": "object"
       },
+      "SessionRating": {
+        "additionalProperties": false,
+        "description": "The Finish screen's whole-session rating; null clears it.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_rating",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "session_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Rating"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "session_rating"
+        ],
+        "title": "SessionRating",
+        "type": "object"
+      },
       "SessionRead": {
         "description": "One completed session with the recordings behind it.",
         "properties": {
@@ -8844,6 +9099,52 @@
         "title": "SessionScoreRead",
         "type": "object"
       },
+      "SessionStart": {
+        "additionalProperties": false,
+        "description": "Start a session (or, sent again, correct when it started).",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_start",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "pattern": "^[^\\x00]*$",
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "start_time"
+        ],
+        "title": "SessionStart",
+        "type": "object"
+      },
       "SessionStatus-Input": {
         "description": "Where a planned session ended up.\n\n``DISPLACED`` is not ``MISSED``: the athlete trained, just not this. WP-6\nsets it when a low-similarity activity is deliberately linked; the member\nexists now so the column does not need a migration then.",
         "enum": ["planned", "completed", "missed", "displaced"],
@@ -8973,6 +9274,46 @@
         "title": "SetConfidence",
         "type": "string"
       },
+      "SetDelete": {
+        "additionalProperties": false,
+        "description": "Delete one logged set. It stays deleted unless a newer edit revives it.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "set_delete",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "set_client_id": {
+            "format": "uuid",
+            "title": "Set Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "set_client_id"
+        ],
+        "title": "SetDelete",
+        "type": "object"
+      },
       "SetSide": {
         "description": "Which side a logged set worked: both at once, or one of them.",
         "enum": ["both", "left", "right"],
@@ -8984,6 +9325,50 @@
         "enum": ["app", "import", "coach", "recap"],
         "title": "SetSource",
         "type": "string"
+      },
+      "SetUpsert": {
+        "additionalProperties": false,
+        "description": "Create or edit one logged set (an edit may also revive a deleted one).",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "set_upsert",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "set": {
+            "$ref": "#/components/schemas/SyncSet"
+          },
+          "set_client_id": {
+            "format": "uuid",
+            "title": "Set Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "set_client_id",
+          "set"
+        ],
+        "title": "SetUpsert",
+        "type": "object"
       },
       "SetsCompletedSchema": {
         "additionalProperties": false,
@@ -9610,6 +9995,322 @@
         },
         "required": ["field", "low", "high", "polarity", "prompt", "anchors"],
         "title": "SubjectiveScaleRead",
+        "type": "object"
+      },
+      "SyncBatch": {
+        "additionalProperties": false,
+        "description": "One upload from the outbox, applied in order, all or nothing.",
+        "properties": {
+          "mutations": {
+            "items": {
+              "$ref": "#/components/schemas/Mutation"
+            },
+            "maxItems": 500,
+            "title": "Mutations",
+            "type": "array"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": ["schema_version", "mutations"],
+        "title": "SyncBatch",
+        "type": "object"
+      },
+      "SyncRejected": {
+        "description": "The 422 body: a rejected mutation, or a malformed batch.\n\nA rejected mutation names itself; a malformed body is the framework's\nper-field list, whose ``loc`` carries the mutation's index.",
+        "properties": {
+          "code": {
+            "const": "mutation_rejected",
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {},
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          }
+        },
+        "required": ["detail"],
+        "title": "SyncRejected",
+        "type": "object"
+      },
+      "SyncResult": {
+        "description": "One result per mutation, in the order sent.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/MutationResultRead"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": ["schema_version", "results"],
+        "title": "SyncResult",
+        "type": "object"
+      },
+      "SyncSet": {
+        "additionalProperties": false,
+        "description": "A logged set as the outbox sends it: only the fields it set.\n\nThe fields are `LoggedSetFields`, the same a typed-in set has, so a set is\nthe same set by either door; an omitted field is left as it is stored.\nThe set's identity is the mutation's ``set_client_id``.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/SetConfidence",
+            "default": "high"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "maximum": 3600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "exercise_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Id"
+          },
+          "exercise_name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Name"
+          },
+          "hold_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HoldQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "pain_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pain_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "per_side": {
+            "default": false,
+            "title": "Per Side",
+            "type": "boolean"
+          },
+          "planned_line_ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Line Ref"
+          },
+          "replaced_exercise_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced Exercise Id"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          },
+          "rest_s": {
+            "anyOf": [
+              {
+                "maximum": 3600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rest S"
+          },
+          "rir": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rir"
+          },
+          "rir_capped": {
+            "default": false,
+            "title": "Rir Capped",
+            "type": "boolean"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 6.0,
+                "multipleOf": 0.5,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "set_index": {
+            "exclusiveMaximum": 200.0,
+            "minimum": 0.0,
+            "title": "Set Index",
+            "type": "integer"
+          },
+          "set_kind": {
+            "$ref": "#/components/schemas/LoggedSetKind",
+            "default": "working"
+          },
+          "side": {
+            "$ref": "#/components/schemas/SetSide",
+            "default": "both"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "utc_offset_min": {
+            "anyOf": [
+              {
+                "maximum": 840.0,
+                "minimum": -840.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utc Offset Min"
+          }
+        },
+        "title": "SyncSet",
         "type": "object"
       },
       "TemperatureMetricsRead": {
@@ -18849,6 +19550,81 @@
         ],
         "summary": "Update Training Settings",
         "tags": ["settings"]
+      }
+    },
+    "/api/v1/sync": {
+      "post": {
+        "description": "Apply the outbox's mutations once, in order, all or nothing.",
+        "operationId": "sync-sync",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaVersionUnsupported"
+                }
+              }
+            },
+            "description": "The batch's schema_version is not one this server understands; update the app"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncRejected"
+                }
+              }
+            },
+            "description": "One mutation cannot be applied, or the body is malformed; nothing was applied"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Sync",
+        "tags": ["sync"]
       }
     },
     "/api/v1/wellness/backfill": {
