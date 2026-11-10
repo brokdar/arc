@@ -18,6 +18,7 @@ from typing import Any
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
@@ -436,4 +437,62 @@ def test_downgrading_0020_keeps_the_connection_and_round_trips(
     assert rows(
         "SELECT last_verified_at FROM connections WHERE id = :id", id=connection_id
     ) == [(None,)]
+    command.check(alembic_config)
+
+
+# --- 0025: the training settings singleton (AC-16) --------------------------------
+
+
+def seed_training_settings(alembic_config: Config) -> None:
+    """Run 0025's own seed statement again, exactly as the migration ran it."""
+    migration = ScriptDirectory.from_config(alembic_config).get_revision("0025")
+    assert migration is not None
+    run_sql([(migration.module.SEED_SQL, migration.module.seed_params())])
+
+
+def test_0025_upgrades_over_0024_and_seeds_one_default_row(
+    alembic_config: Config,
+) -> None:
+    at_revision(alembic_config, "0024")
+    assert rows("SELECT to_regclass('public.athlete_settings')") == [(None,)]
+
+    command.upgrade(alembic_config, "head")
+
+    assert rows(
+        "SELECT scope, mode, plain_logbook, ask_frequency, units, locale, "
+        "high_contrast, before_you_start_seen, first_run_seen, lifted_before "
+        "FROM athlete_settings"
+    ) == [
+        ("training", "simple", False, "always", "kg", "en", False, False, False, None)
+    ]
+    command.check(alembic_config)
+
+
+def test_rerunning_the_0025_seed_does_not_create_a_second_row(
+    alembic_config: Config,
+) -> None:
+    # From 0024, not from wherever the last test left the table: `_clean_tables`
+    # empties every table after each test, the seeded row included.
+    at_revision(alembic_config, "0024")
+    command.upgrade(alembic_config, "head")
+    run_sql([("UPDATE athlete_settings SET mode = 'full'", {})])
+    assert rows("SELECT mode FROM athlete_settings") == [("full",)]
+
+    seed_training_settings(alembic_config)
+    seed_training_settings(alembic_config)
+
+    # One row, and the athlete's choice survives the replay.
+    assert rows("SELECT mode FROM athlete_settings") == [("full",)]
+
+
+def test_downgrading_0025_drops_the_table_and_round_trips(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+
+    command.downgrade(alembic_config, "0024")
+    assert rows("SELECT to_regclass('public.athlete_settings')") == [(None,)]
+
+    command.upgrade(alembic_config, "head")
+    assert rows("SELECT count(*) FROM athlete_settings") == [(1,)]
     command.check(alembic_config)

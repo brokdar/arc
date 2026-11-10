@@ -113,6 +113,7 @@ from app.persistence.db import session_scope
 from app.services.activity import LoggedSetInput, SessionService
 from app.services.agent_notes import AgentNoteService
 from app.services.anchors import AnchorService
+from app.services.athlete_settings import AthleteSettingsService
 from app.services.connections import ConnectionService
 from app.services.exercises import ExerciseService
 from app.services.guardrails import current_profile, remaining_write_budget
@@ -556,7 +557,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 )
                 return {
                     "athlete": views.athlete(
-                        profile, today=today, timezone=athlete_timezone()
+                        profile,
+                        today=today,
+                        timezone=athlete_timezone(),
+                        training=await AthleteSettingsService.from_session(
+                            session
+                        ).read(),
                     ),
                     "red_flag": views.red_flag(profile),
                     "wellness": {
@@ -646,6 +652,11 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         the date there right now — the clock every bare date on this surface is
         on, and the one to convert a `*_at` instant into before quoting it.
 
+        `athlete.training_mode` (`simple`, `standard` or `full`) is how much
+        the gym screen asks: a Simple athlete rates sets Easy / Good / Hard,
+        not in reps in reserve, so talk to them that way. `athlete.units` is
+        the unit they read loads in; loads on this surface stay kilograms.
+
         Requires a `read` key.
         """
         require_scope(Scope.READ)
@@ -657,6 +668,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                         profile,
                         today=athlete_today(),
                         timezone=athlete_timezone(),
+                        training=await AthleteSettingsService.from_session(
+                            session
+                        ).read(),
                     ),
                     "red_flag": views.red_flag(profile),
                 }

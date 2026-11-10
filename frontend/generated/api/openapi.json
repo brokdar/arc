@@ -574,6 +574,12 @@
         "title": "AnomalyKind",
         "type": "string"
       },
+      "AskFrequency": {
+        "description": "How often the gym screen asks how hard a set felt.\n\n``last_set`` asks once per exercise, after its final working set \u2014 the\nrating progression reads, without a question on every set.",
+        "enum": ["always", "last_set", "never"],
+        "title": "AskFrequency",
+        "type": "string"
+      },
       "AssessedPowerCurveRead": {
         "description": "A session's mean-maximal power at every grid duration it is long enough for.",
         "properties": {
@@ -3368,6 +3374,12 @@
         "title": "JointStateRead",
         "type": "object"
       },
+      "LiftedBefore": {
+        "description": "The answer to the first-run question \"Have you lifted before?\".",
+        "enum": ["never", "a_little", "regularly"],
+        "title": "LiftedBefore",
+        "type": "string"
+      },
       "LoadBasis": {
         "description": "Which model produced the training load that was selected (A5.2).",
         "enum": ["power", "hr"],
@@ -3564,6 +3576,12 @@
         "required": ["scan_interval_seconds"],
         "title": "LocalDropSettingsUpdate",
         "type": "object"
+      },
+      "Locale": {
+        "description": "The language and number format of the interface.",
+        "enum": ["en", "de"],
+        "title": "Locale",
+        "type": "string"
       },
       "LoggedSetCreate": {
         "additionalProperties": false,
@@ -9107,6 +9125,110 @@
         "title": "TimeInZoneRead",
         "type": "object"
       },
+      "TrainingMode": {
+        "description": "How much arc asks and decides during a session.",
+        "enum": ["simple", "standard", "full"],
+        "title": "TrainingMode",
+        "type": "string"
+      },
+      "TrainingSettingsRead": {
+        "description": "The training settings every gym surface reads.\n\nOn a database where nothing has been stored these are the defaults:\nSimple, kilograms, English, nothing seen and nothing answered.",
+        "properties": {
+          "ask_frequency": {
+            "$ref": "#/components/schemas/AskFrequency"
+          },
+          "before_you_start_seen": {
+            "title": "Before You Start Seen",
+            "type": "boolean"
+          },
+          "first_run_seen": {
+            "title": "First Run Seen",
+            "type": "boolean"
+          },
+          "high_contrast": {
+            "title": "High Contrast",
+            "type": "boolean"
+          },
+          "lifted_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiftedBefore"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "$ref": "#/components/schemas/Locale"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/TrainingMode"
+          },
+          "plain_logbook": {
+            "title": "Plain Logbook",
+            "type": "boolean"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          }
+        },
+        "required": [
+          "mode",
+          "plain_logbook",
+          "ask_frequency",
+          "units",
+          "locale",
+          "high_contrast",
+          "before_you_start_seen",
+          "first_run_seen",
+          "lifted_before"
+        ],
+        "title": "TrainingSettingsRead",
+        "type": "object"
+      },
+      "TrainingSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "A partial change. Omitted fields are left alone.\n\nNo setting can be cleared, so none takes ``null`` in the contract\n(`.claude/rules/api-nullability.md`); an explicit ``null`` that reaches\nthe service anyway is a 422 naming the field. Sending ``lifted_before``\nalso marks the question seen and, for a new answer, sets the mode\n(`app.domain.training_mode.with_changes`), unless ``mode`` is in the same\nrequest or Full control was chosen.",
+        "properties": {
+          "ask_frequency": {
+            "$ref": "#/components/schemas/AskFrequency",
+            "title": "Ask Frequency"
+          },
+          "before_you_start_seen": {
+            "title": "Before You Start Seen",
+            "type": "boolean"
+          },
+          "first_run_seen": {
+            "title": "First Run Seen",
+            "type": "boolean"
+          },
+          "high_contrast": {
+            "title": "High Contrast",
+            "type": "boolean"
+          },
+          "lifted_before": {
+            "$ref": "#/components/schemas/LiftedBefore",
+            "title": "Lifted Before"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/Locale"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/TrainingMode",
+            "title": "Mode"
+          },
+          "plain_logbook": {
+            "title": "Plain Logbook",
+            "type": "boolean"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          }
+        },
+        "title": "TrainingSettingsUpdate",
+        "type": "object"
+      },
       "TransportKind": {
         "description": "How the bytes reach arc.\n\n* ``local_folder`` \u2014 a directory on the arc server, swept on a timer. The\n  `data/inbox/` sweep that has run since WP-4.3.\n* ``cloud_folder`` \u2014 a folder on a :class:`StorageProvider` arc holds a\n  credential for, polled with a cursor. Dropbox today.\n* ``oauth_api`` \u2014 a per-vendor API arc calls with its own OAuth grant.\n  Expressible, deliberately unimplemented: it is what makes Garmin and\n  Strava statable in the model without pretending arc can deliver them.",
         "enum": ["local_folder", "cloud_folder", "oauth_api"],
@@ -9264,6 +9386,12 @@
         "required": ["local_date", "value", "markers"],
         "title": "TrendPointRead",
         "type": "object"
+      },
+      "Units": {
+        "description": "The unit a load is shown and entered in. Stored loads stay kilograms.",
+        "enum": ["kg", "lb"],
+        "title": "Units",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -17751,6 +17879,124 @@
         ],
         "summary": "Revise Session Reasons",
         "tags": ["scores"]
+      }
+    },
+    "/api/v1/settings/training": {
+      "get": {
+        "description": "Get the training settings \u2014 the defaults when none are stored.",
+        "operationId": "settings-get_training_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Training Settings",
+        "tags": ["settings"]
+      },
+      "patch": {
+        "description": "Partially update the training settings. An empty body changes nothing.",
+        "operationId": "settings-update_training_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainingSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainingSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Unknown setting, value outside its vocabulary, or null"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Training Settings",
+        "tags": ["settings"]
       }
     },
     "/api/v1/wellness/backfill": {

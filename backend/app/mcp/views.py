@@ -40,6 +40,7 @@ from app.domain.pmc import (
 from app.domain.purpose import discipline_of
 from app.domain.session_analysis import explanation_to_json
 from app.domain.templates import PurposeTemplate
+from app.domain.training_mode import TrainingSettings
 from app.domain.wellness import (
     INPUT_TIERS,
     INVALIDATES_MARKERS,
@@ -118,7 +119,11 @@ def red_flag(profile: AthleteProfile) -> dict[str, Any]:
 
 
 def athlete(
-    profile: AthleteProfile, *, today: dt.date, timezone: str
+    profile: AthleteProfile,
+    *,
+    today: dt.date,
+    timezone: str,
+    training: TrainingSettings,
 ) -> dict[str, Any]:
     """The athlete profile the agent plans against.
 
@@ -151,6 +156,13 @@ def athlete(
         #: the plan, and proposing a busier week is answering a question
         #: nobody asked.
         "plan_state": profile.plan_state.value,
+        #: How much the gym screen asks and decides (`simple`, `standard`,
+        #: `full`) — speak to a Simple athlete in Easy / Good / Hard, not in
+        #: reps in reserve. From the training settings, not the profile.
+        "training_mode": training.mode.value,
+        #: The unit the athlete reads loads in (`kg` or `lb`). Stored loads
+        #: on this surface stay kilograms; quote them back in this unit.
+        "units": training.units.value,
     }
 
 
