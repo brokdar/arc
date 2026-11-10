@@ -31,6 +31,34 @@ GOVERNED_MODULES = frozenset({"progression", "warmups", "loading", "safety"})
 #: `0.075` or `0.5` is never mistaken for an allowed number.
 ALLOWED_VALUES = frozenset({0, 1})
 
+#: Module-level assignments whose right-hand side is not a training decision,
+#: keyed by (module stem, assigned name), each with the reason it was let
+#: through. This is the only way past the walk short of moving a number into
+#: `app.domain.rules`, and it is deliberately narrow: it covers literals
+#: inside the value of that one named assignment at module level — annotated
+#: or plain — and nothing else in the module, and nothing in another governed
+#: module that happens to use the same name. The alternatives were an
+#: inline marker comment (invisible in review, copied along with the line)
+#: and widening `ALLOWED_VALUES` (which would excuse a `2` that *is* a
+#: training choice wherever it appears); a named entry here is a reviewed,
+#: greppable decision.
+#:
+#: Entries may name a module that has not landed yet: the loading entries
+#: below are what `feat/strength-loading-arithmetic` needs, and it merges
+#: after this file. `test_no_exemption_names_a_missing_assignment` therefore
+#: skips an entry whose module does not exist and fails one whose module
+#: exists but no longer assigns the name, so a renamed or deleted constant
+#: cannot leave a dead exemption behind for the next number to hide under.
+NOT_TRAINING: dict[tuple[str, str], str] = {
+    ("loading", "KG_PER_LB"): "unit conversion, exact by definition",
+    ("loading", "GRAMS_PER_KG"): "unit conversion for integer-gram arithmetic",
+    ("loading", "BAR_SIDES"): "a barbell has two sides; geometry, not dosing",
+    ("loading", "MAX_PLATE_KINDS"): "input bound on the plate search",
+    ("loading", "MAX_PAIRS_PER_KIND"): "input bound on the plate search",
+    ("loading", "MAX_PERCENT_OF_SET"): "typo guard on a fraction argument",
+    ("loading", "DEFAULT_GYM"): "equipment inventory, not a prescription",
+}
+
 DOI_PATTERN = re.compile(r"10\.\d{4,}/")
 
 
@@ -67,10 +95,43 @@ def _index_literal_ids(tree: ast.AST) -> set[int]:
     return found
 
 
+def _assigned_name(node: ast.stmt) -> str | None:
+    """The single plain name a module-level statement assigns, if it is one."""
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id
+    if (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ):
+        return node.targets[0].id
+    return None
+
+
+def module_assignments(tree: ast.Module) -> dict[str, ast.expr | None]:
+    """Each plain name assigned at module level, mapped to its value."""
+    out: dict[str, ast.expr | None] = {}
+    for node in tree.body:
+        name = _assigned_name(node)
+        if name is not None:
+            assert isinstance(node, (ast.Assign, ast.AnnAssign))
+            out[name] = node.value
+    return out
+
+
+def _exempt_literal_ids(tree: ast.Module, stem: str) -> set[int]:
+    """Ids of every node inside an assignment `NOT_TRAINING` names for `stem`."""
+    found: set[int] = set()
+    for name, value in module_assignments(tree).items():
+        if value is not None and (stem, name) in NOT_TRAINING:
+            found.update(id(n) for n in ast.walk(value))
+    return found
+
+
 def bare_literals(path: Path) -> list[BareLiteral]:
-    """Every numeric literal in `path` that the allow-list does not excuse."""
+    """Every numeric literal in `path` that neither allow-list excuses."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    indices = _index_literal_ids(tree)
+    indices = _index_literal_ids(tree) | _exempt_literal_ids(tree, path.stem)
     out: list[BareLiteral] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or isinstance(node.value, bool):
@@ -93,6 +154,24 @@ def walk_governed(domain_dir: Path) -> list[BareLiteral]:
         if path.stem in GOVERNED_MODULES:
             found.extend(bare_literals(path))
     return found
+
+
+def stale_exemptions(domain_dir: Path) -> list[tuple[str, str]]:
+    """`NOT_TRAINING` keys whose module exists but does not assign the name.
+
+    A key whose module has no file under `domain_dir` is not stale, only
+    early — see `NOT_TRAINING`.
+    """
+    assigned: dict[str, set[str]] = {}
+    for path in sorted(domain_dir.rglob("*.py")):
+        if path.stem in GOVERNED_MODULES:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            assigned.setdefault(path.stem, set()).update(module_assignments(tree))
+    return sorted(
+        (stem, name)
+        for stem, name in NOT_TRAINING
+        if stem in assigned and name not in assigned[stem]
+    )
 
 
 # --- the registry ---------------------------------------------------------
@@ -272,6 +351,75 @@ def test_docstrings_and_strings_are_not_literals(tmp_path: Path) -> None:
 def test_walk_passes_on_the_real_tree() -> None:
     found = walk_governed(DOMAIN_DIR)
     assert found == [], "\n".join(str(f) for f in found)
+
+
+def test_an_unexempted_constant_is_caught(tmp_path: Path) -> None:
+    """A training number hoisted to a `Final` is still a bare literal."""
+    _fixture(
+        tmp_path, "loading.py", "from typing import Final\n\nBACKOFF: Final = 0.075\n"
+    )
+    assert [(f.line, f.value) for f in walk_governed(tmp_path)] == [(3, 0.075)]
+
+
+def test_an_exempt_assignment_is_skipped_and_only_it(tmp_path: Path) -> None:
+    """The exemption covers the named right-hand side, not the module."""
+    _fixture(
+        tmp_path,
+        "loading.py",
+        "from typing import Final\n"
+        "KG_PER_LB: Final = 0.45359237\n"
+        "GRAMS_PER_KG = 1000\n"
+        "DEFAULT_GYM: Final = dict(bar=20.0, plates=((25.0, 4), (1.25, 2)))\n"
+        "\n"
+        "def grams(kg: float) -> int:\n"
+        "    return round(kg * 1000)\n",
+    )
+    assert [(f.line, f.value) for f in walk_governed(tmp_path)] == [(7, 1000)]
+
+
+def test_an_exemption_does_not_leak_to_another_module(tmp_path: Path) -> None:
+    """`KG_PER_LB` is exempt in `loading`, not wherever the name turns up."""
+    _fixture(tmp_path, "progression.py", "KG_PER_LB = 0.45359237\n")
+    assert [(f.path.name, f.value) for f in walk_governed(tmp_path)] == [
+        ("progression.py", 0.45359237)
+    ]
+
+
+def test_an_exemption_does_not_reach_a_nested_assignment(tmp_path: Path) -> None:
+    """Only module-level assignments are exempt; a local of the same name is not."""
+    _fixture(
+        tmp_path,
+        "loading.py",
+        "def f() -> int:\n    BAR_SIDES = 2\n    return BAR_SIDES\n",
+    )
+    assert [f.value for f in walk_governed(tmp_path)] == [2]
+
+
+def test_a_stale_exemption_on_an_existing_module_fails(tmp_path: Path) -> None:
+    _fixture(
+        tmp_path,
+        "loading.py",
+        "from typing import Final\nKG_PER_LB: Final = 0.45359237\n",
+    )
+    stale = stale_exemptions(tmp_path)
+    assert ("loading", "KG_PER_LB") not in stale
+    assert ("loading", "GRAMS_PER_KG") in stale
+
+
+def test_an_exemption_for_a_module_not_yet_landed_is_not_stale(tmp_path: Path) -> None:
+    _fixture(tmp_path, "progression.py", "STEPS = 1\n")
+    assert stale_exemptions(tmp_path) == []
+
+
+def test_no_exemption_names_a_missing_assignment() -> None:
+    stale = stale_exemptions(DOMAIN_DIR)
+    assert stale == [], f"NOT_TRAINING names assignments that do not exist: {stale}"
+
+
+def test_every_exemption_is_governed_and_has_a_reason() -> None:
+    for (stem, name), reason in NOT_TRAINING.items():
+        assert stem in GOVERNED_MODULES, f"{stem}.{name}: module is not governed"
+        assert reason.strip(), f"{stem}.{name}: exemption has no reason"
 
 
 def test_rules_module_itself_is_not_governed() -> None:
