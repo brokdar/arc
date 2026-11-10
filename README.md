@@ -199,3 +199,4 @@ Secrets and variables → Actions) so release builds point at your real API —
 the value is baked in at build time. Leave
 `NEXT_PUBLIC_API_BASE_URL` empty when the frontend is served behind the
 bundled Caddy proxy (same origin).
+<!-- probe -->
