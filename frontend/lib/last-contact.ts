@@ -24,6 +24,7 @@ import { HTTP_STATUS } from "@/lib/api-errors";
 
 const CONTACT_KEY = "arc:last-contact";
 const TIMEZONE_KEY = "arc:athlete-timezone";
+const LOCALE_KEY = "arc:locale";
 
 function read(key: string): string | null {
   try {
@@ -71,6 +72,19 @@ export function rememberTimezone(timezone: string): void {
 /** The zone `GET /clock` last served on this phone — never a guess. */
 export function lastTimezone(): string | null {
   return read(TIMEZONE_KEY);
+}
+
+/** Record the language `GET /settings/training` served. */
+export function rememberLocale(locale: string): void {
+  write(LOCALE_KEY, locale);
+}
+
+/**
+ * The language the settings last served on this phone, unchecked — the
+ * caller resolves it against the catalogues it has (`resolveLocale`).
+ */
+export function lastLocale(): string | null {
+  return read(LOCALE_KEY);
 }
 
 /**

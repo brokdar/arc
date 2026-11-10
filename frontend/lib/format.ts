@@ -3,10 +3,18 @@
  *
  * Every value produced here is meant to be rendered in the mono face — the
  * design system reserves JetBrains Mono for durations, dates, counts and
- * percentages so columns of them line up. Pure functions, no locale lookups:
- * the app is single-athlete and self-hosted, and a calendar that renders
- * `28.07` on one machine and `7/28` on another is worse than one that always
- * renders the same thing.
+ * percentages so columns of them line up. Pure functions, no lookup of the
+ * *machine's* locale: the app is single-athlete and self-hosted, and a
+ * calendar that renders `28.07` on one machine and `7/28` on another is worse
+ * than one that always renders the same thing.
+ *
+ * The athlete's language is different: it is a setting (`locale` in the
+ * training settings), passed in explicitly, so the same setting renders the
+ * same text on every device. The functions that take a `locale` are the ones
+ * whose text a German reader would otherwise misread — `102.5` is not how
+ * German writes a decimal. Dates stay `28.07`, which both languages read;
+ * weekday names come from the message catalogues (`lib/i18n`), not from
+ * `Intl`, whose German abbreviations differ between ICU builds (`Mo` / `Mo.`).
  */
 
 const EM_DASH = "—";
@@ -407,4 +415,39 @@ export function formatSets(sets: number | null | undefined): string {
 function splitIsoDate(isoDate: string): [string, string, string] {
   const [year = "", month = "", day = ""] = isoDate.slice(0, 10).split("-");
   return [year, month, day];
+}
+
+/**
+ * The BCP 47 tag a training-settings locale formats with. British English,
+ * not American, for the 24-hour, day-first conventions the rest of this
+ * module already writes. Anything unrecognised formats as English.
+ */
+function localeTag(locale: string): string {
+  return locale === "de" ? "de-DE" : "en-GB";
+}
+
+const NUMBER_FORMATS = new Map<string, Intl.NumberFormat>();
+
+/**
+ * A number as the athlete's language writes it: `102,5` in German, `102.5`
+ * in English, thousands grouped. At most two decimals — a 1.25 kg plate is
+ * the finest step a load is written in — and float noise rounded away.
+ */
+export function formatNumber(value: number, locale: string): string {
+  const tag = localeTag(locale);
+  let format = NUMBER_FORMATS.get(tag);
+  if (!format) {
+    format = new Intl.NumberFormat(tag, { maximumFractionDigits: 2 });
+    NUMBER_FORMATS.set(tag, format);
+  }
+  return format.format(value);
+}
+
+/** A load with its unit: `102,5 kg` / `102.5 kg`. */
+export function formatWeight(
+  value: number,
+  locale: string,
+  unit: "kg" | "lb" = "kg",
+): string {
+  return `${formatNumber(value, locale)} ${unit}`;
 }

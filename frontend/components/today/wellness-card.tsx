@@ -8,8 +8,9 @@ import { SectionLabel } from "@/components/design/section-label";
 import { Button } from "@/components/ui/button";
 import { $api } from "@/lib/api/client";
 import { useAthleteTimezone } from "@/lib/clock";
-import { addDays, weekdayLabel } from "@/lib/dates";
+import { addDays } from "@/lib/dates";
 import { formatAthleteStamp } from "@/lib/format";
+import { useI18n, useT } from "@/lib/i18n/provider";
 import {
   confounderLabel,
   MARKER_FIELDS,
@@ -47,6 +48,7 @@ export function WellnessCard({
   readonly today: string;
   readonly className?: string;
 }) {
+  const { t, weekday } = useI18n();
   const start = addDays(today, -(RECENT_DAYS - 1));
   const series = $api.useQuery("get", "/api/v1/wellness/days", {
     // Half-open: `end` is the first day after today.
@@ -78,17 +80,17 @@ export function WellnessCard({
     <Panel className={className}>
       <div className="flex flex-col gap-3 px-4 py-3.5">
         <div className="flex items-baseline justify-between gap-2">
-          <SectionLabel level={2}>Wellness</SectionLabel>
+          <SectionLabel level={2}>{t("wellness.title")}</SectionLabel>
           <Link
             href="/wellness"
             className="text-accent text-xs hover:text-accent-hover"
           >
-            History
+            {t("wellness.history")}
           </Link>
         </div>
 
         {series.isPending ? (
-          <p className="text-ink-muted text-sm">Loading…</p>
+          <p className="text-ink-muted text-sm">{t("wellness.loading")}</p>
         ) : day ? (
           <RecordedDay day={day} />
         ) : standing?.status === "expired" ? (
@@ -105,7 +107,7 @@ export function WellnessCard({
           ).map((date) => (
             <li key={date} className="flex items-center gap-2.5 text-sm">
               <span className="w-[26px] shrink-0 font-mono text-ink-faint text-xs">
-                {weekdayLabel(date)}
+                {weekday(date)}
               </span>
               <PastDay date={date} day={days.get(date)} />
             </li>
@@ -117,6 +119,7 @@ export function WellnessCard({
 }
 
 function RecordedDay({ day }: { readonly day: WellnessDay }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-2.5">
       {/* A fixed grid whose slots hold their positions: a missing marker
@@ -149,10 +152,9 @@ function RecordedDay({ day }: { readonly day: WellnessDay }) {
         // athlete — who has to look somewhere else for last night's beer will
         // one day not look, and the numbers above are then read as evidence.
         <p className="rounded-button bg-danger-surface px-2.5 py-1.5 text-destructive text-xs">
-          Recorded, but not actionable today:{" "}
-          {day.markers.invalidated_by.map(confounderLabel).join(", ")}. The
-          numbers are real; they just do not say anything about readiness this
-          morning.
+          {t("wellness.notActionable", {
+            reasons: day.markers.invalidated_by.map(confounderLabel).join(", "),
+          })}
         </p>
       )}
 
@@ -160,7 +162,7 @@ function RecordedDay({ day }: { readonly day: WellnessDay }) {
         size="xs"
         variant="secondary"
         className="self-start"
-        render={<Link href="/wellness">Edit today</Link>}
+        render={<Link href="/wellness">{t("wellness.editToday")}</Link>}
       />
     </div>
   );
@@ -177,6 +179,7 @@ function RecordedDay({ day }: { readonly day: WellnessDay }) {
  * again is wrong in a way this card can prevent.
  */
 function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
+  const { t, rich } = useI18n();
   // The one actionable deadline in the application, so it is rendered on the
   // athlete's own clock rather than in raw UTC. `formatUtcStamp` is right for
   // an ingest log — the log records what the server did, and its column is
@@ -186,20 +189,19 @@ function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
   const timezone = useAthleteTimezone();
   return (
     <div className="flex flex-col items-start gap-2">
-      <p className="text-ink-muted text-sm">
-        arc asked about this morning and has not heard back. Sleep, resting
-        heart rate, HRV, weight and how you feel — whatever you have.
-      </p>
+      <p className="text-ink-muted text-sm">{t("wellness.asked")}</p>
       <p className="text-ink-faint text-xs">
-        Open until{" "}
-        <span className="font-mono">
-          {formatAthleteStamp(expiresAt, timezone)}
-        </span>
-        ; after that the day closes unanswered and is not asked again.
+        {rich("wellness.openUntil", {
+          time: (
+            <span className="font-mono">
+              {formatAthleteStamp(expiresAt, timezone)}
+            </span>
+          ),
+        })}
       </p>
       <Button
         size="sm"
-        render={<Link href="/wellness">Record this morning</Link>}
+        render={<Link href="/wellness">{t("wellness.recordMorning")}</Link>}
       />
     </div>
   );
@@ -215,31 +217,27 @@ function StandingPrompt({ expiresAt }: { readonly expiresAt: string }) {
  * recalled rather than lost.
  */
 function ClosedUnanswered() {
+  const t = useT();
   return (
     <div className="flex flex-col items-start gap-2">
-      <p className="text-ink-muted text-sm">
-        This morning closed unanswered — arc asked and nothing was recorded. It
-        will not ask again for today.
-      </p>
+      <p className="text-ink-muted text-sm">{t("wellness.closed")}</p>
       <Button
         size="sm"
         variant="secondary"
-        render={<Link href="/wellness">Record it from memory</Link>}
+        render={<Link href="/wellness">{t("wellness.recordFromMemory")}</Link>}
       />
     </div>
   );
 }
 
 function NothingYet() {
+  const t = useT();
   return (
     <div className="flex flex-col items-start gap-2">
-      <p className="text-ink-muted text-sm">
-        Nothing recorded this morning. Sleep, resting heart rate, HRV, weight
-        and how you feel — whatever you have.
-      </p>
+      <p className="text-ink-muted text-sm">{t("wellness.nothingYet")}</p>
       <Button
         size="sm"
-        render={<Link href="/wellness">Record this morning</Link>}
+        render={<Link href="/wellness">{t("wellness.recordMorning")}</Link>}
       />
     </div>
   );
@@ -252,10 +250,12 @@ function PastDay({
   readonly date: string;
   readonly day: WellnessDay | undefined;
 }) {
+  const t = useT();
   if (!day) {
     return (
       <span className="text-ink-faint">
-        <NotAssessed reason={`Nothing recorded on ${date}`} /> not recorded
+        <NotAssessed reason={`Nothing recorded on ${date}`} />{" "}
+        {t("wellness.notRecorded")}
       </span>
     );
   }
@@ -263,7 +263,7 @@ function PastDay({
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span className="truncate font-mono text-ink-secondary text-xs">
-        {parts.length > 0 ? parts.join(" · ") : "recorded"}
+        {parts.length > 0 ? parts.join(" · ") : t("wellness.recorded")}
       </span>
       {day.markers.actionable ? null : (
         <span

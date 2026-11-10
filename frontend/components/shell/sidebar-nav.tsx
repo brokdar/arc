@@ -16,6 +16,8 @@ import {
   WorkoutsIcon,
 } from "@/components/icons";
 import { $api } from "@/lib/api/client";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { useT } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 
 /** The section whose nav row carries a count of what is waiting. */
@@ -23,7 +25,8 @@ const COUNTED_HREF = "/proposals";
 
 export interface NavItem {
   readonly href: string;
-  readonly label: string;
+  /** The section's name, as a catalogue key: both navs speak the setting's language. */
+  readonly label: MessageKey;
   readonly icon: (props: IconProps) => React.ReactElement;
   /**
    * A route that does not exist yet renders dimmed and inert rather than as a
@@ -72,10 +75,16 @@ export interface NavItem {
  * disagree about what a section is called or where it lives.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/today", label: "Today", icon: TodayIcon, ready: true, phone: true },
+  {
+    href: "/today",
+    label: "nav.today",
+    icon: TodayIcon,
+    ready: true,
+    phone: true,
+  },
   {
     href: "/calendar",
-    label: "Calendar",
+    label: "nav.calendar",
     icon: CalendarIcon,
     ready: true,
     phone: true,
@@ -83,28 +92,28 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // Directly after Today, because it is answered at the same moment: the
   // athlete opens the app in the morning, says how they slept, and then looks
   // at what is planned.
-  { href: "/wellness", label: "Wellness", icon: WellnessIcon, ready: true },
+  { href: "/wellness", label: "nav.wellness", icon: WellnessIcon, ready: true },
   {
     href: "/sessions",
-    label: "Sessions",
+    label: "nav.sessions",
     icon: SessionsIcon,
     ready: true,
     phone: true,
   },
-  { href: "/inbox", label: "Inbox", icon: InboxIcon, ready: true },
-  { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
+  { href: "/inbox", label: "nav.inbox", icon: InboxIcon, ready: true },
+  { href: "/workouts", label: "nav.workouts", icon: WorkoutsIcon, ready: true },
   // The aggregate analysis surface, one page per question rather than one
   // "Analysis" placeholder: Fitness here, and Power on its own row when its
   // page lands. The dimmed `/analysis` row this replaces was a dead link.
-  { href: "/fitness", label: "Fitness", icon: FitnessIcon, ready: true },
+  { href: "/fitness", label: "nav.fitness", icon: FitnessIcon, ready: true },
   // The row the mockup reserved for "Coach", resolved into the one coach
   // surface that is a *place*: the queue of plan changes waiting on an answer.
   // The coach's other output — its notes on a session or a week — is
   // read where the thing it is about is, not in a section of its own.
-  { href: "/proposals", label: "Proposals", icon: CoachIcon, ready: true },
+  { href: "/proposals", label: "nav.proposals", icon: CoachIcon, ready: true },
   {
     href: "/settings",
-    label: "Settings",
+    label: "nav.settings",
     icon: SettingsIcon,
     ready: true,
     phone: true,
@@ -118,6 +127,7 @@ export interface SidebarNavProps {
 
 export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
   const pathname = usePathname();
+  const t = useT();
   // One page of one, asked for its `total`: the nav needs the count and not
   // the proposals, and the alternative — a full page fetched on every screen
   // of the app to render a two-digit badge — is the expensive version of the
@@ -129,7 +139,7 @@ export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
 
   return (
     <nav
-      aria-label="Sections"
+      aria-label={t("nav.sections")}
       // Hidden under 768 px, where the bottom bar (`bottom-nav.tsx`) takes
       // over: a 212 px column on a 375 px phone leaves no room for the page.
       className="hidden w-[212px] shrink-0 flex-col md:flex gap-5 border-hairline border-r bg-chrome px-3 pt-[18px] pb-3.5"
@@ -167,7 +177,7 @@ export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
                   // the spoken name (WCAG 2.5.3).
                   aria-label={
                     badge
-                      ? `${item.label} — ${badge} waiting on you`
+                      ? t("nav.waiting", { label: t(item.label), count: badge })
                       : undefined
                   }
                   className={cn(
@@ -181,7 +191,7 @@ export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
                   )}
                 >
                   <Icon />
-                  {item.label}
+                  {t(item.label)}
                   {badge ? (
                     <span
                       aria-hidden
@@ -200,7 +210,7 @@ export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
                   className="flex cursor-default items-center gap-2.5 rounded-button px-2.5 py-[7px] font-[450] text-base text-ink-disabled"
                 >
                   <Icon />
-                  {item.label}
+                  {t(item.label)}
                 </span>
               )}
             </li>

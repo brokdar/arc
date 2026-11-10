@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useAthleteTimezone } from "@/lib/clock";
+import { useI18n } from "@/lib/i18n/provider";
 import { lastContact } from "@/lib/last-contact";
 
 /**
@@ -18,6 +19,7 @@ import { lastContact } from "@/lib/last-contact";
  */
 export function OfflineReady() {
   const timezone = useAthleteTimezone();
+  const { t, rich } = useI18n();
   const [ready, setReady] = useState(false);
   const [synced, setSynced] = useState<Date | null>(null);
 
@@ -46,13 +48,11 @@ export function OfflineReady() {
 
   return (
     <p className="text-ink-muted text-xs" data-testid="offline-ready">
-      Ready offline
-      {time ? (
-        <>
-          {" · synced "}
-          <span className="font-mono">{time}</span>
-        </>
-      ) : null}
+      {time
+        ? rich("offline.readySynced", {
+            time: <span className="font-mono">{time}</span>,
+          })
+        : t("offline.ready")}
     </p>
   );
 }

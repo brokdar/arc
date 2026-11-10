@@ -8,15 +8,21 @@ import { Button } from "@/components/ui/button";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { useT } from "@/lib/i18n/provider";
 import {
-  LIFTED_BEFORE_LABELS,
   type LiftedBefore,
   trainingSettingsQueryKey,
 } from "@/lib/training-settings";
 
 type Update = components["schemas"]["TrainingSettingsUpdate"];
 
-const QUESTION = "Have you lifted before?";
+/** The answers, in the order the question offers them. */
+const ANSWERS: Readonly<Record<LiftedBefore, MessageKey>> = {
+  never: "onboarding.firstRun.never",
+  a_little: "onboarding.firstRun.aLittle",
+  regularly: "onboarding.firstRun.regularly",
+};
 
 /**
  * The first-run question: "Have you lifted before?", asked once, on Today.
@@ -42,6 +48,7 @@ export function FirstRunQuestion() {
 
 function Question() {
   const headingId = useId();
+  const t = useT();
   const queryClient = useQueryClient();
   const save = $api.useMutation("patch", "/api/v1/settings/training", {
     onSuccess: (updated) => {
@@ -59,26 +66,23 @@ function Question() {
       className="flex flex-col gap-2.5 px-4 py-3.5"
     >
       <h2 id={headingId} className="font-semibold text-sm">
-        {QUESTION}
+        {t("onboarding.firstRun.question")}
       </h2>
-      <p className="text-ink-muted text-sm">
-        It sets how much arc asks you in the gym. You can change it any time in
-        Settings.
-      </p>
+      <p className="text-ink-muted text-sm">{t("onboarding.firstRun.why")}</p>
       {problems.length > 0 ? (
         <p role="alert" className="text-destructive text-sm">
           {problems.join(" ")}
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(LIFTED_BEFORE_LABELS) as LiftedBefore[]).map((answer) => (
+        {(Object.keys(ANSWERS) as LiftedBefore[]).map((answer) => (
           <Button
             key={answer}
             size="sm"
             disabled={save.isPending}
             onClick={() => send({ lifted_before: answer })}
           >
-            {LIFTED_BEFORE_LABELS[answer]}
+            {t(ANSWERS[answer])}
           </Button>
         ))}
         <Button
@@ -87,7 +91,7 @@ function Question() {
           disabled={save.isPending}
           onClick={() => send({ first_run_seen: true })}
         >
-          Skip
+          {t("onboarding.firstRun.skip")}
         </Button>
       </div>
     </Panel>

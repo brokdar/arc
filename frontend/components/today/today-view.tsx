@@ -24,8 +24,9 @@ import { useExercises } from "@/components/workouts/exercise-catalogue";
 import { $api } from "@/lib/api/client";
 import { useAthleteTimezone } from "@/lib/clock";
 import { describeCriterion } from "@/lib/criteria";
-import { mondayOf, todayIsoDate, weekdayLabel } from "@/lib/dates";
-import { formatDayMonthYear, formatDurationHm, formatSets } from "@/lib/format";
+import { mondayOf, todayIsoDate } from "@/lib/dates";
+import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
+import { type I18n, useI18n } from "@/lib/i18n/provider";
 import { purposeLabel } from "@/lib/purpose";
 import { sessionHeadline } from "@/lib/session-headline";
 import {
@@ -69,6 +70,7 @@ export function TodayView() {
   const [today] = useState(() => todayIsoDate(timezone));
   const [start] = useState(() => mondayOf(today));
   const [planning, setPlanning] = useState(false);
+  const { t, weekday } = useI18n();
 
   const week = $api.useQuery("get", "/api/v1/plan/week", {
     params: { query: { start } },
@@ -84,14 +86,19 @@ export function TodayView() {
         {/* The page's one `h1`. Today can hold two sessions, and two `h1`s
             would leave a screen reader with two documents on one screen —
             so the session headlines below are `h2`s under this. */}
-        <h1 className="font-semibold text-lg tracking-[-0.01em]">Today</h1>
+        <h1 className="font-semibold text-lg tracking-[-0.01em]">
+          {t("today.title")}
+        </h1>
         <span className="font-mono text-ink-muted text-sm">
-          {weekdayLabel(today)} {formatDayMonthYear(today)}
+          {t("today.date", {
+            weekday: weekday(today),
+            date: formatDayMonthYear(today),
+          })}
         </span>
         <div className="ml-auto flex items-center gap-2">
           <RedFlagControl />
           <Button size="sm" onClick={() => setPlanning(true)}>
-            Plan a session
+            {t("today.plan")}
           </Button>
         </div>
       </Toolbar>
@@ -112,10 +119,10 @@ export function TodayView() {
           <FirstRunQuestion />
           <TodayCard />
           {week.isPending ? (
-            <p className="text-ink-muted text-sm">Loading today…</p>
+            <p className="text-ink-muted text-sm">{t("today.loading")}</p>
           ) : week.error ? (
             <p role="alert" className="text-destructive text-sm">
-              Could not load today. Is the API reachable?
+              {t("today.loadFailed")}
             </p>
           ) : ordered.length === 0 ? (
             <RestDay onPlan={() => setPlanning(true)} />
@@ -167,6 +174,7 @@ function SessionPanel({
   today: string;
 }) {
   const [editing, setEditing] = useState(false);
+  const { t, weekday } = useI18n();
   const detail = $api.useQuery(
     "get",
     "/api/v1/planned-sessions/{planned_session_id}",
@@ -198,7 +206,10 @@ function SessionPanel({
           <div className="flex flex-wrap items-center gap-2.5">
             <PurposeBadge purpose={session.purpose} size="md" />
             <span className="font-mono text-ink-faint text-xs">
-              {weekdayLabel(today)} {formatDayMonthYear(today)}
+              {t("today.date", {
+                weekday: weekday(today),
+                date: formatDayMonthYear(today),
+              })}
             </span>
             <span className="ml-auto flex items-center gap-1.5">
               <StatusDot
@@ -207,8 +218,10 @@ function SessionPanel({
               />
               <span className="font-mono text-ink-faint text-xs">
                 {session.discipline === "strength"
-                  ? formatSets(session.total_sets)
-                  : `planned ${formatDurationHm(session.planned_duration_s)}`}
+                  ? setCount(t, session.total_sets)
+                  : t("today.planned", {
+                      duration: formatDurationHm(session.planned_duration_s),
+                    })}
                 {/* The prescription's own predicted load, when the backend
                     could compute one. Absent rather than zero when it could
                     not: a session with no power target has no TSS, and "0
@@ -232,7 +245,7 @@ function SessionPanel({
         {structure?.discipline === "cycling" ? (
           <div className="flex flex-col gap-2.5 px-[22px] py-5">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <SectionLabel level={3}>Workout profile</SectionLabel>
+              <SectionLabel level={3}>{t("today.profile")}</SectionLabel>
               {legend.length > 0 ? (
                 <ul className="flex flex-wrap gap-3 font-mono text-ink-faint text-2xs">
                   {legend.map((entry, index) => {
@@ -267,7 +280,7 @@ function SessionPanel({
 
         {strength ? (
           <div className="flex flex-col gap-2 px-[22px] py-5">
-            <SectionLabel level={3}>Prescription</SectionLabel>
+            <SectionLabel level={3}>{t("today.prescription")}</SectionLabel>
             {strength.groups.map((group, groupIndex) => (
               <div
                 // Groups are ordered positions in the prescription, not entities.
@@ -276,7 +289,9 @@ function SessionPanel({
                 className="flex flex-col gap-1 rounded-button border border-hairline-faint bg-inset px-3 py-2.5"
               >
                 {group.items.length > 1 || group.label ? (
-                  <SectionLabel>{group.label ?? "Superset"}</SectionLabel>
+                  <SectionLabel>
+                    {group.label ?? t("today.superset")}
+                  </SectionLabel>
                 ) : null}
                 {group.items.map((item, itemIndex) => (
                   <div
@@ -303,12 +318,10 @@ function SessionPanel({
 
       <div className="flex flex-wrap items-start gap-3.5">
         <Panel className="flex min-w-0 flex-[1_1_260px] flex-col gap-3 px-4 py-3.5">
-          <SectionLabel level={3}>Targets</SectionLabel>
+          <SectionLabel level={3}>{t("today.targets")}</SectionLabel>
           {bands.length === 0 ? (
             <p className="text-ink-muted text-sm">
-              {strength
-                ? "This session is prescribed in sets and reps, not in channels."
-                : "No channel targets on this prescription."}
+              {strength ? t("today.targetsStrength") : t("today.targetsNone")}
             </p>
           ) : (
             <ul className="flex flex-col">
@@ -346,7 +359,7 @@ function SessionPanel({
           )}
 
           <div className="flex flex-col gap-1.5 border-hairline border-t pt-3">
-            <SectionLabel>Success criteria</SectionLabel>
+            <SectionLabel>{t("today.criteria")}</SectionLabel>
             {intent && intent.success_criteria.length > 0 ? (
               <ul className="flex flex-col gap-1.5">
                 {intent.success_criteria.map((criterion, index) => (
@@ -368,7 +381,7 @@ function SessionPanel({
               </ul>
             ) : (
               <p className="text-ink-muted text-sm">
-                {detail.isPending ? "…" : "No criteria on this session."}
+                {detail.isPending ? "…" : t("today.criteriaNone")}
               </p>
             )}
           </div>
@@ -384,20 +397,17 @@ function SessionPanel({
           with when a real agent note lands on this page.
         */}
         <Panel className="flex min-w-0 flex-[1_1_300px] flex-col gap-2.5 px-4 py-3.5">
-          <SectionLabel level={3}>Watch for</SectionLabel>
+          <SectionLabel level={3}>{t("today.watchFor")}</SectionLabel>
           {intent?.coach_notes ? (
             <p className="text-ink-secondary text-base leading-relaxed">
               {intent.coach_notes}
             </p>
           ) : (
-            <p className="text-ink-muted text-sm">
-              Nothing noted. Add what to watch for when you plan or revise the
-              session.
-            </p>
+            <p className="text-ink-muted text-sm">{t("today.watchForNone")}</p>
           )}
           <div className="mt-auto flex items-center gap-2 border-hairline border-t pt-3">
             <span className="font-mono text-2xs text-ink-faint">
-              intent v{intent?.version ?? "—"}
+              {t("today.intentVersion", { version: intent?.version ?? "—" })}
             </span>
             <Button
               type="button"
@@ -406,7 +416,7 @@ function SessionPanel({
               className="ml-auto"
               onClick={() => setEditing(true)}
             >
-              Edit session
+              {t("today.edit")}
             </Button>
           </div>
         </Panel>
@@ -425,27 +435,27 @@ function SessionPanel({
 
 /** A day with nothing planned is a decision, not a gap — say so. */
 function RestDay({ onPlan }: { onPlan: () => void }) {
+  const { t } = useI18n();
   return (
     <Panel
       tone="card"
       className="flex flex-col items-start gap-3 rounded-shell px-[22px] py-8"
     >
-      <SectionLabel>Rest day</SectionLabel>
+      <SectionLabel>{t("today.restDay")}</SectionLabel>
       <h2 className="font-semibold text-4xl tracking-[-0.025em]">
-        Nothing planned today.
+        {t("today.restTitle")}
       </h2>
       <p className="max-w-[52ch] text-ink-muted text-lg leading-relaxed">
-        Rest is prescribed as much as anything else is. If that is wrong, plan
-        something — it will appear here and on the calendar.
+        {t("today.restBody")}
       </p>
       <div className="flex gap-2">
         <Button size="sm" onClick={onPlan}>
-          Plan a session
+          {t("today.plan")}
         </Button>
         <Button
           size="sm"
           variant="secondary"
-          render={<Link href="/calendar">Open the week</Link>}
+          render={<Link href="/calendar">{t("today.openWeek")}</Link>}
         />
       </div>
     </Panel>
@@ -460,15 +470,16 @@ function ThisWeek({
   days: readonly { date: string; sessions: readonly WeekSession[] }[];
   today: string;
 }) {
+  const { t, weekday } = useI18n();
   return (
     <Panel className="flex flex-col gap-3 px-4 py-3.5">
       <div className="flex items-baseline justify-between gap-2">
-        <SectionLabel level={2}>This week</SectionLabel>
+        <SectionLabel level={2}>{t("today.thisWeek")}</SectionLabel>
         <Link
           href="/calendar"
           className="text-accent text-xs hover:text-accent-hover"
         >
-          Calendar
+          {t("today.calendar")}
         </Link>
       </div>
       <ul className="flex flex-col gap-2">
@@ -490,9 +501,11 @@ function ThisWeek({
                       isToday ? "text-accent" : "text-ink-faint"
                     }`}
                   >
-                    {weekdayLabel(day.date)}
+                    {weekday(day.date)}
                   </span>
-                  <span className="text-ink-faint text-sm">Rest</span>
+                  <span className="text-ink-faint text-sm">
+                    {t("today.rest")}
+                  </span>
                 </span>
               ) : (
                 day.sessions.map((session) => (
@@ -502,7 +515,7 @@ function ThisWeek({
                         isToday ? "text-accent" : "text-ink-faint"
                       }`}
                     >
-                      {weekdayLabel(day.date)}
+                      {weekday(day.date)}
                     </span>
                     <StatusDot
                       status={session.status}
@@ -518,7 +531,7 @@ function ThisWeek({
                     <span className="font-mono text-ink-muted text-xs">
                       {session.discipline === "strength" &&
                       session.total_sets !== null
-                        ? formatSets(session.total_sets)
+                        ? setCount(t, session.total_sets)
                         : formatDurationHm(session.planned_duration_s)}
                     </span>
                   </span>
@@ -530,4 +543,13 @@ function ThisWeek({
       </ul>
     </Panel>
   );
+}
+
+/**
+ * `3 sets` / `1 set` in the athlete's language — `formatSets`, translated.
+ * An em dash when the count is unknown, so the slot keeps its shape.
+ */
+function setCount(t: I18n["t"], sets: number | null | undefined): string {
+  if (sets === null || sets === undefined) return "—";
+  return t(sets === 1 ? "units.setsOne" : "units.setsOther", { count: sets });
 }

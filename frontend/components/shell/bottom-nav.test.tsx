@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/shell/app-shell";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { NAV_ITEMS } from "@/components/shell/sidebar-nav";
+import { translate } from "@/lib/i18n/catalogue";
 
 const pathname = vi.hoisted(() => ({ current: "/today" }));
 
@@ -71,8 +72,8 @@ describe("BottomNav", () => {
   it("draws its rows from NAV_ITEMS, not a list of its own", () => {
     render(<BottomNav />);
 
-    const fromNavItems = NAV_ITEMS.filter((item) => item.phone).map(
-      (item) => item.label,
+    const fromNavItems = NAV_ITEMS.filter((item) => item.phone).map((item) =>
+      translate("en", item.label),
     );
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(
       fromNavItems,
@@ -100,7 +101,7 @@ describe("BottomNav", () => {
           ...NAV_ITEMS,
           {
             href: "/later",
-            label: "Later",
+            label: "nav.inbox",
             icon,
             ready: false,
             arrives: "Arrives later",
@@ -110,7 +111,7 @@ describe("BottomNav", () => {
       />,
     );
 
-    expect(screen.queryByText("Later")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inbox")).not.toBeInTheDocument();
     expect(screen.getAllByRole("link")).toHaveLength(4);
   });
 
