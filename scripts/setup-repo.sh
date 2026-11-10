@@ -26,6 +26,14 @@ gh api -X PATCH "repos/$REPO" \
 # .github/workflows/pr-title.yml (`name: pr-title`), not the workflow name.
 # Renaming that job silently drops the requirement — change both together.
 #
+# `require_code_owner_review` is what makes .github/CODEOWNERS bite: without it the
+# file is a list nobody enforces. Agents act as brokdar-agent[bot], which is not a
+# code owner, so a PR touching an owned path cannot merge without the operator's
+# approval. scripts/check-codeowners.sh fails if this flag is ever set back to
+# false while CODEOWNERS exists, so the declared state cannot silently drift from
+# the live ruleset again (it did: the live ruleset had no required checks at all
+# while this script said it did).
+#
 # Note this POSTs a new ruleset: if `protect-main` already exists it is skipped,
 # not updated. To change an existing one, PATCH it by id
 # (`gh api repos/$REPO/rulesets` to find it) or delete it first.
@@ -47,7 +55,7 @@ gh api -X POST "repos/$REPO/rulesets" --input - >/dev/null <<'JSON' || \
       "parameters": {
         "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": false,
+        "require_code_owner_review": true,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
         "allowed_merge_methods": ["squash"]
