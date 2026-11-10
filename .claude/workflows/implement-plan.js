@@ -85,7 +85,10 @@ const AS_AGENT_NOTE = `IDENTITY. Every push, and every PR create, edit, comment 
 \`scripts/as-agent.sh\` (from the worktree), which acts as the agent's own GitHub identity,
 \`brokdar-agent[bot]\`. If it exits 3 it has REFUSED — there is no agent identity on this host — and
 the command was not run: STOP and report its message verbatim. NEVER re-run the command without the
-wrapper; that would act as the operator, which is precisely what it exists to prevent.`;
+wrapper; that would act as the operator, which is precisely what it exists to prevent. If it exits 4 on
+a merge, merging is PAUSED: an open \`automerge-breaker\` issue means too many recent agent merges were
+undone, and only the operator re-enables it by closing that issue. Do not retry and do not look for
+another way to merge; report \`merged: false\` with its message.`;
 
 if (!PLAN) {
   log("No plan given. Pass { plan: '<slug>-plan.md' }. Aborting.");

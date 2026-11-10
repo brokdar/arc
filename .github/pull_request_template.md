@@ -44,4 +44,15 @@ gate, and a hand-ticked list is a claim no one verifies.
 <!-- Decisions and tradeoffs, or where this deviated from or refined the issue.
      Delete the section if there is nothing real to say — don't pad it. -->
 
+## Risk
+
+<!-- One sentence: what is the worst this could do if it is wrong, and who would
+     notice. "None, docs only" is a fine answer. -->
+
+## How to undo
+
+<!-- One line: revert this PR, or the extra step it needs — a migration to step
+     back, a setting to restore, a rebuild that makes an image rollback unsafe.
+     See docs/review/rollback.md. -->
+
 Closes #

@@ -113,6 +113,13 @@ rather than regenerating the committed types from an unpinned compiler.
   `app/persistence/types.py`. Constraints are named by the `Base` metadata
   convention. Modules under `app/persistence/` are swept by `load_models()`;
   never hand-list them in `alembic/env.py` or a conftest.
+- **Agents write to GitHub as `brokdar-agent[bot]`, never as the operator**:
+  every push, PR create/edit/comment/merge and issue write goes through
+  `scripts/as-agent.sh <command>`, and a PreToolUse hook
+  (`.claude/hooks/require_agent_identity.py`) refuses the bare forms. An agent
+  may merge, but never approves (the owner lane in `.github/CODEOWNERS` needs the
+  operator's review), never changes rulesets or settings, never pushes tags. If
+  the wrapper exits 3 there is no agent identity on this host: stop and report.
 - **Actor**: every mutating service method takes `actor: Actor`
   (`app/domain/actor.py`) — `ActorDep` in the API, `app.mcp.identity`
   (`current_actor()` / `require_scope()`) in MCP tools.

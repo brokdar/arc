@@ -837,6 +837,12 @@ group("every GitHub write goes out as the agent, never as the operator");
   const m = promptFor(runs.merging, "feat/a:merge-and-cleanup");
   ok("the merging seat treats a code-owner block as the owner lane, not a failure", /REVIEW_REQUIRED/.test(m) && /code-owner review/.test(m));
   ok("  …and never approves the PR itself", /Never approve it yourself/.test(m));
+  // Exit 4 is the merge breaker. A seat that does not know it would retry the merge,
+  // or hunt for another way to land it, which is exactly what the breaker forbids.
+  ok(
+    "  …and knows a paused merge (exit 4, automerge-breaker) is a stop, not a retry",
+    /exits 4/.test(m) && /automerge-breaker/.test(m) && /Do not retry/.test(m) && /merged: false/.test(m),
+  );
   // Arming auto-merge on an owner-lane PR makes it merge the instant the operator
   // approves, while the report says it did not merge — so the check must come first.
   ok(

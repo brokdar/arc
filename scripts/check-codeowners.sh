@@ -56,5 +56,13 @@ while read -r pattern owners; do
 done < "$file"
 
 [ "$n" -gt 0 ] || { echo "check-codeowners: $file has no entries"; exit 1; }
+
+# CODEOWNERS only bites when protect-main requires a code owner's review, and the
+# repository's own record of that ruleset is scripts/setup-repo.sh. A copy that
+# says `false` re-creates the repo with an owner lane that does not exist.
+if [ -f scripts/setup-repo.sh ] && ! grep -q '"require_code_owner_review": true' scripts/setup-repo.sh; then
+  echo "check-codeowners: scripts/setup-repo.sh does not declare \"require_code_owner_review\": true, so a fresh repo would have no owner lane"
+  bad=1
+fi
 [ "$bad" -eq 0 ] && echo "check-codeowners: all $n entries match tracked files"
 exit "$bad"

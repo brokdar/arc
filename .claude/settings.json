@@ -13,7 +13,25 @@
       "Bash(docker compose:*)",
       "Bash(git:*)",
       "Bash(gh pr:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(scripts/as-agent.sh:*)",
+      "Bash(./scripts/as-agent.sh:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr review:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh pr ready:*)",
+      "Bash(gh pr reopen:*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue edit:*)",
+      "Bash(gh issue close:*)",
+      "Bash(gh auth token:*)"
     ]
   },
   "hooks": {
@@ -24,6 +42,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_npm.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/require_agent_identity.py\""
           }
         ]
       }

@@ -182,6 +182,14 @@ regardless of how long the paragraph is.
 
 <Decisions and tradeoffs, or where this deviated from or refined the issue. Omit the section if there is nothing real to say.>
 
+## Risk
+
+<One sentence: the worst this does if it is wrong, and who would notice. "None, docs only" is fine.>
+
+## How to undo
+
+<One line: revert this PR, or the extra step it needs (a migration to step back, a setting to restore, a rebuild that makes an image rollback unsafe). See docs/review/rollback.md.>
+
 Closes #<N>
 ```
 
@@ -204,8 +212,21 @@ Closes #<N>
 
 <Decisions and tradeoffs, or anything a reviewer should know that the diff and the issue don't show. Omit if none.>
 
+## Risk
+
+<One sentence: the worst this does if it is wrong, and who would notice.>
+
+## How to undo
+
+<One line: revert this PR, or the extra step it needs. See docs/review/rollback.md.>
+
 Closes #<N>
 ```
+
+`## Risk` and `## How to undo` are on every PR, feature or bug: they are the two
+questions a reviewer would otherwise have to ask, and `docs/review/rollback.md`
+is what "undo" means here (a revert is one step; a migration or a
+`rebuild-streams` makes it more).
 
 Fill `## Notes` by actively comparing the issue's intent against what actually
 shipped: pull in any decision or tradeoff recorded in the commit messages, plus
