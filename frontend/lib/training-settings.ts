@@ -1,5 +1,8 @@
+import { useEffect } from "react";
+
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
+import { lastHighContrast, rememberHighContrast } from "@/lib/last-contact";
 
 type Schemas = components["schemas"];
 export type TrainingSettings = Schemas["TrainingSettingsRead"];
@@ -14,6 +17,46 @@ export const trainingSettingsQueryKey = $api.queryOptions(
   "get",
   "/api/v1/settings/training",
 ).queryKey;
+
+/**
+ * Put `data-contrast="high"` on `<html>` while the athlete's `high_contrast`
+ * setting is on, and take it off when it is not — the switch the
+ * high-contrast token set in `app/globals.css` hangs off.
+ *
+ * On `<html>` rather than a wrapper element because the tokens are defined on
+ * `:root`, and the shadcn aliases (`--color-foreground: var(--color-ink)`)
+ * resolve where they are defined: re-pointing `--color-ink` lower in the tree
+ * would leave every alias on the default value.
+ *
+ * Read from the same cache entry the Settings panel writes back, so ticking
+ * the box re-skins the app with no reload. Offline — the gym with no signal,
+ * which is the case this setting exists for — it applies the value the server
+ * last served on this phone (`lib/last-contact.ts`), so a dim basement does
+ * not lose the setting the moment the network goes. Unmounting removes the
+ * attribute: outside the signed-in tree (the login page) nothing has read
+ * the setting.
+ */
+export function useDocumentContrast(): void {
+  const settings = $api.useQuery("get", "/api/v1/settings/training");
+  const served = settings.data?.high_contrast;
+  const high = served ?? lastHighContrast();
+
+  useEffect(() => {
+    if (served !== undefined) rememberHighContrast(served);
+  }, [served]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (high) {
+      root.dataset.contrast = "high";
+    } else {
+      delete root.dataset.contrast;
+    }
+    return () => {
+      delete root.dataset.contrast;
+    };
+  }, [high]);
+}
 
 /** The first-run answers, in the order the question offers them. */
 export const LIFTED_BEFORE_LABELS: Readonly<Record<LiftedBefore, string>> = {

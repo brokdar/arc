@@ -19,7 +19,7 @@ import {
   translate,
 } from "@/lib/i18n/catalogue";
 import { lastLocale, rememberLocale } from "@/lib/last-contact";
-import type { Locale } from "@/lib/training-settings";
+import { type Locale, useDocumentContrast } from "@/lib/training-settings";
 
 export type Translate = (key: MessageKey, params?: MessageParams) => string;
 
@@ -135,10 +135,17 @@ export function LocaleProvider({
  * the language the server last served on this phone (`lib/last-contact.ts`),
  * and English if it never has. Unlike the clock it never blocks the page: a
  * wrong-language label is a nuisance, a wrong timezone is a wrong day.
+ *
+ * It also applies the high-contrast setting to `<html>`: this is the one
+ * component that reads the training settings for the whole signed-in tree
+ * and writes onto the document (`lang` here, `data-contrast` there), and it
+ * sits above the clock gate, so a dim gym gets its contrast before Today
+ * has finished loading.
  */
 export function I18nProvider({ children }: { readonly children: ReactNode }) {
   const settings = $api.useQuery("get", "/api/v1/settings/training");
   const served = settings.data?.locale;
+  useDocumentContrast();
 
   useEffect(() => {
     if (served !== undefined) rememberLocale(served);

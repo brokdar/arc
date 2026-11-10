@@ -75,12 +75,43 @@ describe("colour literals outside the palette", () => {
   });
 });
 
+/**
+ * A colour token defined anywhere else — `style={{ "--color-ink": … }}`, a
+ * `[data-contrast]` rule in a component's CSS — is a third token set beside
+ * the two in globals.css, and one the contrast test never measures.
+ */
+const TOKEN_DEFINITION =
+  /--color-[\w-]+["']?\s*:\s*["']?(?:#|rgba?\(|hsla?\(|oklch\(|color-mix\(|var\()/;
+
+describe("colour tokens defined outside the palette", () => {
+  const files = SCANNED.flatMap(sourceFiles).filter(
+    (path) => !ALLOWED.has(path.split("\\").join("/")),
+  );
+
+  it.each(files)("%s defines no colour token", (path) => {
+    const offenders = readFileSync(join(ROOT, path), "utf8")
+      .split("\n")
+      .map((line, index) => [index + 1, line] as const)
+      .filter(([, line]) => TOKEN_DEFINITION.test(line))
+      .map(([number, line]) => `${path}:${number}  ${line.trim()}`);
+
+    expect(
+      offenders,
+      `define colour tokens in app/globals.css, in both sets:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
 describe("the palette itself", () => {
-  it("keeps every token in globals.css", () => {
+  it("keeps every token in globals.css, both sets of them", () => {
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
     // A spot check that the file this test exempts is the file it thinks it
     // is — if the palette moved, the exemption above is protecting nothing.
     expect(css).toMatch(/--color-card:/);
+    // The high-contrast set is the second place a literal may appear, and it
+    // is in the same file: a contrast set kept anywhere else would be exempt
+    // from neither this test nor the ink-contrast one, and checked by both.
+    expect(css).toMatch(/:root\[data-contrast="high"\]\s*\{[^}]*--color-card:/);
     expect(relative(ROOT, join(ROOT, "app/globals.css"))).toBe(
       join("app", "globals.css"),
     );
