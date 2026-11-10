@@ -85,6 +85,8 @@ PR_WRITE = frozenset({"create", "edit", "comment", "merge", "review", "close",
                       "ready", "reopen", "lock", "unlock", "update-branch"})
 ISSUE_WRITE = frozenset({"create", "edit", "comment", "close", "reopen", "delete",
                          "transfer", "pin", "unpin", "lock", "unlock", "develop"})
+PR_READ = frozenset({"view", "list", "checks", "diff", "status", "checkout"})
+ISSUE_READ = frozenset({"view", "list", "status"})
 OTHER_WRITE = {
     "workflow": frozenset({"run", "enable", "disable"}),
     "run": frozenset({"rerun", "cancel", "delete"}),
@@ -433,13 +435,26 @@ def inspect(cmd: list[str]) -> tuple[str | None, str | None]:
     group = words[0] if words else ""
     verb = words[1] if len(words) > 1 else ""
 
+    # gh's parser (cobra) treats a flag it does not know as taking a value, so in
+    # `gh pr --subject s merge 5` the second word is `s` and the verb is `merge`. A
+    # write verb anywhere after the group counts — unless the second word is a
+    # known read verb, so `gh pr list --search edit` is still a list.
+    def write_verb(writes, reads):
+        if verb in reads:
+            return verb
+        return next((w for w in words[1:] if w in writes), verb)
+
+    if group == "alias":
+        return "gh alias", "an alias runs a different command under a name this guard cannot read"
     if group == "pr":
+        verb = write_verb(PR_WRITE, PR_READ)
         if verb == "review" and has_flag(args, "--approve", "a", value_letters="bF"):
             return "gh pr review", "approving a PR is the operator's, not an agent's"
         if verb == "merge" and has_flag(args, "--admin"):
             return "gh pr merge", "--admin skips the branch rules"
         return (f"gh pr {verb}" if verb in PR_WRITE else None), None
     if group == "issue":
+        verb = write_verb(ISSUE_WRITE, ISSUE_READ)
         return (f"gh issue {verb}" if verb in ISSUE_WRITE else None), None
     if group == "api":
         # `args` still starts with the group word; the request is what follows it.

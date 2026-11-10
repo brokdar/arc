@@ -107,6 +107,11 @@ ALLOW = [
     W + " git push origin feat/v2-parser",
     W + " git push -u origin ci/agent-write-guard",
     W + " gh pr review 5 --request-changes --body no",
+    W + " gh pr --subject s merge 5",
+    "gh pr list --search merge",
+    "gh pr list --state merged",
+    "gh pr view 5 --json comments",
+    "gh issue list --search close",
 ]
 
 BARE = [
@@ -177,6 +182,11 @@ BARE = [
     "cat <<EOF\n$(git push)\nEOF",
     "gh api graphql -F query=@q.graphql",
     "gh api graphql --input q.json",
+    # cobra treats a flag it does not know as taking a value: the verb is not the second word
+    "gh pr --subject s merge 5",
+    "gh pr -t s merge 5",
+    "gh pr --title t edit 5",
+    "gh issue --label x create --title t",
 ]
 
 # Refused even through the wrapper: the agent has no business doing these as anyone.
@@ -225,6 +235,9 @@ NEVER = [
     W + " gh api repos/o/r/pulls/5/reviews -f event=APPROVE",
     W + " gh api graphql -f query='mutation { addPullRequestReview(input:{pullRequestId:\"x\", event:APPROVE}) { clientMutationId } }'",
     W + " gh api -X PATCH repos/o/r -f default_branch=x",
+    W + " gh alias set pm 'pr merge'",
+    W + " gh alias import aliases.yml",
+    "gh alias set pm 'pr merge'",
 ]
 
 # A shell fed its commands on stdin hides them from the guard.
