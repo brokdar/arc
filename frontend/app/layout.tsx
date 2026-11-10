@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { ServiceWorkerRegistration } from "@/components/shell/sw-register";
 import { Providers } from "./providers";
 
 // Both are variable fonts, so no `weight` list: the whole 100–900 range ships
@@ -20,6 +21,16 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "arc",
   description: "Training application for one athlete.",
+  // iOS reads these instead of the manifest: the home-screen icon, and a
+  // standalone window whose status bar sits over the dark canvas.
+  appleWebApp: {
+    capable: true,
+    title: "arc",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -36,6 +47,7 @@ export default function RootLayout({
     >
       <body className="flex min-h-full flex-col">
         <Providers>{children}</Providers>
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );

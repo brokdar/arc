@@ -1,6 +1,7 @@
 import type * as React from "react";
 
 import { RedFlagBanner } from "@/components/coach/red-flag";
+import { BottomNav } from "@/components/shell/bottom-nav";
 import { SidebarNav } from "@/components/shell/sidebar-nav";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,10 @@ import { cn } from "@/lib/utils";
  * scrolling column so it cannot be scrolled away. It renders nothing
  * while the flag is down, so in the normal case this is the same two-element
  * frame it has always been.
+ *
+ * Under 768 px the sidebar hides and the bottom bar shows, below the
+ * scrolling column so it stays put while the page scrolls — both drawn from
+ * `NAV_ITEMS`.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -25,6 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </div>
+      <BottomNav />
     </div>
   );
 }

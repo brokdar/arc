@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 /** The section whose nav row carries a count of what is waiting. */
 const COUNTED_HREF = "/proposals";
 
-interface NavItem {
+export interface NavItem {
   readonly href: string;
   readonly label: string;
   readonly icon: (props: IconProps) => React.ReactElement;
@@ -40,6 +40,16 @@ interface NavItem {
    * no tooltip at all.
    */
   readonly arrives?: string;
+  /**
+   * Whether the section is one of the phone bar's tabs (`bottom-nav.tsx`).
+   *
+   * A flag on the item rather than a second list there: the bar holds four
+   * tabs where a thumb reaches, the sidebar holds every section, and both
+   * read their rows from `NAV_ITEMS` so a section renamed, reordered or
+   * withdrawn changes in both at once. `bottom-nav.test.tsx` reads the bar's
+   * rows back out of this list, so a copy that drifted fails it.
+   */
+  readonly phone?: boolean;
 }
 
 /**
@@ -54,15 +64,33 @@ interface NavItem {
  * a queue the athlete can answer, and it sits *after* Sessions because that is
  * the direction the athlete travels — you go looking for the inbox because of
  * a ride that is missing from the log, not the other way round.
+ *
+ * **The one list both navs render.** The desktop sidebar draws every row; the
+ * phone's bottom bar (`bottom-nav.tsx`) draws the rows marked `phone` —
+ * Today, Calendar, Sessions, Settings, the four the gym and the morning need.
+ * Displaced: a second list in the bottom bar, which would let the two navs
+ * disagree about what a section is called or where it lives.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/today", label: "Today", icon: TodayIcon, ready: true },
-  { href: "/calendar", label: "Calendar", icon: CalendarIcon, ready: true },
+  { href: "/today", label: "Today", icon: TodayIcon, ready: true, phone: true },
+  {
+    href: "/calendar",
+    label: "Calendar",
+    icon: CalendarIcon,
+    ready: true,
+    phone: true,
+  },
   // Directly after Today, because it is answered at the same moment: the
   // athlete opens the app in the morning, says how they slept, and then looks
   // at what is planned.
   { href: "/wellness", label: "Wellness", icon: WellnessIcon, ready: true },
-  { href: "/sessions", label: "Sessions", icon: SessionsIcon, ready: true },
+  {
+    href: "/sessions",
+    label: "Sessions",
+    icon: SessionsIcon,
+    ready: true,
+    phone: true,
+  },
   { href: "/inbox", label: "Inbox", icon: InboxIcon, ready: true },
   { href: "/workouts", label: "Workouts", icon: WorkoutsIcon, ready: true },
   // The aggregate analysis surface, one page per question rather than one
@@ -74,7 +102,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // The coach's other output — its notes on a session or a week — is
   // read where the thing it is about is, not in a section of its own.
   { href: "/proposals", label: "Proposals", icon: CoachIcon, ready: true },
-  { href: "/settings", label: "Settings", icon: SettingsIcon, ready: true },
+  {
+    href: "/settings",
+    label: "Settings",
+    icon: SettingsIcon,
+    ready: true,
+    phone: true,
+  },
 ];
 
 export interface SidebarNavProps {
@@ -96,7 +130,9 @@ export function SidebarNav({ items = NAV_ITEMS }: SidebarNavProps = {}) {
   return (
     <nav
       aria-label="Sections"
-      className="flex w-[212px] shrink-0 flex-col gap-5 border-hairline border-r bg-chrome px-3 pt-[18px] pb-3.5"
+      // Hidden under 768 px, where the bottom bar (`bottom-nav.tsx`) takes
+      // over: a 212 px column on a 375 px phone leaves no room for the page.
+      className="hidden w-[212px] shrink-0 flex-col md:flex gap-5 border-hairline border-r bg-chrome px-3 pt-[18px] pb-3.5"
     >
       <Link
         href="/calendar"

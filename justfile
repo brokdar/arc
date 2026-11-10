@@ -264,6 +264,13 @@ power-curve-fixture:
 	cd backend && uv run python scripts/emit_power_curve_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-power-curve.ts
 
+# Regenerate the loading vectors both languages are tested against.
+# Run after changing app/domain/loading.py, and commit the result: the phone's
+# twin in frontend/lib/strength must agree with every case, and the backend
+# test fails while the committed file differs from what the domain says now.
+loading-vectors:
+	cd backend && uv run python scripts/emit_loading_vectors.py
+
 # --- Maintenance -------------------------------------------------------------
 
 # Re-parse every original under data/originals/, rewrite its stream file and
