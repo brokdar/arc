@@ -7,6 +7,7 @@ import { TodayView } from "@/components/today/today-view";
 import { AthleteClock } from "@/lib/clock";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
 import { formatAthleteStamp, formatUtcStamp } from "@/lib/format";
+import { queueCard } from "@/tests/mocks/cards-state";
 import {
   ATHLETE_TIMEZONE,
   athleteToday,
@@ -455,5 +456,23 @@ describe("TodayView wellness card", () => {
     expect(
       screen.getByRole("img", { name: /^Not assessed: No hrv/i }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the visible suggestion card in its slot on Today", async () => {
+    queueCard({
+      id: "0199a000-0000-7000-8000-00000000c002",
+      headline: "Welcome back",
+      because: "It has been two weeks since your last session.",
+      kind: "welcome_back",
+      priority: 2,
+    });
+
+    renderToday();
+
+    const card = await screen.findByRole("region", { name: "Welcome back" });
+    expect(card).toHaveTextContent(
+      "It has been two weeks since your last session.",
+    );
+    expect(within(card).getByRole("button", { name: "Accept" })).toBeEnabled();
   });
 });

@@ -22,6 +22,7 @@ from app.core.logging import configure_logging, get_logger
 from app.mcp.analysis_tools import register_analysis_tools
 from app.mcp.auth import McpKey, parse_api_keys, verify_key
 from app.mcp.power_tools import register_power_tools
+from app.mcp.strength_tools import register_strength_tools
 from app.mcp.tools import register_tools
 
 logger = get_logger(__name__)
@@ -69,6 +70,7 @@ def create_server(keys: list[McpKey]) -> FastMCP:
     register_tools(mcp)
     register_analysis_tools(mcp)
     register_power_tools(mcp)
+    register_strength_tools(mcp)
 
     # Custom routes sit outside the MCP endpoint that RequireAuthMiddleware
     # wraps, so this stays reachable without a bearer token — the container

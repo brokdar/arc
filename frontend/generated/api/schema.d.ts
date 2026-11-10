@@ -259,6 +259,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/cards": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Cards
+     * @description The visible card, if any: at most one, none during an active session.
+     */
+    get: operations["cards-list_cards"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/cards/{card_id}/act": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Act On Card
+     * @description Accept, dismiss or snooze ("Not now") one card.
+     */
+    post: operations["cards-act_on_card"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/clock": {
     parameters: {
       query?: never;
@@ -2720,6 +2760,73 @@ export interface components {
       average_cadence: components["schemas"]["MetricRead"];
       max_cadence: components["schemas"]["MetricRead"];
     };
+    /**
+     * CardAct
+     * @description The athlete's answer to a card. "Not now" is ``snooze``.
+     */
+    CardAct: {
+      action: components["schemas"]["CardAction"];
+    };
+    /**
+     * CardAction
+     * @description The three answers. "Not now" in the UI is ``SNOOZE``.
+     * @enum {string}
+     */
+    CardAction: "accept" | "dismiss" | "snooze";
+    /**
+     * CardPriority
+     * @description How urgent a card is; lower surfaces first.
+     *
+     *     ``SAFETY`` is priority 1 and outside the budget. ``TODAY`` is about the
+     *     session in front of the athlete, ``SUNDAY`` about the week ahead, and
+     *     ``DIGEST`` can wait for whenever there is room.
+     * @enum {integer}
+     */
+    CardPriority: 1 | 2 | 3 | 4;
+    /**
+     * CardRead
+     * @description One card as the athlete sees it.
+     */
+    CardRead: {
+      /** Because */
+      because: string;
+      /** Expires At */
+      expires_at: string | null;
+      /** First Shown */
+      first_shown: string | null;
+      /** Headline */
+      headline: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Kind */
+      kind: string;
+      /** Payload */
+      payload: {
+        [key: string]: unknown;
+      };
+      priority: components["schemas"]["CardPriority"];
+      /** Snoozed Until */
+      snoozed_until: string | null;
+      state: components["schemas"]["CardState"];
+    };
+    /**
+     * CardState
+     * @description Where a card stands.
+     *
+     *     ``QUEUED`` has never been shown; ``SHOWN`` and ``SNOOZED`` have, and stay
+     *     answerable until they expire. The last three are terminal.
+     * @enum {string}
+     */
+    CardState:
+      | "queued"
+      | "shown"
+      | "snoozed"
+      | "accepted"
+      | "dismissed"
+      | "expired";
     /**
      * CatalogueEntry
      * @description One integration arc can actually deliver.
@@ -8018,6 +8125,115 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["app__api__schemas__auth__SessionStatus"];
+        };
+      };
+    };
+  };
+  "cards-list_cards": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CardRead"][];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "cards-act_on_card": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        card_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CardAct"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CardRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such card */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The card was already answered or has expired */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Malformed answer */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
         };
       };
     };

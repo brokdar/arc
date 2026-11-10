@@ -111,6 +111,21 @@ class SessionMatchStatus(StrEnum):
     DISPLACED = "displaced"
 
 
+class SessionLifecycle(StrEnum):
+    """Whether the athlete is in the middle of a session or done with it.
+
+    ``ACTIVE`` lies between Start and Finish on the gym screen; every session
+    recorded before that screen existed — a device file, a manual entry, an
+    import — is ``FINISHED`` from the moment it is written. Introduced with
+    suggestion cards (`app.domain.cards.visible`), which must never appear
+    while it is ``ACTIVE``; the offline sync's ``session_start`` and
+    ``session_finish`` mutations are its writers.
+    """
+
+    ACTIVE = "active"
+    FINISHED = "finished"
+
+
 class SessionContext(StrEnum):
     """What kind of outing the session was (addenda R5).
 

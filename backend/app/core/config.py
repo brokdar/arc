@@ -281,6 +281,31 @@ class ProposalSettings(BaseModel):
     """
 
 
+class CardSettings(BaseModel):
+    """Suggestion cards: how many the athlete meets, and how often the sweep runs.
+
+    The budget rules themselves are `app.domain.cards`; these are its two
+    numbers and the sweep's cadence, on the `ProposalSettings` pattern.
+    """
+
+    per_day: int = 1
+    """Most new budgeted cards first shown per athlete-local day."""
+
+    per_week: int = 3
+    """Most new budgeted cards first shown per plan week (Mon-Sun, athlete zone)."""
+
+    expiry_interval_seconds: int = 3600
+    """How often the card expiry sweep runs.
+
+    Hourly, like the proposal sweep: `app.domain.cards.effective_state`
+    already hides and refuses a card the moment its seven days are up, so the
+    sweep only writes down what every read already knows.
+    """
+
+    expiry_batch: int = 200
+    """Most cards one sweep will expire; the next run catches up the rest."""
+
+
 class McpSettings(BaseModel):
     """MCP server and coaching-agent settings.
 
@@ -406,6 +431,7 @@ class Settings(BaseSettings):
     scoring: ScoringSettings = ScoringSettings()
     wellness: WellnessSettings = WellnessSettings()
     proposals: ProposalSettings = ProposalSettings()
+    cards: CardSettings = CardSettings()
     dropbox: DropboxSettings = DropboxSettings()
     secrets: SecretsSettings = SecretsSettings()
     log: LogSettings = LogSettings()

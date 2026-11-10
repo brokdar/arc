@@ -78,6 +78,7 @@ import {
   zoneModelMatches,
   zonesFixture,
 } from "@/tests/mocks/fixtures";
+import { cardHandlers } from "@/tests/mocks/handlers-cards";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
 
@@ -1781,3 +1782,4 @@ handlers.push(...appKeyHandlers);
 
 handlers.push(...fitnessHandlers);
 handlers.push(...powerHandlers);
+handlers.push(...cardHandlers);

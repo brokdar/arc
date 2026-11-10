@@ -1,6 +1,7 @@
 import type { components } from "@/generated/api/schema";
 import { addDays, mondayOf, todayIsoDate } from "@/lib/dates";
 import { redirectEligible } from "@/lib/dropbox-redirect";
+import { resetCardState } from "./cards-state";
 import { MATCH_BREAKDOWNS } from "./generated-matching";
 import { RIDE_METRICS, RIDE_STREAMS } from "./generated-metrics";
 import { SCORED_FTP_VERSION_ID, SCORED_PAIRS } from "./generated-scoring";
@@ -1981,6 +1982,7 @@ export function resetMockState(): void {
   resetConnectionsState();
   resetIntegrationsState();
   resetDiscoveryState();
+  resetCardState();
 }
 
 /** A fresh uuid-shaped id, so nothing minted twice collides. */

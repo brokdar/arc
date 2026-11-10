@@ -49,7 +49,7 @@ from app.core.exceptions import (
     ValidationError,
     domain_rules,
 )
-from app.core.logging import get_logger
+from app.core.scheduler import add_sweep_job, run_sweep
 from app.domain.activity import SessionDiscipline, as_planned_discipline
 from app.domain.actor import Actor
 from app.domain.athlete import Discipline
@@ -87,8 +87,6 @@ from app.services.planned_sessions import (
     PrescriptionPreview,
     SessionResolution,
 )
-
-logger = get_logger(__name__)
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "plan_proposal"
@@ -1170,14 +1168,15 @@ async def resolve_proposals_for_session(
 
 async def run_proposal_expiry() -> None:
     """The scheduled sweep. Never raises — a failed run must not kill the job."""
-    try:
+
+    async def sweep() -> int:
         async with session_scope() as session:
             lapsed = await ProposalService.from_session(session).expire(
                 actor=Actor.system()
             )
-        logger.info("proposal_expiry_ran", lapsed=len(lapsed))
-    except Exception:  # noqa: BLE001 — a scheduler job that raises stops running
-        logger.exception("proposal_expiry_failed")
+        return len(lapsed)
+
+    await run_sweep("proposal_expiry", sweep)
 
 
 def register_proposal_expiry_job(scheduler: BaseScheduler) -> None:
@@ -1185,17 +1184,11 @@ def register_proposal_expiry_job(scheduler: BaseScheduler) -> None:
 
     Registered by the work package that needs it, like the inbox, missed and
     prompt sweeps, rather than in `app.core.scheduler`, which owns no jobs of
-    its own. ``coalesce`` and ``max_instances=1`` because the sweep is
-    idempotent and two of them over one backlog would race for nothing.
+    its own (it owns only the shared `add_sweep_job` shape).
     """
-    interval = get_settings().proposals.expiry_interval_seconds
-    scheduler.add_job(
+    add_sweep_job(
+        scheduler,
         run_proposal_expiry,
-        "interval",
-        seconds=interval,
-        id=EXPIRY_JOB_ID,
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
+        job_id=EXPIRY_JOB_ID,
+        seconds=get_settings().proposals.expiry_interval_seconds,
     )
-    logger.info("proposal_expiry_registered", seconds=interval)

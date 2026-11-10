@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import type { WeekSession } from "@/components/calendar/session-card";
+import { TodayCard } from "@/components/cards/card";
 import { RedFlagControl } from "@/components/coach/red-flag";
 import { AnchorProvenance } from "@/components/design/anchor-provenance";
 import { Panel } from "@/components/design/panel";
@@ -94,6 +95,9 @@ export function TodayView() {
 
       <PageBody className="flex flex-wrap items-start gap-[18px]">
         <div className="flex min-w-0 flex-[1_1_620px] flex-col gap-3.5">
+          {/* Above the session, and empty — not even a frame — when there is
+              no card or a session is under way (`components/cards/card.tsx`). */}
+          <TodayCard />
           {week.isPending ? (
             <p className="text-ink-muted text-sm">Loading today…</p>
           ) : week.error ? (
