@@ -56,7 +56,6 @@ group("owner: an owned path, whoever wrote it");
     ".claude/settings.json",
     ".claude/hooks/require_agent_identity.py",
     "scripts/risk-tier.mjs",
-    "justfile",
   ]) {
     const v = tier({ files: [f("docs/a.md"), f(p)] });
     ok(`${p} makes the whole PR owner`, v.tier === "owner", JSON.stringify(v));
@@ -260,20 +259,16 @@ group("the live .github/CODEOWNERS, through the classifier");
     "backend/app/persistence/alembic/versions/anything.py",
     "caddy/Caddyfile",
     "docker-compose.yml",
-    ".env.example",
     ".github/workflows/zizmor.yml",
-    ".agents/skills/alembic/SKILL.md",
     ".github/CODEOWNERS",
     ".claude/settings.json",
     ".claude/hooks/require_agent_identity.py",
-    ".pre-commit-config.yaml",
     "scripts/as-agent.sh",
     "scripts/risk-tier.mjs",
-    "justfile",
   ]) {
     ok(`${p} is owned`, ownedBy(p, entries) !== null);
   }
-  for (const p of ["backend/app/services/athlete.py", "frontend/components/x.tsx", "docs/a.md", "CLAUDE.md", "backend/tests/unit/test_auth.py"]) {
+  for (const p of ["backend/app/services/athlete.py", "frontend/components/x.tsx", "docs/a.md", "CLAUDE.md", "backend/tests/unit/test_auth.py", "justfile", ".env.example", ".pre-commit-config.yaml", ".agents/skills/alembic/SKILL.md", "scripts/bootstrap-env.sh"]) {
     ok(`${p} is not owned`, ownedBy(p, entries) === null);
   }
 }
