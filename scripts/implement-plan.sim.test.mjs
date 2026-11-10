@@ -107,10 +107,26 @@ const DEFAULTS = {
   baseline: { exitCode: 0, failing: [], tail: "GATE OK", detail: "green before we start" },
 };
 
+// What the parse seat really returns: `parse-plan.mjs --compact`, the plan with
+// each PR's prose stripped and its criteria reduced to ids. The prose comes back
+// per PR from the detail seat, so a fixture's full PR is what that seat returns.
+const AC_ID = /\*\*(AC-\d+)\*\*/;
+function skeletonOf(plan) {
+  if (!plan || !plan.prs) return plan;
+  return {
+    ...plan,
+    prs: plan.prs.map(({ why, delivers, reuses, decisions, acceptance, ...rest }) => ({
+      ...rest,
+      acIds: (acceptance || []).map((a) => (a.match(AC_ID) || [])[1] || "?"),
+    })),
+  };
+}
+
 // Which default a label falls back to. Order matters: longest match first.
 const ROUTES = [
   ["parse-plan", "parse"],
   ["gate-baseline", "baseline"],
+  [":detail", "detail"],
   [":setup", "setup"],
   [":implement", "implement"],
   // Before the broader `:gate` / `:ci` needles: `feat/a:gate-fix1` and
@@ -143,10 +159,17 @@ async function simulate({ plan, replies = {}, argsIn }) {
       const r = replies[label];
       return typeof r === "function" ? r(calls) : r;
     }
-    if (label === "parse-plan") return plan;
+    if (label === "parse-plan") return skeletonOf(plan);
     const hit = ROUTES.find(([needle]) => label.includes(needle));
     const kind = hit ? hit[1] : null;
-    if (kind === "parse") return plan;
+    if (kind === "parse") return skeletonOf(plan);
+    if (kind === "detail") {
+      const branch = label.split(":")[0];
+      const me = (plan.prs || []).find((x) => x.branch === branch);
+      if (!me) return { ok: false, exitCode: 4, stderr: `No PR with branch ${branch}` };
+      const { title, why, delivers, reuses, decisions, triggers, acceptance } = me;
+      return { ok: true, exitCode: 0, title, branch, why, delivers, reuses, decisions, triggers, acceptance };
+    }
     if (!kind) return { detail: "unrouted" };
     const base = DEFAULTS[kind];
     if (kind === "setup") {
@@ -216,8 +239,8 @@ group("a clean run of two independent PRs");
   ok("not halted", r.halted === null);
   ok("the plan sha is reported", r.planSha === "abc123abc123");
   ok(
-    "the seat order per PR is setup → implement → gate → review → pr → ci → cleanup",
-    seatsFor(sim, "feat/a").join(",") === "setup,implement,gate,review,pr,ci,cleanup",
+    "the seat order per PR is detail → setup → implement → gate → review → pr → ci → cleanup",
+    seatsFor(sim, "feat/a").join(",") === "detail,setup,implement,gate,review,pr,ci,cleanup",
     seatsFor(sim, "feat/a").join(","),
   );
   ok("no merge seat ran for a leaf", !sim.labels.some((l) => l.includes("merge")));
@@ -1165,6 +1188,32 @@ group("a gate that was already red must not be charged to every pull request");
   const dead = await simulate({ plan: planOf([prOf()]), replies: { "gate-baseline": null }, argsIn: { plan: "p.md" } });
   ok("a dead baseline seat degrades to no baseline", dead.result.open.length === 1, JSON.stringify(dead.result));
   ok("  …and says so", /could not be measured/.test(dead.log));
+}
+
+// ── the plan is copied in two sizes: a skeleton once, each PR's detail alone ──
+group("each PR's full section is fetched and checked before its worktree is touched");
+{
+  const two = [prOf({ branch: "feat/a", title: "feat(a): a" }), prOf({ branch: "feat/b", title: "feat(b): b" })];
+  const sim = await simulate({ plan: planOf(two), argsIn: { plan: "p.md" } });
+  ok("the parse seat is asked for the compact skeleton", /parse-plan\.mjs p\.md --compact/.test(promptFor(sim, "parse-plan")));
+  ok("the detail seat reads the snapshot, not the working copy", /thing-plan\.md --pr=feat\/a/.test(promptFor(sim, "feat/a:detail")));
+  ok("the developer still sees the criterion text", promptFor(sim, "feat/a:implement").includes("something specific happens"));
+  ok("…and the edge case", promptFor(sim, "feat/a:implement").includes("Edge: nothing at all"));
+  ok("…and the PR's why", promptFor(sim, "feat/a:implement").includes("because the coach cannot see it"));
+  ok("the reviewer sees the criterion text", promptFor(sim, "feat/a:review").includes("something specific happens"));
+
+  const dropped = await simulate({
+    plan: planOf([prOf({ acceptance: [AC, "- [ ] **AC-2** another — *unit*, `t.py`\n- Edge: none"] })]),
+    replies: { "feat/a:detail": { ok: true, exitCode: 0, title: "feat(x): the a thing", branch: "feat/a", why: "w", delivers: "d", acceptance: [AC] } },
+    argsIn: { plan: "p.md" },
+  });
+  const st = (dropped.result.stopped || [])[0] || {};
+  ok("a detail copy that drops a criterion stops that PR", st.reason === "plan-detail-corrupt", JSON.stringify(dropped.result));
+  ok("  …before any worktree is set up", !dropped.labels.includes("feat/a:setup"), dropped.labels.join(","));
+  ok("  …and the recovery names the re-entry", /onlyBranch: "feat\/a"/.test(st.recovery || ""));
+
+  const dead = await simulate({ plan: planOf([prOf()]), replies: { "feat/a:detail": null }, argsIn: { plan: "p.md" } });
+  ok("a dead detail seat stops that PR, reported", ((dead.result.stopped || [])[0] || {}).reason === "plan-detail-corrupt", JSON.stringify(dead.result));
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

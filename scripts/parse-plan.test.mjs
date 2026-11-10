@@ -476,13 +476,53 @@ group("CLI");
     // size is a real constraint. Calibrated on the LIVE plan, not on the toy
     // fixture: the toy is ~2 KB and could never fail this.
     const live = execFileSync("bash", ["-c", `ls ${resolve(here, "..")}/*-plan.md 2>/dev/null | head -1`], { encoding: "utf8" }).trim();
+    // What the workflow copies is the `--compact` skeleton once and one `--pr=`
+    // section per PR — the full document is for humans and may be any size.
     if (live) {
-      const big = call([live, "--no-remote", "--no-snapshot"]);
-      ok("a real plan's JSON stays inside the ~20 KB echo budget", big.code === 0 && big.out.length < 20_000, `${big.out.length} bytes`);
+      const big = call([live, "--no-remote", "--no-snapshot", "--compact"]);
+      ok("a real plan's skeleton stays inside the ~20 KB echo budget", big.code === 0 && big.out.length < 20_000, `${big.out.length} bytes`);
+      const prs = big.code === 0 ? JSON.parse(big.out).prs : [];
+      const widest = Math.max(0, ...prs.map((p) => call([live, `--pr=${p.branch}`]).out.length));
+      ok("every one of its PR sections stays inside the budget too", widest > 0 && widest < 20_000, `${widest} bytes`);
     } else {
       ok("the fixture's JSON is compact", r.out.length < 12_000, `${r.out.length} bytes`);
     }
   }
+
+  // ── the two shapes the workflow copies ──
+  const c = call([good, "--no-remote", "--no-snapshot", "--compact"]);
+  const cj = c.code === 0 ? JSON.parse(c.out) : { prs: [] };
+  ok("--compact exits 0", c.code === 0, c.err);
+  ok("--compact keeps prCount and the PR list", cj.prCount === 2 && cj.prs.length === 2);
+  ok("--compact drops the prose", cj.prs.every((p) => !("why" in p) && !("delivers" in p) && !("reuses" in p) && !("decisions" in p)));
+  ok("--compact replaces criteria text with their ids", cj.prs.every((p) => !("acceptance" in p)) && cj.prs[0].acIds.every((id) => /^AC-\d+$/.test(id)));
+  ok("--compact keeps what the guards read", cj.prs.every((p) => "depends" in p && "owns" in p && "needsDocker" in p && "merged" in p));
+  ok("--compact keeps the plan-level why and feature criteria", cj.why === json.why && cj.featureAcceptance.length === json.featureAcceptance.length);
+
+  const one = call([good, "--pr=feat/mcp-week-ids"]);
+  const oj = one.code === 0 ? JSON.parse(one.out) : {};
+  const full = json.prs.find((p) => p.branch === "feat/mcp-week-ids");
+  ok("--pr= exits 0 for a known branch", one.code === 0, one.err);
+  ok("--pr= returns that PR's criteria verbatim", JSON.stringify(oj.acceptance) === JSON.stringify(full.acceptance));
+  ok("--pr= returns its prose", oj.why === full.why && oj.delivers === full.delivers && oj.reuses === full.reuses);
+  ok("--pr= ids agree with the skeleton's", JSON.stringify(cj.prs.find((p) => p.branch === "feat/mcp-week-ids").acIds) === JSON.stringify(oj.acceptance.map((a) => a.match(/\*\*(AC-\d+)\*\*/)[1])));
+  ok("--pr= with an unknown branch exits 4", call([good, "--pr=feat/ghost"]).code === 4);
+  ok("--pr= with no branch exits 4", call([good, "--pr="]).code === 4);
+  ok("--pr= and --compact together exit 4", call([good, "--pr=feat/mcp-week-ids", "--compact"]).code === 4);
+
+  // `process.exit()` ended the process before a PIPED stdout drained, so a
+  // consumer reading through a pipe got exactly the first 65,536 bytes — invalid
+  // JSON — with exit 0. execFileSync reads to EOF and never saw it.
+  const huge = join(dir, "huge-plan.md");
+  writeFileSync(huge, PLAN.replace("**Delivers**: ids on the week strip.", `**Delivers**: ids on the week strip. ${"padding ".repeat(12_000)}`));
+  const piped = execFileSync("bash", ["-c", `node "${script}" "${huge}" --no-remote --no-snapshot | cat`], { encoding: "utf8", maxBuffer: 8 << 20 });
+  let pj = null;
+  try {
+    pj = JSON.parse(piped);
+  } catch {
+    /* reported below */
+  }
+  ok("output past 64 KiB survives a pipe whole", piped.length > 65_536 && pj !== null && pj.prCount === 2, `${piped.length} bytes`);
 
   const missingBranch = join(dir, "broken-plan.md");
   writeFileSync(missingBranch, PLAN.replace("> **Branch**: `feat/mcp-week-ids`\n", ""));

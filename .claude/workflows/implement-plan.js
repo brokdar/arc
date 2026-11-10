@@ -132,9 +132,9 @@ const PARSE_SCHEMA = {
     // at the operator's working copy.
     planSnapshot: { type: "string" },
     planSha: { type: "string" },
-    // Cross-checked against `prs.length`: the seat has to copy a ~16 KB JSON
-    // document into its structured output, and a truncated echo that drops a PR
-    // would otherwise read as a shorter plan.
+    // Cross-checked against `prs.length`: the seat has to copy the skeleton JSON
+    // into its structured output, and a truncated echo that drops a PR would
+    // otherwise read as a shorter plan.
     prCount: { type: "number" },
     // The script prints this and the prompt says to copy the JSON verbatim, so
     // `additionalProperties: false` made those two instructions contradict each
@@ -145,25 +145,49 @@ const PARSE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "branch", "depends", "acceptance", "prExists", "merged"],
+        // The SKELETON (`parse-plan.mjs --compact`): no prose, and the criteria
+        // as ids only. Each PR's full text is fetched by its own detail seat —
+        // see DETAIL_SCHEMA.
+        required: ["title", "branch", "depends", "acIds", "prExists", "merged"],
         properties: {
           title: { type: "string" },
           branch: { type: "string" },
           depends: { type: "array", items: { type: "string" } },
-          why: { type: "string" },
-          delivers: { type: "string" },
-          reuses: { type: "string" },
           owns: { type: "array", items: { type: "string" } },
           needsDocker: { type: "boolean" },
           triggers: { type: "array", items: { type: "string" } },
-          decisions: { type: "array", items: { type: "string" } },
-          acceptance: { type: "array", items: { type: "string" } },
+          acIds: { type: "array", items: { type: "string" } },
           prExists: { type: "boolean" },
+          prState: { type: ["string", "null"] },
           merged: { type: "boolean" },
           prNumber: { type: ["number", "null"] },
         },
       },
     },
+  },
+};
+
+// One PR's full section (`parse-plan.mjs <snapshot> --pr=<branch>`), copied by a
+// cheap seat at the start of that PR's build. Splitting the parse this way keeps
+// every copy small: the whole 24-PR strength plan printed at once was ~76 KB,
+// and on 2026-10-11 a 109 KB copy was stopped by a classifier before any PR ran.
+// A single PR is ~3 KB. `detailProblems` checks the copy against the skeleton.
+const DETAIL_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ok", "exitCode"],
+  properties: {
+    ok: { type: "boolean" },
+    exitCode: { type: "number" },
+    stderr: { type: "string" },
+    title: { type: "string" },
+    branch: { type: "string" },
+    why: { type: "string" },
+    delivers: { type: "string" },
+    reuses: { type: "string" },
+    decisions: { type: "array", items: { type: "string" } },
+    triggers: { type: "array", items: { type: "string" } },
+    acceptance: { type: "array", items: { type: "string" } },
   },
 };
 
@@ -457,6 +481,7 @@ function normalizePrs(prs) {
     triggers: p.triggers || [],
     decisions: p.decisions || [],
     acceptance: p.acceptance || [],
+    acIds: p.acIds || [],
     why: p.why || "",
     delivers: p.delivers || "",
     reuses: p.reuses || "",
@@ -505,7 +530,7 @@ function duplicateTitles(prs) {
 // criteria". A PR with none is an unreviewed push to a protected branch — and it
 // is a likely parse failure, since a stray `### heading` becomes a PR with no ACs.
 function acceptanceless(prs) {
-  return prs.filter((p) => !p.acceptance || p.acceptance.length === 0);
+  return prs.filter((p) => !(p.acIds && p.acIds.length) && !(p.acceptance && p.acceptance.length));
 }
 function unknownDependencies(prs) {
   const known = new Set(prs.map((p) => p.branch));
@@ -560,9 +585,10 @@ function missingPrerequisites(nextGroup, mergedNow, planMerged) {
   ];
 }
 
-// A parse seat has to echo a ~16 KB JSON document into its structured output.
-// This is the integrity check on that echo: a truncated array, a dropped PR, or
-// a payload that does not match the count the script printed.
+// A parse seat has to echo the plan skeleton into its structured output. This is
+// the integrity check on that echo: a truncated array, a dropped PR, or a payload
+// that does not match the count the script printed. The prose is checked later,
+// per PR, by `detailProblems`.
 function echoProblems(parsed) {
   const out = [];
   if (!parsed.prs || !parsed.prs.length) out.push("no PRs in the parsed payload");
@@ -575,7 +601,24 @@ function echoProblems(parsed) {
     // Only for PRs still to be built. A long-lived plan legitimately has its
     // shipped sections trimmed to a heading, and refusing the run for that
     // reports a corrupt echo when the echo is fine.
-    if (!p.merged && (!p.why || !p.delivers)) out.push(`"${p.title || "?"}" is missing why/delivers`);
+    if (!p.merged && (p.acIds || []).includes("?")) out.push(`"${p.title || "?"}" has a criterion with no AC-n id`);
+  }
+  return out;
+}
+
+// The per-PR detail copy, checked against the skeleton it must agree with. The
+// criteria are contracts: a copy that drops one, reorders them, or belongs to
+// another PR would have the developer and the reviewer both judge a shorter list.
+function detailProblems(skeleton, detail) {
+  const out = [];
+  if (!detail) return ["the detail seat returned nothing"];
+  if (!detail.ok) return [`parse-plan --pr refused (exit ${detail.exitCode}): ${detail.stderr || "(no stderr)"}`];
+  if (detail.branch !== skeleton.branch) out.push(`detail is for "${detail.branch}", not "${skeleton.branch}"`);
+  if (detail.title !== skeleton.title) out.push("detail title differs from the skeleton's");
+  if (!detail.why || !detail.delivers) out.push("missing why/delivers");
+  const ids = (detail.acceptance || []).map((a) => (a.match(/\*\*(AC-\d+)\*\*/) || [])[1] || "?");
+  if (ids.join(",") !== (skeleton.acIds || []).join(",")) {
+    out.push(`criteria ${ids.join(",") || "(none)"} do not match the skeleton's ${(skeleton.acIds || []).join(",")}`);
   }
   return out;
 }
@@ -709,10 +752,11 @@ ${list(h.weakSpots)}
 function parsePrompt() {
   return `Run the plan parser and hand back exactly what it printed.
 
-  \`node scripts/parse-plan.mjs ${PLAN}\`
+  \`node scripts/parse-plan.mjs ${PLAN} --compact\`
 
 It reads the plan, cross-checks every PR against \`gh pr list\` and \`git log origin/main\`, snapshots
-the plan for the rest of the run, and prints ONE JSON document on stdout.
+the plan for the rest of the run, and prints ONE JSON document on stdout: the plan's skeleton, with
+each PR's criteria as ids only (their text is read later, per PR).
 
 - Exit 0 → return \`ok: true\`, \`exitCode: 0\`, and the JSON's fields as your structured output,
   COPIED VERBATIM. Do not summarise, re-order, re-wrap or "tidy" anything — the acceptance criteria
@@ -721,6 +765,24 @@ the plan for the rest of the run, and prints ONE JSON document on stdout.
 - Exit 2 (plan defects), 3 (remote state unavailable) or 4 (usage) → return \`ok: false\`, the
   \`exitCode\`, and the script's stderr verbatim in \`stderr\`. Do NOT try to parse the plan yourself,
   do not work around it, and do not fix the plan.
+
+Run nothing else.`;
+}
+
+function detailPrompt(parsed, p) {
+  return `Run the plan parser for ONE pull request and hand back exactly what it printed.
+
+  \`node scripts/parse-plan.mjs ${parsed.planSnapshot} --pr=${p.branch}\`
+
+It prints ONE JSON document on stdout: that PR's title, branch, why, delivers, reuses, decisions,
+triggers and acceptance criteria.
+
+- Exit 0 → return \`ok: true\`, \`exitCode: 0\`, and the JSON's fields as your structured output,
+  COPIED VERBATIM. Do not summarise, re-order, re-wrap or "tidy" anything — the acceptance criteria
+  are contracts, and their ids are checked against the plan skeleton, so a dropped or altered
+  criterion is detected.
+- Any other exit → return \`ok: false\`, the \`exitCode\`, and the script's stderr verbatim in
+  \`stderr\`. Do NOT read the plan yourself and do not work around it.
 
 Run nothing else.`;
 }
@@ -1532,6 +1594,28 @@ async function buildPr(p) {
     log(`HARD STOP — ${p.branch}: ${reason}`);
     return { branch: p.branch, title: p.title, ok: false, merged: false, reason, ...extra };
   };
+
+  // The skeleton carries no prose; every prompt below needs this PR's full
+  // section, so it is fetched (and checked against the skeleton) first.
+  const detail = await agent(detailPrompt(parsed, p), cheap("detail", DETAIL_SCHEMA));
+  const detailBad = detailProblems(p, detail);
+  if (detailBad.length) {
+    return fail("plan-detail-corrupt", {
+      problems: detailBad,
+      recovery: `The copy of this PR's plan section did not hold up: ${detailBad.join("; ")}. Nothing was implemented. Run \`node scripts/parse-plan.mjs ${parsed.planSnapshot} --pr=${p.branch}\` by hand, then re-launch with { onlyBranch: "${p.branch}" }.`,
+    });
+  }
+  p = normalizePrs([
+    {
+      ...p,
+      why: detail.why,
+      delivers: detail.delivers,
+      reuses: detail.reuses,
+      decisions: detail.decisions,
+      triggers: detail.triggers || p.triggers,
+      acceptance: detail.acceptance,
+    },
+  ])[0];
 
   const setup = await agent(setupPrompt(parsed, p), cheap("setup", SETUP_SCHEMA));
   if (setup == null) {
