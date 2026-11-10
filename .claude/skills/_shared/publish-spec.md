@@ -56,19 +56,21 @@ tab-separated columns, so a whole-line grep against it never matches and the cre
 error — on every repeat invocation. Keep `--limit 200` (the default is only 30) and `-F` so the
 label is matched literally, not as a regex.)
 
-Then create the issue and capture the URL it prints. The **title** goes in `--title` and the
+Then create the issue and capture the URL it prints. Run it through `scripts/as-agent.sh`, as every
+agent write to GitHub is, so the issue is authored by the agent and not by the operator; if the wrapper
+exits 3 it refused and ran nothing — report that, and do not retry the command bare. The **title** goes in `--title` and the
 **body** is the template as-is — don't prepend an H1 title to the body; that would duplicate the
 issue title:
 
 ```bash
-gh issue create --title "<title>" --label "<label>" --body "<body>"
+scripts/as-agent.sh gh issue create --title "<title>" --label "<label>" --body "<body>"
 ```
 
 For multi-line bodies, write the body to a temp file and pass `--body-file` instead of `--body` —
 it avoids shell-quoting headaches with markdown:
 
 ```bash
-gh issue create --title "<title>" --label "<label>" --body-file <tmpfile>
+scripts/as-agent.sh gh issue create --title "<title>" --label "<label>" --body-file <tmpfile>
 ```
 
 Report the created issue URL back to the user. Do **not** also write a file in this case — the

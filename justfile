@@ -171,8 +171,8 @@ check-all: check test-int
 # `exec-bits` (pre-push hooks outside `check`), the file hygiene hooks
 # (end-of-file, trailing-whitespace, check-yaml/toml/json), and the repo's own
 # tooling suites (`workflow-guards-test`, `implement-plan-sim-test`,
-# `parse-plan-test`, `ci-status-test`, `docker-lock-test`, migration-required's
-# own cases) — which run at commit time, scoped to the files they cover. So a
+# `parse-plan-test`, `ci-status-test`, `docker-lock-test`, `as-agent-test`,
+# migration-required's own cases) — which run at commit time, scoped to the files they cover. So a
 # green gate can still be followed by a hook that refuses the commit.
 #
 # The migration heuristic reads a COMMIT RANGE, so it is silent until the branch
