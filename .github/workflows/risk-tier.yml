@@ -1,0 +1,95 @@
+name: Risk tier
+
+# Labels every pull request `tier:auto`, `tier:agent` or `tier:owner` from what it
+# changes (scripts/risk-tier.mjs), so a reviewer and an agent both know early
+# which lane it is in.
+#
+# THE LABEL IS INFORMATION, NEVER AN INPUT TO A MERGE DECISION. Two reasons, both
+# real: anyone with triage access can add or remove a label by hand, and on a
+# `pull_request` event GitHub runs this YAML from the PR's own merge ref, so a PR
+# that edits this file can label itself whatever it likes. Both are contained
+# today because `.github/` is an owned path (the code-owner review blocks the
+# merge regardless of any label). Anything that lets an agent merge unattended
+# must therefore RECOMPUTE the tier at merge time from the base branch's copy of
+# scripts/risk-tier.mjs, not read this label.
+#
+# WHAT IS READ FROM THE BASE BRANCH: the script and .github/CODEOWNERS, so a PR
+# cannot loosen the classification rules by editing them (both are owned paths
+# anyway). For the very first PR that adds this workflow the script is not on the
+# base yet; that is labelled `tier:owner`, the safe answer, instead of failing.
+#
+# NO LABEL MEANS UNCLASSIFIED, not safe. Labels are cleared FIRST and set last, so
+# a failure anywhere leaves none rather than a stale `tier:auto` on a PR that has
+# since touched an owned path.
+#
+# `pull_request`, not `pull_request_target`: nothing here needs the privileged
+# context, and the job never executes PR code — it reads the file list from the API
+# and runs the BASE branch's script. A fork's token is read-only and could not
+# label, so forks are skipped. Dependabot's token is read-only too: for its PRs the
+# labelling steps are allowed to fail (the tier is still computed and shown in the
+# run summary); for every other author a labelling failure fails the job.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  tier:
+    # Not a required check, and not named like one: renaming it breaks nothing.
+    name: risk-tier
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # labels are issues' labels; `gh label create` needs it
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Clear the old tier label
+        continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
+        run: |
+          set -euo pipefail
+          for t in auto agent owner; do
+            gh label create "tier:$t" --repo "$REPO" --force \
+              --color "$(case $t in auto) echo 0e8a16 ;; agent) echo fbca04 ;; owner) echo d93f0b ;; esac)" \
+              --description "Review lane from scripts/risk-tier.mjs" > /dev/null
+            gh pr edit "$PR" --repo "$REPO" --remove-label "tier:$t" > /dev/null
+          done
+
+      - name: Classify
+        id: classify
+        run: |
+          set -euo pipefail
+          if [ -f scripts/risk-tier.mjs ]; then
+            node scripts/risk-tier.mjs --pr "$PR" --repo "$REPO" > "$RUNNER_TEMP/tier.json"
+          else
+            echo '{"tier":"owner","reasons":["scripts/risk-tier.mjs is not on the base branch yet, so this PR cannot be classified"],"authorType":"unknown"}' > "$RUNNER_TEMP/tier.json"
+          fi
+          tier="$(jq -r .tier "$RUNNER_TEMP/tier.json")"
+          case "$tier" in auto | agent | owner) ;; *) echo "unexpected tier '$tier'" >&2; exit 1 ;; esac
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Risk tier: \`$tier\`"
+            jq -r '"Author type: \(.authorType)", "", (.reasons[] | "- " + .)' "$RUNNER_TEMP/tier.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set the tier label
+        continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
+        env:
+          TIER: ${{ steps.classify.outputs.tier }}
+        run: gh pr edit "$PR" --repo "$REPO" --add-label "tier:$TIER"
