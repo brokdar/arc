@@ -14,6 +14,8 @@ import { StatusDot } from "@/components/design/status-dot";
 import { WorkoutProfileBars } from "@/components/design/workout-profile-bars";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
+import { InstallHint } from "@/components/shell/install-hint";
+import { OfflineReady } from "@/components/shell/offline-ready";
 import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
@@ -93,6 +95,13 @@ export function TodayView() {
       </Toolbar>
 
       <PageBody className="flex flex-wrap items-start gap-[18px]">
+        {/* Today is the page the installed app opens on, offline included,
+            so it is where the phone says whether it can. Full width, above
+            both columns; each renders nothing when it has nothing to say. */}
+        <div className="flex w-full flex-col gap-2 empty:hidden">
+          <OfflineReady />
+          <InstallHint />
+        </div>
         <div className="flex min-w-0 flex-[1_1_620px] flex-col gap-3.5">
           {week.isPending ? (
             <p className="text-ink-muted text-sm">Loading today…</p>

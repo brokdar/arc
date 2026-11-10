@@ -25,3 +25,23 @@ test("a guarded page degrades gracefully with no API", async ({ page }) => {
       .or(page.getByText("Could not verify your session.")),
   ).toBeVisible();
 });
+
+/**
+ * Behind Caddy, the service worker is served from the origin root and never
+ * from an HTTP cache — the proxy's half of the offline shell, which only the
+ * real stack can show (Next sets the same headers; `caddy/Caddyfile` repeats
+ * them after the proxy answers). Tagged @fullstack, so it runs only in
+ * `just smoke`, against http://localhost through Caddy.
+ */
+test("the service worker is served from / uncached behind Caddy @fullstack", async ({
+  request,
+}) => {
+  const response = await request.get("/sw.js");
+
+  expect(response.status()).toBe(200);
+  expect(new URL(response.url()).pathname).toBe("/sw.js");
+  expect(response.headers()["cache-control"]).toBe("no-cache");
+  expect(response.headers()["service-worker-allowed"]).toBe("/");
+  expect(response.headers()["content-type"]).toMatch(/javascript/);
+  expect(await response.text()).toContain('addEventListener("fetch"');
+});

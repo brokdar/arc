@@ -12,6 +12,13 @@
 # with a bearer key from MCP__API_KEYS — unauthenticated calls get a 401 from
 # the MCP server itself, not from Caddy.
 #
+# `/sw.js` is the service worker (frontend/public/sw.js). It is served from
+# the origin root because a worker controls only paths under its own URL, and
+# it must never sit in an HTTP cache: a cached worker would keep a phone on the
+# previous build until that cache expired. Next sets the same two headers
+# (frontend/next.config.ts); Caddy sets them again after the proxy answers
+# (`header_down`), so a change on either side cannot silently drop them.
+#
 # `request_body max_size` is the first bound on an upload: the API refuses
 # anything over 100 MB (MAX_UPLOAD_BYTES) from the Content-Length header, but
 # only after the request has reached it. This closes the connection at the
@@ -34,6 +41,13 @@
 
 	handle /mcp* {
 		reverse_proxy mcp:8001
+	}
+
+	handle /sw.js {
+		reverse_proxy frontend:3000 {
+			header_down Cache-Control "no-cache"
+			header_down Service-Worker-Allowed "/"
+		}
 	}
 
 	handle {
