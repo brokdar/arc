@@ -169,7 +169,8 @@ check-all: check test-int
 #
 # WHAT IT DOES NOT RUN, so nobody reads it as "everything": `zizmor` and
 # `exec-bits` (pre-push hooks outside `check`), the file hygiene hooks
-# (end-of-file, trailing-whitespace, check-yaml/toml/json), and the repo's own
+# (end-of-file, trailing-whitespace, check-yaml/toml/json, `check-codeowners`
+# and its suite), and the repo's own
 # tooling suites (`workflow-guards-test`, `implement-plan-sim-test`,
 # `parse-plan-test`, `ci-status-test`, `docker-lock-test`, migration-required's
 # own cases) — which run at commit time, scoped to the files they cover. So a

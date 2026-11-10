@@ -1,0 +1,60 @@
+# The owner lane: a pull request touching any path below cannot merge without
+# the operator's approving review (`protect-main` sets
+# `require_code_owner_review`). Agents act as `brokdar-agent[bot]`
+# (scripts/as-agent.sh), which is not a code owner, so no agent can clear this —
+# not by approving, not by merging, not by being the author.
+#
+# What is here, and why: the paths where a plausible-looking change is a
+# security or data incident, and the paths that define the gate itself — an
+# agent PR must not be able to change what checks agent PRs.
+#
+# Every entry is a literal path, no globs, and `scripts/check-codeowners.sh`
+# fails the commit if one stops matching a tracked file: a rename would
+# otherwise drop its protection silently, with GitHub saying nothing.
+
+# Auth and session: the single-user login, the session cookie, and where the
+# guard is attached. `deps.py` only DEFINES `require_session`; which routers
+# carry it is decided in `app/main.py` (the open router vs the guarded one), so
+# moving a router across that line removes auth without touching an auth file.
+/backend/app/api/session.py           @brokdar
+/backend/app/api/deps.py              @brokdar
+/backend/app/api/routes/auth.py       @brokdar
+/backend/app/main.py                  @brokdar
+
+# MCP authentication: bearer keys, scopes, the identity tools act as, and
+# `mcp/main.py`, which attaches the key verifier to the server — dropping that
+# argument leaves every tool open.
+/backend/app/mcp/auth.py              @brokdar
+/backend/app/mcp/identity.py          @brokdar
+/backend/app/mcp/main.py              @brokdar
+
+# Migrations run against the athlete's only database; a bad one is data loss.
+/backend/app/persistence/alembic/     @brokdar
+
+# What is exposed, and how it is deployed.
+/caddy/                               @brokdar
+/docker-compose.yml                   @brokdar
+/.env.example                         @brokdar
+/backend/Dockerfile                   @brokdar
+/frontend/Dockerfile                  @brokdar
+
+# The gate and the agents: CI, this file, hooks, toolchain pins, the agent
+# definitions, workflows, rules and settings, and every repo-tooling script —
+# the gate's own pieces (migration heuristic, api-sync, ci-status, the identity
+# wrapper scripts/as-agent.sh, this file's checker) all live in scripts/.
+/.github/                             @brokdar
+/.claude/                             @brokdar
+/.pre-commit-config.yaml              @brokdar
+/justfile                             @brokdar
+/mise.toml                            @brokdar
+/mise.lock                            @brokdar
+/backend/schemathesis.toml            @brokdar
+/scripts/                             @brokdar
+
+# DELIBERATELY NOT OWNED, and the hole it leaves: `backend/pyproject.toml`
+# (the import-linter contracts, pytest options, ruff rules), `frontend/package.json`
+# (the scripts the gate runs), the lint and test configs, `backend/app/core/config.py`
+# (session cookie settings) and `backend/tests/`. An agent PR that edits one can
+# weaken the check that judges agent PRs and merge without the operator. They are
+# unowned because owning them sends every dependency bump and every new setting
+# or test to the operator too; that trade is the operator's to make, not a default.
