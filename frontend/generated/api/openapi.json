@@ -2750,6 +2750,12 @@
         "title": "HeartRateMetricsRead",
         "type": "object"
       },
+      "HoldQuality": {
+        "description": "The athlete's rating of a timed hold \u2014 its effort question.\n\nA hold has no reps left to count, so the end buttons are the rating.",
+        "enum": ["clean", "shaky", "fell"],
+        "title": "HoldQuality",
+        "type": "string"
+      },
       "HrvContext": {
         "description": "How an HRV reading was taken. Baselines stay within one context.",
         "enum": ["sleeping", "waking_spot", "manual"],
@@ -3587,6 +3593,34 @@
         "additionalProperties": false,
         "description": "One set of a manually entered session.\n\n``reps`` and ``duration_s`` are both optional *here* and exactly one of\nthem is required by the service: the exactly-one-of rule cannot be stated\nin a JSON schema without an ``oneOf`` the generated client would render as\ntwo unrelated shapes, and the #17 lesson says a bound that lives only in\nthe API schema is a bound a dry run passes and the write then fails. One\nrule, one message, one place.",
         "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/SetConfidence",
+            "default": "high"
+          },
           "duration_s": {
             "anyOf": [
               {
@@ -3626,6 +3660,16 @@
             ],
             "title": "Exercise Name"
           },
+          "hold_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HoldQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "load_kg": {
             "anyOf": [
               {
@@ -3652,10 +3696,56 @@
             ],
             "title": "Notes"
           },
+          "pain_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pain_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "per_side": {
             "default": false,
             "title": "Per Side",
             "type": "boolean"
+          },
+          "planned_line_ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Line Ref"
+          },
+          "replaced_exercise_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced Exercise Id"
           },
           "reps": {
             "anyOf": [
@@ -3670,6 +3760,19 @@
             ],
             "title": "Reps"
           },
+          "rest_s": {
+            "anyOf": [
+              {
+                "maximum": 3600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rest S"
+          },
           "rir": {
             "anyOf": [
               {
@@ -3682,14 +3785,100 @@
               }
             ],
             "title": "Rir"
+          },
+          "rir_capped": {
+            "default": false,
+            "title": "Rir Capped",
+            "type": "boolean"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 6.0,
+                "multipleOf": 0.5,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
+          "set_kind": {
+            "$ref": "#/components/schemas/LoggedSetKind",
+            "default": "working"
+          },
+          "side": {
+            "$ref": "#/components/schemas/SetSide",
+            "default": "both"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "utc_offset_min": {
+            "anyOf": [
+              {
+                "maximum": 840.0,
+                "minimum": -840.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utc Offset Min"
           }
         },
         "title": "LoggedSetCreate",
         "type": "object"
       },
+      "LoggedSetKind": {
+        "description": "What a logged set was for.\n\n``WARMUP`` is the one that matters most: a warm-up counts nowhere \u2014 not in\ncompletion, volume, estimates or progression. The rest are the\nprescription's working-set kinds, carried onto the logged row so a Hevy\ndrop set or a Strong failure set survives import with its meaning.\nLogged-side only: a prescription line never *is* a warm-up, it asks for\nthem.",
+        "enum": [
+          "warmup",
+          "working",
+          "top",
+          "backoff",
+          "amrap",
+          "drop",
+          "myo",
+          "failure",
+          "lengthened_partial"
+        ],
+        "title": "LoggedSetKind",
+        "type": "string"
+      },
       "LoggedSetRead": {
         "description": "One set the athlete logged by hand.",
         "properties": {
+          "client_id": {
+            "format": "uuid",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/SetConfidence"
+          },
           "duration_s": {
             "anyOf": [
               {
@@ -3715,6 +3904,16 @@
           "exercise_name": {
             "title": "Exercise Name",
             "type": "string"
+          },
+          "hold_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HoldQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -3743,9 +3942,51 @@
             ],
             "title": "Notes"
           },
+          "pain_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pain_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PainKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "per_side": {
             "title": "Per Side",
             "type": "boolean"
+          },
+          "planned_line_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Line Ref"
+          },
+          "replaced_exercise_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced Exercise Id"
           },
           "reps": {
             "anyOf": [
@@ -3758,6 +3999,17 @@
             ],
             "title": "Reps"
           },
+          "rest_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rest S"
+          },
           "rir": {
             "anyOf": [
               {
@@ -3769,9 +4021,44 @@
             ],
             "title": "Rir"
           },
+          "rir_capped": {
+            "title": "Rir Capped",
+            "type": "boolean"
+          },
+          "rpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpe"
+          },
           "set_index": {
             "title": "Set Index",
             "type": "integer"
+          },
+          "set_kind": {
+            "$ref": "#/components/schemas/LoggedSetKind"
+          },
+          "side": {
+            "$ref": "#/components/schemas/SetSide"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SetSource"
+          },
+          "utc_offset_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utc Offset Min"
           }
         },
         "required": [
@@ -3784,7 +4071,22 @@
           "per_side",
           "load_kg",
           "rir",
-          "notes"
+          "notes",
+          "client_id",
+          "set_kind",
+          "side",
+          "planned_line_ref",
+          "replaced_exercise_id",
+          "source",
+          "confidence",
+          "rir_capped",
+          "rpe",
+          "hold_quality",
+          "rest_s",
+          "completed_at",
+          "utc_offset_min",
+          "pain_kind",
+          "pain_band"
         ],
         "title": "LoggedSetRead",
         "type": "object"
@@ -3808,6 +4110,24 @@
           "discipline": {
             "$ref": "#/components/schemas/SessionDiscipline",
             "default": "strength"
+          },
+          "dont_learn": {
+            "default": false,
+            "title": "Dont Learn",
+            "type": "boolean"
+          },
+          "dont_learn_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dont Learn Reason"
           },
           "duration_s": {
             "maximum": 86400.0,
@@ -3845,6 +4165,19 @@
               }
             ],
             "title": "Rpe"
+          },
+          "session_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Rating"
           },
           "sets": {
             "items": {
@@ -4854,6 +5187,18 @@
         "required": ["items", "total", "offset", "limit"],
         "title": "Page[WorkoutRead]",
         "type": "object"
+      },
+      "PainBand": {
+        "description": "How bad the pain was, in the three bands the screen offers (0-10).",
+        "enum": ["0-3", "4-5", "6+"],
+        "title": "PainBand",
+        "type": "string"
+      },
+      "PainKind": {
+        "description": "The two kinds of pain the gym screen asks about.\n\n``ACHE`` (muscle ache or burn) is noted and changes nothing. ``SHARP``\n(sharp, or in a joint) stops the exercise for today.",
+        "enum": ["ache", "sharp"],
+        "title": "PainKind",
+        "type": "string"
       },
       "PercentLimitSchema": {
         "additionalProperties": false,
@@ -7903,6 +8248,21 @@
             ],
             "title": "Distance Km"
           },
+          "dont_learn": {
+            "title": "Dont Learn",
+            "type": "boolean"
+          },
+          "dont_learn_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dont Learn Reason"
+          },
           "duration_s": {
             "title": "Duration S",
             "type": "number"
@@ -8013,6 +8373,17 @@
             ],
             "title": "Rpe"
           },
+          "session_rating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Rating"
+          },
           "start_time": {
             "format": "date-time",
             "title": "Start Time",
@@ -8087,6 +8458,9 @@
           "end_time",
           "recordings",
           "logged_sets",
+          "dont_learn",
+          "dont_learn_reason",
+          "session_rating",
           "metrics",
           "weight_kg_in_force",
           "wellness",
@@ -8342,6 +8716,24 @@
         },
         "title": "SessionUpdate",
         "type": "object"
+      },
+      "SetConfidence": {
+        "description": "How far a logged set's numbers can be trusted.\n\n``LOW`` is for numbers nobody confirmed \u2014 a watch's rep count, a recap the\nathlete was unsure of. Everything a person entered deliberately is\n``HIGH``.",
+        "enum": ["high", "low"],
+        "title": "SetConfidence",
+        "type": "string"
+      },
+      "SetSide": {
+        "description": "Which side a logged set worked: both at once, or one of them.",
+        "enum": ["both", "left", "right"],
+        "title": "SetSide",
+        "type": "string"
+      },
+      "SetSource": {
+        "description": "How a logged set reached arc.\n\n``APP`` is logged live on the gym screen; ``RECAP`` is typed in after the\nsession (\"phone in the locker\", and every row stored before this column\nexisted); ``IMPORT`` came from another app's export; ``COACH`` was written\nby the coaching agent. Recap and import sets are excluded from learned\ndurations, which is why the distinction is stored rather than inferred.",
+        "enum": ["app", "import", "coach", "recap"],
+        "title": "SetSource",
+        "type": "string"
       },
       "SetsCompletedSchema": {
         "additionalProperties": false,

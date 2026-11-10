@@ -3679,6 +3679,14 @@ export interface components {
       max_hr: components["schemas"]["MetricRead"];
     };
     /**
+     * HoldQuality
+     * @description The athlete's rating of a timed hold — its effort question.
+     *
+     *     A hold has no reps left to count, so the end buttons are the rating.
+     * @enum {string}
+     */
+    HoldQuality: "clean" | "shaky" | "fell";
+    /**
      * HrvContext
      * @description How an HRV reading was taken. Baselines stay within one context.
      * @enum {string}
@@ -4105,37 +4113,97 @@ export interface components {
      *     rule, one message, one place.
      */
     LoggedSetCreate: {
+      /** Client Id */
+      client_id?: string | null;
+      /** Completed At */
+      completed_at?: string | null;
+      /** @default high */
+      confidence: components["schemas"]["SetConfidence"];
       /** Duration S */
       duration_s?: number | null;
       /** Exercise Id */
       exercise_id?: string | null;
       /** Exercise Name */
       exercise_name?: string | null;
+      hold_quality?: components["schemas"]["HoldQuality"] | null;
       /** Load Kg */
       load_kg?: number | null;
       /** Notes */
       notes?: string | null;
+      pain_band?: components["schemas"]["PainBand"] | null;
+      pain_kind?: components["schemas"]["PainKind"] | null;
       /**
        * Per Side
        * @default false
        */
       per_side: boolean;
+      /** Planned Line Ref */
+      planned_line_ref?: string | null;
+      /** Replaced Exercise Id */
+      replaced_exercise_id?: string | null;
       /** Reps */
       reps?: number | null;
+      /** Rest S */
+      rest_s?: number | null;
       /** Rir */
       rir?: number | null;
+      /**
+       * Rir Capped
+       * @default false
+       */
+      rir_capped: boolean;
+      /** Rpe */
+      rpe?: number | null;
+      /** @default working */
+      set_kind: components["schemas"]["LoggedSetKind"];
+      /** @default both */
+      side: components["schemas"]["SetSide"];
+      source?: components["schemas"]["SetSource"] | null;
+      /** Utc Offset Min */
+      utc_offset_min?: number | null;
     };
+    /**
+     * LoggedSetKind
+     * @description What a logged set was for.
+     *
+     *     ``WARMUP`` is the one that matters most: a warm-up counts nowhere — not in
+     *     completion, volume, estimates or progression. The rest are the
+     *     prescription's working-set kinds, carried onto the logged row so a Hevy
+     *     drop set or a Strong failure set survives import with its meaning.
+     *     Logged-side only: a prescription line never *is* a warm-up, it asks for
+     *     them.
+     * @enum {string}
+     */
+    LoggedSetKind:
+      | "warmup"
+      | "working"
+      | "top"
+      | "backoff"
+      | "amrap"
+      | "drop"
+      | "myo"
+      | "failure"
+      | "lengthened_partial";
     /**
      * LoggedSetRead
      * @description One set the athlete logged by hand.
      */
     LoggedSetRead: {
+      /**
+       * Client Id
+       * Format: uuid
+       */
+      client_id: string;
+      /** Completed At */
+      completed_at: string | null;
+      confidence: components["schemas"]["SetConfidence"];
       /** Duration S */
       duration_s: number | null;
       /** Exercise Id */
       exercise_id: string | null;
       /** Exercise Name */
       exercise_name: string;
+      hold_quality: components["schemas"]["HoldQuality"] | null;
       /**
        * Id
        * Format: uuid
@@ -4145,14 +4213,31 @@ export interface components {
       load_kg: number | null;
       /** Notes */
       notes: string | null;
+      pain_band: components["schemas"]["PainBand"] | null;
+      pain_kind: components["schemas"]["PainKind"] | null;
       /** Per Side */
       per_side: boolean;
+      /** Planned Line Ref */
+      planned_line_ref: string | null;
+      /** Replaced Exercise Id */
+      replaced_exercise_id: string | null;
       /** Reps */
       reps: number | null;
+      /** Rest S */
+      rest_s: number | null;
       /** Rir */
       rir: number | null;
+      /** Rir Capped */
+      rir_capped: boolean;
+      /** Rpe */
+      rpe: number | null;
       /** Set Index */
       set_index: number;
+      set_kind: components["schemas"]["LoggedSetKind"];
+      side: components["schemas"]["SetSide"];
+      source: components["schemas"]["SetSource"];
+      /** Utc Offset Min */
+      utc_offset_min: number | null;
     };
     /**
      * LoginRequest
@@ -4173,6 +4258,13 @@ export interface components {
     ManualSessionCreate: {
       /** @default strength */
       discipline: components["schemas"]["SessionDiscipline"];
+      /**
+       * Dont Learn
+       * @default false
+       */
+      dont_learn: boolean;
+      /** Dont Learn Reason */
+      dont_learn_reason?: string | null;
       /** Duration S */
       duration_s: number;
       /**
@@ -4184,6 +4276,8 @@ export interface components {
       notes?: string | null;
       /** Rpe */
       rpe?: number | null;
+      /** Session Rating */
+      session_rating?: number | null;
       /** Sets */
       sets?: components["schemas"]["LoggedSetCreate"][];
       /**
@@ -4694,6 +4788,21 @@ export interface components {
       /** Total */
       total: number;
     };
+    /**
+     * PainBand
+     * @description How bad the pain was, in the three bands the screen offers (0-10).
+     * @enum {string}
+     */
+    PainBand: "0-3" | "4-5" | "6+";
+    /**
+     * PainKind
+     * @description The two kinds of pain the gym screen asks about.
+     *
+     *     ``ACHE`` (muscle ache or burn) is noted and changes nothing. ``SHARP``
+     *     (sharp, or in a joint) stops the exercise for today.
+     * @enum {string}
+     */
+    PainKind: "ache" | "sharp";
     /**
      * PercentLimitSchema
      * @description A ceiling expressed as a fraction of an anchor.
@@ -6055,6 +6164,10 @@ export interface components {
       discipline_overridden: boolean;
       /** Distance Km */
       distance_km?: number | null;
+      /** Dont Learn */
+      dont_learn: boolean;
+      /** Dont Learn Reason */
+      dont_learn_reason: string | null;
       /** Duration S */
       duration_s: number;
       /**
@@ -6088,6 +6201,8 @@ export interface components {
       recordings: components["schemas"]["RecordingRead"][];
       /** Rpe */
       rpe: number | null;
+      /** Session Rating */
+      session_rating: number | null;
       /**
        * Start Time
        * Format: date-time
@@ -6243,6 +6358,34 @@ export interface components {
        */
       timezone?: string;
     };
+    /**
+     * SetConfidence
+     * @description How far a logged set's numbers can be trusted.
+     *
+     *     ``LOW`` is for numbers nobody confirmed — a watch's rep count, a recap the
+     *     athlete was unsure of. Everything a person entered deliberately is
+     *     ``HIGH``.
+     * @enum {string}
+     */
+    SetConfidence: "high" | "low";
+    /**
+     * SetSide
+     * @description Which side a logged set worked: both at once, or one of them.
+     * @enum {string}
+     */
+    SetSide: "both" | "left" | "right";
+    /**
+     * SetSource
+     * @description How a logged set reached arc.
+     *
+     *     ``APP`` is logged live on the gym screen; ``RECAP`` is typed in after the
+     *     session ("phone in the locker", and every row stored before this column
+     *     existed); ``IMPORT`` came from another app's export; ``COACH`` was written
+     *     by the coaching agent. Recap and import sets are excluded from learned
+     *     durations, which is why the distinction is stored rather than inferred.
+     * @enum {string}
+     */
+    SetSource: "app" | "import" | "coach" | "recap";
     /**
      * SetsCompletedSchema
      * @description At least this fraction of the prescribed strength sets performed.

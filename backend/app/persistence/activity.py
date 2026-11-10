@@ -47,11 +47,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.activity import (
     ClassificationSource,
+    HoldQuality,
+    LoggedSetKind,
+    PainBand,
+    PainKind,
     RecordingKind,
     SessionContext,
     SessionDiscipline,
     SessionLifecycle,
     SessionMatchStatus,
+    SetConfidence,
+    SetSide,
+    SetSource,
 )
 from app.domain.anchors import Provenance
 from app.domain.streams import AnomalyKind, StreamChannel
@@ -75,6 +82,12 @@ MAX_PATH_LENGTH = 1_024
 
 #: Longest a channel-source label or the rule that chose it may be (A4.3).
 MAX_SOURCE_LENGTH = 200
+
+#: Longest private reason a session may carry for "don't learn from today".
+MAX_DONT_LEARN_REASON_LENGTH = 500
+
+#: Longest reference a logged set may carry to the planned line it answered.
+MAX_PLANNED_LINE_REF_LENGTH = 64
 
 
 class SessionRow(Base):
@@ -146,6 +159,23 @@ class SessionRow(Base):
     #: "conditions", ahead of the MMP's observed-conditions model.
     temperature_c: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(String(MAX_NOTES_LENGTH))
+    #: "Don't learn from today": the session stays in history but out of
+    #: estimates, progression and learned numbers — an off day the athlete
+    #: chose not to teach arc. Server default false because every earlier row
+    #: was a session somebody meant to count.
+    dont_learn: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    #: The athlete's optional, private reason for `dont_learn`. Not shared with
+    #: the coach (the MCP surface never returns it): health and life context
+    #: reaches the agent only when the athlete opts in.
+    dont_learn_reason: Mapped[str | None] = mapped_column(
+        String(MAX_DONT_LEARN_REASON_LENGTH)
+    )
+    #: The Finish screen's "How hard was the whole session? 1-10", a whole
+    #: number. Distinct from `rpe`, the free 0-10 session RPE a recap or the
+    #: coach reports; null when skipped, and never guessed.
+    session_rating: Mapped[int | None] = mapped_column(Integer)
 
     #: Reserved (R3), no behavior: bodyweight **at the time**, pinned like an
     #: anchor, because every w/kg, VO2max and power-profile number the MMP adds
@@ -305,16 +335,34 @@ class StreamAnomalyRow(Base):
 
 
 class LoggedSetRow(Base):
-    """One set the athlete logged by hand (manual strength entry, B-6)."""
+    """One set the athlete logged (manual strength entry, B-6; the gym screen).
+
+    **Identity is `client_id`, order is `set_index`.** The phone mints a uuid7
+    for every set before it has signal, and the server upserts on it, so a set
+    uploaded twice is stored once — hence the unique `(session_id, client_id)`.
+    `set_index` stays the display and scoring order (positional scoring pairs
+    by it) but is no longer unique: a reorder rewrites it in one transaction,
+    and a unique index would be violated half-way through any rewrite that
+    swaps two positions. Separate `exercise_order` / `set_number` columns were
+    the alternative and were rejected — they would be a second order to keep
+    in step with the one scoring already reads. Pinned by
+    `test_activity_persistence.py::test_reorder_rewrites_set_index` and, on
+    both dialects, by `tests/integration/test_logged_set_order.py`.
+    """
 
     __tablename__ = "logged_sets"
-    __table_args__ = (UniqueConstraint("session_id", "set_index"),)
+    __table_args__ = (UniqueConstraint("session_id", "client_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     #: No index of its own: the constraint above leads on this column.
     session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE")
     )
+    #: The set's own identity, minted on the phone (uuid7) so a retried upload
+    #: is recognised. Unique per session only — two sessions may carry the
+    #: same value. Minted here for a caller that sends none (the coach, legacy
+    #: callers), and backfilled as uuid7 for every row older than the column.
+    client_id: Mapped[uuid.UUID] = mapped_column(default=uuid.uuid7)
     #: The catalogue movement, when it is one. Nulled rather than cascaded if
     #: that entry is ever removed — `exercise_name` is what keeps the row
     #: readable, which is the same reason it exists for free-text entries.
@@ -326,8 +374,42 @@ class LoggedSetRow(Base):
     #: What the athlete called the movement. Always written; for a catalogue
     #: exercise it is the catalogue name at the time of logging.
     exercise_name: Mapped[str] = mapped_column(String(160))
-    #: 0-based position within the session.
+    #: 0-based position within the session: the display and scoring order,
+    #: not an identity (see the class docstring).
     set_index: Mapped[int] = mapped_column(Integer)
+    #: Warm-up, working, or one of the working kinds. Warm-ups count nowhere.
+    set_kind: Mapped[LoggedSetKind] = mapped_column(
+        enum_column(LoggedSetKind),
+        default=LoggedSetKind.WORKING,
+        server_default=LoggedSetKind.WORKING.value,
+    )
+    #: Which side the set worked. Every row older than the column is `both` —
+    #: including the `per_side` ones, which never said which side they were.
+    side: Mapped[SetSide] = mapped_column(
+        enum_column(SetSide), default=SetSide.BOTH, server_default=SetSide.BOTH.value
+    )
+    #: The prescription line this set answered, so scoring can pair by line
+    #: rather than by position when a session was reordered or swapped. A
+    #: reference, never a copy: the line's targets are not read from it.
+    planned_line_ref: Mapped[str | None] = mapped_column(
+        String(MAX_PLANNED_LINE_REF_LENGTH)
+    )
+    #: The catalogue movement this set stood in for, when the athlete swapped.
+    replaced_exercise_id: Mapped[str | None] = mapped_column(
+        String(MAX_SLUG_LENGTH), ForeignKey("exercises.id", ondelete="SET NULL")
+    )
+    #: How the set reached arc. Rows older than the column were all typed in
+    #: after the fact, hence the server default `recap`.
+    source: Mapped[SetSource] = mapped_column(
+        enum_column(SetSource),
+        default=SetSource.RECAP,
+        server_default=SetSource.RECAP.value,
+    )
+    confidence: Mapped[SetConfidence] = mapped_column(
+        enum_column(SetConfidence),
+        default=SetConfidence.HIGH,
+        server_default=SetConfidence.HIGH.value,
+    )
     #: Repetitions performed, or null for a timed hold. Exactly one of `reps`
     #: and `duration_s` is set — the service refuses the write and
     #: `app.domain.metrics.PerformedSet` refuses to be built from a row that
@@ -344,8 +426,32 @@ class LoggedSetRow(Base):
         Boolean, server_default=false(), default=False
     )
     load_kg: Mapped[float | None] = mapped_column(Float)
-    #: Reps in reserve, as reported after the set.
+    #: Reps in reserve, as **reported** after the set — never the target.
     rir: Mapped[int | None] = mapped_column(Integer)
+    #: Whether `rir` is a floor rather than a count. The Standard effort row
+    #: ends in "4+" (felt easy), which is stored as ``rir = 4, rir_capped =
+    #: true``; "not sure" / "log without rating" is ``rir = null``. Chosen over
+    #: an open-ended sentinel (``rir = 99``, ``-1``), which every reader doing
+    #: arithmetic on `rir` would have to know to skip. True only with
+    #: ``rir = 4``.
+    rir_capped: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    #: RPE as reported (Full control), 6-10 in half steps. Converts to reps
+    #: left as 10 - RPE, and when both are given they must agree.
+    rpe: Mapped[float | None] = mapped_column(Float)
+    #: The rating of a timed hold — its end buttons. Null for a rep set.
+    hold_quality: Mapped[HoldQuality | None] = mapped_column(enum_column(HoldQuality))
+    #: Rest taken before this set, seconds, as the phone's timer measured it.
+    rest_s: Mapped[int | None] = mapped_column(Integer)
+    #: When the set was logged, aware UTC, plus the device's UTC offset at the
+    #: time in minutes — stored per set so a later per-athlete timezone can
+    #: recover local clock readings without guessing.
+    completed_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime)
+    utc_offset_min: Mapped[int | None] = mapped_column(Integer)
+    #: Pain reported on this set: its kind, and the 0-10 band it fell in.
+    pain_kind: Mapped[PainKind | None] = mapped_column(enum_column(PainKind))
+    pain_band: Mapped[PainBand | None] = mapped_column(enum_column(PainBand))
     notes: Mapped[str | None] = mapped_column(String(MAX_NOTES_LENGTH))
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
@@ -488,6 +594,39 @@ class SessionRepository:
             .order_by(SessionRow.start_time.asc())
         )
         return list(result.scalars())
+
+    async def manual_replay(
+        self,
+        *,
+        start_time: dt.datetime,
+        discipline: SessionDiscipline,
+        client_ids: Sequence[uuid.UUID],
+    ) -> SessionRow | None:
+        """The manual session a repeated upload already created, if any.
+
+        A replay is a manual session with the same start and discipline that
+        already holds **every** one of ``client_ids``. All of them, not some:
+        uniqueness is per session, so another session sharing one id is a
+        different session, not this one again.
+        """
+        wanted = set(client_ids)
+        if not wanted:
+            return None
+        result = await self._session.execute(
+            select(LoggedSetRow.session_id, func.count())
+            .join(SessionRow, SessionRow.id == LoggedSetRow.session_id)
+            .where(
+                SessionRow.recording_kind == RecordingKind.MANUAL,
+                SessionRow.start_time == start_time,
+                SessionRow.discipline == discipline,
+                LoggedSetRow.client_id.in_(wanted),
+            )
+            .group_by(LoggedSetRow.session_id)
+        )
+        for session_id, held in result.all():
+            if held == len(wanted):
+                return await self.get(session_id)
+        return None
 
     async def add(self, row: SessionRow) -> SessionRow:
         """Persist a session (new or modified) and refresh generated fields.

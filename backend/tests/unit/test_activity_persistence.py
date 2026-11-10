@@ -241,18 +241,62 @@ async def test_logged_sets_belong_to_their_session_and_are_ordered(
     assert [row.set_index for row in stored.logged_sets] == [0, 1, 2]
     assert stored.rpe == 7.0
 
-    # Two sets claiming the same position in one session is a form submitted
-    # twice, not two sets; the constraint is what says so.
+    # Two rows with one client id in one session are one set uploaded twice,
+    # not two sets; the constraint is what says so. Position is not identity
+    # any more — `test_reorder_rewrites_set_index` pins that half.
+    taken = stored.logged_sets[0].client_id
     db_session.add(
         LoggedSetRow(
             session_id=session_id,
+            client_id=taken,
             exercise_name="Trap bar deadlift",
-            set_index=0,
+            set_index=7,
             reps=5,
         )
     )
     with pytest.raises(ConflictError):
         await flush(db_session)
+
+
+async def test_reorder_rewrites_set_index(db_session: AsyncSession) -> None:
+    """`set_index` is the order, `client_id` the identity (`LoggedSetRow`).
+
+    Reversing four sets and inserting one at position 1 rewrites every
+    `set_index` in one flush. Under the old unique `(session_id, set_index)`
+    the first UPDATE already collides with a row not yet moved.
+    """
+    sessions = SessionRepository(db_session)
+    session = await sessions.add(
+        a_session(
+            discipline=SessionDiscipline.STRENGTH,
+            classification_source=ClassificationSource.MANUAL,
+            recording_kind=RecordingKind.MANUAL,
+        )
+    )
+    rows = [
+        LoggedSetRow(session_id=session.id, exercise_name=name, set_index=index, reps=5)
+        for index, name in enumerate("ABCD")
+    ]
+    db_session.add_all(rows)
+    await flush(db_session)
+
+    for row in rows:
+        row.set_index = 3 - row.set_index
+    for row in rows:
+        if row.set_index >= 1:
+            row.set_index += 1
+    db_session.add(
+        LoggedSetRow(session_id=session.id, exercise_name="E", set_index=1, reps=5)
+    )
+    await flush(db_session)
+    session_id = session.id
+    db_session.expire_all()
+
+    stored = await sessions.get(session_id)
+    assert stored is not None
+    assert [row.exercise_name for row in stored.logged_sets] == list("DECBA")
+    assert [row.set_index for row in stored.logged_sets] == [0, 1, 2, 3, 4]
+    assert len({row.client_id for row in stored.logged_sets}) == 5
 
 
 async def test_sessions_list_newest_first_and_can_be_bounded_by_date(

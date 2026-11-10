@@ -1559,6 +1559,54 @@ const TRAINER_RECORDING: Schemas["RecordingRead"] = {
   created_at: "2026-08-03T17:10:00Z",
 };
 
+/**
+ * What the API stores for a set typed in after the session with nothing but
+ * the B-6 fields: the server mints its `client_id` (uuid7), and every other
+ * column takes its default — a working recap of both sides, unrated beyond
+ * the `rir` it was given. `per_side` rows are `side: "both"` too: they never
+ * said which side they were.
+ */
+function typedInSet(
+  set: Omit<
+    Schemas["LoggedSetRead"],
+    | "client_id"
+    | "set_kind"
+    | "side"
+    | "planned_line_ref"
+    | "replaced_exercise_id"
+    | "source"
+    | "confidence"
+    | "rir_capped"
+    | "rpe"
+    | "hold_quality"
+    | "rest_s"
+    | "completed_at"
+    | "utc_offset_min"
+    | "pain_kind"
+    | "pain_band"
+  >,
+): Schemas["LoggedSetRead"] {
+  return {
+    ...set,
+    // A distinct uuid7 per set, derived from the row id so it is stable.
+    client_id: set.id.replace(/-8000-/, "-9000-"),
+    set_kind: "working",
+    side: "both",
+    planned_line_ref: null,
+    replaced_exercise_id: null,
+    source: "recap",
+    confidence: "high",
+    rir_capped: false,
+    rpe: null,
+    hold_quality: null,
+    rest_s: null,
+    completed_at: null,
+    utc_offset_min: null,
+    pain_kind: null,
+    pain_band: null,
+  };
+}
+
 const GYM_SETS: Schemas["LoggedSetRead"][] = [
   {
     id: "0199a000-0000-7000-8000-000000000401",
@@ -1625,7 +1673,7 @@ const GYM_SETS: Schemas["LoggedSetRead"][] = [
     rir: null,
     notes: null,
   },
-];
+].map(typedInSet);
 
 /**
  * The outdoor ride's metric artefact and stream payload, **generated**.
@@ -1650,12 +1698,25 @@ export const NO_WELLNESS = {
   wellness: null,
 } as const;
 
+/**
+ * What a session read carries when the Finish screen was never answered:
+ * learned from, unrated. The server defaults for every session written
+ * without them — a device file, a typed-in session — spread into every
+ * session fixture.
+ */
+export const NOT_RATED = {
+  dont_learn: false,
+  dont_learn_reason: null,
+  session_rating: null,
+} as const;
+
 /** The three sessions the log starts with, newest first. */
 function seedSessions(): Schemas["SessionRead"][] {
   return [
     {
       id: ACTIVITY_IDS.gym,
       ...NO_WELLNESS,
+      ...NOT_RATED,
       local_date: "2026-08-06",
       start_time: "2026-08-06T16:30:00Z",
       start_time_known: true,
@@ -1684,6 +1745,7 @@ function seedSessions(): Schemas["SessionRead"][] {
     {
       id: ACTIVITY_IDS.outdoorRide,
       ...NO_WELLNESS,
+      ...NOT_RATED,
       local_date: "2026-08-05",
       start_time: "2026-08-05T05:14:00Z",
       start_time_known: true,
@@ -1714,6 +1776,7 @@ function seedSessions(): Schemas["SessionRead"][] {
     {
       id: ACTIVITY_IDS.trainerRide,
       ...NO_WELLNESS,
+      ...NOT_RATED,
       local_date: "2026-08-03",
       start_time: "2026-08-03T16:02:00Z",
       start_time_known: true,
@@ -1754,6 +1817,9 @@ export function toListItem(
     recordings: _recordings,
     logged_sets: _sets,
     notes: _notes,
+    dont_learn: _dontLearn,
+    dont_learn_reason: _reason,
+    session_rating: _rating,
     end_time: _end,
     created_at: _created,
     updated_at: _updated,
@@ -2048,6 +2114,7 @@ export function ingestedSessionFixture(
   return {
     id,
     ...NO_WELLNESS,
+    ...NOT_RATED,
     local_date: "2026-08-07",
     start_time: start.toISOString().replace(".000", ""),
     start_time_known: true,
@@ -2179,6 +2246,7 @@ export function sessionRunFixture(count: number): Schemas["SessionRead"][] {
     return {
       id,
       ...NO_WELLNESS,
+      ...NOT_RATED,
       // Started at 06:00 UTC, so the UTC day and the local day agree.
       local_date: stamp(start).slice(0, 10),
       start_time: stamp(start),
@@ -2793,6 +2861,7 @@ export function seedMergeCandidate(): Schemas["SessionRead"] {
   const half: Schemas["SessionRead"] = {
     id: "0199a000-0000-7000-8000-000000000701",
     ...NO_WELLNESS,
+    ...NOT_RATED,
     local_date: "2026-08-05",
     // Twelve minutes after the outdoor ride's 07:53 local finish: one ride,
     // recorded as two files, well inside the six hours a merge will bridge.

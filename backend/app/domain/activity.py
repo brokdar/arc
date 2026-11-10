@@ -126,6 +126,94 @@ class SessionLifecycle(StrEnum):
     FINISHED = "finished"
 
 
+class LoggedSetKind(StrEnum):
+    """What a logged set was for.
+
+    ``WARMUP`` is the one that matters most: a warm-up counts nowhere — not in
+    completion, volume, estimates or progression. The rest are the
+    prescription's working-set kinds, carried onto the logged row so a Hevy
+    drop set or a Strong failure set survives import with its meaning.
+    Logged-side only: a prescription line never *is* a warm-up, it asks for
+    them.
+    """
+
+    WARMUP = "warmup"
+    WORKING = "working"
+    TOP = "top"
+    BACKOFF = "backoff"
+    AMRAP = "amrap"
+    DROP = "drop"
+    MYO = "myo"
+    FAILURE = "failure"
+    LENGTHENED_PARTIAL = "lengthened_partial"
+
+
+class SetSide(StrEnum):
+    """Which side a logged set worked: both at once, or one of them."""
+
+    BOTH = "both"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class SetSource(StrEnum):
+    """How a logged set reached arc.
+
+    ``APP`` is logged live on the gym screen; ``RECAP`` is typed in after the
+    session ("phone in the locker", and every row stored before this column
+    existed); ``IMPORT`` came from another app's export; ``COACH`` was written
+    by the coaching agent. Recap and import sets are excluded from learned
+    durations, which is why the distinction is stored rather than inferred.
+    """
+
+    APP = "app"
+    IMPORT = "import"
+    COACH = "coach"
+    RECAP = "recap"
+
+
+class SetConfidence(StrEnum):
+    """How far a logged set's numbers can be trusted.
+
+    ``LOW`` is for numbers nobody confirmed — a watch's rep count, a recap the
+    athlete was unsure of. Everything a person entered deliberately is
+    ``HIGH``.
+    """
+
+    HIGH = "high"
+    LOW = "low"
+
+
+class HoldQuality(StrEnum):
+    """The athlete's rating of a timed hold — its effort question.
+
+    A hold has no reps left to count, so the end buttons are the rating.
+    """
+
+    CLEAN = "clean"
+    SHAKY = "shaky"
+    FELL = "fell"
+
+
+class PainKind(StrEnum):
+    """The two kinds of pain the gym screen asks about.
+
+    ``ACHE`` (muscle ache or burn) is noted and changes nothing. ``SHARP``
+    (sharp, or in a joint) stops the exercise for today.
+    """
+
+    ACHE = "ache"
+    SHARP = "sharp"
+
+
+class PainBand(StrEnum):
+    """How bad the pain was, in the three bands the screen offers (0-10)."""
+
+    MILD = "0-3"
+    MODERATE = "4-5"
+    SEVERE = "6+"
+
+
 class SessionContext(StrEnum):
     """What kind of outing the session was (addenda R5).
 
