@@ -1,112 +1,812 @@
 {
   "exercises": [
-    { "id": "back_squat", "name": "Back Squat", "category": "squat" },
-    { "id": "front_squat", "name": "Front Squat", "category": "squat" },
-    { "id": "goblet_squat", "name": "Goblet Squat", "category": "squat" },
-    { "id": "box_squat", "name": "Box Squat", "category": "squat" },
-    { "id": "overhead_squat", "name": "Overhead Squat", "category": "squat" },
-    { "id": "safety_bar_squat", "name": "Safety Bar Squat", "category": "squat" },
-    { "id": "zercher_squat", "name": "Zercher Squat", "category": "squat" },
-    { "id": "hack_squat", "name": "Hack Squat", "category": "squat" },
-    { "id": "leg_press", "name": "Leg Press", "category": "squat" },
-    { "id": "pistol_squat", "name": "Pistol Squat", "category": "squat", "unilateral": true },
-    { "id": "air_squat", "name": "Air Squat", "category": "squat" },
-    { "id": "leg_extension", "name": "Leg Extension", "category": "squat" },
-    { "id": "single_leg_calf_raise", "name": "Single-Leg Calf Raise", "category": "squat", "unilateral": true },
+    {
+      "id": "back_squat", "name": "Back Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "quads_rectus_femoris": 0.5, "adductors": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion", "long_breath_hold"],
+      "source": "free-exercise-db:Barbell_Squat"
+    },
+    {
+      "id": "front_squat", "name": "Front Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "quads_rectus_femoris": 0.5, "erector_spinae": 0.5, "rectus_abdominis": 0.5, "traps_upper": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion", "long_breath_hold"],
+      "source": "free-exercise-db:Front_Barbell_Squat"
+    },
+    {
+      "id": "goblet_squat", "name": "Goblet Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "adductors": 0.5, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion"],
+      "source": "free-exercise-db:Goblet_Squat"
+    },
+    {
+      "id": "box_squat", "name": "Box Squat", "category": "squat",
+      "muscles": {"glute_max": 1.0, "quads_vasti": 1.0, "hamstrings": 0.5, "adductors": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["barbell", "rack", "box"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold"],
+      "source": "free-exercise-db:Box_Squat"
+    },
+    {
+      "id": "overhead_squat", "name": "Overhead Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "delt_anterior": 0.5, "delt_lateral": 0.5, "traps_upper": 0.5, "traps_lower": 0.5, "rectus_abdominis": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["advanced", "deep_hip_flexion", "deep_knee_flexion", "overhead"],
+      "source": "free-exercise-db:Overhead_Squat"
+    },
+    {
+      "id": "safety_bar_squat", "name": "Safety Bar Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "erector_spinae": 0.5, "traps_upper": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["safety_bar", "rack"], "load_type": "barbell",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion", "long_breath_hold"],
+      "source": "arc"
+    },
+    {
+      "id": "zercher_squat", "name": "Zercher Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "erector_spinae": 0.5, "biceps": 0.5, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["advanced", "deep_hip_flexion", "deep_knee_flexion", "long_breath_hold"],
+      "source": "free-exercise-db:Zercher_Squats"
+    },
+    {
+      "id": "hack_squat", "name": "Hack Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["machine"], "load_type": "plate_loaded",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "free-exercise-db:Hack_Squat"
+    },
+    {
+      "id": "leg_press", "name": "Leg Press", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["machine"], "load_type": "plate_loaded",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion"],
+      "source": "free-exercise-db:Leg_Press"
+    },
+    {
+      "id": "pistol_squat", "name": "Pistol Squat", "category": "squat", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "glute_med_min": 0.5, "hip_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["advanced", "deep_hip_flexion", "deep_knee_flexion", "unsupported_single_leg"],
+      "source": "free-exercise-db:Kettlebell_Pistol_Squat"
+    },
+    {
+      "id": "air_squat", "name": "Air Squat", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "squat",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion"],
+      "source": "free-exercise-db:Bodyweight_Squat"
+    },
+    {
+      "id": "leg_extension", "name": "Leg Extension", "category": "squat",
+      "muscles": {"quads_vasti": 1.0, "quads_rectus_femoris": 1.0},
+      "mechanic": "single_joint", "pattern": "knee_extension",
+      "equipment": ["machine"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Leg_Extensions"
+    },
+    {
+      "id": "single_leg_calf_raise", "name": "Single-Leg Calf Raise", "category": "squat", "unilateral": true,
+      "muscles": {"gastrocnemius": 1.0, "soleus": 0.5},
+      "mechanic": "single_joint", "pattern": "calf_raise",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Standing_Calf_Raises"
+    },
 
-    { "id": "conventional_deadlift", "name": "Conventional Deadlift", "category": "hinge" },
-    { "id": "sumo_deadlift", "name": "Sumo Deadlift", "category": "hinge" },
-    { "id": "romanian_deadlift", "name": "Romanian Deadlift", "category": "hinge" },
-    { "id": "single_leg_romanian_deadlift", "name": "Single-Leg Romanian Deadlift", "category": "hinge", "unilateral": true },
-    { "id": "trap_bar_deadlift", "name": "Trap Bar Deadlift", "category": "hinge" },
-    { "id": "deficit_deadlift", "name": "Deficit Deadlift", "category": "hinge" },
-    { "id": "rack_pull", "name": "Rack Pull", "category": "hinge" },
-    { "id": "good_morning", "name": "Good Morning", "category": "hinge" },
-    { "id": "hip_thrust", "name": "Barbell Hip Thrust", "category": "hinge" },
-    { "id": "glute_bridge", "name": "Glute Bridge", "category": "hinge" },
-    { "id": "kettlebell_swing", "name": "Kettlebell Swing", "category": "hinge" },
-    { "id": "nordic_curl", "name": "Nordic Hamstring Curl", "category": "hinge" },
-    { "id": "seated_leg_curl", "name": "Seated Leg Curl", "category": "hinge" },
-    { "id": "back_extension", "name": "Back Extension", "category": "hinge" },
+    {
+      "id": "conventional_deadlift", "name": "Conventional Deadlift", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "hamstrings": 1.0, "erector_spinae": 1.0, "quads_vasti": 0.5, "adductors": 0.5, "traps_upper": 0.5, "traps_middle": 0.5, "lats": 0.5, "forearm_flexors": 0.5, "quadratus_lumborum": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": ["deep_hip_flexion", "long_breath_hold"],
+      "source": "free-exercise-db:Barbell_Deadlift"
+    },
+    {
+      "id": "sumo_deadlift", "name": "Sumo Deadlift", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "adductors": 1.0, "hamstrings": 0.5, "quads_vasti": 0.5, "erector_spinae": 0.5, "traps_upper": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": ["deep_hip_flexion", "hip_rotation_loaded", "long_breath_hold"],
+      "source": "free-exercise-db:Sumo_Deadlift"
+    },
+    {
+      "id": "romanian_deadlift", "name": "Romanian Deadlift", "category": "hinge",
+      "muscles": {"hamstrings": 1.0, "glute_max": 1.0, "erector_spinae": 0.5, "forearm_flexors": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Romanian_Deadlift"
+    },
+    {
+      "id": "single_leg_romanian_deadlift", "name": "Single-Leg Romanian Deadlift", "category": "hinge", "unilateral": true,
+      "muscles": {"hamstrings": 1.0, "glute_max": 1.0, "glute_med_min": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["unsupported_single_leg"],
+      "source": "free-exercise-db:Kettlebell_One-Legged_Deadlift"
+    },
+    {
+      "id": "trap_bar_deadlift", "name": "Trap Bar Deadlift", "category": "hinge",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "hamstrings": 0.5, "erector_spinae": 0.5, "traps_upper": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["trap_bar"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold"],
+      "source": "free-exercise-db:Trap_Bar_Deadlift"
+    },
+    {
+      "id": "deficit_deadlift", "name": "Deficit Deadlift", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "hamstrings": 1.0, "erector_spinae": 1.0, "quads_vasti": 0.5, "traps_upper": 0.5, "forearm_flexors": 0.5, "lats": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell", "box"], "load_type": "barbell",
+      "restrictions": ["advanced", "deep_hip_flexion", "long_breath_hold"],
+      "source": "free-exercise-db:Deficit_Deadlift"
+    },
+    {
+      "id": "rack_pull", "name": "Rack Pull", "category": "hinge",
+      "muscles": {"erector_spinae": 1.0, "glute_max": 1.0, "hamstrings": 0.5, "traps_upper": 0.5, "traps_middle": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold"],
+      "source": "free-exercise-db:Rack_Pulls"
+    },
+    {
+      "id": "good_morning", "name": "Good Morning", "category": "hinge",
+      "muscles": {"hamstrings": 1.0, "erector_spinae": 1.0, "glute_max": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Good_Morning"
+    },
+    {
+      "id": "hip_thrust", "name": "Barbell Hip Thrust", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "hamstrings": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["barbell", "bench"], "load_type": "barbell",
+      "restrictions": ["supine_loaded"],
+      "source": "free-exercise-db:Barbell_Hip_Thrust"
+    },
+    {
+      "id": "glute_bridge", "name": "Glute Bridge", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "hamstrings": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Barbell_Glute_Bridge"
+    },
+    {
+      "id": "kettlebell_swing", "name": "Kettlebell Swing", "category": "hinge",
+      "muscles": {"glute_max": 1.0, "hamstrings": 1.0, "erector_spinae": 0.5, "delt_anterior": 0.5, "forearm_flexors": 0.5, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "hinge",
+      "equipment": ["kettlebell"], "load_type": "kettlebell",
+      "restrictions": ["power"],
+      "source": "free-exercise-db:One-Arm_Kettlebell_Swings"
+    },
+    {
+      "id": "nordic_curl", "name": "Nordic Hamstring Curl", "category": "hinge",
+      "muscles": {"hamstrings": 1.0, "gastrocnemius": 0.5},
+      "mechanic": "single_joint", "pattern": "knee_flexion",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["advanced"],
+      "source": "free-exercise-db:Natural_Glute_Ham_Raise"
+    },
+    {
+      "id": "seated_leg_curl", "name": "Seated Leg Curl", "category": "hinge",
+      "muscles": {"hamstrings": 1.0, "gastrocnemius": 0.5},
+      "mechanic": "single_joint", "pattern": "knee_flexion",
+      "equipment": ["machine"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Seated_Leg_Curl"
+    },
+    {
+      "id": "back_extension", "name": "Back Extension", "category": "hinge",
+      "muscles": {"erector_spinae": 1.0, "glute_max": 0.5, "hamstrings": 0.5},
+      "mechanic": "single_joint", "pattern": "hinge",
+      "equipment": ["machine"], "load_type": "bodyweight",
+      "restrictions": ["prone"],
+      "source": "free-exercise-db:Hyperextensions_Back_Extensions"
+    },
 
-    { "id": "split_squat", "name": "Split Squat", "category": "lunge", "unilateral": true },
-    { "id": "bulgarian_split_squat", "name": "Bulgarian Split Squat", "category": "lunge", "unilateral": true },
-    { "id": "walking_lunge", "name": "Walking Lunge", "category": "lunge", "unilateral": true },
-    { "id": "reverse_lunge", "name": "Reverse Lunge", "category": "lunge", "unilateral": true },
-    { "id": "forward_lunge", "name": "Forward Lunge", "category": "lunge", "unilateral": true },
-    { "id": "lateral_lunge", "name": "Lateral Lunge", "category": "lunge", "unilateral": true },
-    { "id": "curtsy_lunge", "name": "Curtsy Lunge", "category": "lunge", "unilateral": true },
-    { "id": "step_up", "name": "Step-Up", "category": "lunge", "unilateral": true },
+    {
+      "id": "split_squat", "name": "Split Squat", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "adductors": 0.5, "hamstrings": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "free-exercise-db:Split_Squat_with_Dumbbells"
+    },
+    {
+      "id": "bulgarian_split_squat", "name": "Bulgarian Split Squat", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "adductors": 0.5, "glute_med_min": 0.5, "hip_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion"],
+      "source": "arc"
+    },
+    {
+      "id": "walking_lunge", "name": "Walking Lunge", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "adductors": 0.5, "hamstrings": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion", "unsupported_single_leg"],
+      "source": "free-exercise-db:Barbell_Walking_Lunge"
+    },
+    {
+      "id": "reverse_lunge", "name": "Reverse Lunge", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "adductors": 0.5, "hamstrings": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "free-exercise-db:Dumbbell_Rear_Lunge"
+    },
+    {
+      "id": "forward_lunge", "name": "Forward Lunge", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "adductors": 0.5, "hamstrings": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "free-exercise-db:Dumbbell_Lunges"
+    },
+    {
+      "id": "lateral_lunge", "name": "Lateral Lunge", "category": "lunge", "unilateral": true,
+      "muscles": {"adductors": 1.0, "quads_vasti": 1.0, "glute_max": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "arc"
+    },
+    {
+      "id": "curtsy_lunge", "name": "Curtsy Lunge", "category": "lunge", "unilateral": true,
+      "muscles": {"glute_max": 1.0, "quads_vasti": 1.0, "glute_med_min": 0.5, "adductors": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["deep_knee_flexion", "hip_rotation_loaded"],
+      "source": "arc"
+    },
+    {
+      "id": "step_up", "name": "Step-Up", "category": "lunge", "unilateral": true,
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "hamstrings": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "lunge",
+      "equipment": ["dumbbell", "box"], "load_type": "dumbbell",
+      "restrictions": ["unsupported_single_leg"],
+      "source": "free-exercise-db:Dumbbell_Step_Ups"
+    },
 
-    { "id": "bench_press", "name": "Barbell Bench Press", "category": "press" },
-    { "id": "incline_bench_press", "name": "Incline Bench Press", "category": "press" },
-    { "id": "close_grip_bench_press", "name": "Close-Grip Bench Press", "category": "press" },
-    { "id": "dumbbell_bench_press", "name": "Dumbbell Bench Press", "category": "press" },
-    { "id": "overhead_press", "name": "Barbell Overhead Press", "category": "press" },
-    { "id": "push_press", "name": "Push Press", "category": "press" },
-    { "id": "z_press", "name": "Z Press", "category": "press" },
-    { "id": "dumbbell_shoulder_press", "name": "Dumbbell Shoulder Press", "category": "press" },
-    { "id": "arnold_press", "name": "Arnold Press", "category": "press" },
-    { "id": "single_arm_overhead_press", "name": "Single-Arm Overhead Press", "category": "press", "unilateral": true },
-    { "id": "landmine_press", "name": "Landmine Press", "category": "press", "unilateral": true },
-    { "id": "push_up", "name": "Push-Up", "category": "press" },
-    { "id": "dip", "name": "Dip", "category": "press" },
-    { "id": "cable_chest_fly", "name": "Cable Chest Fly", "category": "press" },
-    { "id": "triceps_pushdown", "name": "Triceps Pushdown", "category": "press" },
-    { "id": "lateral_raise", "name": "Lateral Raise", "category": "press" },
+    {
+      "id": "bench_press", "name": "Barbell Bench Press", "category": "press",
+      "muscles": {"pec_sternal": 1.0, "pec_clavicular": 0.5, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5, "triceps_long": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_push",
+      "equipment": ["barbell", "bench", "rack"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold", "supine_loaded"],
+      "source": "free-exercise-db:Barbell_Bench_Press_-_Medium_Grip"
+    },
+    {
+      "id": "incline_bench_press", "name": "Incline Bench Press", "category": "press",
+      "muscles": {"pec_clavicular": 1.0, "pec_sternal": 0.5, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_push",
+      "equipment": ["barbell", "bench", "rack"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold", "supine_loaded"],
+      "source": "free-exercise-db:Barbell_Incline_Bench_Press_-_Medium_Grip"
+    },
+    {
+      "id": "close_grip_bench_press", "name": "Close-Grip Bench Press", "category": "press",
+      "muscles": {"triceps_lateral_medial": 1.0, "triceps_long": 1.0, "pec_sternal": 0.5, "delt_anterior": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_push",
+      "equipment": ["barbell", "bench", "rack"], "load_type": "barbell",
+      "restrictions": ["supine_loaded"],
+      "source": "free-exercise-db:Close-Grip_Barbell_Bench_Press"
+    },
+    {
+      "id": "dumbbell_bench_press", "name": "Dumbbell Bench Press", "category": "press",
+      "muscles": {"pec_sternal": 1.0, "pec_clavicular": 0.5, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_push",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": ["supine_loaded"],
+      "source": "free-exercise-db:Dumbbell_Bench_Press"
+    },
+    {
+      "id": "overhead_press", "name": "Barbell Overhead Press", "category": "press",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5, "triceps_long": 0.5, "traps_upper": 0.5, "serratus_anterior": 0.5, "pec_clavicular": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["long_breath_hold", "overhead"],
+      "source": "free-exercise-db:Standing_Military_Press"
+    },
+    {
+      "id": "push_press", "name": "Push Press", "category": "press",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5, "quads_vasti": 0.5, "glute_max": 0.5, "traps_upper": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["overhead", "power"],
+      "source": "free-exercise-db:Push_Press"
+    },
+    {
+      "id": "z_press", "name": "Z Press", "category": "press",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5, "triceps_long": 0.5, "rectus_abdominis": 0.5, "traps_upper": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["barbell", "rack"], "load_type": "barbell",
+      "restrictions": ["advanced", "overhead"],
+      "source": "arc"
+    },
+    {
+      "id": "dumbbell_shoulder_press", "name": "Dumbbell Shoulder Press", "category": "press",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Dumbbell_Shoulder_Press"
+    },
+    {
+      "id": "arnold_press", "name": "Arnold Press", "category": "press",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Arnold_Dumbbell_Press"
+    },
+    {
+      "id": "single_arm_overhead_press", "name": "Single-Arm Overhead Press", "category": "press", "unilateral": true,
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "triceps_lateral_medial": 0.5, "obliques": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": ["overhead"],
+      "source": "arc"
+    },
+    {
+      "id": "landmine_press", "name": "Landmine Press", "category": "press", "unilateral": true,
+      "muscles": {"delt_anterior": 1.0, "pec_clavicular": 1.0, "triceps_lateral_medial": 0.5, "serratus_anterior": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["barbell", "landmine"], "load_type": "plate_loaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Single-Arm_Linear_Jammer"
+    },
+    {
+      "id": "push_up", "name": "Push-Up", "category": "press",
+      "muscles": {"pec_sternal": 1.0, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5, "rectus_abdominis": 0.5, "serratus_anterior": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_push",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["prone"],
+      "source": "free-exercise-db:Pushups"
+    },
+    {
+      "id": "dip", "name": "Dip", "category": "press",
+      "muscles": {"pec_sternal": 1.0, "triceps_lateral_medial": 1.0, "delt_anterior": 0.5, "triceps_long": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_push",
+      "equipment": ["dip_bars"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Dips_-_Chest_Version"
+    },
+    {
+      "id": "cable_chest_fly", "name": "Cable Chest Fly", "category": "press",
+      "muscles": {"pec_sternal": 1.0, "pec_clavicular": 0.5, "delt_anterior": 0.5},
+      "mechanic": "single_joint", "pattern": "chest_fly",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Cable_Crossover"
+    },
+    {
+      "id": "triceps_pushdown", "name": "Triceps Pushdown", "category": "press",
+      "muscles": {"triceps_lateral_medial": 1.0, "triceps_long": 0.5},
+      "mechanic": "single_joint", "pattern": "elbow_extension",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Triceps_Pushdown"
+    },
+    {
+      "id": "lateral_raise", "name": "Lateral Raise", "category": "press",
+      "muscles": {"delt_lateral": 1.0, "traps_upper": 0.5, "delt_anterior": 0.5},
+      "mechanic": "single_joint", "pattern": "shoulder_raise",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Side_Lateral_Raise"
+    },
 
-    { "id": "pull_up", "name": "Pull-Up", "category": "pull" },
-    { "id": "chin_up", "name": "Chin-Up", "category": "pull" },
-    { "id": "lat_pulldown", "name": "Lat Pulldown", "category": "pull" },
-    { "id": "barbell_row", "name": "Barbell Row", "category": "pull" },
-    { "id": "pendlay_row", "name": "Pendlay Row", "category": "pull" },
-    { "id": "single_arm_dumbbell_row", "name": "Single-Arm Dumbbell Row", "category": "pull", "unilateral": true },
-    { "id": "seated_cable_row", "name": "Seated Cable Row", "category": "pull" },
-    { "id": "chest_supported_row", "name": "Chest-Supported Row", "category": "pull" },
-    { "id": "inverted_row", "name": "Inverted Row", "category": "pull" },
-    { "id": "face_pull", "name": "Face Pull", "category": "pull" },
-    { "id": "reverse_fly", "name": "Dumbbell Reverse Fly", "category": "pull" },
-    { "id": "barbell_shrug", "name": "Barbell Shrug", "category": "pull" },
-    { "id": "barbell_curl", "name": "Barbell Curl", "category": "pull" },
-    { "id": "dumbbell_curl", "name": "Dumbbell Curl", "category": "pull" },
-    { "id": "hammer_curl", "name": "Hammer Curl", "category": "pull" },
+    {
+      "id": "pull_up", "name": "Pull-Up", "category": "pull",
+      "muscles": {"lats": 1.0, "teres_major": 0.5, "biceps": 0.5, "brachialis": 0.5, "rhomboids": 0.5, "traps_lower": 0.5, "delt_posterior": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_pull",
+      "equipment": ["pull_up_bar"], "load_type": "bodyweight",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Pullups"
+    },
+    {
+      "id": "chin_up", "name": "Chin-Up", "category": "pull",
+      "muscles": {"lats": 1.0, "biceps": 0.5, "brachialis": 0.5, "teres_major": 0.5, "rhomboids": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_pull",
+      "equipment": ["pull_up_bar"], "load_type": "bodyweight",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Chin-Up"
+    },
+    {
+      "id": "lat_pulldown", "name": "Lat Pulldown", "category": "pull",
+      "muscles": {"lats": 1.0, "teres_major": 0.5, "biceps": 0.5, "brachialis": 0.5, "rhomboids": 0.5, "traps_lower": 0.5},
+      "mechanic": "multi_joint", "pattern": "vertical_pull",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Wide-Grip_Lat_Pulldown"
+    },
+    {
+      "id": "barbell_row", "name": "Barbell Row", "category": "pull",
+      "muscles": {"lats": 1.0, "rhomboids": 1.0, "traps_middle": 1.0, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5, "erector_spinae": 0.5, "teres_major": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Bent_Over_Barbell_Row"
+    },
+    {
+      "id": "pendlay_row", "name": "Pendlay Row", "category": "pull",
+      "muscles": {"lats": 1.0, "rhomboids": 1.0, "traps_middle": 1.0, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5, "erector_spinae": 0.5, "teres_major": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Bent_Over_Barbell_Row"
+    },
+    {
+      "id": "single_arm_dumbbell_row", "name": "Single-Arm Dumbbell Row", "category": "pull", "unilateral": true,
+      "muscles": {"lats": 1.0, "rhomboids": 1.0, "traps_middle": 0.5, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5, "teres_major": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:One-Arm_Dumbbell_Row"
+    },
+    {
+      "id": "seated_cable_row", "name": "Seated Cable Row", "category": "pull",
+      "muscles": {"rhomboids": 1.0, "traps_middle": 1.0, "lats": 1.0, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Seated_Cable_Rows"
+    },
+    {
+      "id": "chest_supported_row", "name": "Chest-Supported Row", "category": "pull",
+      "muscles": {"rhomboids": 1.0, "traps_middle": 1.0, "lats": 0.5, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["dumbbell", "bench"], "load_type": "dumbbell",
+      "restrictions": ["prone"],
+      "source": "free-exercise-db:Dumbbell_Incline_Row"
+    },
+    {
+      "id": "inverted_row", "name": "Inverted Row", "category": "pull",
+      "muscles": {"rhomboids": 1.0, "traps_middle": 1.0, "lats": 1.0, "delt_posterior": 0.5, "biceps": 0.5, "brachialis": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "horizontal_pull",
+      "equipment": ["barbell", "rack"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Inverted_Row"
+    },
+    {
+      "id": "face_pull", "name": "Face Pull", "category": "pull",
+      "muscles": {"delt_posterior": 1.0, "rotator_cuff": 0.5, "traps_middle": 0.5, "rhomboids": 0.5, "traps_lower": 0.5},
+      "mechanic": "multi_joint", "pattern": "rear_delt",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Face_Pull"
+    },
+    {
+      "id": "reverse_fly", "name": "Dumbbell Reverse Fly", "category": "pull",
+      "muscles": {"delt_posterior": 1.0, "rhomboids": 0.5, "traps_middle": 0.5, "rotator_cuff": 0.5},
+      "mechanic": "single_joint", "pattern": "rear_delt",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Reverse_Flyes"
+    },
+    {
+      "id": "barbell_shrug", "name": "Barbell Shrug", "category": "pull",
+      "muscles": {"traps_upper": 1.0, "traps_middle": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "single_joint", "pattern": "shrug",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Barbell_Shrug"
+    },
+    {
+      "id": "barbell_curl", "name": "Barbell Curl", "category": "pull",
+      "muscles": {"biceps": 1.0, "brachialis": 0.5, "brachioradialis": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "single_joint", "pattern": "elbow_flexion",
+      "equipment": ["barbell"], "load_type": "barbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Barbell_Curl"
+    },
+    {
+      "id": "dumbbell_curl", "name": "Dumbbell Curl", "category": "pull",
+      "muscles": {"biceps": 1.0, "brachialis": 0.5, "brachioradialis": 0.5},
+      "mechanic": "single_joint", "pattern": "elbow_flexion",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Dumbbell_Bicep_Curl"
+    },
+    {
+      "id": "hammer_curl", "name": "Hammer Curl", "category": "pull",
+      "muscles": {"brachialis": 1.0, "brachioradialis": 1.0, "biceps": 0.5},
+      "mechanic": "single_joint", "pattern": "elbow_flexion",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Hammer_Curls"
+    },
 
-    { "id": "front_plank", "name": "Front Plank", "category": "core" },
-    { "id": "side_plank", "name": "Side Plank", "category": "core", "unilateral": true },
-    { "id": "copenhagen_plank", "name": "Copenhagen Plank", "category": "core", "unilateral": true },
-    { "id": "dead_bug", "name": "Dead Bug", "category": "core" },
-    { "id": "bird_dog", "name": "Bird Dog", "category": "core", "unilateral": true },
-    { "id": "hollow_body_hold", "name": "Hollow Body Hold", "category": "core" },
-    { "id": "hanging_leg_raise", "name": "Hanging Leg Raise", "category": "core" },
-    { "id": "ab_wheel_rollout", "name": "Ab Wheel Rollout", "category": "core" },
-    { "id": "pallof_press", "name": "Pallof Press", "category": "core", "unilateral": true },
-    { "id": "cable_woodchop", "name": "Cable Woodchop", "category": "core", "unilateral": true },
-    { "id": "russian_twist", "name": "Russian Twist", "category": "core" },
-    { "id": "sit_up", "name": "Sit-Up", "category": "core" },
+    {
+      "id": "front_plank", "name": "Front Plank", "category": "core",
+      "muscles": {"rectus_abdominis": 1.0, "transversus_abdominis": 1.0, "obliques": 0.5, "serratus_anterior": 0.5, "delt_anterior": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_extension",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["prone"],
+      "source": "free-exercise-db:Plank"
+    },
+    {
+      "id": "side_plank", "name": "Side Plank", "category": "core", "unilateral": true,
+      "muscles": {"obliques": 1.0, "transversus_abdominis": 0.5, "glute_med_min": 0.5, "quadratus_lumborum": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_lateral_flexion",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Side_Bridge"
+    },
+    {
+      "id": "copenhagen_plank", "name": "Copenhagen Plank", "category": "core", "unilateral": true,
+      "muscles": {"adductors": 1.0, "obliques": 0.5, "glute_med_min": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_lateral_flexion",
+      "equipment": ["bench"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "dead_bug", "name": "Dead Bug", "category": "core",
+      "muscles": {"transversus_abdominis": 1.0, "rectus_abdominis": 1.0, "obliques": 0.5, "hip_flexors": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_extension",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Dead_Bug"
+    },
+    {
+      "id": "bird_dog", "name": "Bird Dog", "category": "core", "unilateral": true,
+      "muscles": {"erector_spinae": 1.0, "glute_max": 0.5, "transversus_abdominis": 0.5, "obliques": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_rotation",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "hollow_body_hold", "name": "Hollow Body Hold", "category": "core",
+      "muscles": {"rectus_abdominis": 1.0, "transversus_abdominis": 1.0, "hip_flexors": 0.5, "obliques": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_extension",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "hanging_leg_raise", "name": "Hanging Leg Raise", "category": "core",
+      "muscles": {"rectus_abdominis": 1.0, "hip_flexors": 0.5, "obliques": 0.5, "forearm_flexors": 0.5, "lats": 0.5},
+      "mechanic": "single_joint", "pattern": "trunk_flexion",
+      "equipment": ["pull_up_bar"], "load_type": "bodyweight",
+      "restrictions": ["loaded_spinal_flexion", "overhead"],
+      "source": "free-exercise-db:Hanging_Leg_Raise"
+    },
+    {
+      "id": "ab_wheel_rollout", "name": "Ab Wheel Rollout", "category": "core",
+      "muscles": {"rectus_abdominis": 1.0, "transversus_abdominis": 1.0, "lats": 0.5, "obliques": 0.5, "delt_anterior": 0.5, "serratus_anterior": 0.5},
+      "mechanic": "multi_joint", "pattern": "anti_extension",
+      "equipment": ["ab_wheel"], "load_type": "bodyweight",
+      "restrictions": [],
+      "source": "free-exercise-db:Ab_Roller"
+    },
+    {
+      "id": "pallof_press", "name": "Pallof Press", "category": "core", "unilateral": true,
+      "muscles": {"obliques": 1.0, "transversus_abdominis": 1.0, "rectus_abdominis": 0.5},
+      "mechanic": "single_joint", "pattern": "anti_rotation",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": [],
+      "source": "free-exercise-db:Pallof_Press"
+    },
+    {
+      "id": "cable_woodchop", "name": "Cable Woodchop", "category": "core", "unilateral": true,
+      "muscles": {"obliques": 1.0, "rectus_abdominis": 0.5, "transversus_abdominis": 0.5, "delt_anterior": 0.5, "glute_max": 0.5},
+      "mechanic": "multi_joint", "pattern": "rotation",
+      "equipment": ["cable"], "load_type": "stack",
+      "restrictions": ["hip_rotation_loaded"],
+      "source": "free-exercise-db:Standing_Cable_Wood_Chop"
+    },
+    {
+      "id": "russian_twist", "name": "Russian Twist", "category": "core",
+      "muscles": {"obliques": 1.0, "rectus_abdominis": 0.5, "hip_flexors": 0.5},
+      "mechanic": "single_joint", "pattern": "rotation",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["loaded_spinal_flexion"],
+      "source": "free-exercise-db:Russian_Twist"
+    },
+    {
+      "id": "sit_up", "name": "Sit-Up", "category": "core",
+      "muscles": {"rectus_abdominis": 1.0, "hip_flexors": 0.5, "obliques": 0.5},
+      "mechanic": "single_joint", "pattern": "trunk_flexion",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["loaded_spinal_flexion"],
+      "source": "free-exercise-db:Sit-Up"
+    },
 
-    { "id": "farmers_carry", "name": "Farmer's Carry", "category": "carry" },
-    { "id": "suitcase_carry", "name": "Suitcase Carry", "category": "carry", "unilateral": true },
-    { "id": "front_rack_carry", "name": "Front Rack Carry", "category": "carry" },
-    { "id": "overhead_carry", "name": "Overhead Carry", "category": "carry" },
-    { "id": "sled_push", "name": "Sled Push", "category": "carry" },
+    {
+      "id": "farmers_carry", "name": "Farmer's Carry", "category": "carry",
+      "muscles": {"forearm_flexors": 1.0, "traps_upper": 1.0, "obliques": 0.5, "quadratus_lumborum": 0.5, "glute_med_min": 0.5, "traps_middle": 0.5},
+      "mechanic": "multi_joint", "pattern": "carry",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "free-exercise-db:Farmers_Walk"
+    },
+    {
+      "id": "suitcase_carry", "name": "Suitcase Carry", "category": "carry", "unilateral": true,
+      "muscles": {"obliques": 1.0, "quadratus_lumborum": 1.0, "forearm_flexors": 0.5, "traps_upper": 0.5, "glute_med_min": 0.5},
+      "mechanic": "multi_joint", "pattern": "carry",
+      "equipment": ["dumbbell"], "load_type": "dumbbell",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "front_rack_carry", "name": "Front Rack Carry", "category": "carry",
+      "muscles": {"rectus_abdominis": 1.0, "transversus_abdominis": 1.0, "delt_anterior": 0.5, "traps_upper": 0.5, "biceps": 0.5, "erector_spinae": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "carry",
+      "equipment": ["kettlebell"], "load_type": "kettlebell",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "overhead_carry", "name": "Overhead Carry", "category": "carry",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "traps_upper": 0.5, "traps_lower": 0.5, "serratus_anterior": 0.5, "triceps_lateral_medial": 0.5, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "carry",
+      "equipment": ["kettlebell"], "load_type": "kettlebell",
+      "restrictions": ["overhead"],
+      "source": "arc"
+    },
+    {
+      "id": "sled_push", "name": "Sled Push", "category": "carry",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "gastrocnemius": 0.5, "hamstrings": 0.5, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "carry",
+      "equipment": ["sled"], "load_type": "plate_loaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Sled_Push"
+    },
 
-    { "id": "couch_stretch", "name": "Couch Stretch", "category": "mobility", "unilateral": true },
-    { "id": "hip_flexor_stretch", "name": "Hip Flexor Stretch", "category": "mobility", "unilateral": true },
-    { "id": "worlds_greatest_stretch", "name": "World's Greatest Stretch", "category": "mobility", "unilateral": true },
-    { "id": "thoracic_rotation", "name": "Thoracic Rotation", "category": "mobility", "unilateral": true },
-    { "id": "ankle_dorsiflexion_drill", "name": "Ankle Dorsiflexion Drill", "category": "mobility", "unilateral": true },
-    { "id": "ninety_ninety_hip_switch", "name": "90/90 Hip Switch", "category": "mobility" },
-    { "id": "cat_cow", "name": "Cat-Cow", "category": "mobility" },
-    { "id": "band_pull_apart", "name": "Band Pull-Apart", "category": "mobility" },
-    { "id": "shoulder_dislocate", "name": "Shoulder Dislocate", "category": "mobility" },
+    {
+      "id": "couch_stretch", "name": "Couch Stretch", "category": "mobility", "unilateral": true,
+      "muscles": {"quads_rectus_femoris": 1.0, "hip_flexors": 1.0, "quads_vasti": 0.5},
+      "mechanic": "multi_joint", "pattern": "mobility",
+      "equipment": ["bench"], "load_type": "unloaded",
+      "restrictions": ["deep_knee_flexion"],
+      "source": "free-exercise-db:Intermediate_Hip_Flexor_and_Quad_Stretch"
+    },
+    {
+      "id": "hip_flexor_stretch", "name": "Hip Flexor Stretch", "category": "mobility", "unilateral": true,
+      "muscles": {"hip_flexors": 1.0, "quads_rectus_femoris": 0.5},
+      "mechanic": "single_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Kneeling_Hip_Flexor"
+    },
+    {
+      "id": "worlds_greatest_stretch", "name": "World's Greatest Stretch", "category": "mobility", "unilateral": true,
+      "muscles": {"hip_flexors": 1.0, "hamstrings": 1.0, "glute_max": 0.5, "adductors": 0.5, "obliques": 0.5},
+      "mechanic": "multi_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": ["deep_hip_flexion"],
+      "source": "free-exercise-db:Worlds_Greatest_Stretch"
+    },
+    {
+      "id": "thoracic_rotation", "name": "Thoracic Rotation", "category": "mobility", "unilateral": true,
+      "muscles": {"erector_spinae": 1.0, "obliques": 0.5, "rhomboids": 0.5},
+      "mechanic": "single_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "ankle_dorsiflexion_drill", "name": "Ankle Dorsiflexion Drill", "category": "mobility", "unilateral": true,
+      "muscles": {"soleus": 1.0, "gastrocnemius": 0.5, "tibialis_anterior": 0.5},
+      "mechanic": "single_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "ninety_ninety_hip_switch", "name": "90/90 Hip Switch", "category": "mobility",
+      "muscles": {"glute_med_min": 1.0, "adductors": 0.5, "glute_max": 0.5, "hip_flexors": 0.5},
+      "mechanic": "single_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": ["deep_hip_flexion"],
+      "source": "arc"
+    },
+    {
+      "id": "cat_cow", "name": "Cat-Cow", "category": "mobility",
+      "muscles": {"erector_spinae": 1.0, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "mobility",
+      "equipment": ["bodyweight"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Cat_Stretch"
+    },
+    {
+      "id": "band_pull_apart", "name": "Band Pull-Apart", "category": "mobility",
+      "muscles": {"delt_posterior": 1.0, "rhomboids": 0.5, "traps_middle": 0.5, "rotator_cuff": 0.5},
+      "mechanic": "single_joint", "pattern": "rear_delt",
+      "equipment": ["band"], "load_type": "band",
+      "restrictions": [],
+      "source": "free-exercise-db:Band_Pull_Apart"
+    },
+    {
+      "id": "shoulder_dislocate", "name": "Shoulder Dislocate", "category": "mobility",
+      "muscles": {"rotator_cuff": 1.0, "delt_anterior": 0.5, "delt_posterior": 0.5, "delt_lateral": 0.5},
+      "mechanic": "single_joint", "pattern": "mobility",
+      "equipment": ["band"], "load_type": "unloaded",
+      "restrictions": ["overhead"],
+      "source": "free-exercise-db:Shoulder_Stretch"
+    },
 
-    { "id": "air_bike", "name": "Air Bike", "category": "conditioning" },
-    { "id": "rowing_machine", "name": "Rowing Machine", "category": "conditioning" },
-    { "id": "ski_erg", "name": "Ski Erg", "category": "conditioning" },
-    { "id": "burpee", "name": "Burpee", "category": "conditioning" },
-    { "id": "box_jump", "name": "Box Jump", "category": "conditioning" },
-    { "id": "jump_rope", "name": "Jump Rope", "category": "conditioning" },
-    { "id": "battle_ropes", "name": "Battle Ropes", "category": "conditioning" },
-    { "id": "mountain_climber", "name": "Mountain Climber", "category": "conditioning" }
+    {
+      "id": "air_bike", "name": "Air Bike", "category": "conditioning",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 0.5, "hamstrings": 0.5, "delt_anterior": 0.5, "lats": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["air_bike"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Bicycling_Stationary"
+    },
+    {
+      "id": "rowing_machine", "name": "Rowing Machine", "category": "conditioning",
+      "muscles": {"lats": 1.0, "quads_vasti": 1.0, "glute_max": 0.5, "hamstrings": 0.5, "rhomboids": 0.5, "biceps": 0.5, "erector_spinae": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["rower"], "load_type": "unloaded",
+      "restrictions": ["deep_hip_flexion", "deep_knee_flexion"],
+      "source": "free-exercise-db:Rowing_Stationary"
+    },
+    {
+      "id": "ski_erg", "name": "Ski Erg", "category": "conditioning",
+      "muscles": {"lats": 1.0, "triceps_long": 0.5, "rectus_abdominis": 0.5, "glute_max": 0.5, "hamstrings": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["ski_erg"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "arc"
+    },
+    {
+      "id": "burpee", "name": "Burpee", "category": "conditioning",
+      "muscles": {"quads_vasti": 1.0, "pec_sternal": 1.0, "glute_max": 0.5, "delt_anterior": 0.5, "triceps_lateral_medial": 0.5, "rectus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["impact", "power", "prone"],
+      "source": "arc"
+    },
+    {
+      "id": "box_jump", "name": "Box Jump", "category": "conditioning",
+      "muscles": {"quads_vasti": 1.0, "glute_max": 1.0, "gastrocnemius": 0.5, "hamstrings": 0.5},
+      "mechanic": "multi_joint", "pattern": "jump",
+      "equipment": ["box"], "load_type": "bodyweight",
+      "restrictions": ["impact", "power"],
+      "source": "free-exercise-db:Front_Box_Jump"
+    },
+    {
+      "id": "jump_rope", "name": "Jump Rope", "category": "conditioning",
+      "muscles": {"gastrocnemius": 1.0, "soleus": 0.5, "quads_vasti": 0.5, "forearm_flexors": 0.5},
+      "mechanic": "multi_joint", "pattern": "jump",
+      "equipment": ["jump_rope"], "load_type": "unloaded",
+      "restrictions": ["impact"],
+      "source": "free-exercise-db:Rope_Jumping"
+    },
+    {
+      "id": "battle_ropes", "name": "Battle Ropes", "category": "conditioning",
+      "muscles": {"delt_anterior": 1.0, "delt_lateral": 0.5, "rectus_abdominis": 0.5, "forearm_flexors": 0.5, "triceps_lateral_medial": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["battle_ropes"], "load_type": "unloaded",
+      "restrictions": [],
+      "source": "free-exercise-db:Battling_Ropes"
+    },
+    {
+      "id": "mountain_climber", "name": "Mountain Climber", "category": "conditioning",
+      "muscles": {"rectus_abdominis": 1.0, "hip_flexors": 0.5, "delt_anterior": 0.5, "quads_vasti": 0.5, "transversus_abdominis": 0.5},
+      "mechanic": "multi_joint", "pattern": "conditioning",
+      "equipment": ["bodyweight"], "load_type": "bodyweight",
+      "restrictions": ["prone"],
+      "source": "free-exercise-db:Mountain_Climbers"
+    }
   ]
 }

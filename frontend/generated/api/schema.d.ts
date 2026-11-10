@@ -557,7 +557,7 @@ export interface paths {
     };
     /**
      * List Exercises
-     * @description List catalogue exercises, by family then name.
+     * @description List catalogue exercises, by family then name; every filter narrows.
      */
     get: operations["exercises-list_exercises"];
     put?: never;
@@ -581,6 +581,30 @@ export interface paths {
      */
     get: operations["exercises-get_exercise"];
     put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exercises/{exercise_id}/note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Exercise Note
+     * @description Get the athlete's note on an exercise; empty text when there is none.
+     */
+    get: operations["exercises-get_exercise_note"];
+    /**
+     * Put Exercise Note
+     * @description Replace the note on an exercise; an empty text deletes it.
+     */
+    put: operations["exercises-put_exercise_note"];
     post?: never;
     delete?: never;
     options?: never;
@@ -3422,6 +3446,66 @@ export interface components {
       | "mobility"
       | "conditioning";
     /**
+     * ExerciseEquipment
+     * @description Something a movement, as named, needs in the room.
+     *
+     *     An entry's equipment is **everything** it needs, not a list of
+     *     alternatives: a Bulgarian split squat is ``dumbbell`` *and* ``bench``.
+     *     Alternatives arrive with variations in a later step. ``bodyweight`` means
+     *     "needs nothing" and therefore stands alone.
+     *
+     *     Not :class:`app.domain.loading.Equipment`, which is how a *weight* is made
+     *     up (bar and plates, rack steps, a stack); that question is
+     *     :class:`LoadType`.
+     * @enum {string}
+     */
+    ExerciseEquipment:
+      | "barbell"
+      | "trap_bar"
+      | "safety_bar"
+      | "dumbbell"
+      | "kettlebell"
+      | "cable"
+      | "machine"
+      | "bench"
+      | "rack"
+      | "pull_up_bar"
+      | "dip_bars"
+      | "band"
+      | "box"
+      | "sled"
+      | "landmine"
+      | "ab_wheel"
+      | "jump_rope"
+      | "battle_ropes"
+      | "rower"
+      | "ski_erg"
+      | "air_bike"
+      | "bodyweight";
+    /**
+     * ExerciseNoteRead
+     * @description The athlete's note on one exercise.
+     *
+     *     ``text`` is empty and ``updated_at`` null when there is no note — every
+     *     exercise has a note slot, so "nothing written" is a value, not a 404.
+     */
+    ExerciseNoteRead: {
+      /** Exercise Id */
+      exercise_id: string;
+      /** Text */
+      text: string;
+      /** Updated At */
+      updated_at: string | null;
+    };
+    /**
+     * ExerciseNoteWrite
+     * @description Replace the note on an exercise; an empty ``text`` deletes it.
+     */
+    ExerciseNoteWrite: {
+      /** Text */
+      text: string;
+    };
+    /**
      * ExerciseRead
      * @description One catalogue movement as returned by the API.
      */
@@ -3432,10 +3516,21 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** Equipment */
+      equipment: components["schemas"]["ExerciseEquipment"][];
       /** Id */
       id: string;
+      load_type: components["schemas"]["LoadType"];
+      mechanic: components["schemas"]["Mechanic"];
+      /** Muscles */
+      muscles: {
+        [key: string]: number;
+      };
       /** Name */
       name: string;
+      pattern: components["schemas"]["MovementPattern"];
+      /** Restrictions */
+      restrictions: components["schemas"]["Restriction"][];
       /** Unilateral */
       unilateral: boolean;
       /**
@@ -4037,6 +4132,26 @@ export interface components {
       value?: number | null;
     };
     /**
+     * LoadType
+     * @description How the load of the movement is made up, which decides what is loadable.
+     *
+     *     ``barbell``, ``dumbbell`` and ``stack`` are the three implements
+     *     `app.domain.loading` rounds for, spelled the same. ``plate_loaded`` is a
+     *     machine or sled loaded with plates and no bar; ``bodyweight`` moves the
+     *     athlete's own body (weight may be added); ``unloaded`` has no load to
+     *     progress — a stretch, an erg.
+     * @enum {string}
+     */
+    LoadType:
+      | "barbell"
+      | "dumbbell"
+      | "stack"
+      | "kettlebell"
+      | "plate_loaded"
+      | "band"
+      | "bodyweight"
+      | "unloaded";
+    /**
      * LoadWithinSchema
      * @description Loads used within this relative tolerance of what was prescribed.
      */
@@ -4565,6 +4680,16 @@ export interface components {
       reason: string;
     };
     /**
+     * Mechanic
+     * @description Multi-joint or single-joint, as the direction's glossary uses the words.
+     *
+     *     Decides the default main lift (the first multi-joint movement of each
+     *     pattern) and, with the main muscle group, which exercises progress in
+     *     small steps.
+     * @enum {string}
+     */
+    Mechanic: "multi_joint" | "single_joint";
+    /**
      * MetricExplanationRead
      * @description Why a computed number is the number. Travels with it; not page copy.
      */
@@ -4650,6 +4775,110 @@ export interface components {
        */
       reasons: components["schemas"]["Reason"][];
     };
+    /**
+     * MovementPattern
+     * @description What the movement does, at the grain a swap needs.
+     *
+     *     Finer than :class:`ExerciseCategory`: a swap for a lat pulldown wants a
+     *     vertical pull, not any pull. The five main-lift patterns (squat, hinge,
+     *     lunge, push, pull) are recovered by reading ``horizontal_push`` and
+     *     ``vertical_push`` as push, and likewise for pull.
+     * @enum {string}
+     */
+    MovementPattern:
+      | "squat"
+      | "hinge"
+      | "lunge"
+      | "horizontal_push"
+      | "vertical_push"
+      | "horizontal_pull"
+      | "vertical_pull"
+      | "chest_fly"
+      | "shoulder_raise"
+      | "rear_delt"
+      | "shrug"
+      | "elbow_flexion"
+      | "elbow_extension"
+      | "knee_flexion"
+      | "knee_extension"
+      | "calf_raise"
+      | "anti_extension"
+      | "anti_rotation"
+      | "anti_lateral_flexion"
+      | "trunk_flexion"
+      | "rotation"
+      | "carry"
+      | "jump"
+      | "mobility"
+      | "conditioning";
+    /**
+     * MuscleGroup
+     * @description One of the 16 groups counts and the map are shown in.
+     *
+     *     Member order is the direction's order, which is also display order;
+     *     :data:`GROUP_LABELS` holds the words an athlete reads.
+     * @enum {string}
+     */
+    MuscleGroup:
+      | "chest"
+      | "front_shoulders"
+      | "side_rear_shoulders"
+      | "upper_back"
+      | "lats"
+      | "lower_back"
+      | "biceps"
+      | "triceps"
+      | "forearms"
+      | "abs_obliques"
+      | "glutes"
+      | "quads"
+      | "hamstrings"
+      | "adductors"
+      | "calves"
+      | "neck";
+    /**
+     * MuscleRegion
+     * @description One of the 37 internal muscle regions. Append-only — see the module.
+     * @enum {string}
+     */
+    MuscleRegion:
+      | "pec_clavicular"
+      | "pec_sternal"
+      | "serratus_anterior"
+      | "delt_anterior"
+      | "delt_lateral"
+      | "delt_posterior"
+      | "rotator_cuff"
+      | "lats"
+      | "teres_major"
+      | "traps_upper"
+      | "traps_middle"
+      | "traps_lower"
+      | "rhomboids"
+      | "erector_spinae"
+      | "quadratus_lumborum"
+      | "biceps"
+      | "brachialis"
+      | "brachioradialis"
+      | "triceps_long"
+      | "triceps_lateral_medial"
+      | "forearm_flexors"
+      | "forearm_extensors"
+      | "rectus_abdominis"
+      | "obliques"
+      | "transversus_abdominis"
+      | "glute_max"
+      | "glute_med_min"
+      | "hip_flexors"
+      | "adductors"
+      | "tfl_abductors"
+      | "quads_rectus_femoris"
+      | "quads_vasti"
+      | "hamstrings"
+      | "gastrocnemius"
+      | "soleus"
+      | "tibialis_anterior"
+      | "neck";
     /**
      * NotAssessedPowerCurveRead
      * @description Why a session has no power curve, naming the missing input.
@@ -5801,6 +6030,27 @@ export interface components {
       resolved_low: number | null;
       unit: components["schemas"]["ChannelUnit"];
     };
+    /**
+     * Restriction
+     * @description What a movement asks of the body that a safety filter may rule out.
+     *
+     *     The direction's list (§12), verbatim. A tag says the movement *involves*
+     *     the demand, never that it is unsafe.
+     * @enum {string}
+     */
+    Restriction:
+      | "deep_knee_flexion"
+      | "deep_hip_flexion"
+      | "hip_rotation_loaded"
+      | "loaded_spinal_flexion"
+      | "impact"
+      | "long_breath_hold"
+      | "unsupported_single_leg"
+      | "overhead"
+      | "supine_loaded"
+      | "prone"
+      | "advanced"
+      | "power";
     /**
      * RollingMeanRead
      * @description The trailing seven-day mean, with the `n` it was computed over.
@@ -9103,6 +9353,14 @@ export interface operations {
         category?: components["schemas"]["ExerciseCategory"];
         /** @description Case-insensitive substring of the name. */
         q?: string;
+        /** @description Only exercises whose main muscles roll up to this group. */
+        group?: components["schemas"]["MuscleGroup"];
+        /** @description Only exercises with this movement pattern. */
+        pattern?: components["schemas"]["MovementPattern"];
+        /** @description Only exercises whose equipment includes this item. */
+        equipment?: components["schemas"]["ExerciseEquipment"];
+        /** @description Only multi-joint or only single-joint exercises. */
+        mechanic?: components["schemas"]["Mechanic"];
         offset?: number;
         limit?: number;
       };
@@ -9168,6 +9426,135 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ExerciseRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-get_exercise_note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExerciseNoteRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-put_exercise_note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ExerciseNoteWrite"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExerciseNoteRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
       /** @description No valid session */

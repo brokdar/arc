@@ -22,8 +22,9 @@ with the item count.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 from typing import Any
 
@@ -41,6 +42,7 @@ from app.domain.coding import (
     no_extra_fields,
     optional,
 )
+from app.domain.muscles import MAIN_WEIGHT, MuscleRegion
 
 
 class ExerciseCategory(StrEnum):
@@ -106,6 +108,138 @@ MAX_RIR = 10
 SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
+#: What a catalogue entry's ``source`` may say: the free-exercise-db entry its
+#: muscles were hand-mapped from, or ``arc`` where that database has no
+#: counterpart and the mapping is arc's own.
+SOURCE_PATTERN = re.compile(r"arc|free-exercise-db:[A-Za-z0-9][A-Za-z0-9_()-]*")
+
+
+class Mechanic(StrEnum):
+    """Multi-joint or single-joint, as the direction's glossary uses the words.
+
+    Decides the default main lift (the first multi-joint movement of each
+    pattern) and, with the main muscle group, which exercises progress in
+    small steps.
+    """
+
+    MULTI_JOINT = "multi_joint"
+    SINGLE_JOINT = "single_joint"
+
+
+class MovementPattern(StrEnum):
+    """What the movement does, at the grain a swap needs.
+
+    Finer than :class:`ExerciseCategory`: a swap for a lat pulldown wants a
+    vertical pull, not any pull. The five main-lift patterns (squat, hinge,
+    lunge, push, pull) are recovered by reading ``horizontal_push`` and
+    ``vertical_push`` as push, and likewise for pull.
+    """
+
+    SQUAT = "squat"
+    HINGE = "hinge"
+    LUNGE = "lunge"
+    HORIZONTAL_PUSH = "horizontal_push"
+    VERTICAL_PUSH = "vertical_push"
+    HORIZONTAL_PULL = "horizontal_pull"
+    VERTICAL_PULL = "vertical_pull"
+    CHEST_FLY = "chest_fly"
+    SHOULDER_RAISE = "shoulder_raise"
+    REAR_DELT = "rear_delt"
+    SHRUG = "shrug"
+    ELBOW_FLEXION = "elbow_flexion"
+    ELBOW_EXTENSION = "elbow_extension"
+    KNEE_FLEXION = "knee_flexion"
+    KNEE_EXTENSION = "knee_extension"
+    CALF_RAISE = "calf_raise"
+    ANTI_EXTENSION = "anti_extension"
+    ANTI_ROTATION = "anti_rotation"
+    ANTI_LATERAL_FLEXION = "anti_lateral_flexion"
+    TRUNK_FLEXION = "trunk_flexion"
+    ROTATION = "rotation"
+    CARRY = "carry"
+    JUMP = "jump"
+    MOBILITY = "mobility"
+    CONDITIONING = "conditioning"
+
+
+class ExerciseEquipment(StrEnum):
+    """Something a movement, as named, needs in the room.
+
+    An entry's equipment is **everything** it needs, not a list of
+    alternatives: a Bulgarian split squat is ``dumbbell`` *and* ``bench``.
+    Alternatives arrive with variations in a later step. ``bodyweight`` means
+    "needs nothing" and therefore stands alone.
+
+    Not :class:`app.domain.loading.Equipment`, which is how a *weight* is made
+    up (bar and plates, rack steps, a stack); that question is
+    :class:`LoadType`.
+    """
+
+    BARBELL = "barbell"
+    TRAP_BAR = "trap_bar"
+    SAFETY_BAR = "safety_bar"
+    DUMBBELL = "dumbbell"
+    KETTLEBELL = "kettlebell"
+    CABLE = "cable"
+    MACHINE = "machine"
+    BENCH = "bench"
+    RACK = "rack"
+    PULL_UP_BAR = "pull_up_bar"
+    DIP_BARS = "dip_bars"
+    BAND = "band"
+    BOX = "box"
+    SLED = "sled"
+    LANDMINE = "landmine"
+    AB_WHEEL = "ab_wheel"
+    JUMP_ROPE = "jump_rope"
+    BATTLE_ROPES = "battle_ropes"
+    ROWER = "rower"
+    SKI_ERG = "ski_erg"
+    AIR_BIKE = "air_bike"
+    BODYWEIGHT = "bodyweight"
+
+
+class LoadType(StrEnum):
+    """How the load of the movement is made up, which decides what is loadable.
+
+    ``barbell``, ``dumbbell`` and ``stack`` are the three implements
+    `app.domain.loading` rounds for, spelled the same. ``plate_loaded`` is a
+    machine or sled loaded with plates and no bar; ``bodyweight`` moves the
+    athlete's own body (weight may be added); ``unloaded`` has no load to
+    progress — a stretch, an erg.
+    """
+
+    BARBELL = "barbell"
+    DUMBBELL = "dumbbell"
+    STACK = "stack"
+    KETTLEBELL = "kettlebell"
+    PLATE_LOADED = "plate_loaded"
+    BAND = "band"
+    BODYWEIGHT = "bodyweight"
+    UNLOADED = "unloaded"
+
+
+class Restriction(StrEnum):
+    """What a movement asks of the body that a safety filter may rule out.
+
+    The direction's list (§12), verbatim. A tag says the movement *involves*
+    the demand, never that it is unsafe.
+    """
+
+    DEEP_KNEE_FLEXION = "deep_knee_flexion"
+    DEEP_HIP_FLEXION = "deep_hip_flexion"
+    HIP_ROTATION_LOADED = "hip_rotation_loaded"
+    LOADED_SPINAL_FLEXION = "loaded_spinal_flexion"
+    IMPACT = "impact"
+    LONG_BREATH_HOLD = "long_breath_hold"
+    UNSUPPORTED_SINGLE_LEG = "unsupported_single_leg"
+    OVERHEAD = "overhead"
+    SUPINE_LOADED = "supine_loaded"
+    PRONE = "prone"
+    ADVANCED = "advanced"
+    POWER = "power"
+
+
 @dataclass(frozen=True, slots=True)
 class Exercise:
     """One catalogue movement.
@@ -118,12 +252,35 @@ class Exercise:
         unilateral: Whether the movement is performed one side at a time —
             which is what lets "3 x 8" be prescribed per side: three sets of
             left-right pairs, 48 reps.
+        muscles: ``{region: weight}``, 1.0 for a main muscle and 0.5 for a
+            helper (any value in [0, 1] is legal). At least one region is
+            main: a movement that only helps everywhere trains nothing a
+            count or a swap could name. Excluded from the hash (a dict is not
+            hashable); equality still compares it.
+        mechanic: Multi- or single-joint.
+        pattern: What the movement does.
+        equipment: Everything the movement needs; never empty.
+        load_type: How its load is made up.
+        restrictions: Demands a safety filter may rule out; often empty.
+        source: Where the muscle mapping's hint came from — see
+            :data:`SOURCE_PATTERN`. Recorded per entry because the muscles
+            are hand-mapped, not copied: the source says what was read, the
+            mapping says what arc concluded.
     """
 
     id: str
     name: str
     category: ExerciseCategory
     unilateral: bool = False
+    muscles: Mapping[MuscleRegion, float] = dataclass_field(kw_only=True, hash=False)
+    mechanic: Mechanic = dataclass_field(kw_only=True)
+    pattern: MovementPattern = dataclass_field(kw_only=True)
+    equipment: frozenset[ExerciseEquipment] = dataclass_field(kw_only=True)
+    load_type: LoadType = dataclass_field(kw_only=True)
+    restrictions: frozenset[Restriction] = dataclass_field(
+        kw_only=True, default=frozenset()
+    )
+    source: str = dataclass_field(kw_only=True)
 
     def __post_init__(self) -> None:
         """Reject entries that could not have come from the catalogue file."""
@@ -136,6 +293,31 @@ class Exercise:
             )
         if not self.name.strip():
             raise ValueError(f"exercise {self.id} needs a non-empty name")
+        for region, weight in self.muscles.items():
+            if not 0.0 <= weight <= 1.0:
+                raise ValueError(
+                    f"exercise {self.id}: muscle weight of {region} must be "
+                    f"between 0 and 1, got {weight}"
+                )
+        if not any(weight == MAIN_WEIGHT for weight in self.muscles.values()):
+            raise ValueError(
+                f"exercise {self.id} needs at least one main muscle (weight "
+                f"{MAIN_WEIGHT}); helpers alone train no group"
+            )
+        if not self.equipment:
+            raise ValueError(
+                f"exercise {self.id} needs equipment; use 'bodyweight' for none"
+            )
+        if ExerciseEquipment.BODYWEIGHT in self.equipment and len(self.equipment) > 1:
+            raise ValueError(
+                f"exercise {self.id}: equipment 'bodyweight' means it needs "
+                "nothing, so it cannot be listed with anything else"
+            )
+        if not SOURCE_PATTERN.fullmatch(self.source):
+            raise ValueError(
+                f"exercise {self.id}: source {self.source!r} must be 'arc' or "
+                "'free-exercise-db:<entry id>'"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -610,20 +792,58 @@ def strength_workout_from_json(document: Any, path: str = "") -> StrengthWorkout
 
 
 def exercise_to_json(exercise: Exercise) -> dict[str, Any]:
-    """Serialize a catalogue entry."""
+    """Serialize a catalogue entry, in the catalogue file's own shape.
+
+    Sets are written sorted so the output is stable across runs.
+    """
     return {
         "id": exercise.id,
         "name": exercise.name,
         "category": exercise.category.value,
         "unilateral": exercise.unilateral,
+        "muscles": {
+            region.value: weight for region, weight in exercise.muscles.items()
+        },
+        "mechanic": exercise.mechanic.value,
+        "pattern": exercise.pattern.value,
+        "equipment": sorted(item.value for item in exercise.equipment),
+        "load_type": exercise.load_type.value,
+        "restrictions": sorted(tag.value for tag in exercise.restrictions),
+        "source": exercise.source,
     }
 
 
-_EXERCISE_FIELDS = frozenset({"id", "name", "category", "unilateral"})
+_EXERCISE_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "category",
+        "unilateral",
+        "muscles",
+        "mechanic",
+        "pattern",
+        "equipment",
+        "load_type",
+        "restrictions",
+        "source",
+    }
+)
+
+
+def _enum_set[E: StrEnum](enum_class: type[E], value: Any, path: str) -> frozenset[E]:
+    """Decode a JSON array of ``enum_class`` values into a set."""
+    return frozenset(
+        as_enum(enum_class, item, f"{path}[{index}]")
+        for index, item in enumerate(as_sequence(value, path))
+    )
 
 
 def exercise_from_json(document: Any, path: str = "exercise") -> Exercise:
     """Deserialize a catalogue entry.
+
+    Every tag but ``restrictions`` (absent means none) and ``unilateral``
+    (absent means false) is required: an untagged entry is exactly what a
+    swap or a safety filter cannot reason about.
 
     Raises:
         ValueError: When the document is not a legal catalogue entry.
@@ -631,11 +851,28 @@ def exercise_from_json(document: Any, path: str = "exercise") -> Exercise:
     body = as_mapping(document, path)
     no_extra_fields(body, _EXERCISE_FIELDS, path)
     unilateral = optional(body, "unilateral")
+    restrictions = optional(body, "restrictions")
     slug = as_str(field(body, "id", path), f"{path}.id")
     name = as_str(field(body, "name", path), f"{path}.name")
     category = as_enum(
         ExerciseCategory, field(body, "category", path), f"{path}.category"
     )
+    muscles_path = f"{path}.muscles"
+    muscles = {
+        as_enum(MuscleRegion, region, f"{muscles_path}.{region}"): as_float(
+            weight, f"{muscles_path}.{region}"
+        )
+        for region, weight in as_mapping(
+            field(body, "muscles", path), muscles_path
+        ).items()
+    }
+    mechanic = as_enum(Mechanic, field(body, "mechanic", path), f"{path}.mechanic")
+    pattern = as_enum(MovementPattern, field(body, "pattern", path), f"{path}.pattern")
+    equipment = _enum_set(
+        ExerciseEquipment, field(body, "equipment", path), f"{path}.equipment"
+    )
+    load_type = as_enum(LoadType, field(body, "load_type", path), f"{path}.load_type")
+    source = as_str(field(body, "source", path), f"{path}.source")
     with located(path):
         return Exercise(
             id=slug,
@@ -646,6 +883,17 @@ def exercise_from_json(document: Any, path: str = "exercise") -> Exercise:
                 if unilateral is None
                 else as_bool(unilateral, f"{path}.unilateral")
             ),
+            muscles=muscles,
+            mechanic=mechanic,
+            pattern=pattern,
+            equipment=equipment,
+            load_type=load_type,
+            restrictions=(
+                frozenset()
+                if restrictions is None
+                else _enum_set(Restriction, restrictions, f"{path}.restrictions")
+            ),
+            source=source,
         )
 
 
@@ -667,7 +915,7 @@ def parse_catalogue(document: Any) -> tuple[Exercise, ...]:
     no_extra_fields(body, frozenset({"exercises"}), "catalogue")
     entries = as_sequence(field(body, "exercises", "catalogue"), "catalogue.exercises")
     exercises = tuple(
-        exercise_from_json(entry, f"catalogue.exercises[{index}]")
+        exercise_from_json(entry, _entry_path(index, entry))
         for index, entry in enumerate(entries)
     )
     if not exercises:
@@ -683,6 +931,17 @@ def parse_catalogue(document: Any) -> tuple[Exercise, ...]:
             f"catalogue: duplicate exercise id(s): {', '.join(sorted(duplicates))}"
         )
     return exercises
+
+
+def _entry_path(index: int, entry: Any) -> str:
+    """Where a catalogue entry sits, naming its slug when it has one.
+
+    ``catalogue.exercises[41] (bench_press)``: a position alone sends whoever
+    edits a hundred-entry file counting.
+    """
+    path = f"catalogue.exercises[{index}]"
+    slug = entry.get("id") if isinstance(entry, Mapping) else None
+    return f"{path} ({slug})" if isinstance(slug, str) else path
 
 
 def _join(path: str, name: str) -> str:

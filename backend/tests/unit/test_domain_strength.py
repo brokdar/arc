@@ -8,13 +8,20 @@ import pytest
 
 from app.domain.activity import SetSide
 from app.domain.athlete import Discipline
+from app.domain.loading import Equipment
 from app.domain.metrics import PerformedSet, StrengthVolume, strength_volume
+from app.domain.muscles import REGION_GROUP, MuscleRegion
 from app.domain.strength import (
     SLUG_PATTERN,
     Exercise,
     ExerciseCategory,
+    ExerciseEquipment,
     Load,
     LoadKind,
+    LoadType,
+    Mechanic,
+    MovementPattern,
+    Restriction,
     StrengthGroup,
     StrengthSet,
     StrengthWorkout,
@@ -29,6 +36,146 @@ from app.domain.strength import (
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.services.templates import EXERCISE_CATALOGUE_FILE
 from tests.unit.prescriptions import LIFT, bodyweight
+
+#: Every catalogue slug as of `664d5bc`, the last release before the library
+#: was tagged. Slugs are referenced from stored prescriptions, so none of these
+#: may ever leave the file (direction S32.4). Append-only, like the file.
+RELEASED_SLUGS: tuple[str, ...] = tuple(
+    [
+        "back_squat",
+        "front_squat",
+        "goblet_squat",
+        "box_squat",
+        "overhead_squat",
+        "safety_bar_squat",
+        "zercher_squat",
+        "hack_squat",
+        "leg_press",
+        "pistol_squat",
+        "air_squat",
+        "leg_extension",
+        "single_leg_calf_raise",
+        "conventional_deadlift",
+        "sumo_deadlift",
+        "romanian_deadlift",
+        "single_leg_romanian_deadlift",
+        "trap_bar_deadlift",
+        "deficit_deadlift",
+        "rack_pull",
+        "good_morning",
+        "hip_thrust",
+        "glute_bridge",
+        "kettlebell_swing",
+        "nordic_curl",
+        "seated_leg_curl",
+        "back_extension",
+        "split_squat",
+        "bulgarian_split_squat",
+        "walking_lunge",
+        "reverse_lunge",
+        "forward_lunge",
+        "lateral_lunge",
+        "curtsy_lunge",
+        "step_up",
+        "bench_press",
+        "incline_bench_press",
+        "close_grip_bench_press",
+        "dumbbell_bench_press",
+        "overhead_press",
+        "push_press",
+        "z_press",
+        "dumbbell_shoulder_press",
+        "arnold_press",
+        "single_arm_overhead_press",
+        "landmine_press",
+        "push_up",
+        "dip",
+        "cable_chest_fly",
+        "triceps_pushdown",
+        "lateral_raise",
+        "pull_up",
+        "chin_up",
+        "lat_pulldown",
+        "barbell_row",
+        "pendlay_row",
+        "single_arm_dumbbell_row",
+        "seated_cable_row",
+        "chest_supported_row",
+        "inverted_row",
+        "face_pull",
+        "reverse_fly",
+        "barbell_shrug",
+        "barbell_curl",
+        "dumbbell_curl",
+        "hammer_curl",
+        "front_plank",
+        "side_plank",
+        "copenhagen_plank",
+        "dead_bug",
+        "bird_dog",
+        "hollow_body_hold",
+        "hanging_leg_raise",
+        "ab_wheel_rollout",
+        "pallof_press",
+        "cable_woodchop",
+        "russian_twist",
+        "sit_up",
+        "farmers_carry",
+        "suitcase_carry",
+        "front_rack_carry",
+        "overhead_carry",
+        "sled_push",
+        "couch_stretch",
+        "hip_flexor_stretch",
+        "worlds_greatest_stretch",
+        "thoracic_rotation",
+        "ankle_dorsiflexion_drill",
+        "ninety_ninety_hip_switch",
+        "cat_cow",
+        "band_pull_apart",
+        "shoulder_dislocate",
+        "air_bike",
+        "rowing_machine",
+        "ski_erg",
+        "burpee",
+        "box_jump",
+        "jump_rope",
+        "battle_ropes",
+        "mountain_climber",
+    ]
+)
+
+
+def catalogue_entry(**overrides: Any) -> dict[str, Any]:
+    """A complete, legal catalogue entry as JSON, with ``overrides`` applied."""
+    return {
+        "id": "goblet_squat",
+        "name": "Goblet Squat",
+        "category": "squat",
+        "muscles": {"quads_vasti": 1.0, "glute_max": 0.5},
+        "mechanic": "multi_joint",
+        "pattern": "squat",
+        "equipment": ["dumbbell"],
+        "load_type": "dumbbell",
+        "restrictions": ["deep_knee_flexion"],
+        "source": "free-exercise-db:Goblet_Squat",
+    } | overrides
+
+
+def exercise(**overrides: Any) -> Exercise:
+    """A complete, legal catalogue entry, with ``overrides`` applied."""
+    fields: dict[str, Any] = {
+        "id": "bench_press",
+        "name": "Barbell Bench Press",
+        "category": ExerciseCategory.PRESS,
+        "muscles": {MuscleRegion.PEC_STERNAL: 1.0, MuscleRegion.DELT_ANTERIOR: 0.5},
+        "mechanic": Mechanic.MULTI_JOINT,
+        "pattern": MovementPattern.HORIZONTAL_PUSH,
+        "equipment": frozenset({ExerciseEquipment.BARBELL}),
+        "load_type": LoadType.BARBELL,
+        "source": "arc",
+    } | overrides
+    return Exercise(**fields)
 
 
 def squat(**overrides: object) -> StrengthSet:
@@ -175,9 +322,7 @@ def test_a_lone_side_is_half_a_set_worked_by_one_limb() -> None:
 
 
 def test_a_movement_that_is_not_unilateral_refuses_one_side() -> None:
-    bench = Exercise(
-        id="bench_press", name="Bench Press", category=ExerciseCategory.PRESS
-    )
+    bench = exercise()
 
     with pytest.raises(ValueError, match="both sides at once"):
         check_sidedness(bench.unilateral, per_side=False, side=SetSide.LEFT)
@@ -490,9 +635,9 @@ def test_a_semantic_failure_keeps_its_place_in_the_document() -> None:
 
 def test_a_catalogue_entry_needs_a_slug_and_a_name() -> None:
     with pytest.raises(ValueError, match="lowercase slug"):
-        Exercise(id="Back Squat", name="Back Squat", category=ExerciseCategory.SQUAT)
+        exercise(id="Back Squat", name="Back Squat")
     with pytest.raises(ValueError, match="non-empty name"):
-        Exercise(id="back_squat", name=" ", category=ExerciseCategory.SQUAT)
+        exercise(id="back_squat", name=" ")
 
 
 @pytest.mark.parametrize(
@@ -506,7 +651,7 @@ def test_a_slug_is_checked_against_its_shape_not_against_one_bad_character(
     # prescriptions and in URLs — so it is checked against what is allowed.
     # Spelling the rule as "no spaces" let a tab and a newline through.
     with pytest.raises(ValueError, match="lowercase slug"):
-        Exercise(id=slug, name="Back Squat", category=ExerciseCategory.SQUAT)
+        exercise(id=slug, name="Back Squat")
 
 
 def test_every_bundled_slug_satisfies_the_shape() -> None:
@@ -525,8 +670,8 @@ def test_a_duplicate_slug_is_fatal_rather_than_deduplicated() -> None:
         parse_catalogue(
             {
                 "exercises": [
-                    {"id": "back_squat", "name": "Back Squat", "category": "squat"},
-                    {"id": "back_squat", "name": "Squat", "category": "squat"},
+                    catalogue_entry(id="back_squat", name="Back Squat"),
+                    catalogue_entry(id="back_squat", name="Squat"),
                 ]
             }
         )
@@ -540,3 +685,162 @@ def test_an_empty_catalogue_is_rejected() -> None:
 def test_an_unknown_category_names_the_ones_that_exist() -> None:
     with pytest.raises(ValueError, match="is not one of: squat"):
         parse_catalogue({"exercises": [{"id": "x", "name": "X", "category": "biceps"}]})
+
+
+# --- the catalogue's tags (AC-32) ---------------------------------------------
+
+
+def bundled_catalogue() -> tuple[Exercise, ...]:
+    """The bundled file, parsed by the same function the application uses."""
+    return parse_catalogue(
+        json.loads(Path(EXERCISE_CATALOGUE_FILE).read_text(encoding="utf-8"))
+    )
+
+
+def test_every_bundled_entry_is_fully_tagged() -> None:
+    catalogue = bundled_catalogue()
+
+    for entry in catalogue:
+        assert entry.muscles, entry.id
+        assert any(weight == 1.0 for weight in entry.muscles.values()), entry.id
+        assert all(0.0 <= weight <= 1.0 for weight in entry.muscles.values()), entry.id
+        assert set(entry.muscles) <= set(MuscleRegion), entry.id
+        assert set(entry.muscles) <= set(REGION_GROUP), entry.id
+        assert isinstance(entry.mechanic, Mechanic), entry.id
+        assert isinstance(entry.pattern, MovementPattern), entry.id
+        assert entry.equipment, entry.id
+        assert all(isinstance(e, ExerciseEquipment) for e in entry.equipment), entry.id
+        assert isinstance(entry.load_type, LoadType), entry.id
+        assert all(isinstance(r, Restriction) for r in entry.restrictions), entry.id
+
+
+def test_every_released_slug_is_still_in_the_catalogue() -> None:
+    slugs = {entry.id for entry in bundled_catalogue()}
+
+    assert len(RELEASED_SLUGS) == 100
+    assert sorted(set(RELEASED_SLUGS) - slugs) == []
+
+
+def test_catalogue_source() -> None:
+    # Muscles are mapped by hand, using free-exercise-db's text as a hint and
+    # never copying its muscle lists (its vocabulary is coarser than ours, and
+    # wrong in places). Each entry records which hint it was mapped from, or
+    # `arc` where free-exercise-db has no counterpart.
+    sources = [entry.source for entry in bundled_catalogue()]
+
+    assert all(
+        source == "arc" or source.startswith("free-exercise-db:") for source in sources
+    )
+    assert sum(source.startswith("free-exercise-db:") for source in sources) >= 50
+
+
+def test_a_source_must_name_free_exercise_db_or_arc() -> None:
+    with pytest.raises(ValueError, match="source"):
+        parse_catalogue({"exercises": [catalogue_entry(source="exercisedb:0001")]})
+
+
+def test_a_complete_entry_parses_with_every_tag() -> None:
+    (parsed,) = parse_catalogue({"exercises": [catalogue_entry()]})
+
+    assert parsed.muscles == {
+        MuscleRegion.QUADS_VASTI: 1.0,
+        MuscleRegion.GLUTE_MAX: 0.5,
+    }
+    assert parsed.mechanic is Mechanic.MULTI_JOINT
+    assert parsed.pattern is MovementPattern.SQUAT
+    assert parsed.equipment == frozenset({ExerciseEquipment.DUMBBELL})
+    assert parsed.load_type is LoadType.DUMBBELL
+    assert parsed.restrictions == frozenset({Restriction.DEEP_KNEE_FLEXION})
+    assert parsed.source == "free-exercise-db:Goblet_Squat"
+
+
+def test_an_entry_with_only_helper_muscles_fails() -> None:
+    helpers_only = catalogue_entry(muscles={"quads_vasti": 0.5, "glute_max": 0.5})
+
+    with pytest.raises(ValueError, match=r"goblet_squat.*main muscle"):
+        parse_catalogue({"exercises": [helpers_only]})
+
+
+def test_an_unknown_equipment_value_fails_naming_the_entry() -> None:
+    anvil = catalogue_entry(equipment=["dumbbell", "anvil"])
+
+    with pytest.raises(ValueError, match=r"goblet_squat.*'anvil' is not one of"):
+        parse_catalogue({"exercises": [anvil]})
+
+
+def test_an_unknown_region_fails_naming_the_entry() -> None:
+    entry = catalogue_entry(muscles={"quads_vasti": 1.0, "quadzilla": 0.5})
+
+    with pytest.raises(ValueError, match=r"goblet_squat.*'quadzilla' is not one of"):
+        parse_catalogue({"exercises": [entry]})
+
+
+@pytest.mark.parametrize("weight", [-0.1, 1.5])
+def test_a_weight_outside_zero_to_one_fails(weight: float) -> None:
+    entry = catalogue_entry(muscles={"quads_vasti": 1.0, "glute_max": weight})
+
+    with pytest.raises(ValueError, match=r"goblet_squat.*between 0 and 1"):
+        parse_catalogue({"exercises": [entry]})
+
+
+@pytest.mark.parametrize(
+    "missing", ["muscles", "mechanic", "pattern", "equipment", "load_type", "source"]
+)
+def test_every_tag_but_restrictions_is_required(missing: str) -> None:
+    entry = catalogue_entry()
+    del entry[missing]
+
+    with pytest.raises(ValueError, match=missing):
+        parse_catalogue({"exercises": [entry]})
+
+
+def test_restrictions_may_be_omitted_for_none() -> None:
+    entry = catalogue_entry()
+    del entry["restrictions"]
+
+    (parsed,) = parse_catalogue({"exercises": [entry]})
+
+    assert parsed.restrictions == frozenset()
+
+
+def test_an_empty_equipment_list_fails() -> None:
+    with pytest.raises(ValueError, match=r"goblet_squat.*equipment"):
+        parse_catalogue({"exercises": [catalogue_entry(equipment=[])]})
+
+
+def test_bodyweight_equipment_stands_alone() -> None:
+    # `bodyweight` means "needs nothing"; next to a bench it contradicts itself.
+    entry = catalogue_entry(equipment=["bodyweight", "bench"])
+
+    with pytest.raises(ValueError, match=r"goblet_squat.*bodyweight"):
+        parse_catalogue({"exercises": [entry]})
+
+
+def test_an_unknown_restriction_tag_fails() -> None:
+    entry = catalogue_entry(restrictions=["deep_knee_flexion", "scary"])
+
+    with pytest.raises(ValueError, match=r"'scary' is not one of"):
+        parse_catalogue({"exercises": [entry]})
+
+
+def test_the_direction_restriction_tags_are_the_vocabulary() -> None:
+    assert {tag.value for tag in Restriction} == {
+        "deep_knee_flexion",
+        "deep_hip_flexion",
+        "hip_rotation_loaded",
+        "loaded_spinal_flexion",
+        "impact",
+        "long_breath_hold",
+        "unsupported_single_leg",
+        "overhead",
+        "supine_loaded",
+        "prone",
+        "advanced",
+        "power",
+    }
+
+
+def test_load_types_cover_every_loading_implement() -> None:
+    # `app.domain.loading` rounds to what a barbell, a dumbbell rack or a stack
+    # can make; an exercise's load type must be able to name each of them.
+    assert {implement.value for implement in Equipment} <= {t.value for t in LoadType}

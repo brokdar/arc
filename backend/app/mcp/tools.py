@@ -104,9 +104,15 @@ from app.domain.anchors import (
     Provenance,
 )
 from app.domain.athlete import Discipline
+from app.domain.muscles import MuscleGroup
 from app.domain.plan import week_start
 from app.domain.proposals import ProposalStatus, changes_from_json
-from app.domain.strength import ExerciseCategory
+from app.domain.strength import (
+    ExerciseCategory,
+    ExerciseEquipment,
+    Mechanic,
+    MovementPattern,
+)
 from app.domain.templates import sorted_templates
 from app.domain.wellness import (
     WRITABLE_FIELDS,
@@ -1324,6 +1330,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
     async def get_exercise_catalogue(
         category: ExerciseCategory | None = None,
         query: str | None = None,
+        group: MuscleGroup | None = None,
+        pattern: MovementPattern | None = None,
+        equipment: ExerciseEquipment | None = None,
+        mechanic: Mechanic | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -1345,6 +1355,13 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 `lunge`, `press`, `pull`, `core`, `carry`, `mobility`,
                 `conditioning`); omit for all of them.
             query: Case-insensitive substring of the name.
+            group: Only movements whose **main** muscles (weight 1.0) roll
+                up to this muscle group (`quads`, `chest`, `side_rear_shoulders`,
+                ...); a helper muscle does not count.
+            pattern: Only this movement pattern (`squat`, `vertical_pull`, ...).
+            equipment: Only movements whose equipment includes this item;
+                `bodyweight` means a movement that needs nothing.
+            mechanic: `multi_joint` or `single_joint`.
             limit: How many to return, by family then name.
             offset: How many to skip, for reading past the first page.
 
@@ -1356,6 +1373,10 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
                 rows, total = await ExerciseService.from_session(session).list(
                     category=category,
                     query=query,
+                    group=group,
+                    pattern=pattern,
+                    equipment=equipment,
+                    mechanic=mechanic,
                     offset=_offset(offset),
                     limit=_limit(limit),
                 )

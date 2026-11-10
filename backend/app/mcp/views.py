@@ -626,12 +626,19 @@ def exercise(row: ExerciseRow) -> dict[str, Any]:
     ``id`` is the slug — the exact string a strength structure's
     ``exercise_id`` must carry — not a uuid, and that is the point of the
     catalogue: the identifier is stable and readable across every deployment.
+    ``muscles`` is ``{region: weight}`` — 1.0 a main muscle, 0.5 a helper.
     """
     return {
         "id": row.id,
         "name": row.name,
         "category": row.category.value,
         "unilateral": row.unilateral,
+        "muscles": dict(row.muscles),
+        "mechanic": None if row.mechanic is None else row.mechanic.value,
+        "pattern": None if row.pattern is None else row.pattern.value,
+        "equipment": list(row.equipment),
+        "load_type": None if row.load_type is None else row.load_type.value,
+        "restrictions": list(row.restrictions),
     }
 
 
