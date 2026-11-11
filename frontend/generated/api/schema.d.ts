@@ -1986,6 +1986,26 @@ export interface paths {
     patch: operations["settings-update_training_settings"];
     trace?: never;
   };
+  "/api/v1/strength/packet": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Packet
+     * @description The next seven days of strength sessions, with every number the gym needs.
+     */
+    get: operations["strength-get_packet"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sync": {
     parameters: {
       query?: never;
@@ -3578,6 +3598,20 @@ export interface components {
       min_seconds: number;
     };
     /**
+     * EffortQuestionRead
+     * @description Which effort question follows a set, and how often it is asked.
+     */
+    EffortQuestionRead: {
+      ask: components["schemas"]["AskFrequency"];
+      scale: components["schemas"]["EffortScale"];
+    };
+    /**
+     * EffortScale
+     * @description Which effort question the phone asks after a set, by training mode.
+     * @enum {string}
+     */
+    EffortScale: "easy_good_hard" | "reps_left" | "reps_left_or_rpe";
+    /**
      * EnduranceStructureSchema
      * @description A structured endurance prescription.
      */
@@ -3611,6 +3645,15 @@ export interface components {
         | components["schemas"]["RepeatBlockSchema-Output"]
       )[];
     };
+    /**
+     * Equipment
+     * @description How a weight is made up, which decides what is loadable.
+     *
+     *     A barbell is a bar plus pairs of plates; dumbbells come in fixed rack
+     *     steps; a stack has a pin every step. Only the barbell has a plate list.
+     * @enum {string}
+     */
+    Equipment: "barbell" | "dumbbell" | "stack";
     /**
      * ErrorDetail
      * @description Error response body, as produced by the AppError handler.
@@ -4083,6 +4126,24 @@ export interface components {
       /** First Assessed */
       first_assessed: string | null;
     };
+    /**
+     * GymRead
+     * @description The gym every weight in the packet was made loadable for.
+     */
+    GymRead: {
+      /** Bar Kg */
+      bar_kg: number;
+      /** Dumbbell Max Kg */
+      dumbbell_max_kg: number;
+      /** Dumbbell Step Kg */
+      dumbbell_step_kg: number;
+      /** Plate Pairs */
+      plate_pairs: components["schemas"]["PlatePairRead"][];
+      /** Stack Max Kg */
+      stack_max_kg: number;
+      /** Stack Step Kg */
+      stack_step_kg: number;
+    };
     /** HTTPValidationError */
     HTTPValidationError: {
       /** Detail */
@@ -4409,6 +4470,29 @@ export interface components {
       label: string;
       /** Resting Hr Deviation Sd */
       resting_hr_deviation_sd: number;
+    };
+    /**
+     * LastNumbersRead
+     * @description The last non-warm-up set logged for one exercise.
+     */
+    LastNumbersRead: {
+      /** Duration S */
+      duration_s: number | null;
+      /** Exercise Id */
+      exercise_id: string;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Load Kg */
+      load_kg: number | null;
+      /**
+       * Logged On
+       * Format: date
+       */
+      logged_on: string;
+      /** Per Side */
+      per_side: boolean;
+      /** Reps */
+      reps: number | null;
     };
     /**
      * LiftedBefore
@@ -5295,6 +5379,107 @@ export interface components {
       direction: components["schemas"]["Direction"];
       metric: components["schemas"]["WellnessMetric"];
     };
+    /**
+     * PacketLineRead
+     * @description One prescription line with everything the gym screen needs.
+     */
+    PacketLineRead: {
+      equipment: components["schemas"]["Equipment"] | null;
+      /** Exercise Id */
+      exercise_id: string;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Group Index */
+      group_index: number;
+      /** Group Label */
+      group_label: string | null;
+      /** Item Index */
+      item_index: number;
+      /** Line Ref */
+      line_ref: string;
+      /** Main */
+      main: boolean;
+      /** Plates Per Side */
+      plates_per_side: number[] | null;
+      prefill: components["schemas"]["PrefillRead"];
+      prescription: components["schemas"]["StrengthSetSchema"];
+      /** Warmups */
+      warmups: components["schemas"]["WarmupRead"][];
+    };
+    /**
+     * PacketRead
+     * @description Everything the phone stores to train the next seven days offline.
+     */
+    PacketRead: {
+      effort: components["schemas"]["EffortQuestionRead"];
+      /**
+       * Ends Before
+       * Format: date
+       */
+      ends_before: string;
+      /**
+       * Generated At
+       * Format: date-time
+       */
+      generated_at: string;
+      gym: components["schemas"]["GymRead"];
+      /** Last Numbers */
+      last_numbers: components["schemas"]["LastNumbersRead"][];
+      /** Library */
+      library: components["schemas"]["ExerciseRead"][];
+      /** Schema Version */
+      schema_version: number;
+      /** Sessions */
+      sessions: components["schemas"]["PacketSessionRead"][];
+      settings: components["schemas"]["PacketSettingsRead"];
+      /**
+       * Starts On
+       * Format: date
+       */
+      starts_on: string;
+    };
+    /**
+     * PacketSessionRead
+     * @description One planned strength session in the packet's window.
+     */
+    PacketSessionRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Follow Exactly */
+      follow_exactly: boolean;
+      /** Intent Text */
+      intent_text: string | null;
+      /** Key */
+      key: boolean;
+      /** Lines */
+      lines: components["schemas"]["PacketLineRead"][];
+      /**
+       * Plan Id
+       * Format: uuid
+       */
+      plan_id: string;
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id: string;
+      purpose: components["schemas"]["Purpose"];
+      /** Time Of Day */
+      time_of_day: string | null;
+    };
+    /**
+     * PacketSettingsRead
+     * @description The training settings the packet was prepared under.
+     */
+    PacketSettingsRead: {
+      mode: components["schemas"]["TrainingMode"];
+      /** Plain Logbook */
+      plain_logbook: boolean;
+      units: components["schemas"]["Units"];
+    };
     /** Page[AnchorVersionRead] */
     Page_AnchorVersionRead_: {
       /** Items */
@@ -5922,6 +6107,16 @@ export interface components {
       workout_id?: string | null;
     };
     /**
+     * PlatePairRead
+     * @description One kind of plate in the gym, and how many pairs of it.
+     */
+    PlatePairRead: {
+      /** Kg */
+      kg: number;
+      /** Pairs */
+      pairs: number;
+    };
+    /**
      * Polarity
      * @description Which way a subjective scale points.
      *
@@ -6003,6 +6198,31 @@ export interface components {
       /** Volume Load Kg */
       volume_load_kg: number | null;
     };
+    /**
+     * PrefillRead
+     * @description The numbers a line's first set opens with, and where they came from.
+     *
+     *     ``starting_flow`` is true exactly when ``source`` is ``blank``: the
+     *     exercise has never been logged and the line names no weight, so the phone
+     *     guides the athlete to a starting weight.
+     */
+    PrefillRead: {
+      /** Duration S */
+      duration_s: number | null;
+      /** Load Kg */
+      load_kg: number | null;
+      /** Reps */
+      reps: number | null;
+      source: components["schemas"]["PrefillSource"];
+      /** Starting Flow */
+      starting_flow: boolean;
+    };
+    /**
+     * PrefillSource
+     * @description Where a line's pre-filled numbers came from.
+     * @enum {string}
+     */
+    PrefillSource: "prescription" | "last_logged" | "blank";
     /**
      * Progression
      * @description How the next session's weight is decided from this line.
@@ -8141,6 +8361,18 @@ export interface components {
      * @enum {string}
      */
     WarmupMode: "auto" | "none";
+    /**
+     * WarmupRead
+     * @description One generated warm-up set.
+     */
+    WarmupRead: {
+      /** Kg */
+      kg: number;
+      /** Plates Per Side */
+      plates_per_side: number[] | null;
+      /** Reps */
+      reps: number;
+    };
     /**
      * WeekSessionRead
      * @description One planned session, as a calendar card shows it.
@@ -14554,6 +14786,44 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "strength-get_packet": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PacketRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };

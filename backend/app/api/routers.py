@@ -33,6 +33,7 @@ from app.api.routes.integrations import catalogue_router as integration_catalogu
 from app.api.routes.integrations import router as integrations_router
 from app.api.routes.matching import router as matches_router
 from app.api.routes.matching import session_router as session_matches_router
+from app.api.routes.packet import router as packet_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
 from app.api.routes.plans import router as plans_router
@@ -80,4 +81,5 @@ GUARDED_ROUTERS: tuple[APIRouter, ...] = (
     plans_router,
     exports_router,
     session_export_router,
+    packet_router,
 )

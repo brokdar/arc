@@ -16,7 +16,11 @@ import type { components } from "@/generated/api/schema";
  *   retried, never silently dropped;
  * - **`meta`** — the outbox's standing refusal (`blocked`): an update
  *   required or a login expired, remembered across reloads so the badge says
- *   so before the next attempt.
+ *   so before the next attempt;
+ * - **`packet`** — the last session packet the server prepared
+ *   (`GET /strength/packet`, `lib/offline/packet-store.ts`): one record, the
+ *   next seven days of strength sessions with every number the gym screen
+ *   shows. Added in version 2; an upgrade from 1 keeps the outbox intact.
  *
  * A connection is opened per operation and closed after it: the outbox is
  * touched a few times a minute, and a long-lived handle would block the
@@ -58,10 +62,12 @@ export interface FailedItem {
 }
 
 const DB_NAME = "arc-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const OUTBOX = "outbox";
 const FAILED = "failed";
 const META = "meta";
+const PACKET = "packet";
+const PACKET_KEY = "current";
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -83,6 +89,9 @@ function open(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(META)) {
         db.createObjectStore(META);
+      }
+      if (!db.objectStoreNames.contains(PACKET)) {
+        db.createObjectStore(PACKET);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -170,5 +179,29 @@ export function getBlocked(): Promise<Blocked> {
 export function setBlocked(blocked: Blocked): Promise<void> {
   return inTransaction([META], "readwrite", (tx) => {
     tx.objectStore(META).put(blocked, "blocked");
+  });
+}
+
+/** A session packet as the phone keeps it: the server's document, unchanged. */
+export interface StoredPacket {
+  packet: Schemas["PacketRead"];
+  /** When this phone stored it, epoch milliseconds. */
+  storedAt: number;
+}
+
+/** Replace the stored packet. */
+export function putPacket(stored: StoredPacket): Promise<void> {
+  return inTransaction([PACKET], "readwrite", (tx) => {
+    tx.objectStore(PACKET).put(stored, PACKET_KEY);
+  });
+}
+
+/** The stored packet, or null when this phone has never synced one. */
+export function getPacket(): Promise<StoredPacket | null> {
+  return inTransaction([PACKET], "readonly", async (tx) => {
+    const value = (await request(tx.objectStore(PACKET).get(PACKET_KEY))) as
+      | StoredPacket
+      | undefined;
+    return value ?? null;
   });
 }

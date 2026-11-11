@@ -82,6 +82,7 @@ import {
 import { cardHandlers } from "@/tests/mocks/handlers-cards";
 import { exportHandlers } from "@/tests/mocks/handlers-exports";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
+import { packetHandlers } from "@/tests/mocks/handlers-packet";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
 import { syncHandlers } from "@/tests/mocks/handlers-sync";
 import {
@@ -1840,3 +1841,4 @@ handlers.push(...powerHandlers);
 handlers.push(...cardHandlers);
 handlers.push(...exportHandlers);
 handlers.push(...syncHandlers);
+handlers.push(...packetHandlers);

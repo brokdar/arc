@@ -22,7 +22,12 @@
   },
   "offline": {
     "ready": "Ready offline",
-    "readySynced": "Ready offline · synced {time}"
+    "readySynced": "Ready offline · synced {time}",
+    "packetTitle": "From your last sync",
+    "packetStale": "Connect to refresh",
+    "packetSynced": "Prepared {date}",
+    "noWeight": "find a weight",
+    "bodyweight": "bodyweight"
   },
   "outbox": {
     "waiting": "{count} waiting to upload",

@@ -18,6 +18,7 @@ import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
 import { FirstRunQuestion } from "@/components/today/first-run";
+import { OfflineSessions } from "@/components/today/offline-sessions";
 import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
@@ -27,6 +28,7 @@ import { describeCriterion } from "@/lib/criteria";
 import { mondayOf, todayIsoDate } from "@/lib/dates";
 import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
 import { type I18n, useI18n } from "@/lib/i18n/provider";
+import { isUnreachable } from "@/lib/last-contact";
 import { purposeLabel } from "@/lib/purpose";
 import { sessionHeadline } from "@/lib/session-headline";
 import {
@@ -121,9 +123,17 @@ export function TodayView() {
           {week.isPending ? (
             <p className="text-ink-muted text-sm">{t("today.loading")}</p>
           ) : week.error ? (
-            <p role="alert" className="text-destructive text-sm">
-              {t("today.loadFailed")}
-            </p>
+            // No server answered: train from the packet the last sync stored
+            // (`lib/offline/packet-store.ts`). A server that answered with an
+            // error is still an error.
+            isUnreachable(week.error) ? (
+              <OfflineSessions
+                today={today}
+                fallback={<LoadFailed message={t("today.loadFailed")} />}
+              />
+            ) : (
+              <LoadFailed message={t("today.loadFailed")} />
+            )
           ) : ordered.length === 0 ? (
             <RestDay onPlan={() => setPlanning(true)} />
           ) : (
@@ -146,6 +156,14 @@ export function TodayView() {
         <SessionForm date={today} onClose={() => setPlanning(false)} />
       ) : null}
     </>
+  );
+}
+
+function LoadFailed({ message }: { message: string }) {
+  return (
+    <p role="alert" className="text-destructive text-sm">
+      {message}
+    </p>
   );
 }
 

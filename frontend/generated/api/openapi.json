@@ -2222,6 +2222,26 @@
         "title": "DurationFloorSchema",
         "type": "object"
       },
+      "EffortQuestionRead": {
+        "description": "Which effort question follows a set, and how often it is asked.",
+        "properties": {
+          "ask": {
+            "$ref": "#/components/schemas/AskFrequency"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/EffortScale"
+          }
+        },
+        "required": ["scale", "ask"],
+        "title": "EffortQuestionRead",
+        "type": "object"
+      },
+      "EffortScale": {
+        "description": "Which effort question the phone asks after a set, by training mode.",
+        "enum": ["easy_good_hard", "reps_left", "reps_left_or_rpe"],
+        "title": "EffortScale",
+        "type": "string"
+      },
       "EnduranceStructureSchema-Input": {
         "additionalProperties": false,
         "description": "A structured endurance prescription.",
@@ -2301,6 +2321,12 @@
         "required": ["steps"],
         "title": "EnduranceStructureSchema",
         "type": "object"
+      },
+      "Equipment": {
+        "description": "How a weight is made up, which decides what is loadable.\n\nA barbell is a bar plus pairs of plates; dumbbells come in fixed rack\nsteps; a stack has a pin every step. Only the barbell has a plate list.",
+        "enum": ["barbell", "dumbbell", "stack"],
+        "title": "Equipment",
+        "type": "string"
       },
       "ErrorDetail": {
         "description": "Error response body, as produced by the AppError handler.\n\nReference it in endpoint ``responses={...}`` declarations so error\nstatuses are part of the OpenAPI contract (and the generated frontend\ntypes).",
@@ -3094,6 +3120,48 @@
         "title": "FormStandingRead",
         "type": "object"
       },
+      "GymRead": {
+        "description": "The gym every weight in the packet was made loadable for.",
+        "properties": {
+          "bar_kg": {
+            "title": "Bar Kg",
+            "type": "number"
+          },
+          "dumbbell_max_kg": {
+            "title": "Dumbbell Max Kg",
+            "type": "number"
+          },
+          "dumbbell_step_kg": {
+            "title": "Dumbbell Step Kg",
+            "type": "number"
+          },
+          "plate_pairs": {
+            "items": {
+              "$ref": "#/components/schemas/PlatePairRead"
+            },
+            "title": "Plate Pairs",
+            "type": "array"
+          },
+          "stack_max_kg": {
+            "title": "Stack Max Kg",
+            "type": "number"
+          },
+          "stack_step_kg": {
+            "title": "Stack Step Kg",
+            "type": "number"
+          }
+        },
+        "required": [
+          "bar_kg",
+          "plate_pairs",
+          "dumbbell_step_kg",
+          "dumbbell_max_kg",
+          "stack_step_kg",
+          "stack_max_kg"
+        ],
+        "title": "GymRead",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3767,6 +3835,72 @@
           "resting_hr_deviation_sd"
         ],
         "title": "JointStateRead",
+        "type": "object"
+      },
+      "LastNumbersRead": {
+        "description": "The last non-warm-up set logged for one exercise.",
+        "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "logged_on": {
+            "format": "date",
+            "title": "Logged On",
+            "type": "string"
+          },
+          "per_side": {
+            "title": "Per Side",
+            "type": "boolean"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          }
+        },
+        "required": [
+          "exercise_id",
+          "exercise_name",
+          "load_kg",
+          "reps",
+          "duration_s",
+          "per_side",
+          "logged_on"
+        ],
+        "title": "LastNumbersRead",
         "type": "object"
       },
       "LiftedBefore": {
@@ -5564,6 +5698,258 @@
         "title": "OutsideMarkerRead",
         "type": "object"
       },
+      "PacketLineRead": {
+        "description": "One prescription line with everything the gym screen needs.",
+        "properties": {
+          "equipment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Equipment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          },
+          "group_index": {
+            "title": "Group Index",
+            "type": "integer"
+          },
+          "group_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Label"
+          },
+          "item_index": {
+            "title": "Item Index",
+            "type": "integer"
+          },
+          "line_ref": {
+            "title": "Line Ref",
+            "type": "string"
+          },
+          "main": {
+            "title": "Main",
+            "type": "boolean"
+          },
+          "plates_per_side": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plates Per Side"
+          },
+          "prefill": {
+            "$ref": "#/components/schemas/PrefillRead"
+          },
+          "prescription": {
+            "$ref": "#/components/schemas/StrengthSetSchema"
+          },
+          "warmups": {
+            "items": {
+              "$ref": "#/components/schemas/WarmupRead"
+            },
+            "title": "Warmups",
+            "type": "array"
+          }
+        },
+        "required": [
+          "line_ref",
+          "group_index",
+          "item_index",
+          "group_label",
+          "exercise_id",
+          "exercise_name",
+          "prescription",
+          "main",
+          "equipment",
+          "prefill",
+          "warmups",
+          "plates_per_side"
+        ],
+        "title": "PacketLineRead",
+        "type": "object"
+      },
+      "PacketRead": {
+        "description": "Everything the phone stores to train the next seven days offline.",
+        "properties": {
+          "effort": {
+            "$ref": "#/components/schemas/EffortQuestionRead"
+          },
+          "ends_before": {
+            "format": "date",
+            "title": "Ends Before",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "gym": {
+            "$ref": "#/components/schemas/GymRead"
+          },
+          "last_numbers": {
+            "items": {
+              "$ref": "#/components/schemas/LastNumbersRead"
+            },
+            "title": "Last Numbers",
+            "type": "array"
+          },
+          "library": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseRead"
+            },
+            "title": "Library",
+            "type": "array"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/PacketSessionRead"
+            },
+            "title": "Sessions",
+            "type": "array"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PacketSettingsRead"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "generated_at",
+          "starts_on",
+          "ends_before",
+          "settings",
+          "effort",
+          "gym",
+          "sessions",
+          "last_numbers",
+          "library"
+        ],
+        "title": "PacketRead",
+        "type": "object"
+      },
+      "PacketSessionRead": {
+        "description": "One planned strength session in the packet's window.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "follow_exactly": {
+            "title": "Follow Exactly",
+            "type": "boolean"
+          },
+          "intent_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent Text"
+          },
+          "key": {
+            "title": "Key",
+            "type": "boolean"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/PacketLineRead"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/Purpose"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day"
+          }
+        },
+        "required": [
+          "planned_session_id",
+          "date",
+          "time_of_day",
+          "purpose",
+          "intent_text",
+          "key",
+          "plan_id",
+          "follow_exactly",
+          "lines"
+        ],
+        "title": "PacketSessionRead",
+        "type": "object"
+      },
+      "PacketSettingsRead": {
+        "description": "The training settings the packet was prepared under.",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/TrainingMode"
+          },
+          "plain_logbook": {
+            "title": "Plain Logbook",
+            "type": "boolean"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          }
+        },
+        "required": ["mode", "plain_logbook", "units"],
+        "title": "PacketSettingsRead",
+        "type": "object"
+      },
       "Page_AnchorVersionRead_": {
         "properties": {
           "items": {
@@ -7021,6 +7407,22 @@
         "title": "PlannedSessionUpdate",
         "type": "object"
       },
+      "PlatePairRead": {
+        "description": "One kind of plate in the gym, and how many pairs of it.",
+        "properties": {
+          "kg": {
+            "title": "Kg",
+            "type": "number"
+          },
+          "pairs": {
+            "title": "Pairs",
+            "type": "integer"
+          }
+        },
+        "required": ["kg", "pairs"],
+        "title": "PlatePairRead",
+        "type": "object"
+      },
       "Polarity": {
         "description": "Which way a subjective scale points.\n\nFatigue, soreness, stress and motivation are all 1-5 and they do not all\npoint the same way: 5 motivation is good, 5 fatigue is not. A reader that\nassumes one direction is a bug nothing catches, because both readings are\nplausible numbers \u2014 so every scale declares its own, and no consumer may\nhardcode a direction.\n\n``HIGHER_IS_NEITHER`` is the third answer and it is session RPE's: a 9 is a\nhard session, not a bad one. Forcing RPE into ``higher_is_worse`` to keep\nthe enum binary would invent exactly the direction this table exists to\nstop being invented, and a reader would flag every genuinely hard session\nas a problem.",
         "enum": ["higher_is_better", "higher_is_worse", "higher_is_neither"],
@@ -7168,6 +7570,66 @@
         ],
         "title": "PredictedVolumeRead",
         "type": "object"
+      },
+      "PrefillRead": {
+        "description": "The numbers a line's first set opens with, and where they came from.\n\n``starting_flow`` is true exactly when ``source`` is ``blank``: the\nexercise has never been logged and the line names no weight, so the phone\nguides the athlete to a starting weight.",
+        "properties": {
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PrefillSource"
+          },
+          "starting_flow": {
+            "title": "Starting Flow",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "load_kg",
+          "reps",
+          "duration_s",
+          "starting_flow"
+        ],
+        "title": "PrefillRead",
+        "type": "object"
+      },
+      "PrefillSource": {
+        "description": "Where a line's pre-filled numbers came from.",
+        "enum": ["prescription", "last_logged", "blank"],
+        "title": "PrefillSource",
+        "type": "string"
       },
       "Progression": {
         "description": "How the next session's weight is decided from this line.\n\n``rir_load`` adjusts the load from the effort the athlete reports against\nthe ``rir`` target; ``double_progression`` adds reps across the range and\nthen weight once the top of it is reached; ``top_backoff`` progresses the\ntop set and derives the backoffs from it; ``simple`` adds a fixed step\nwhenever every set is completed.",
@@ -11635,6 +12097,36 @@
         "enum": ["auto", "none"],
         "title": "WarmupMode",
         "type": "string"
+      },
+      "WarmupRead": {
+        "description": "One generated warm-up set.",
+        "properties": {
+          "kg": {
+            "title": "Kg",
+            "type": "number"
+          },
+          "plates_per_side": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plates Per Side"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          }
+        },
+        "required": ["kg", "reps", "plates_per_side"],
+        "title": "WarmupRead",
+        "type": "object"
       },
       "WeekSessionRead": {
         "description": "One planned session, as a calendar card shows it.",
@@ -20988,6 +21480,51 @@
         ],
         "summary": "Update Training Settings",
         "tags": ["settings"]
+      }
+    },
+    "/api/v1/strength/packet": {
+      "get": {
+        "description": "The next seven days of strength sessions, with every number the gym needs.",
+        "operationId": "strength-get_packet",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PacketRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Packet",
+        "tags": ["strength"]
       }
     },
     "/api/v1/sync": {
