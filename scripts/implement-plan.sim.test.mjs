@@ -481,6 +481,41 @@ group("a CI fix that changes nothing is an infrastructure stop, not a red gate")
   ok("  …and nothing was re-reviewed or pushed", !sim.labels.some((l) => l.includes("review-ci") || l.includes("ci-push")));
 }
 
+group("a PR that conflicts with main gets main merged in, then CI is watched again");
+{
+  const conflict = { exitCode: 5, status: "CONFLICT", detail: "mergeStateStatus DIRTY", invocations: 1 };
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "feat/a:ci": conflict,
+      "feat/a:sync-main": { ok: true, sha: "m3rgesha", detail: "routers.py: kept both" },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  ok("the merge seat runs", sim.labels.includes("feat/a:sync-main"), sim.labels.join());
+  ok("  …told to merge, never rebase", /git merge --no-edit origin\/main/.test(promptFor(sim, "feat/a:sync-main")) && /never a rebase/.test(promptFor(sim, "feat/a:sync-main")));
+  ok("  …and a migration conflict is a stop, not a merge", /migration conflict/i.test(promptFor(sim, "feat/a:sync-main")));
+  ok("CI is watched again after it", sim.labels.indexOf("feat/a:ci-after-sync") > sim.labels.indexOf("feat/a:sync-main"));
+  ok("no local verification ran for a conflict", !sim.labels.some((l) => l.includes("local-ci")));
+  ok("the PR finishes normally", (sim.result.stopped || []).length === 0, JSON.stringify(sim.result.stopped));
+
+  const refused = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:ci": conflict, "feat/a:sync-main": { ok: false, detail: "two heads: 0029 and 0029" } },
+    argsIn: { plan: "p.md" },
+  });
+  const st = (refused.result.stopped || [])[0] || {};
+  ok("a merge the seat will not finish stops as conflict-with-main", st.reason === "conflict-with-main", JSON.stringify(refused.result.stopped));
+  ok("  …with the seat's words in the recovery", /two heads/.test(st.recovery || ""));
+
+  const again = await simulate({
+    plan: planOf([prOf()]),
+    replies: { "feat/a:ci": conflict, "feat/a:sync-main": { ok: true, sha: "x", detail: "ok" }, "feat/a:ci-after-sync": conflict },
+    argsIn: { plan: "p.md" },
+  });
+  ok("still conflicting after one merge stops instead of looping", ((again.result.stopped || [])[0] || {}).reason === "conflict-with-main");
+}
+
 group("CI that stays red stops with the PR open, and the worktree is reclaimed");
 {
   const red = { exitCode: 1, status: "RED", failing: ["integration"], detail: "alembic drift", invocations: 1 };

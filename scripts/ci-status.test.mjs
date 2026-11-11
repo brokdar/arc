@@ -56,6 +56,26 @@ group("red — a real defect, and the fix agent needs the name");
   );
 }
 
+group("conflict — a PR GitHub will not run CI on until it merges with main");
+{
+  // PR #131 (10 Nov 2026) and #144 (11 Nov 2026): main moved while the PR was
+  // built, the PR opened DIRTY, no pull_request run ever registered, and NO_RUNS
+  // sent the run to a full local verification instead of merging main in.
+  const v = classify([], 0, { zeroForS: 0, headAgeS: 0, graceS: GRACE, mergeState: "DIRTY" });
+  ok("no checks on a DIRTY PR is CONFLICT", v.status === "CONFLICT", JSON.stringify(v));
+  ok("…at once, without waiting out the grace window", v.status === "CONFLICT");
+  ok("…and the detail says to merge main in", /merge origin\/main/.test(v.detail), v.detail);
+  const settled = classify([], 0, { zeroForS: 600, headAgeS: 600, graceS: GRACE, mergeState: "DIRTY" });
+  ok("a DIRTY PR is never reported NO_RUNS", settled.status === "CONFLICT", JSON.stringify(settled));
+  const clean = classify([], 0, { zeroForS: 600, headAgeS: 600, graceS: GRACE, mergeState: "CLEAN" });
+  ok("a clean PR with no runs is still NO_RUNS", clean.status === "NO_RUNS", JSON.stringify(clean));
+  const unknown = classify([], 0, { zeroForS: 600, headAgeS: 600, graceS: GRACE, mergeState: "UNKNOWN" });
+  ok("GitHub still computing the merge state is not a conflict", unknown.status === "NO_RUNS", JSON.stringify(unknown));
+  const ran = classify([check("check", "pass")], 1, { zeroForS: 0, headAgeS: 0, graceS: GRACE, mergeState: "DIRTY" });
+  ok("checks that did run are judged as usual", ran.status === "GREEN", JSON.stringify(ran));
+  ok("CONFLICT has its own exit code", exitFor("CONFLICT") === 5 && EXIT.CONFLICT === 5);
+}
+
 group("no runs — the budget case, distinguished from red");
 {
   const v = classify([], 0, { zeroForS: 600, headAgeS: 600, graceS: GRACE });
@@ -169,6 +189,7 @@ group("CLI wiring, via --fixture (no network, no sleeping)");
 
   ok("no checks and no runs exits 2", call([], ["--runs", "0"]).code === 2);
   ok("no checks with a run registered exits 3, not 2", call([], ["--runs", "1"]).code === 3);
+  ok("no checks on a DIRTY PR exits 5", call([], ["--runs", "0", "--merge-state", "DIRTY"]).code === 5);
   ok("a pending check exits 3", call([check("a", "pending")]).code === 3);
   ok("a cancelled check exits 3", call([check("a", "cancel")]).code === 3);
 

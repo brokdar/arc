@@ -25,10 +25,13 @@
 //              code; verify it locally.
 //   3 UNKNOWN  still pending at the deadline, or a check was cancelled
 //   4 usage / the PR could not be read
+//   5 CONFLICT the PR conflicts with main (mergeStateStatus DIRTY) and has no
+//              checks: GitHub does not run pull_request workflows on a PR it
+//              cannot merge, so CI will never start until main is merged in.
 //
 // Usage:
 //   node scripts/ci-status.mjs <pr> [--deadline 480] [--interval 30] [--grace 300]
-//   node scripts/ci-status.mjs <pr> --fixture <checks.json> [--runs N|null] [--zero-for S] [--head-age S]
+//   node scripts/ci-status.mjs <pr> --fixture <checks.json> [--runs N|null] [--zero-for S] [--head-age S] [--merge-state S]
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -56,12 +59,26 @@ const MIN_ZERO_OBSERVATION_S = 60;
  *                 made by the gate seat and pushed after a review, so it is
  *                 routinely 10–40 minutes old by the time this runs and a grace
  *                 window measured from it has always already expired.
+ *                 `mergeState` is the PR's mergeStateStatus; only "DIRTY" (a
+ *                 conflict with the base) changes the verdict.
  */
 export function classify(checks, runCount, obs) {
-  const { zeroForS = 0, headAgeS = 0, graceS = 300 } = obs || {};
+  const { zeroForS = 0, headAgeS = 0, graceS = 300, mergeState = "" } = obs || {};
   const named = (bs) => checks.filter((c) => bs.includes(c.bucket)).map((c) => c.name);
 
   if (!checks.length) {
+    // A conflicted PR gets no pull_request run at all, so "no runs" is certain
+    // and immediate — and it is not the budget case. Reading it as NO_RUNS sent
+    // PR #131 and PR #144 to a full local verification when the answer was to
+    // merge main in. Only DIRTY counts: UNKNOWN means GitHub is still computing.
+    if (mergeState === "DIRTY") {
+      return {
+        status: "CONFLICT",
+        detail:
+          "the PR conflicts with main (mergeStateStatus DIRTY), so GitHub will not run CI on it — " +
+          "merge origin/main into the branch, resolve, gate and push",
+      };
+    }
     if (runCount === null) {
       return { status: "PENDING", detail: "could not count workflow runs for the head SHA" };
     }
@@ -127,7 +144,7 @@ export function classify(checks, runCount, obs) {
   };
 }
 
-export const EXIT = { GREEN: 0, RED: 1, NO_RUNS: 2, UNKNOWN: 3, USAGE: 4 };
+export const EXIT = { GREEN: 0, RED: 1, NO_RUNS: 2, UNKNOWN: 3, USAGE: 4, CONFLICT: 5 };
 // One mapping, used by both the real path and `--fixture`, so what the tests
 // exercise is what ships. PENDING is not an outcome the caller can act on: at the
 // deadline it is UNKNOWN.
@@ -168,7 +185,7 @@ function fetchRunCount(sha) {
 }
 
 function fetchHead(pr) {
-  const r = gh(["pr", "view", String(pr), "--json", "headRefOid,headRefName,state,url"]);
+  const r = gh(["pr", "view", String(pr), "--json", "headRefOid,headRefName,state,url,mergeStateStatus"]);
   if (!r.ok) return null;
   try {
     return JSON.parse(r.out);
@@ -199,13 +216,13 @@ function report(pr, head, verdict, checks) {
 
 const USAGE =
   "usage: ci-status.mjs <pr> [--deadline 480] [--interval 30] [--grace 300]\n" +
-  "       ci-status.mjs <pr> --fixture <checks.json> [--runs N] [--zero-for S] [--head-age S]\n";
+  "       ci-status.mjs <pr> --fixture <checks.json> [--runs N] [--zero-for S] [--head-age S] [--merge-state S]\n";
 
 async function main(argv) {
   // An option's VALUE is not a positional argument: `--deadline 480 55` used to
   // poll PR 480. The PR is the first token that is not a flag and not consumed by
   // one.
-  const FLAGS_WITH_VALUES = ["deadline", "interval", "grace", "fixture", "runs", "head-age", "zero-for"];
+  const FLAGS_WITH_VALUES = ["deadline", "interval", "grace", "fixture", "runs", "head-age", "zero-for", "merge-state"];
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -268,6 +285,7 @@ async function main(argv) {
       zeroForS: Number(opt("zero-for", 9999)),
       headAgeS: Number(opt("head-age", 9999)),
       graceS,
+      mergeState: String(opt("merge-state", "")),
     });
     report(pr, null, verdict, Array.isArray(checks) ? checks : []);
     return exitFor(verdict.status);
@@ -312,6 +330,7 @@ async function main(argv) {
       zeroForS: zeroSinceMs === null ? 0 : (Date.now() - zeroSinceMs) / 1000,
       headAgeS: headAgeS + elapsedS,
       graceS,
+      mergeState: (now && now.mergeStateStatus) || head.mergeStateStatus || "",
     });
     if (verdict.status !== "PENDING") break;
     if (elapsedS + intervalS > deadlineS) {
