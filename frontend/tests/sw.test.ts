@@ -224,7 +224,7 @@ describe("the worker's version", () => {
 });
 
 describe("installing the app shell", () => {
-  it("precaches Today, the offline page and the static assets they load", async () => {
+  it("precaches Today, the logging screen, the offline page and the static assets they load", async () => {
     const worker = boot();
     worker.fetch.mockImplementation(async (input) => {
       const url = new URL(
@@ -244,6 +244,9 @@ describe("installing the app shell", () => {
           '<script src="/_next/static/chunks/offline-1.js"></script>',
         );
       }
+      if (url.pathname === "/train/shell") {
+        return html('<script src="/_next/static/chunks/train-7.js"></script>');
+      }
       return new Response("asset", { status: 200 });
     });
 
@@ -256,9 +259,11 @@ describe("installing the app shell", () => {
       "/_next/static/chunks/lazy-9.js",
       "/_next/static/chunks/offline-1.js",
       "/_next/static/chunks/today-abc.js",
+      "/_next/static/chunks/train-7.js",
       "/_next/static/css/app-1.css",
       "/offline",
       "/today",
+      "/train/shell",
     ]);
   });
 
@@ -335,6 +340,25 @@ describe("navigations: network first, cache when the network fails", () => {
 
     expect(response?.status).toBe(200);
     expect(await response?.text()).toContain("offline page");
+  });
+
+  it("serves the logging screen's shell for a session never opened online", async () => {
+    // Every session has its own `/train/<id>`, and the gym opens one it has
+    // never seen online: the screen reads the id from the address bar, so
+    // one cached copy serves them all.
+    const worker = boot();
+    const cache = await worker.caches.open("arc-shell-build-1");
+    await cache.put("/offline", html("offline page"));
+    await cache.put("/train/shell", html("logging screen"));
+    worker.fetch.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const response = await worker.dispatch(
+      request("/train/0199c000-0000-7000-8000-00000000a001", {
+        mode: "navigate",
+      }),
+    );
+
+    expect(await response?.text()).toContain("logging screen");
   });
 
   it("falls back to the cache when the network hangs, as a basement does", async () => {

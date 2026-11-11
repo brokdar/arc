@@ -2242,6 +2242,12 @@
         "title": "EffortScale",
         "type": "string"
       },
+      "EffortSimple": {
+        "description": "Simple mode's answer to \"How did that feel?\", kept as given.\n\nNot converted to reps left: \"Good\" is not a count of\nreps, and storing it as one would put a number in `rir` that the athlete\nnever reported \u2014 the target wearing the clothes of a report (S10.1).\nProgression in Simple mode reads this answer directly.",
+        "enum": ["easy", "good", "hard"],
+        "title": "EffortSimple",
+        "type": "string"
+      },
       "EnduranceStructureSchema-Input": {
         "additionalProperties": false,
         "description": "A structured endurance prescription.",
@@ -2629,6 +2635,10 @@
           },
           "arcConfidence": {
             "title": "Arcconfidence",
+            "type": "string"
+          },
+          "arcEffortSimple": {
+            "title": "Arceffortsimple",
             "type": "string"
           },
           "arcHoldQuality": {
@@ -4172,6 +4182,16 @@
             ],
             "title": "Duration S"
           },
+          "effort_simple": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortSimple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "exercise_id": {
             "anyOf": [
               {
@@ -4428,6 +4448,16 @@
             ],
             "title": "Duration S"
           },
+          "effort_simple": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortSimple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "exercise_id": {
             "anyOf": [
               {
@@ -4620,6 +4650,7 @@
           "rir_capped",
           "rpe",
           "hold_quality",
+          "effort_simple",
           "rest_s",
           "completed_at",
           "utc_offset_min",
@@ -11197,6 +11228,16 @@
               }
             ],
             "title": "Duration S"
+          },
+          "effort_simple": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortSimple"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "exercise_id": {
             "anyOf": [

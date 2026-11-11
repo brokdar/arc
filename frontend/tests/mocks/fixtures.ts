@@ -1691,6 +1691,7 @@ function typedInSet(
     | "rir_capped"
     | "rpe"
     | "hold_quality"
+    | "effort_simple"
     | "rest_s"
     | "completed_at"
     | "utc_offset_min"
@@ -1711,6 +1712,7 @@ function typedInSet(
     rir_capped: false,
     rpe: null,
     hold_quality: null,
+    effort_simple: null,
     rest_s: null,
     completed_at: null,
     utc_offset_min: null,

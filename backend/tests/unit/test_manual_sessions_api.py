@@ -417,3 +417,47 @@ async def test_set_timing_is_bounded(
     response = await client.post(MANUAL, json=a_session(sets=[a_set(**{field: value})]))
 
     located(response, "body", "sets", 0, field)
+
+
+# --- Simple mode's "How did that feel?" ---------------------------------------
+
+
+@pytest.mark.parametrize("answer", ["easy", "good", "hard"])
+async def test_simple_effort_is_stored_as_answered(
+    client: AsyncClient, answer: str
+) -> None:
+    """Simple mode asks Easy / Good / Hard, and the answer is kept as said.
+
+    Not translated into reps left: "Good" is not a number of reps, and storing
+    it as one would be the target dressed up as a report.
+    """
+    session = await post(client, a_session(sets=[a_set(effort_simple=answer)]))
+
+    entry = session["logged_sets"][0]
+    assert entry["effort_simple"] == answer
+    assert entry["rir"] is None
+
+
+async def test_an_unrated_set_has_no_simple_effort(client: AsyncClient) -> None:
+    session = await post(client, a_session(sets=[a_set()]))
+
+    assert session["logged_sets"][0]["effort_simple"] is None
+
+
+async def test_simple_effort_is_easy_good_or_hard_only(client: AsyncClient) -> None:
+    response = await client.post(
+        MANUAL, json=a_session(sets=[a_set(effort_simple="medium")])
+    )
+
+    located(response, "body", "sets", 0, "effort_simple")
+
+
+async def test_simple_effort_and_reps_left_are_one_answer_not_two(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        MANUAL, json=a_session(sets=[a_set(effort_simple="good", rir=2)])
+    )
+
+    assert response.status_code == 422, response.text
+    assert "effort_simple" in response.json()["detail"]

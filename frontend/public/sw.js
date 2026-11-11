@@ -24,6 +24,10 @@
  *    opened online, the app's own `/offline` page instead of the browser's
  *    error. Keeping the HTML is safe because every page is a client-rendered
  *    shell — athlete data arrives from the API, which rule 2 never caches.
+ *    A logging screen (`/train/<id>`) never opened online is answered with
+ *    the precached `/train/shell`: the screen reads its session id from the
+ *    address bar and its numbers from the stored session packet, so one copy
+ *    serves every session — and the gym can start one it has never seen.
  * 4. Build assets (`/_next/static/`, content-hashed and immutable) and the
  *    icons are cache-first.
  *
@@ -41,8 +45,13 @@ const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 const CACHE_PREFIX = "arc-shell-";
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const OFFLINE_URL = "/offline";
-/** Today is what the gym opens; the offline page answers everything unseen. */
-const SHELL = ["/today", OFFLINE_URL];
+const TRAIN_SHELL_URL = "/train/shell";
+/**
+ * Today is what the gym opens, the logging screen what it opens next; the
+ * offline page answers everything unseen.
+ */
+const SHELL = ["/today", TRAIN_SHELL_URL, OFFLINE_URL];
+const TRAIN = /^\/train\/[^/]+$/;
 /** Past this, a navigation stops waiting on a network that only half works. */
 const NAVIGATION_TIMEOUT_MS = 4000;
 const NETWORK_ONLY = /^\/(?:api\/|health$|mcp)/;
@@ -121,8 +130,12 @@ async function networkFirst(request) {
     timeout(NAVIGATION_TIMEOUT_MS),
   ]);
   if (response) return response;
+  const train = TRAIN.test(new URL(request.url).pathname)
+    ? await cache.match(TRAIN_SHELL_URL)
+    : undefined;
   return (
     (await cache.match(request.url, { ignoreSearch: true })) ||
+    train ||
     (await cache.match(OFFLINE_URL)) ||
     Response.error()
   );

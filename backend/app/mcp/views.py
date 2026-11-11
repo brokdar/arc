@@ -447,6 +447,9 @@ def logged_set(row: LoggedSetRow) -> dict[str, Any]:
         "rir_capped": row.rir_capped,
         "rpe": row.rpe,
         "hold_quality": None if row.hold_quality is None else row.hold_quality.value,
+        "effort_simple": (
+            None if row.effort_simple is None else row.effort_simple.value
+        ),
         "planned_line_ref": row.planned_line_ref,
         "replaced_exercise_id": row.replaced_exercise_id,
         "source": row.source.value,

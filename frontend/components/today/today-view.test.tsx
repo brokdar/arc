@@ -249,6 +249,33 @@ describe("TodayView", () => {
     expect(screen.getByText("Romanian Deadlift")).toBeInTheDocument();
   });
 
+  it("offers Start on a planned strength session, linking to its logging screen", async () => {
+    // The fixture's lift, before it was marked done: the same card the API
+    // serves for it with `status: "planned"` (it carries no link either way).
+    serveWeek([{ ...STRENGTH_CARD, status: "planned" }, VO2_CARD]);
+
+    renderToday();
+
+    const start = await screen.findByRole("link", {
+      name: "Start 10 sets of max strength",
+    });
+    expect(start).toHaveTextContent("Start");
+    expect(start).toHaveAttribute("href", `/train/${SESSION_IDS.strength}`);
+    // A ride is not logged set by set: no Start beside it.
+    expect(screen.getAllByRole("link", { name: /^Start / })).toHaveLength(1);
+  });
+
+  it("offers no Start on a lift already done", async () => {
+    serveWeek([STRENGTH_CARD]);
+
+    renderToday();
+
+    await screen.findByText("Back Squat");
+    expect(
+      screen.queryByRole("link", { name: /^Start / }),
+    ).not.toBeInTheDocument();
+  });
+
   it("treats an empty day as a rest day, with a way out of it", async () => {
     serveWeek([]);
 

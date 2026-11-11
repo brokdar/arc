@@ -86,6 +86,7 @@ from app.core.exceptions import (
 )
 from app.core.logging import get_logger
 from app.domain.activity import (
+    EffortSimple,
     HoldQuality,
     LoggedSetKind,
     PainBand,
@@ -279,6 +280,7 @@ _SET_FIELDS = frozenset(
         "rir_capped",
         "rpe",
         "hold_quality",
+        "effort_simple",
         "rest_s",
         "completed_at",
         "utc_offset_min",
@@ -295,6 +297,7 @@ _SET_VOCABULARIES: dict[str, type[StrEnum]] = {
     "source": SetSource,
     "confidence": SetConfidence,
     "hold_quality": HoldQuality,
+    "effort_simple": EffortSimple,
     "pain_kind": PainKind,
     "pain_band": PainBand,
 }
@@ -472,6 +475,7 @@ def _logged_sets(entries: list[dict[str, Any]] | None) -> list[LoggedSetInput]:
                 rir_capped=_flag(entry, "rir_capped", where=where),
                 rpe=_number(entry, "rpe", where=where),
                 hold_quality=_word(entry, "hold_quality", where=where),
+                effort_simple=_word(entry, "effort_simple", where=where),
                 rest_s=_whole(entry, "rest_s", where=where),
                 completed_at=(
                     None
@@ -2313,7 +2317,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           with `per_side` (a row is one side or a pair, not both);
         * **effort, as reported — never the target**: `rir` (reps left), or
           `rir: 4, rir_capped: true` for "4 or more", or `rpe` 6-10 in half
-          steps. With both, they must agree (`rir == floor(10 - rpe)`). If the
+          steps. With both, they must agree (`rir == floor(10 - rpe)`). A
+          Simple-mode athlete answers `effort_simple` (`easy` / `good` /
+          `hard`) instead, never beside `rir` or `rpe`. If the
           athlete did not say, leave them out: a planned "2 reps left" is not
           a report, and copying it in would teach progression something that
           never happened;

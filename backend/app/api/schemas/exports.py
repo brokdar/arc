@@ -54,6 +54,7 @@ class ExportedSet(_Camel):
     arc_assistance_kg: float | SkipJsonSchema[None] = None
     arc_rir_capped: bool | SkipJsonSchema[None] = None
     arc_hold_quality: str | SkipJsonSchema[None] = None
+    arc_effort_simple: str | SkipJsonSchema[None] = None
     arc_planned_line_ref: str | SkipJsonSchema[None] = None
     arc_replaced_exercise_id: str | SkipJsonSchema[None] = None
     arc_source: str

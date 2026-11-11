@@ -387,3 +387,22 @@ def test_the_409_and_422_bodies_are_in_the_contract(app: FastAPI) -> None:
     # Unbounded above: a newer phone's version is the 409, not a schema 422.
     version = schemas["SyncBatch"]["properties"]["schema_version"]
     assert "maximum" not in version
+
+
+async def test_a_simple_rating_lands_on_the_set_and_a_later_one_replaces_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The logging screen rates an exercise by patching each of its sets."""
+    await sync(
+        client,
+        [
+            start(1),
+            upsert(2, SET_IDS[0], 5, **squat(0)),
+            upsert(3, SET_IDS[0], 6, effort_simple="good"),
+            upsert(4, SET_IDS[0], 7, effort_simple="hard"),
+        ],
+    )
+    row = (await db_session.execute(select(SessionRow))).scalar_one()
+
+    stored = (await client.get(f"{SESSIONS}/{row.id}")).json()
+    assert [s["effort_simple"] for s in stored["logged_sets"]] == ["hard"]

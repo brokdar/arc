@@ -3612,6 +3612,17 @@ export interface components {
      */
     EffortScale: "easy_good_hard" | "reps_left" | "reps_left_or_rpe";
     /**
+     * EffortSimple
+     * @description Simple mode's answer to "How did that feel?", kept as given.
+     *
+     *     Not converted to reps left: "Good" is not a count of
+     *     reps, and storing it as one would put a number in `rir` that the athlete
+     *     never reported — the target wearing the clothes of a report (S10.1).
+     *     Progression in Simple mode reads this answer directly.
+     * @enum {string}
+     */
+    EffortSimple: "easy" | "good" | "hard";
+    /**
      * EnduranceStructureSchema
      * @description A structured endurance prescription.
      */
@@ -3854,6 +3865,8 @@ export interface components {
       arcCompletedAt?: string;
       /** Arcconfidence */
       arcConfidence: string;
+      /** Arceffortsimple */
+      arcEffortSimple?: string;
       /** Archoldquality */
       arcHoldQuality?: string;
       /** Arcpainband */
@@ -4646,6 +4659,7 @@ export interface components {
       confidence: components["schemas"]["SetConfidence"];
       /** Duration S */
       duration_s?: number | null;
+      effort_simple?: components["schemas"]["EffortSimple"] | null;
       /** Exercise Id */
       exercise_id?: string | null;
       /** Exercise Name */
@@ -4724,6 +4738,7 @@ export interface components {
       confidence: components["schemas"]["SetConfidence"];
       /** Duration S */
       duration_s: number | null;
+      effort_simple: components["schemas"]["EffortSimple"] | null;
       /** Exercise Id */
       exercise_id: string | null;
       /** Exercise Name */
@@ -7971,6 +7986,7 @@ export interface components {
       confidence: components["schemas"]["SetConfidence"];
       /** Duration S */
       duration_s?: number | null;
+      effort_simple?: components["schemas"]["EffortSimple"] | null;
       /** Exercise Id */
       exercise_id?: string | null;
       /** Exercise Name */

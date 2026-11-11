@@ -25,11 +25,17 @@ export interface BottomNavProps {
  * Every tab is at least 44 × 44 px (`min-h-11 min-w-11`), the smallest target
  * a thumb hits reliably; the bar pads itself above the home indicator with
  * the safe-area inset.
+ *
+ * It steps aside on the logging screen (`/train/...`): there the bottom edge
+ * belongs to the 72 px ✓, and a tab bar under it would push the one control
+ * the athlete hits every set off a 320 px screen — and invite a mis-tap away
+ * from a session in progress. The screen's own End leads out.
  */
 export function BottomNav({ items = NAV_ITEMS }: BottomNavProps = {}) {
   const pathname = usePathname();
   const t = useT();
   const tabs = items.filter((item) => item.phone && item.ready);
+  if (pathname.startsWith("/train/")) return null;
 
   return (
     <nav

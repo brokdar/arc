@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
 import { SectionLabel } from "@/components/design/section-label";
+import { StartLink } from "@/components/strength/start-link";
 import type { components } from "@/generated/api/schema";
 import { formatDayMonthYear } from "@/lib/format";
 import { useI18n } from "@/lib/i18n/provider";
@@ -14,6 +15,7 @@ import {
   sessionsForToday,
   storedPacket,
 } from "@/lib/offline/packet-store";
+import { purposeLabel } from "@/lib/purpose";
 import { describeSets } from "@/lib/workout-profile";
 
 type PacketLine = components["schemas"]["PacketLineRead"];
@@ -116,6 +118,10 @@ export function OfflineSessions({
               </li>
             ))}
           </ul>
+          <StartLink
+            id={session.planned_session_id}
+            name={purposeLabel(session.purpose)}
+          />
         </Panel>
       ))}
     </section>

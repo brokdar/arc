@@ -25,7 +25,6 @@ Every match is a case-insensitive **literal** substring — `%` and `_` in the
 query are characters, not wildcards (`app.persistence.search`).
 """
 
-import datetime as dt
 from dataclasses import dataclass
 from typing import Literal, Self
 
@@ -47,7 +46,6 @@ class NoteHit:
 
     #: `agent_note` or `proposal`.
     source: Literal["agent_note", "proposal"]
-    at: dt.datetime
     row: AgentNoteRow | PlanProposalRow
 
 
@@ -73,6 +71,12 @@ class NoteSearchService:
         Each source is asked for its newest ``offset + limit`` rows, which is
         enough to know the merged page without reading either table whole.
 
+        Newest means newest *written*: hits merge on their uuid7 ids, which
+        this process mints in strictly increasing order, not on ``created_at``
+        — a backwards wall-clock step can stamp a later row with an earlier
+        time (`.claude/rules/clock-monotonicity.md`), and keying on the stamp
+        made a proposal filed after a note sort behind it.
+
         Raises:
             ValidationError: When ``query`` is blank. An empty substring
                 matches everything, and "search" quietly returning the whole
@@ -86,8 +90,8 @@ class NoteSearchService:
         proposals, proposal_total = await self._proposals.list(
             query=term, offset=0, limit=depth
         )
-        hits = [NoteHit("agent_note", row.created_at, row) for row in notes] + [
-            NoteHit("proposal", row.created_at, row) for row in proposals
+        hits = [NoteHit("agent_note", row) for row in notes] + [
+            NoteHit("proposal", row) for row in proposals
         ]
-        hits.sort(key=lambda hit: (hit.at, hit.row.id), reverse=True)
+        hits.sort(key=lambda hit: hit.row.id, reverse=True)
         return hits[offset:depth], note_total + proposal_total
