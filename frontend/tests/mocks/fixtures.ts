@@ -70,6 +70,48 @@ export const SESSION_IDS = {
   copy: "0199a000-0000-7000-8000-000000000006",
 } as const;
 
+/**
+ * Plans. `default` is the plan migration `0028` creates and every session no
+ * dated plan covers belongs to — so every planned-session fixture names it.
+ */
+export const PLAN_IDS = {
+  default: "0199a000-0000-7000-8000-0000000000d1",
+  spring: "0199a000-0000-7000-8000-0000000000d2",
+} as const;
+
+/**
+ * The plans `GET /plans` answers with: the default plan (undated, active, as
+ * the migration leaves it) and one dated block.
+ */
+export function planFixtures(): Schemas["PlanRead"][] {
+  return [
+    {
+      id: PLAN_IDS.default,
+      name: "My plan",
+      phase: "base",
+      follow_exactly: false,
+      active: true,
+      is_default: true,
+      starts_on: null,
+      ends_before: null,
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    },
+    {
+      id: PLAN_IDS.spring,
+      name: "Spring block",
+      phase: "build",
+      follow_exactly: false,
+      active: true,
+      is_default: false,
+      starts_on: "2026-03-02",
+      ends_before: "2026-05-04",
+      created_at: "2026-07-02T00:00:00Z",
+      updated_at: "2026-07-02T00:00:00Z",
+    },
+  ];
+}
+
 export const WORKOUT_IDS = {
   vo2: "0199a000-0000-7000-8000-0000000000aa",
   long: "0199a000-0000-7000-8000-0000000000bb",
@@ -900,6 +942,9 @@ export function plannedSessionFixture(
     date: addDays(mondayOf(athleteToday()), seed.dayOffset),
     discipline: seed.session.discipline,
     status: seed.session.status,
+    plan_id: PLAN_IDS.default,
+    key: false,
+    time_of_day: null,
     intent_versions: seed.session.intent_version,
     created_at: "2026-07-20T09:00:00Z",
     updated_at: "2026-07-27T18:30:00Z",
@@ -2609,6 +2654,9 @@ function seedPlanned(): Schemas["PlannedSessionListItem"][] {
     date: seed.date,
     discipline: seed.discipline,
     status: "planned",
+    plan_id: PLAN_IDS.default,
+    key: false,
+    time_of_day: null,
     intent_versions: 1,
     created_at: "2026-07-30T09:00:00Z",
     updated_at: "2026-07-30T09:00:00Z",

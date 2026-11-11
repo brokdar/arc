@@ -32,6 +32,9 @@ export type AnchorType = Schemas["AnchorType"];
 export type StepRole = Schemas["StepRole"];
 export type LoadKind = Schemas["LoadKind"];
 export type Discipline = Schemas["Discipline"];
+export type SetKind = Schemas["SetKind"];
+export type WarmupMode = Schemas["WarmupMode"];
+export type Progression = Schemas["Progression"];
 
 export type EnduranceStructureInput = Schemas["EnduranceStructureSchema-Input"];
 export type StrengthStructure = Schemas["StrengthStructureSchema"];
@@ -108,6 +111,43 @@ export const LOAD_KINDS: readonly LoadKind[] = [
 ];
 
 /** How the editor labels each load kind. */
+/** Every set kind, in the order the builder offers them. */
+export const SET_KINDS: readonly SetKind[] = [
+  "working",
+  "top",
+  "backoff",
+  "amrap",
+  "drop",
+  "myo",
+  "failure",
+  "lengthened_partial",
+];
+
+export const SET_KIND_LABELS: Readonly<Record<SetKind, string>> = {
+  working: "Working",
+  top: "Top set",
+  backoff: "Backoff",
+  amrap: "AMRAP",
+  drop: "Drop set",
+  myo: "Myo-reps",
+  failure: "To failure",
+  lengthened_partial: "Lengthened partials",
+};
+
+export const PROGRESSIONS: readonly Progression[] = [
+  "rir_load",
+  "double_progression",
+  "top_backoff",
+  "simple",
+];
+
+export const PROGRESSION_LABELS: Readonly<Record<Progression, string>> = {
+  rir_load: "Load by RIR",
+  double_progression: "Reps, then weight",
+  top_backoff: "Top set + backoffs",
+  simple: "Add weight when done",
+};
+
 export const LOAD_KIND_LABELS: Readonly<Record<LoadKind, string>> = {
   kg: "kg",
   percent_e1rm: "% e1RM",
@@ -192,7 +232,10 @@ export interface DraftStrengthItem {
   /** Rounds, as written on the card. A per-side round is one set (L + R). */
   readonly sets: string;
   readonly mode: StrengthItemMode;
+  /** Reps per set — the bottom of the range when `repsHigh` is filled in. */
   readonly reps: string;
+  /** The top of a rep range; blank (or equal to `reps`) for a fixed count. */
+  readonly repsHigh: string;
   /** Seconds held per set (each side, per side), when the mode is `hold`. */
   readonly durationS: string;
   /** Each round performed one side at a time — one set, both sides' reps. */
@@ -200,9 +243,17 @@ export interface DraftStrengthItem {
   readonly loadKind: LoadKind;
   readonly loadValue: string;
   readonly rir: string;
+  /** The top of an RIR range; blank for a single target. */
+  readonly rirHigh: string;
   readonly restS: string;
   readonly tempo: string;
   readonly notes: string;
+  /** `""` leaves it unset — an ordinary working set. */
+  readonly setKind: SetKind | "";
+  /** `""` leaves the main-lift default in charge; yes/no overrides it. */
+  readonly main: "" | "yes" | "no";
+  readonly warmup: WarmupMode | "";
+  readonly progression: Progression | "";
 }
 
 /** One or more lines performed together; more than one *is* a superset. */
@@ -299,14 +350,20 @@ export function blankStrengthItem(exerciseId = ""): DraftStrengthItem {
     sets: "3",
     mode: "reps",
     reps: "8",
+    repsHigh: "",
     durationS: "",
     perSide: false,
     loadKind: "kg",
     loadValue: "",
     rir: "",
+    rirHigh: "",
     restS: "",
     tempo: "",
     notes: "",
+    setKind: "",
+    main: "",
+    warmup: "",
+    progression: "",
   };
 }
 
@@ -549,7 +606,7 @@ function strengthItemToWire(
     sets: Math.round(parseNumberInput(item.sets) ?? 0),
     // Exactly one of the two, and the *other* one is null rather than absent
     // so a re-edit cannot carry a stale value across a mode switch.
-    reps: hold ? null : Math.round(parseNumberInput(item.reps) ?? 0),
+    reps: hold ? null : (countToWire(item.reps, item.repsHigh) ?? 0),
     duration_s: hold ? Math.round(parseNumberInput(item.durationS) ?? 0) : null,
     per_side: item.perSide ? true : null,
     load: {
@@ -561,11 +618,85 @@ function strengthItemToWire(
             ? value / 100
             : value,
     },
-    rir: parseNumberInput(item.rir),
+    rir: countToWire(item.rir, item.rirHigh),
     rest_s: parseNumberInput(item.restS),
     tempo: item.tempo.trim() === "" ? null : item.tempo.trim(),
     notes: item.notes.trim() === "" ? null : item.notes.trim(),
+    set_kind: item.setKind === "" ? null : item.setKind,
+    main: item.main === "" ? null : item.main === "yes",
+    warmup: item.warmup === "" ? null : item.warmup,
+    progression: item.progression === "" ? null : item.progression,
   };
+}
+
+/**
+ * A count as the API takes it: a number, or `[low, high]` for a range.
+ *
+ * A top that is blank or equal to the bottom is a fixed count — the domain
+ * refuses `[8, 8]` (`app.domain.strength.TargetRange`), and "8 to 8" is what
+ * an athlete types on the way to clearing the box. A top below the bottom is
+ * sent as written, so the server's refusal agrees with the inline one.
+ */
+function countToWire(low: string, high: string): number | number[] | null {
+  const bottom = parseNumberInput(low);
+  if (bottom === null) {
+    return null;
+  }
+  const top = parseNumberInput(high);
+  if (top === null || Math.round(top) === Math.round(bottom)) {
+    return Math.round(bottom);
+  }
+  return [Math.round(bottom), Math.round(top)];
+}
+
+/** The bottom and top of a wire count, as the two boxes hold them. */
+function countFromWire(
+  count: number | number[] | null | undefined,
+): [string, string] {
+  if (count === null || count === undefined) {
+    return ["", ""];
+  }
+  if (Array.isArray(count)) {
+    return [String(count[0] ?? ""), String(count[1] ?? "")];
+  }
+  return [String(count), ""];
+}
+
+/**
+ * What is wrong with one line's ranges, by field, for the builder to show
+ * under the boxes and the editor to refuse a save on.
+ *
+ * Only the one mistake the form can see for certain without a round trip: a
+ * top below its bottom. Out-of-bounds numbers are `validateDraft`'s, reported
+ * on save like every other bound.
+ */
+export function rangeProblems(item: DraftStrengthItem): {
+  readonly reps?: string;
+  readonly rir?: string;
+} {
+  const backwards = (low: string, high: string) => {
+    const bottom = parseNumberInput(low);
+    const top = parseNumberInput(high);
+    return bottom !== null && top !== null && top < bottom;
+  };
+  return {
+    ...(item.mode === "reps" && backwards(item.reps, item.repsHigh)
+      ? { reps: "The top of the rep range is below its bottom." }
+      : {}),
+    ...(backwards(item.rir, item.rirHigh)
+      ? { rir: "The top of the RIR range is below its bottom." }
+      : {}),
+  };
+}
+
+/** Whether any line of the draft has a range written top first. */
+export function hasRangeProblem(draft: WorkoutDraft): boolean {
+  return (
+    draft.discipline === "strength" &&
+    draft.groups.some((group) =>
+      group.items.some((item) => Object.keys(rangeProblems(item)).length > 0),
+    )
+  );
 }
 
 // --- wire → draft ------------------------------------------------------------
@@ -591,10 +722,8 @@ export function draftFromStructure(
             item.duration_s === null || item.duration_s === undefined
               ? ("reps" as const)
               : ("hold" as const),
-          reps:
-            item.reps === null || item.reps === undefined
-              ? ""
-              : String(item.reps),
+          reps: countFromWire(item.reps)[0],
+          repsHigh: countFromWire(item.reps)[1],
           durationS:
             item.duration_s === null || item.duration_s === undefined
               ? ""
@@ -609,14 +738,23 @@ export function draftFromStructure(
                     ? round(item.load.value * 100)
                     : item.load.value,
                 ),
-          rir:
-            item.rir === null || item.rir === undefined ? "" : String(item.rir),
+          rir: countFromWire(item.rir)[0],
+          rirHigh: countFromWire(item.rir)[1],
           restS:
             item.rest_s === null || item.rest_s === undefined
               ? ""
               : String(item.rest_s),
           tempo: item.tempo ?? "",
           notes: item.notes ?? "",
+          setKind: item.set_kind ?? "",
+          main:
+            item.main === null || item.main === undefined
+              ? ("" as const)
+              : item.main
+                ? ("yes" as const)
+                : ("no" as const),
+          warmup: item.warmup ?? "",
+          progression: item.progression ?? "",
         })),
       })),
     };
@@ -836,9 +974,28 @@ function validateStrength(draft: StrengthDraft): string[] {
         );
       } else {
         problems.push(...inRange(item.reps, 1, MAX_REPS, `${label}: reps`));
+        if (item.repsHigh.trim() !== "") {
+          problems.push(
+            ...inRange(item.repsHigh, 1, MAX_REPS, `${label}: top of the reps`),
+          );
+        }
       }
       if (item.rir.trim() !== "") {
         problems.push(...inRange(item.rir, 0, MAX_RIR, `${label}: RIR`));
+      }
+      if (item.rirHigh.trim() !== "" && item.rir.trim() === "") {
+        problems.push(`${label}: give the bottom of the RIR range too.`);
+      }
+      if (item.rirHigh.trim() !== "") {
+        problems.push(
+          ...inRange(item.rirHigh, 0, MAX_RIR, `${label}: top of the RIR`),
+        );
+      }
+      const ranges = rangeProblems(item);
+      for (const problem of [ranges.reps, ranges.rir]) {
+        if (problem) {
+          problems.push(`${label}: ${problem}`);
+        }
       }
       if (item.restS.trim() !== "") {
         problems.push(

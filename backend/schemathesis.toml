@@ -64,7 +64,9 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 #   * a step states exactly one of duration_s and distance_m, repeat blocks
 #     nest at most four deep, a percentage target names an anchor its channel
 #     derives from, an absolute one uses that channel's unit (app.domain.workout),
-#   * a strength prescription references the bundled exercise catalogue,
+#   * a strength prescription references the bundled exercise catalogue, and
+#     a rep or RIR range runs low to high inside its field's bounds
+#     (app.domain.strength),
 #   * a planned session takes exactly one of workout_id and structure, its
 #     purpose and workout agree on a discipline, and every anchor it refers to
 #     has a version in force (build-plan invariant 4).
@@ -350,6 +352,31 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
 [[operations]]
 include-name = "PUT /api/v1/connections/dropbox/app"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+# Plans (feat/plans-entity) carry rules a JSON schema cannot express, each
+# pinned in test_plans_api.py: a plan's `ends_before` must be after its
+# `starts_on`, the default plan stays undated and active, and a week is keyed
+# by its Monday — so a schema-valid date that is not a Monday is a 422.
+
+[[operations]]
+include-name = "POST /api/v1/plans"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/plans/{plan_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "GET /api/v1/plans/{plan_id}/weeks/{week_start}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PUT /api/v1/plans/{plan_id}/weeks/{week_start}"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 

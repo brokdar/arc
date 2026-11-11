@@ -52,6 +52,7 @@ from app.domain.scoring import (
     VerdictEvidence,
     VerdictRule,
     completion_state,
+    reps_hit,
     score_session,
     score_to_json,
     suggest_verdict,
@@ -59,6 +60,7 @@ from app.domain.scoring import (
     worst_state,
 )
 from app.domain.sessions import SessionStatus
+from app.domain.strength import TargetRange
 from app.domain.templates import ScoringAxis
 from app.domain.workout import (
     AbsoluteRange,
@@ -874,6 +876,85 @@ def test_a_gym_session_with_nothing_logged_has_no_sets_load() -> None:
 
     assert isinstance(result.assessment, NotAssessed)
     assert "no sets were logged" in result.assessment.reason
+
+
+def test_range_hit() -> None:
+    """AC-30: reps inside ``[lo, hi]`` are a hit, both ends included.
+
+    Displaces scoring a range by its lower bound: "8-12" read as "at least 8"
+    would call 15 reps a hit, when 15 against 8-12 says the load was too
+    light — which is what double progression reads to add weight.
+    """
+    target = TargetRange(8, 12)
+
+    assert reps_hit(target, 10)
+    assert not reps_hit(target, 7)
+    assert reps_hit(target, 8)
+    assert reps_hit(target, 12)
+    assert not reps_hit(target, 13)
+
+
+def test_a_fixed_rep_target_is_hit_by_at_least_its_count() -> None:
+    assert reps_hit(5, 5)
+    assert reps_hit(5, 6)
+    assert not reps_hit(5, 4)
+
+
+def rep_inputs(performed: tuple[int | None, ...]) -> ScoringInputs:
+    """Four sets of 8-12 at 100 kg, and the reps logged against them."""
+    return ScoringInputs(
+        purpose=Purpose.MAX_STRENGTH,
+        axes=(ScoringAxis.COMPLETION, ScoringAxis.SETS_LOAD),
+        criteria=(SetsCompleted(min_fraction=1.0), LoadWithin(pct_tolerance=0.1)),
+        planned_sets=4,
+        performed_sets=float(len(performed)),
+        prescribed_loads_kg=(100.0,) * 4,
+        performed_loads_kg=(100.0,) * len(performed),
+        prescribed_reps=(TargetRange(8, 12),) * 4,
+        performed_reps=performed,
+    )
+
+
+@pytest.mark.parametrize(
+    ("performed", "hits"),
+    [
+        pytest.param((10, 10, 10, 10), "4", id="inside"),
+        pytest.param((10, 7, 10, 10), "3", id="seven-misses"),
+        pytest.param((8, 12, 8, 12), "4", id="both-ends"),
+        pytest.param((13, 12, 7, 8), "2", id="above-and-below"),
+    ],
+)
+def test_a_set_inside_the_range_scores_as_a_hit(
+    performed: tuple[int, ...], hits: str
+) -> None:
+    result = axis(rep_inputs(performed), ScoringAxis.SETS_LOAD)
+
+    assert isinstance(result.assessment, Measured)
+    inputs = result.assessment.explanation.inputs
+    assert inputs["sets comparable by reps"] == "4"
+    assert inputs["sets within the prescribed reps"] == hits
+
+
+def test_a_rep_count_logged_against_a_hold_is_not_compared() -> None:
+    inputs = replace(
+        rep_inputs((10, 10, 10, 10)),
+        prescribed_reps=(None, TargetRange(8, 12), None, None),
+        performed_reps=(None, 7, 10, 10),
+    )
+
+    explanation = axis(inputs, ScoringAxis.SETS_LOAD).assessment
+    assert isinstance(explanation, Measured)
+    assert explanation.explanation.inputs["sets comparable by reps"] == "1"
+    assert explanation.explanation.inputs["sets within the prescribed reps"] == "0"
+
+
+def test_a_session_without_reps_reports_no_rep_agreement() -> None:
+    # The keys are absent rather than "0 of 0": a payload stored before reps
+    # were compared keeps its exact shape on a rescore with nothing to read.
+    result = axis(strength_inputs(), ScoringAxis.SETS_LOAD)
+
+    assert isinstance(result.assessment, Measured)
+    assert "sets comparable by reps" not in result.assessment.explanation.inputs
 
 
 # --- the shape of a whole score -------------------------------------------------

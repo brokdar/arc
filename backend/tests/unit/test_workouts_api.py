@@ -277,6 +277,61 @@ async def test_writing_a_pre_per_side_document_does_not_store_the_new_keys(
     assert all("duration_s" not in item for item in items)
 
 
+async def test_a_rep_range_set_kind_and_main_lift_survive_the_library(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # AC-29 through HTTP: the request schema has to admit `[lo, hi]` and the
+    # new tags, the stored row has to carry exactly what was sent, and the
+    # response has to read the stored document back.
+    line = {
+        "exercise_id": "back_squat",
+        "sets": 3,
+        "reps": [8, 12],
+        "load": {"kind": "kg", "value": 100.0},
+        "rir": [1, 2],
+        "set_kind": "backoff",
+        "main": True,
+        "warmup": "auto",
+        "progression": "double_progression",
+    }
+    structure = {"discipline": "strength", "groups": [{"items": [line]}]}
+
+    created = await create(client, structure=structure, name="Range day")
+
+    stored = await db_session.get(WorkoutRow, uuid.UUID(created["id"]))
+    assert stored is not None
+    assert stored.structure["groups"][0]["items"][0] == line
+    returned = created["structure"]["groups"][0]["items"][0]
+    assert {key: returned[key] for key in line} == line
+
+
+async def test_a_backwards_rep_range_is_refused_with_its_place(
+    client: AsyncClient,
+) -> None:
+    structure = {
+        "discipline": "strength",
+        "groups": [
+            {
+                "items": [
+                    {
+                        "exercise_id": "back_squat",
+                        "sets": 3,
+                        "reps": [12, 8],
+                        "load": {"kind": "kg", "value": 100.0},
+                    }
+                ]
+            }
+        ],
+    }
+
+    response = await client.post(
+        WORKOUTS, json={"name": "Nope", "structure": structure}
+    )
+
+    assert response.status_code == 422
+    assert "groups[0].items[0].reps" in response.json()["detail"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

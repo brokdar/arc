@@ -27,7 +27,7 @@ from app.api.pagination import Page
 from app.api.validation import PostgresText
 from app.domain.anchors import AnchorType
 from app.domain.athlete import Discipline
-from app.domain.strength import LoadKind
+from app.domain.strength import LoadKind, Progression, SetKind, WarmupMode
 from app.domain.workout import Channel, ChannelUnit, StepRole
 from app.persistence.workouts import (
     MAX_DESCRIPTION_LENGTH,
@@ -150,6 +150,16 @@ class LoadSchema(BaseModel):
     value: float | None = None
 
 
+#: An inclusive ``[low, high]`` count. The schema owns the shape (two
+#: integers); the domain owns the rules (``low < high``, the field's bounds), as
+#: everywhere in this module.
+#: A list rather than ``tuple[int, int]``: the tuple publishes as
+#: ``prefixItems``, which openapi-typescript renders as ``[number, number]`` and
+#: openapi-fetch's response typing then widens back to ``number[]`` — two
+#: incompatible types for one field across the frontend.
+CountRange = Annotated[list[int], Field(min_length=2, max_length=2)]
+
+
 class StrengthSetSchema(BaseModel):
     """One line of a strength prescription.
 
@@ -180,20 +190,31 @@ class StrengthSetSchema(BaseModel):
     #: round is **one** set (a left-right pair) in every set count, and both
     #: sides' reps count in volume.
     sets: int
-    #: Reps per set, on each side for a ``per_side`` line. Exactly one of ``reps`` and ``duration_s``.
-    reps: int | None = None
+    #: Reps per set, on each side for a ``per_side`` line: a number, or an
+    #: inclusive ``[low, high]`` range (``[8, 12]``) with ``low < high``.
+    #: Exactly one of ``reps`` and ``duration_s``.
+    reps: int | CountRange | None = None
     #: Seconds held per set (each side, for a ``per_side`` line), for a timed set.
     duration_s: int | None = None
     #: Whether each round is performed one side at a time. Refused on a
     #: movement the catalogue does not mark unilateral.
     per_side: bool | None = None
     load: LoadSchema
-    #: Target reps in reserve, 0-10.
-    rir: int | None = None
+    #: Target reps in reserve, 0-10: a number or an inclusive ``[low, high]``.
+    rir: int | CountRange | None = None
     rest_s: int | None = None
     #: Free-form tempo notation (``"3-1-1-0"``); uninterpreted by the MVP.
     tempo: FreeText | None = None
     notes: FreeText | None = None
+    #: What kind of set this is; absent is an ordinary working set.
+    set_kind: SetKind | None = None
+    #: Whether this line is a main lift. Absent defaults to the first
+    #: multi-joint line of each movement pattern; ``false`` opts out.
+    main: bool | None = None
+    #: ``auto`` generates warm-up sets before the line, ``none`` does not.
+    warmup: WarmupMode | None = None
+    #: How the next session's weight is decided from this line.
+    progression: Progression | None = None
 
 
 class StrengthGroupSchema(BaseModel):

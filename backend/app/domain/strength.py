@@ -367,6 +367,103 @@ class Load:
         return cls(LoadKind.BODYWEIGHT)
 
 
+class SetKind(StrEnum):
+    """What kind of set a prescription line asks for.
+
+    Absent means an ordinary working set, which is what every line stored
+    before the field existed was; ``working`` says the same thing explicitly.
+    The rest name the set structures a programme writes differently on the
+    card: a heavy ``top`` single followed by lighter ``backoff`` sets, an
+    ``amrap`` (as many reps as possible), a ``drop`` set, ``myo`` reps (an
+    activation set and mini-sets on short rests), a set taken to ``failure``,
+    and ``lengthened_partial`` reps in the stretched half of the range.
+    """
+
+    WORKING = "working"
+    TOP = "top"
+    BACKOFF = "backoff"
+    AMRAP = "amrap"
+    DROP = "drop"
+    MYO = "myo"
+    FAILURE = "failure"
+    LENGTHENED_PARTIAL = "lengthened_partial"
+
+
+class WarmupMode(StrEnum):
+    """Whether the gym screen generates warm-up sets before the line.
+
+    ``auto`` ramps up to the first working weight; ``none`` starts straight
+    in — a second exercise for an already-warm muscle, say. Absent leaves the
+    choice to the screen.
+    """
+
+    AUTO = "auto"
+    NONE = "none"
+
+
+class Progression(StrEnum):
+    """How the next session's weight is decided from this line.
+
+    ``rir_load`` adjusts the load from the effort the athlete reports against
+    the ``rir`` target; ``double_progression`` adds reps across the range and
+    then weight once the top of it is reached; ``top_backoff`` progresses the
+    top set and derives the backoffs from it; ``simple`` adds a fixed step
+    whenever every set is completed.
+    """
+
+    RIR_LOAD = "rir_load"
+    DOUBLE_PROGRESSION = "double_progression"
+    TOP_BACKOFF = "top_backoff"
+    SIMPLE = "simple"
+
+
+@dataclass(frozen=True, slots=True)
+class TargetRange:
+    """A prescribed count given as a range: "8-12 reps", "1-3 reps left".
+
+    **Both ends are inclusive**: a set of 8 or of 12 against ``8-12`` is in
+    the range. This is a count on a card, not an index range, so the
+    half-open convention for spans of samples and windows
+    (`.claude/rules/backend-domain-units.md`, rule 3) does not reach it —
+    "8-12 reps" has always meant twelve is allowed.
+
+    ``low`` is strictly below ``high``: a range whose ends agree is a fixed
+    number, and it is written as one, so there is exactly one way to store
+    "8 reps". The bounds of what the count may be (1-500 reps, 0-10 RIR) are
+    the owning field's, checked by :class:`StrengthSet`.
+    """
+
+    low: int
+    high: int
+
+    def __post_init__(self) -> None:
+        """Refuse a range that is empty or written backwards."""
+        if self.low >= self.high:
+            raise ValueError(
+                f"a range's low end must be below its high end, got "
+                f"[{self.low}, {self.high}]; write a single number for a fixed "
+                "count"
+            )
+
+    def __contains__(self, count: object) -> bool:
+        """Whether ``count`` lies in the range, both ends included."""
+        return isinstance(count, int) and self.low <= count <= self.high
+
+
+#: A prescribed count: one number, or an inclusive range of them.
+type Count = int | TargetRange
+
+
+def _count_bounds(name: str, value: Count | None, low: int, high: int) -> None:
+    """Refuse a count (or either end of a range) outside ``[low, high]``."""
+    if value is None:
+        return
+    ends = (value.low, value.high) if isinstance(value, TargetRange) else (value,)
+    for end in ends:
+        if not low <= end <= high:
+            raise ValueError(f"{name} must be between {low} and {high}, got {end}")
+
+
 @dataclass(frozen=True, slots=True)
 class StrengthSet:
     """One line of a strength prescription.
@@ -387,8 +484,9 @@ class StrengthSet:
         sets: Number of **rounds** prescribed.
         load: How heavy. For a per-side line this is the load on **one** side —
             see :class:`Load`.
-        reps: Reps per set (each side, per side), or ``None`` for a timed hold. Exactly one
-            of ``reps`` and ``duration_s`` is given.
+        reps: Reps per set (each side, per side) — a number, or an inclusive
+            :class:`TargetRange` ("8-12") — or ``None`` for a timed hold.
+            Exactly one of ``reps`` and ``duration_s`` is given.
         duration_s: Seconds held per set (each side), or ``None`` for a rep-based
             set.
         per_side: Whether each round is performed one side at a time — one set
@@ -398,23 +496,33 @@ class StrengthSet:
             changes under it. The *service* refuses ``per_side`` on a movement
             the catalogue marks bilateral, so the two cannot disagree in the
             direction that matters.
-        rir: Target reps in reserve, 0-10, or ``None`` when unprescribed.
+        rir: Target reps in reserve, 0-10, as a number or a range, or
+            ``None`` when unprescribed.
         rest_s: Prescribed rest after each round, in seconds.
         tempo: Free-form tempo notation (``"3-1-1-0"``), uninterpreted by the
             MVP.
         notes: Free-form coaching note for this line.
+        set_kind: See :class:`SetKind`; ``None`` is an ordinary working set.
+        main: Whether this is a main lift. ``None`` leaves it to the default
+            :func:`resolve_main_lines` applies; ``False`` opts out of it.
+        warmup: See :class:`WarmupMode`; ``None`` leaves it to the screen.
+        progression: See :class:`Progression`; ``None`` when unprescribed.
     """
 
     exercise_id: str
     sets: int
     load: Load
-    reps: int | None = None
+    reps: Count | None = None
     duration_s: int | None = None
     per_side: bool = False
-    rir: int | None = None
+    rir: Count | None = None
     rest_s: int | None = None
     tempo: str | None = None
     notes: str | None = None
+    set_kind: SetKind | None = None
+    main: bool | None = None
+    warmup: WarmupMode | None = None
+    progression: Progression | None = None
 
     def __post_init__(self) -> None:
         """Reject prescriptions nobody could execute."""
@@ -428,15 +536,13 @@ class StrengthSet:
                 "prescribes repetitions or it prescribes a hold, not both and "
                 "not neither"
             )
-        if self.reps is not None and not 1 <= self.reps <= MAX_REPS:
-            raise ValueError(f"reps must be between 1 and {MAX_REPS}, got {self.reps}")
+        _count_bounds("reps", self.reps, 1, MAX_REPS)
         if self.duration_s is not None and not 1 <= self.duration_s <= MAX_HOLD_SECONDS:
             raise ValueError(
                 f"duration_s must be between 1 and {MAX_HOLD_SECONDS}, "
                 f"got {self.duration_s}"
             )
-        if self.rir is not None and not 0 <= self.rir <= MAX_RIR:
-            raise ValueError(f"rir must be between 0 and {MAX_RIR}, got {self.rir}")
+        _count_bounds("rir", self.rir, 0, MAX_RIR)
         if self.rest_s is not None and not 0 <= self.rest_s <= MAX_REST_SECONDS:
             raise ValueError(
                 f"rest_s must be between 0 and {MAX_REST_SECONDS}, got {self.rest_s}"
@@ -473,11 +579,27 @@ class StrengthSet:
         return 2 if self.per_side else 1
 
     @property
-    def total_reps(self) -> int | None:
-        """Prescribed reps across every round and side, or ``None`` for a hold."""
+    def rep_floor(self) -> int | None:
+        """The fewest reps per set the line asks for, or ``None`` for a hold.
+
+        The number itself for a fixed count, the low end of a range.
+        """
         if self.reps is None:
             return None
-        return self.sets * self.sides * self.reps
+        return self.reps.low if isinstance(self.reps, TargetRange) else self.reps
+
+    @property
+    def total_reps(self) -> int | None:
+        """Prescribed reps across every round and side, or ``None`` for a hold.
+
+        A range counts its floor (:attr:`rep_floor`): the reps the
+        prescription promises. Its top is where the load goes up, not reps
+        the athlete is booked for, so predicted volume does not assume it.
+        """
+        floor = self.rep_floor
+        if floor is None:
+            return None
+        return self.sets * self.sides * floor
 
     @property
     def total_hold_s(self) -> int | None:
@@ -616,6 +738,71 @@ def exercise_ids(workout: StrengthWorkout) -> frozenset[str]:
     return frozenset(item.exercise_id for item in workout.prescriptions)
 
 
+#: The five main-lift patterns, as :class:`MovementPattern` reads into them:
+#: horizontal and vertical push are one pattern for this purpose, as are the
+#: two pulls. Every other pattern (core, carries, isolation work) has no
+#: default main lift.
+MAIN_LIFT_PATTERNS: Mapping[MovementPattern, str] = {
+    MovementPattern.SQUAT: "squat",
+    MovementPattern.HINGE: "hinge",
+    MovementPattern.LUNGE: "lunge",
+    MovementPattern.HORIZONTAL_PUSH: "push",
+    MovementPattern.VERTICAL_PUSH: "push",
+    MovementPattern.HORIZONTAL_PULL: "pull",
+    MovementPattern.VERTICAL_PULL: "pull",
+}
+
+
+def resolve_main_lines(
+    workout: StrengthWorkout, catalogue: Mapping[str, Exercise]
+) -> tuple[bool, ...]:
+    """Which prescription lines are main lifts, aligned to ``prescriptions``.
+
+    **An explicit ``main`` wins; an unset one defaults to the first
+    multi-joint line of each main-lift pattern** (:data:`MAIN_LIFT_PATTERNS`).
+    ``main: true`` makes a line main whatever it is — a curl included — and
+    a pattern that has one gets no default beside it; ``main: false`` opts a
+    line out, and the default does not then move on to the pattern's next
+    line, because the athlete has said what this pattern's main lift is not
+    and nothing about which other one it should be.
+
+    This displaces making ``main`` always explicit: every workout stored
+    before the field existed carries none, and the gym screen still needs to
+    know which line gets the warm-up ramp and the heavier progression. The
+    first compound of each pattern is what nearly every programme already
+    means by its main lift, so a default gets the common case right and the
+    flag stays for the exceptions.
+
+    A movement the catalogue does not know is never a default main lift:
+    there is no mechanic or pattern to read.
+    """
+    lines = workout.prescriptions
+    claimed: set[str] = set()
+    for item in lines:
+        entry = catalogue.get(item.exercise_id)
+        if item.main is not None and entry is not None:
+            pattern = MAIN_LIFT_PATTERNS.get(entry.pattern)
+            if pattern is not None:
+                claimed.add(pattern)
+    resolved: list[bool] = []
+    for item in lines:
+        if item.main is not None:
+            resolved.append(item.main)
+            continue
+        entry = catalogue.get(item.exercise_id)
+        pattern = None if entry is None else MAIN_LIFT_PATTERNS.get(entry.pattern)
+        default = (
+            entry is not None
+            and pattern is not None
+            and entry.mechanic is Mechanic.MULTI_JOINT
+            and pattern not in claimed
+        )
+        if default and pattern is not None:
+            claimed.add(pattern)
+        resolved.append(default)
+    return tuple(resolved)
+
+
 # --- serialization ------------------------------------------------------------
 
 
@@ -660,17 +847,56 @@ def strength_set_to_json(prescription: StrengthSet) -> dict[str, Any]:
         "sets": prescription.sets,
     }
     if prescription.reps is not None:
-        document["reps"] = prescription.reps
+        document["reps"] = count_to_json(prescription.reps)
     if prescription.duration_s is not None:
         document["duration_s"] = prescription.duration_s
     document["load"] = load_to_json(prescription.load)
     if prescription.per_side:
         document["per_side"] = True
-    for name in ("rir", "rest_s", "tempo", "notes"):
+    if prescription.rir is not None:
+        document["rir"] = count_to_json(prescription.rir)
+    for name in ("rest_s", "tempo", "notes"):
         value = getattr(prescription, name)
         if value is not None:
             document[name] = value
+    # The keys added with ranges and set kinds come last, in a fixed order, so
+    # a document that never had them is written exactly as it always was.
+    if prescription.set_kind is not None:
+        document["set_kind"] = prescription.set_kind.value
+    if prescription.main is not None:
+        document["main"] = prescription.main
+    if prescription.warmup is not None:
+        document["warmup"] = prescription.warmup.value
+    if prescription.progression is not None:
+        document["progression"] = prescription.progression.value
     return document
+
+
+def count_to_json(count: Count) -> int | list[int]:
+    """A fixed count as itself, a range as ``[low, high]``."""
+    if isinstance(count, TargetRange):
+        return [count.low, count.high]
+    return count
+
+
+def count_from_json(value: Any, path: str) -> Count:
+    """Decode a count: an integer, or a two-integer ``[low, high]`` array.
+
+    Raises:
+        ValueError: Located at ``path`` (or the offending end) when the value
+            is neither, or the range is empty or backwards. The bounds of the
+            count itself are the owning field's to check.
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) != 2:
+            raise ValueError(
+                f"{path}: a range is two numbers, [low, high]; got {len(value)}"
+            )
+        low = as_int(value[0], f"{path}[0]")
+        high = as_int(value[1], f"{path}[1]")
+        with located(path):
+            return TargetRange(low, high)
+    return as_int(value, path)
 
 
 _SET_FIELDS = frozenset(
@@ -685,6 +911,10 @@ _SET_FIELDS = frozenset(
         "rest_s",
         "tempo",
         "notes",
+        "set_kind",
+        "main",
+        "warmup",
+        "progression",
     }
 )
 
@@ -710,6 +940,10 @@ def strength_set_from_json(document: Any, path: str) -> StrengthSet:
     rest_s = optional(body, "rest_s")
     tempo = optional(body, "tempo")
     notes = optional(body, "notes")
+    set_kind = optional(body, "set_kind")
+    main = optional(body, "main")
+    warmup = optional(body, "warmup")
+    progression = optional(body, "progression")
     exercise_id = as_str(field(body, "exercise_id", path), f"{path}.exercise_id")
     sets = as_int(field(body, "sets", path), f"{path}.sets")
     load = load_from_json(field(body, "load", path), f"{path}.load")
@@ -718,17 +952,33 @@ def strength_set_from_json(document: Any, path: str) -> StrengthSet:
             exercise_id=exercise_id,
             sets=sets,
             load=load,
-            reps=None if reps is None else as_int(reps, f"{path}.reps"),
+            reps=None if reps is None else count_from_json(reps, f"{path}.reps"),
             duration_s=(
                 None if duration_s is None else as_int(duration_s, f"{path}.duration_s")
             ),
             per_side=(
                 False if per_side is None else as_bool(per_side, f"{path}.per_side")
             ),
-            rir=None if rir is None else as_int(rir, f"{path}.rir"),
+            rir=None if rir is None else count_from_json(rir, f"{path}.rir"),
             rest_s=None if rest_s is None else as_int(rest_s, f"{path}.rest_s"),
             tempo=None if tempo is None else as_str(tempo, f"{path}.tempo"),
             notes=None if notes is None else as_str(notes, f"{path}.notes"),
+            set_kind=(
+                None
+                if set_kind is None
+                else as_enum(SetKind, set_kind, f"{path}.set_kind")
+            ),
+            main=None if main is None else as_bool(main, f"{path}.main"),
+            warmup=(
+                None
+                if warmup is None
+                else as_enum(WarmupMode, warmup, f"{path}.warmup")
+            ),
+            progression=(
+                None
+                if progression is None
+                else as_enum(Progression, progression, f"{path}.progression")
+            ),
         )
 
 

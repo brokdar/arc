@@ -5750,11 +5750,198 @@
         "title": "PinnedAnchorRead",
         "type": "object"
       },
+      "PlanCreate": {
+        "additionalProperties": false,
+        "description": "Payload for creating a plan.",
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "ends_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends Before"
+          },
+          "follow_exactly": {
+            "default": false,
+            "title": "Follow Exactly",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/PlanPhase"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          }
+        },
+        "required": ["name", "phase"],
+        "title": "PlanCreate",
+        "type": "object"
+      },
+      "PlanPhase": {
+        "description": "Where in the season a plan sits.",
+        "enum": ["base", "build", "peak", "taper", "maintenance", "transition"],
+        "title": "PlanPhase",
+        "type": "string"
+      },
+      "PlanRead": {
+        "description": "One plan.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "ends_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends Before"
+          },
+          "follow_exactly": {
+            "title": "Follow Exactly",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/PlanPhase"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "phase",
+          "follow_exactly",
+          "active",
+          "is_default",
+          "starts_on",
+          "ends_before",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PlanRead",
+        "type": "object"
+      },
       "PlanState": {
         "description": "Whether the plan is being enforced.\n\n``PAUSED`` does not pause the application: see the module docstring for\nwhat it does and does not stop.",
         "enum": ["active", "paused"],
         "title": "PlanState",
         "type": "string"
+      },
+      "PlanUpdate": {
+        "additionalProperties": false,
+        "description": "A partial change to a plan. Omitted fields are left alone.\n\nOnly the dates take ``null``, meaning \"unbounded on that side\"\n(`.claude/rules/api-nullability.md`).",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "ends_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends Before"
+          },
+          "follow_exactly": {
+            "title": "Follow Exactly",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/PlanPhase",
+            "title": "Phase"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          }
+        },
+        "title": "PlanUpdate",
+        "type": "object"
       },
       "PlanWeekDayRead": {
         "description": "One day of the week: what was planned for it, and what was recorded.",
@@ -6096,6 +6283,54 @@
         "title": "PlanWeekRead",
         "type": "object"
       },
+      "PlanWeekTag": {
+        "description": "A label on one week of one plan.",
+        "enum": ["recovery"],
+        "title": "PlanWeekTag",
+        "type": "string"
+      },
+      "PlanWeekTagsRead": {
+        "description": "The tags on one week of one plan.",
+        "properties": {
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekTag"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": ["plan_id", "week_start", "tags"],
+        "title": "PlanWeekTagsRead",
+        "type": "object"
+      },
+      "PlanWeekTagsWrite": {
+        "additionalProperties": false,
+        "description": "The whole set of tags one week carries. ``[]`` clears it.",
+        "properties": {
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/PlanWeekTag"
+            },
+            "maxItems": 1,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": ["tags"],
+        "title": "PlanWeekTagsWrite",
+        "type": "object"
+      },
       "PlannedSessionCopy": {
         "additionalProperties": false,
         "description": "Payload for copying a planned session onto another date.",
@@ -6146,6 +6381,11 @@
               }
             ],
             "title": "Intent Text"
+          },
+          "key": {
+            "default": false,
+            "title": "Key",
+            "type": "boolean"
           },
           "purpose": {
             "$ref": "#/components/schemas/Purpose"
@@ -6215,6 +6455,20 @@
             ],
             "title": "Success Criteria"
           },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "description": "Athlete-local time of day, HH:MM on a 24-hour clock.",
+                "examples": ["17:30"],
+                "pattern": "^([01]\\d|2[0-3]):([0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day"
+          },
           "workout_id": {
             "anyOf": [
               {
@@ -6260,6 +6514,10 @@
             "title": "Intent Versions",
             "type": "integer"
           },
+          "key": {
+            "title": "Key",
+            "type": "boolean"
+          },
           "match": {
             "anyOf": [
               {
@@ -6277,8 +6535,24 @@
             "title": "Pinned Anchors",
             "type": "array"
           },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day"
           },
           "updated_at": {
             "format": "date-time",
@@ -6291,6 +6565,9 @@
           "date",
           "discipline",
           "status",
+          "plan_id",
+          "key",
+          "time_of_day",
           "intent",
           "intent_versions",
           "created_at",
@@ -6342,6 +6619,10 @@
             "title": "Intent Versions",
             "type": "integer"
           },
+          "key": {
+            "title": "Key",
+            "type": "boolean"
+          },
           "match": {
             "anyOf": [
               {
@@ -6358,6 +6639,11 @@
             },
             "title": "Pinned Anchors",
             "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
           },
           "predicted_load": {
             "anyOf": [
@@ -6389,6 +6675,17 @@
           "status": {
             "$ref": "#/components/schemas/app__domain__sessions__SessionStatus"
           },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -6400,6 +6697,9 @@
           "date",
           "discipline",
           "status",
+          "plan_id",
+          "key",
+          "time_of_day",
           "intent",
           "intent_versions",
           "created_at",
@@ -6414,7 +6714,7 @@
       },
       "PlannedSessionUpdate": {
         "additionalProperties": false,
-        "description": "Payload for updating a planned session. Omitted fields are unchanged.\n\nTouching ``purpose``, ``intent_text``, ``coach_notes``,\n``success_criteria``, ``workout_id`` or ``structure`` appends a new intent\nversion. Touching only ``date`` or ``status`` does not.",
+        "description": "Payload for updating a planned session. Omitted fields are unchanged.\n\nTouching ``purpose``, ``intent_text``, ``coach_notes``,\n``success_criteria``, ``workout_id`` or ``structure`` appends a new intent\nversion. Touching only ``date``, ``status``, ``key`` or ``time_of_day``\ndoes not. ``time_of_day: null`` clears the time; ``key`` cannot be cleared.",
         "properties": {
           "coach_notes": {
             "anyOf": [
@@ -6455,6 +6755,10 @@
               }
             ],
             "title": "Intent Text"
+          },
+          "key": {
+            "title": "Key",
+            "type": "boolean"
           },
           "purpose": {
             "anyOf": [
@@ -6540,6 +6844,20 @@
               }
             ],
             "title": "Success Criteria"
+          },
+          "time_of_day": {
+            "anyOf": [
+              {
+                "description": "Athlete-local time of day, HH:MM on a 24-hour clock.",
+                "examples": ["17:30"],
+                "pattern": "^([01]\\d|2[0-3]):([0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day"
           },
           "workout_id": {
             "anyOf": [
@@ -6704,6 +7022,12 @@
         ],
         "title": "PredictedVolumeRead",
         "type": "object"
+      },
+      "Progression": {
+        "description": "How the next session's weight is decided from this line.\n\n``rir_load`` adjusts the load from the effort the athlete reports against\nthe ``rir`` target; ``double_progression`` adds reps across the range and\nthen weight once the top of it is reached; ``top_backoff`` progresses the\ntop set and derives the backoffs from it; ``simple`` adds a fixed step\nwhenever every set is completed.",
+        "enum": ["rir_load", "double_progression", "top_backoff", "simple"],
+        "title": "Progression",
+        "type": "string"
       },
       "ProposalChangeDiff": {
         "description": "What one change would do, computed when the proposal was written.",
@@ -9212,6 +9536,21 @@
         "title": "SetConfidence",
         "type": "string"
       },
+      "SetKind": {
+        "description": "What kind of set a prescription line asks for.\n\nAbsent means an ordinary working set, which is what every line stored\nbefore the field existed was; ``working`` says the same thing explicitly.\nThe rest name the set structures a programme writes differently on the\ncard: a heavy ``top`` single followed by lighter ``backoff`` sets, an\n``amrap`` (as many reps as possible), a ``drop`` set, ``myo`` reps (an\nactivation set and mini-sets on short rests), a set taken to ``failure``,\nand ``lengthened_partial`` reps in the stretched half of the range.",
+        "enum": [
+          "working",
+          "top",
+          "backoff",
+          "amrap",
+          "drop",
+          "myo",
+          "failure",
+          "lengthened_partial"
+        ],
+        "title": "SetKind",
+        "type": "string"
+      },
       "SetSide": {
         "description": "Which side a logged set worked: both at once, or one of them.",
         "enum": ["both", "left", "right"],
@@ -9714,6 +10053,17 @@
           "load": {
             "$ref": "#/components/schemas/LoadSchema"
           },
+          "main": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main"
+          },
           "notes": {
             "anyOf": [
               {
@@ -9739,10 +10089,28 @@
             ],
             "title": "Per Side"
           },
+          "progression": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Progression"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reps": {
             "anyOf": [
               {
                 "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
               },
               {
                 "type": "null"
@@ -9767,10 +10135,28 @@
                 "type": "integer"
               },
               {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              {
                 "type": "null"
               }
             ],
             "title": "Rir"
+          },
+          "set_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sets": {
             "title": "Sets",
@@ -9789,6 +10175,16 @@
               }
             ],
             "title": "Tempo"
+          },
+          "warmup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": ["exercise_id", "sets", "load"],
@@ -10531,6 +10927,12 @@
           "nothing_contradicts"
         ],
         "title": "VerdictRule",
+        "type": "string"
+      },
+      "WarmupMode": {
+        "description": "Whether the gym screen generates warm-up sets before the line.\n\n``auto`` ramps up to the first working weight; ``none`` starts straight\nin \u2014 a second exercise for an already-warm muscle, say. Absent leaves the\nchoice to the screen.",
+        "enum": ["auto", "none"],
+        "title": "WarmupMode",
         "type": "string"
       },
       "WeekSessionRead": {
@@ -17193,6 +17595,492 @@
         ],
         "summary": "Answer Missed Session Prompt",
         "tags": ["scores"]
+      }
+    },
+    "/api/v1/plans": {
+      "get": {
+        "description": "Every plan, oldest first, the default plan included.",
+        "operationId": "plans-list_plans",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlanRead"
+                  },
+                  "title": "Response Plans-List Plans",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Plans",
+        "tags": ["plans"]
+      },
+      "post": {
+        "description": "Create a plan. An active plan may not overlap another active one.",
+        "operationId": "plans-create_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The plan would overlap another active plan"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Plan violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Plan",
+        "tags": ["plans"]
+      }
+    },
+    "/api/v1/plans/{plan_id}": {
+      "get": {
+        "description": "One plan.",
+        "operationId": "plans-get_plan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such plan"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Plan",
+        "tags": ["plans"]
+      },
+      "patch": {
+        "description": "Change a plan's name, phase, follow-exactly flag, activity or dates.",
+        "operationId": "plans-update_plan",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such plan"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The plan would overlap another active plan"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Plan violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Plan",
+        "tags": ["plans"]
+      }
+    },
+    "/api/v1/plans/{plan_id}/weeks/{week_start}": {
+      "get": {
+        "description": "The tags on one week of one plan; ``week_start`` is its Monday.",
+        "operationId": "plans-get_plan_week_tags",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "week_start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Week Start",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanWeekTagsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such plan"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Plan violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Plan Week Tags",
+        "tags": ["plans"]
+      },
+      "put": {
+        "description": "Replace one week's tags; ``[]`` clears them.",
+        "operationId": "plans-set_plan_week_tags",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "week_start",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Week Start",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanWeekTagsWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanWeekTagsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such plan"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "Plan violates a schema or domain rule"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Set Plan Week Tags",
+        "tags": ["plans"]
       }
     },
     "/api/v1/proposals": {
