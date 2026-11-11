@@ -21,6 +21,12 @@ import type { components } from "@/generated/api/schema";
  *   (`GET /strength/packet`, `lib/offline/packet-store.ts`): one record, the
  *   next seven days of strength sessions with every number the gym screen
  *   shows. Added in version 2; an upgrade from 1 keeps the outbox intact.
+ * - **`training`** — the session being logged on this phone, keyed by its
+ *   planned session id (`components/strength/session-store.ts`): what was
+ *   logged, where the screen is and when the rest ends, so a reload or a
+ *   crash resumes at the next unlogged set with the timer intact. Added in
+ *   version 3; the outbox is the record of what to upload, this is only the
+ *   screen's memory of it.
  *
  * A connection is opened per operation and closed after it: the outbox is
  * touched a few times a minute, and a long-lived handle would block the
@@ -62,12 +68,13 @@ export interface FailedItem {
 }
 
 const DB_NAME = "arc-offline";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const OUTBOX = "outbox";
 const FAILED = "failed";
 const META = "meta";
 const PACKET = "packet";
 const PACKET_KEY = "current";
+const TRAINING = "training";
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -92,6 +99,9 @@ function open(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(PACKET)) {
         db.createObjectStore(PACKET);
+      }
+      if (!db.objectStoreNames.contains(TRAINING)) {
+        db.createObjectStore(TRAINING);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -133,6 +143,30 @@ export function queued(): Promise<QueuedItem[]> {
   return inTransaction([OUTBOX], "readonly", (tx) =>
     request(tx.objectStore(OUTBOX).getAll() as IDBRequest<QueuedItem[]>),
   );
+}
+
+/**
+ * Take back queued items by mutation id, in one transaction. Resolves to the
+ * ids that were still waiting and are now gone; an id not returned was
+ * already uploaded (or never queued), so taking it back needs a compensating
+ * mutation instead.
+ */
+export function removeQueuedMutations(
+  mutationIds: string[],
+): Promise<string[]> {
+  const wanted = new Set(mutationIds);
+  return inTransaction([OUTBOX], "readwrite", async (tx) => {
+    const store = tx.objectStore(OUTBOX);
+    const items = (await request(store.getAll())) as QueuedItem[];
+    const removed: string[] = [];
+    for (const item of items) {
+      if (wanted.has(item.mutation.mutation_id)) {
+        store.delete(item.seq);
+        removed.push(item.mutation.mutation_id);
+      }
+    }
+    return removed;
+  });
 }
 
 /** Drop uploaded items. */
@@ -201,6 +235,22 @@ export function getPacket(): Promise<StoredPacket | null> {
   return inTransaction([PACKET], "readonly", async (tx) => {
     const value = (await request(tx.objectStore(PACKET).get(PACKET_KEY))) as
       | StoredPacket
+      | undefined;
+    return value ?? null;
+  });
+}
+
+/** One record of the `training` store, opaque here: its owner types it. */
+export function putTraining(key: string, value: unknown): Promise<void> {
+  return inTransaction([TRAINING], "readwrite", (tx) => {
+    tx.objectStore(TRAINING).put(value, key);
+  });
+}
+
+export function getTraining<T>(key: string): Promise<T | null> {
+  return inTransaction([TRAINING], "readonly", async (tx) => {
+    const value = (await request(tx.objectStore(TRAINING).get(key))) as
+      | T
       | undefined;
     return value ?? null;
   });

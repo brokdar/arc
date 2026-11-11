@@ -132,6 +132,11 @@ class AgentNoteRepository:
         Newest first, unlike the reads above: a search is "when did we last say
         this", and the latest answer is the one that matters. Case-insensitive
         and literal (`app.persistence.search`).
+
+        "Newest" is the uuid7 id — writing order — not ``created_at``: the wall
+        clock steps backwards (`.claude/rules/clock-monotonicity.md`), and
+        `NoteSearchService` merges these hits with proposals on the same key,
+        so both sources must pick their newest rows by it.
         """
         criterion = contains(AgentNoteRow.text, query)
         total = await self._session.scalar(
@@ -140,7 +145,7 @@ class AgentNoteRepository:
         result = await self._session.execute(
             select(AgentNoteRow)
             .where(criterion)
-            .order_by(AgentNoteRow.created_at.desc(), AgentNoteRow.id.desc())
+            .order_by(AgentNoteRow.id.desc())
             .limit(limit)
         )
         return result.scalars().all(), total or 0

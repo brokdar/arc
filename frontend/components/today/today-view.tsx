@@ -17,6 +17,7 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
+import { StartLink } from "@/components/strength/start-link";
 import { FirstRunQuestion } from "@/components/today/first-run";
 import { OfflineSessions } from "@/components/today/offline-sessions";
 import { WellnessCard } from "@/components/today/wellness-card";
@@ -253,6 +254,13 @@ function SessionPanel({
           <h2 className="max-w-[760px] font-semibold text-4xl tracking-[-0.025em]">
             {headline}
           </h2>
+          {/* The one way into the gym screen: a strength session still to
+              do gets Start, and the tap on it is the whole of starting
+              (`components/strength/logging-screen.tsx`). The prescription
+              below stays read-only; logging happens there, not here. */}
+          {session.discipline === "strength" && session.status === "planned" ? (
+            <StartLink id={session.id} name={headline} />
+          ) : null}
           {intent?.intent_text ? (
             <p className="max-w-[640px] text-ink-muted text-lg leading-relaxed">
               {intent.intent_text}

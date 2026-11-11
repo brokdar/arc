@@ -52,6 +52,15 @@ function renderShell() {
 }
 
 describe("BottomNav", () => {
+  it("steps aside on the logging screen, whose ✓ owns the bottom edge", () => {
+    pathname.current = "/train/0199c000-0000-7000-8000-00000000a001";
+    render(<BottomNav />);
+
+    expect(
+      screen.queryByRole("navigation", { name: "Sections (phone)" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows Today, Calendar, Sessions and Settings, in that order", () => {
     pathname.current = "/today";
     render(<BottomNav />);

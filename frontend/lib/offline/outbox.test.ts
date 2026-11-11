@@ -15,7 +15,9 @@ import {
   startOutbox,
 } from "@/lib/offline/outbox";
 import { uuid7 } from "@/lib/offline/uuid7";
-import { syncServer } from "@/tests/mocks/sync-state";
+import { http } from "@/tests/mocks/handlers";
+import { server } from "@/tests/mocks/server";
+import { applyBatch, syncServer } from "@/tests/mocks/sync-state";
 
 /**
  * The outbox against the typed `/sync` handler (`tests/mocks/sync-state.ts`),
@@ -57,6 +59,39 @@ afterEach(() => {
 });
 
 describe("flush", () => {
+  it("uploads what was queued during an upload when a flush is asked for then", async () => {
+    // The logging screen finishes a session while the outbox's own flush is
+    // mid-upload: the finish must not wait 30 s for the next tick.
+    let entered = false;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post("/api/v1/sync", async ({ request, response }) => {
+        entered = true;
+        await gate;
+        const answer = applyBatch(await request.json());
+        if (answer.status !== 200) throw new Error("unexpected refusal");
+        return response(200).json(answer.body);
+      }),
+    );
+    const first = start();
+    await enqueue(first);
+    const uploading = flush();
+    await vi.waitFor(() => expect(entered).toBe(true));
+
+    const late = logSet(0);
+    await enqueue(late);
+    const asked = flush();
+    release();
+
+    expect(await asked).toBe("drained");
+    expect(await uploading).toBe("drained");
+    expect(syncServer().applied).toEqual([first.mutation_id, late.mutation_id]);
+    expect(await queued()).toEqual([]);
+  });
+
   it("uploads queued mutations once, in order, and empties the queue", async () => {
     const items = [start(), logSet(0), logSet(1), logSet(2)];
     for (const item of items) await enqueue(item);

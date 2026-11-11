@@ -11,6 +11,7 @@ import SessionPage from "@/app/(app)/sessions/[id]/page";
 import SessionsPage from "@/app/(app)/sessions/page";
 import SettingsPage from "@/app/(app)/settings/page";
 import TodayPage from "@/app/(app)/today/page";
+import TrainPage from "@/app/(app)/train/[id]/page";
 import WorkoutPage from "@/app/(app)/workouts/[id]/page";
 import WorkoutsPage from "@/app/(app)/workouts/page";
 import LoginPage from "@/app/login/page";
@@ -188,6 +189,28 @@ describe("route shells", () => {
 
     expect(
       await screen.findByRole("heading", { name: "Corrections" }),
+    ).toBeInTheDocument();
+  });
+
+  it("routes a planned session id at its logging screen", async () => {
+    // No IndexedDB in this file: nothing can be stored on the "phone", so the
+    // screen says the session is not here yet and how to fix that.
+    render(
+      <Guarded>
+        {
+          await TrainPage({
+            params: Promise.resolve({
+              id: "0199c000-0000-7000-8000-00000000a001",
+            }),
+          })
+        }
+      </Guarded>,
+    );
+
+    expect(
+      await screen.findByText(
+        "This session is not on this phone yet. Connect once so arc can fetch it.",
+      ),
     ).toBeInTheDocument();
   });
 

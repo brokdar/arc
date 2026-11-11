@@ -195,6 +195,20 @@ class HoldQuality(StrEnum):
     FELL = "fell"
 
 
+class EffortSimple(StrEnum):
+    """Simple mode's answer to "How did that feel?", kept as given.
+
+    Not converted to reps left: "Good" is not a count of
+    reps, and storing it as one would put a number in `rir` that the athlete
+    never reported — the target wearing the clothes of a report (S10.1).
+    Progression in Simple mode reads this answer directly.
+    """
+
+    EASY = "easy"
+    GOOD = "good"
+    HARD = "hard"
+
+
 class PainKind(StrEnum):
     """The two kinds of pain the gym screen asks about.
 

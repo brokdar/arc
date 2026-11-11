@@ -431,6 +431,7 @@ def _sets(payload: ManualSessionCreate) -> Sequence[LoggedSetInput]:
             rir_capped=entry.rir_capped,
             rpe=entry.rpe,
             hold_quality=entry.hold_quality,
+            effort_simple=entry.effort_simple,
             rest_s=entry.rest_s,
             completed_at=entry.completed_at,
             utc_offset_min=entry.utc_offset_min,

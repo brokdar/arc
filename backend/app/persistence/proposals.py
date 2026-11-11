@@ -119,7 +119,11 @@ class PlanProposalRepository:
         wants. The stored diff is not searched.
 
         Newest first because this is an inbox: the thing to answer is the
-        thing that just arrived, not the one from three weeks ago.
+        thing that just arrived, not the one from three weeks ago. "Newest" is
+        the uuid7 id — filing order — rather than ``created_at``, which a
+        backwards clock step can put behind an older row
+        (`.claude/rules/clock-monotonicity.md`); `NoteSearchService` merges
+        this page with agent notes on the same key.
         """
         criteria: list[Any] = []
         if status is not None:
@@ -137,7 +141,7 @@ class PlanProposalRepository:
         result = await self._session.execute(
             select(PlanProposalRow)
             .where(*criteria)
-            .order_by(PlanProposalRow.created_at.desc(), PlanProposalRow.id.desc())
+            .order_by(PlanProposalRow.id.desc())
             .offset(offset)
             .limit(limit)
         )

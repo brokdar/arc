@@ -12,6 +12,7 @@ import {
   type QueuedItem,
   queued,
   removeQueued,
+  removeQueuedMutations,
   setBlocked,
 } from "@/lib/offline/db";
 
@@ -90,10 +91,44 @@ export async function enqueue(
 
 let inflight: Promise<FlushOutcome> | null = null;
 
-/** Upload what is queued. One flush at a time; a second call joins the first. */
+/**
+ * Take back mutations that may not have left the phone yet — the logging
+ * screen's Undo. Waits for a flush in progress first, so an item being
+ * uploaded right now is either still queued afterwards (and removed) or
+ * reported as gone. Resolves to the ids that had already reached the server:
+ * the caller sends a compensating mutation for those.
+ */
+export async function withdraw(mutationIds: string[]): Promise<string[]> {
+  if (inflight) await inflight.catch(() => undefined);
+  const removed = new Set(await removeQueuedMutations(mutationIds));
+  notify();
+  return mutationIds.filter((id) => !removed.has(id));
+}
+
+let again = false;
+
+/**
+ * Upload what is queued. One flush at a time; a second call joins the first
+ * — and, because the first read the queue before the caller added to it,
+ * makes the first go round once more when it drained cleanly. Without that,
+ * a session finished during the outbox's own upload waited for the next
+ * 30-second tick.
+ */
 export function flush(): Promise<FlushOutcome> {
-  inflight ??= drain().finally(() => {
+  if (inflight) {
+    again = true;
+    return inflight;
+  }
+  inflight = (async () => {
+    let outcome: FlushOutcome;
+    do {
+      again = false;
+      outcome = await drain();
+    } while (again && outcome === "drained");
+    return outcome;
+  })().finally(() => {
     inflight = null;
+    again = false;
     notify();
   });
   return inflight;

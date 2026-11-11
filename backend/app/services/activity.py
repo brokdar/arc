@@ -33,6 +33,7 @@ from app.core.exceptions import NotFoundError, ValidationError, domain_rules
 from app.core.logging import get_logger
 from app.domain.activity import (
     ClassificationSource,
+    EffortSimple,
     HoldQuality,
     LoggedSetKind,
     PainBand,
@@ -175,6 +176,8 @@ class LoggedSetInput:
         rpe: RPE as reported, 6-10 in half steps. With ``rir`` it must agree:
             ``rir == floor(10 - rpe)``.
         hold_quality: The rating of a timed hold; only on a hold.
+        effort_simple: Simple mode's Easy / Good / Hard, as answered; never
+            beside ``rir`` or ``rpe``.
         rest_s: Rest before this set, seconds.
         completed_at: When the set was logged, timezone-aware.
         utc_offset_min: The device's UTC offset when it was logged, minutes.
@@ -200,6 +203,7 @@ class LoggedSetInput:
     rir_capped: bool = False
     rpe: float | None = None
     hold_quality: HoldQuality | None = None
+    effort_simple: EffortSimple | None = None
     rest_s: int | None = None
     completed_at: dt.datetime | None = None
     utc_offset_min: int | None = None
@@ -802,6 +806,7 @@ class SessionService:
             rir_capped=entry.rir_capped,
             rpe=entry.rpe,
             hold_quality=entry.hold_quality,
+            effort_simple=entry.effort_simple,
             rest_s=entry.rest_s,
             completed_at=entry.completed_at,
             utc_offset_min=entry.utc_offset_min,
@@ -953,6 +958,13 @@ def _check_effort(entry: LoggedSetInput, index: int) -> None:
     Raises:
         ValidationError: Naming the set and the rule.
     """
+    if entry.effort_simple is not None and (
+        entry.rir is not None or entry.rpe is not None
+    ):
+        raise ValidationError(
+            f"Set {index}: effort_simple is Simple mode's answer to the effort "
+            "question; a set rated in reps left or rpe answered a different one"
+        )
     if entry.rir_capped and entry.rir != CAPPED_RIR:
         raise ValidationError(
             f"Set {index}: rir_capped means '{CAPPED_RIR}+ reps left' and needs "

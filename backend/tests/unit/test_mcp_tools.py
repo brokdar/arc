@@ -4405,6 +4405,30 @@ async def test_search_notes_finds_agent_notes_and_proposals_newest_first(
     assert by_reason["items"][0]["item"]["resolution_note"] == "Too much, I am away"
 
 
+async def test_search_notes_orders_by_writing_order_when_the_clock_steps_back(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # The wall clock steps backwards (`.claude/rules/clock-monotonicity.md`):
+    # a proposal filed after a note can carry the older `created_at`. Newest
+    # first means newest *written*, so the stamp must not reorder the hits —
+    # this is the state that made the test above flaky on a stepping host.
+    await append_ftp(client)
+    session_id = await record(client)
+    await evaluate(session_id, "Hydration looked short on this ride.")
+    filed = await filed_proposal(rationale="Protect legs: hydration week ahead.")
+    [note] = await rows(db_session, AgentNoteRow)
+    [proposal] = await rows(db_session, PlanProposalRow)
+    note.created_at = dt.datetime(2026, 8, 10, 9, 0, 2, tzinfo=dt.UTC)
+    proposal.created_at = dt.datetime(2026, 8, 10, 9, 0, 0, tzinfo=dt.UTC)
+    await db_session.commit()
+
+    data = await call(READER, "search_notes", {"query": "hydration"})
+    page = await call(READER, "search_notes", {"query": "hydration", "limit": 1})
+
+    assert [hit["source"] for hit in data["items"]] == ["proposal", "agent_note"]
+    assert [hit["item"]["id"] for hit in page["items"]] == [filed["proposal"]["id"]]
+
+
 async def test_search_notes_pages_across_both_sources(client: AsyncClient) -> None:
     await append_ftp(client)
     session_id = await record(client)

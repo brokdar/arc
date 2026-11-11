@@ -493,6 +493,7 @@ def openweight_set(row: LoggedSetRow, zone: dt.tzinfo) -> dict[str, Any]:
             "arcAssistanceKg": assistance(row),
             "arcRirCapped": row.rir_capped if row.rir is not None else None,
             "arcHoldQuality": row.hold_quality.value if row.hold_quality else None,
+            "arcEffortSimple": (row.effort_simple.value if row.effort_simple else None),
             "arcPlannedLineRef": row.planned_line_ref,
             "arcReplacedExerciseId": row.replaced_exercise_id,
             "arcSource": row.source.value,

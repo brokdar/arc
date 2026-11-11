@@ -138,6 +138,21 @@ describe("Today offline", () => {
     expect(within(section).queryByText("Connect to refresh")).toBeNull();
   });
 
+  it("offers Start on a stored session, so the gym needs no signal to begin", async () => {
+    await syncNow();
+    goOffline();
+
+    renderToday();
+
+    const section = await screen.findByTestId("offline-sessions");
+    const start = within(section).getByRole("link", { name: /^Start / });
+    expect(start).toHaveTextContent("Start");
+    expect(start).toHaveAttribute(
+      "href",
+      `/train/${packetServer.served[0].sessions[0].planned_session_id}`,
+    );
+  });
+
   it("shows a packet older than seven days with Connect to refresh, still listed", async () => {
     const eightDaysAgo = new Date(Date.now() - STALE_AFTER_MS - 86_400_000);
     const old = packetFixture(addDays(today, -8), eightDaysAgo);

@@ -45,6 +45,7 @@ from app.core.exceptions import (
 )
 from app.domain.activity import (
     ClassificationSource,
+    EffortSimple,
     HoldQuality,
     LoggedSetKind,
     PainBand,
@@ -127,6 +128,7 @@ _SET_COLUMNS = (
     "rir_capped",
     "rpe",
     "hold_quality",
+    "effort_simple",
     "rest_s",
     "completed_at",
     "utc_offset_min",
@@ -637,6 +639,7 @@ def _set_input(values: Mapping[str, Any], *, client_id: uuid.UUID) -> LoggedSetI
         rir_capped=bool(values.get("rir_capped", False)),
         rpe=values.get("rpe"),
         hold_quality=_optional(values, "hold_quality", HoldQuality),
+        effort_simple=_optional(values, "effort_simple", EffortSimple),
         rest_s=values.get("rest_s"),
         completed_at=None if completed is None else _instant(completed, "completed_at"),
         utc_offset_min=values.get("utc_offset_min"),

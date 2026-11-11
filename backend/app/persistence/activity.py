@@ -47,6 +47,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.activity import (
     ClassificationSource,
+    EffortSimple,
     HoldQuality,
     LoggedSetKind,
     PainBand,
@@ -445,6 +446,12 @@ class LoggedSetRow(Base):
     rpe: Mapped[float | None] = mapped_column(Float)
     #: The rating of a timed hold — its end buttons. Null for a rep set.
     hold_quality: Mapped[HoldQuality | None] = mapped_column(enum_column(HoldQuality))
+    #: Simple mode's "How did that feel?" — Easy / Good / Hard, as answered.
+    #: Null when the set was not rated, and never beside `rir` or `rpe`: one
+    #: set answers one effort question.
+    effort_simple: Mapped[EffortSimple | None] = mapped_column(
+        enum_column(EffortSimple)
+    )
     #: Rest taken before this set, seconds, as the phone's timer measured it.
     rest_s: Mapped[int | None] = mapped_column(Integer)
     #: When the set was logged, aware UTC, plus the device's UTC offset at the

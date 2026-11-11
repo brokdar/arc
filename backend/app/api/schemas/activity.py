@@ -30,6 +30,7 @@ from app.domain.activity import (
     MAX_TEMPERATURE_C,
     MIN_TEMPERATURE_C,
     ClassificationSource,
+    EffortSimple,
     HoldQuality,
     LoggedSetKind,
     PainBand,
@@ -178,6 +179,8 @@ class LoggedSetRead(BaseModel):
     rpe: float | None
     #: The rating of a timed hold.
     hold_quality: HoldQuality | None
+    #: Simple mode's "How did that feel?", as answered.
+    effort_simple: EffortSimple | None
     #: Rest before this set, seconds.
     rest_s: int | None
     #: When the set was logged, UTC, and the device's UTC offset then.
@@ -387,6 +390,8 @@ class LoggedSetFields(BaseModel):
     )
     #: Only on a timed hold.
     hold_quality: HoldQuality | None = None
+    #: Simple mode's "How did that feel?" — never with ``rir`` or ``rpe``.
+    effort_simple: EffortSimple | None = None
     rest_s: int | None = Field(default=None, ge=0, le=MAX_REST_S)
     completed_at: (
         Annotated[AwareDatetime, Field(ge=EARLIEST_SESSION, le=LATEST_SESSION)] | None
