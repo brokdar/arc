@@ -197,6 +197,7 @@ async def test_follow_exactly_prefills_every_line_with_its_prescription(
         client,
         {"exercise_id": "back_squat", "reps": 8, "load_kg": 55.0},
         {"exercise_id": "split_squat", "reps": 12, "load_kg": 10.0, "per_side": True},
+        {"exercise_id": "barbell_row", "reps": 10, "load_kg": 50.0},
     )
     prescribed = [
         item("back_squat", sets=5, reps=3, load={"kind": "kg", "value": 70}),
@@ -210,6 +211,9 @@ async def test_follow_exactly_prefills_every_line_with_its_prescription(
         item(
             "front_plank", sets=3, reps=None, duration_s=40, load={"kind": "bodyweight"}
         ),
+        # An effort load names no weight to follow, so the weight is the last
+        # one logged — but the reps stay the prescription's 6, not history's 10.
+        item("barbell_row", sets=3, reps=6, load={"kind": "rpe", "value": 8}),
     ]
     session_id = await plan(client, lift(*prescribed))
 
@@ -217,13 +221,24 @@ async def test_follow_exactly_prefills_every_line_with_its_prescription(
 
     (session,) = body["sessions"]
     assert session["follow_exactly"] is True
-    for line, written in zip(session["lines"], prescribed, strict=True):
+    *kg_or_bodyweight, effort = session["lines"]
+    for line, written in zip(kg_or_bodyweight, prescribed[:-1], strict=True):
         load = written["load"].get("value")
         assert line["prefill"]["source"] == "prescription"
         assert line["prefill"]["load_kg"] == (None if load is None else float(load))
         assert line["prefill"]["reps"] == written.get("reps")
         assert line["prefill"]["duration_s"] == written.get("duration_s")
+        assert line["prefill"]["starting_flow"] is False
         assert line["prescription"]["sets"] == written["sets"]
+    assert effort["exercise_id"] == "barbell_row"
+    assert effort["prefill"] == {
+        "source": "last_logged",
+        "load_kg": 50.0,
+        "reps": 6,
+        "duration_s": None,
+        "starting_flow": False,
+    }
+    assert effort["prescription"]["sets"] == 3
     assert session_id == session["planned_session_id"]
 
 
