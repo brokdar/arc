@@ -39,6 +39,7 @@ import {
 import { purposeLabel, STATUS_TONES } from "@/lib/purpose";
 import {
   describeSets,
+  formatCount,
   type StrengthStructure,
   unmeasuredVolumeReason,
 } from "@/lib/workout-profile";
@@ -786,7 +787,7 @@ function StrengthGroups({ structure }: { structure: StrengthStructure }) {
                 )}
                 {item.rir === null || item.rir === undefined
                   ? ""
-                  : ` · RIR ${item.rir}`}
+                  : ` · RIR ${formatCount(item.rir)}`}
               </span>
             </div>
           ))}

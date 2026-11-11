@@ -5699,6 +5699,18 @@ export interface components {
       volume_load_kg: number | null;
     };
     /**
+     * Progression
+     * @description How the next session's weight is decided from this line.
+     *
+     *     ``rir_load`` adjusts the load from the effort the athlete reports against
+     *     the ``rir`` target; ``double_progression`` adds reps across the range and
+     *     then weight once the top of it is reached; ``top_backoff`` progresses the
+     *     top set and derives the backoffs from it; ``simple`` adds a fixed step
+     *     whenever every set is completed.
+     * @enum {string}
+     */
+    Progression: "rir_load" | "double_progression" | "top_backoff" | "simple";
+    /**
      * ProposalChangeDiff
      * @description What one change would do, computed when the proposal was written.
      */
@@ -6843,6 +6855,28 @@ export interface components {
      */
     SetConfidence: "high" | "low";
     /**
+     * SetKind
+     * @description What kind of set a prescription line asks for.
+     *
+     *     Absent means an ordinary working set, which is what every line stored
+     *     before the field existed was; ``working`` says the same thing explicitly.
+     *     The rest name the set structures a programme writes differently on the
+     *     card: a heavy ``top`` single followed by lighter ``backoff`` sets, an
+     *     ``amrap`` (as many reps as possible), a ``drop`` set, ``myo`` reps (an
+     *     activation set and mini-sets on short rests), a set taken to ``failure``,
+     *     and ``lengthened_partial`` reps in the stretched half of the range.
+     * @enum {string}
+     */
+    SetKind:
+      | "working"
+      | "top"
+      | "backoff"
+      | "amrap"
+      | "drop"
+      | "myo"
+      | "failure"
+      | "lengthened_partial";
+    /**
      * SetSide
      * @description Which side a logged set worked: both at once, or one of them.
      * @enum {string}
@@ -7125,20 +7159,25 @@ export interface components {
       /** Exercise Id */
       exercise_id: string;
       load: components["schemas"]["LoadSchema"];
+      /** Main */
+      main?: boolean | null;
       /** Notes */
       notes?: string | null;
       /** Per Side */
       per_side?: boolean | null;
+      progression?: components["schemas"]["Progression"] | null;
       /** Reps */
-      reps?: number | null;
+      reps?: number | number[] | null;
       /** Rest S */
       rest_s?: number | null;
       /** Rir */
-      rir?: number | null;
+      rir?: number | number[] | null;
+      set_kind?: components["schemas"]["SetKind"] | null;
       /** Sets */
       sets: number;
       /** Tempo */
       tempo?: string | null;
+      warmup?: components["schemas"]["WarmupMode"] | null;
     };
     /**
      * StrengthStructureSchema
@@ -7512,6 +7551,16 @@ export interface components {
       | "completion_above_ceiling"
       | "completion_short"
       | "nothing_contradicts";
+    /**
+     * WarmupMode
+     * @description Whether the gym screen generates warm-up sets before the line.
+     *
+     *     ``auto`` ramps up to the first working weight; ``none`` starts straight
+     *     in — a second exercise for an already-warm muscle, say. Absent leaves the
+     *     choice to the screen.
+     * @enum {string}
+     */
+    WarmupMode: "auto" | "none";
     /**
      * WeekSessionRead
      * @description One planned session, as a calendar card shows it.

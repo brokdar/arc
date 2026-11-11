@@ -22,6 +22,14 @@ import {
   LOAD_KIND_LABELS,
   LOAD_KINDS,
   type LoadKind,
+  PROGRESSION_LABELS,
+  PROGRESSIONS,
+  type Progression,
+  rangeProblems,
+  SET_KIND_LABELS,
+  SET_KINDS,
+  type SetKind,
+  type WarmupMode,
 } from "@/lib/workout-draft";
 
 export interface StrengthBuilderProps {
@@ -181,6 +189,7 @@ function ItemRow({
   // before the catalogue changed under it can be corrected here rather than
   // stranded behind a control it can no longer reach.
   const perSideOffered = unilateral(item.exerciseId) || item.perSide;
+  const ranges = rangeProblems(item);
 
   return (
     <FieldRow
@@ -267,17 +276,40 @@ function ItemRow({
           />
         </Field>
       ) : (
-        <Field label="Reps" htmlFor={`${base}-reps`} className="w-[58px]">
-          <Input
-            id={`${base}-reps`}
-            inputMode="numeric"
-            className="h-7 font-mono"
-            value={item.reps}
-            onChange={(event) =>
-              onChange({ ...item, reps: event.target.value })
-            }
-          />
-        </Field>
+        <>
+          <Field label="Reps" htmlFor={`${base}-reps`} className="w-[58px]">
+            <Input
+              id={`${base}-reps`}
+              inputMode="numeric"
+              className="h-7 font-mono"
+              value={item.reps}
+              onChange={(event) =>
+                onChange({ ...item, reps: event.target.value })
+              }
+            />
+          </Field>
+          {/* A range is a second box rather than a "8-12" string: each end is
+              a number the form can check as it is typed, and a blank top is a
+              fixed count, which is what every line was before ranges. */}
+          <Field
+            label="Reps up to"
+            htmlFor={`${base}-reps-high`}
+            className="w-[72px]"
+          >
+            <Input
+              id={`${base}-reps-high`}
+              inputMode="numeric"
+              className="h-7 font-mono"
+              placeholder="—"
+              aria-invalid={ranges.reps ? true : undefined}
+              aria-describedby={ranges.reps ? `${base}-ranges` : undefined}
+              value={item.repsHigh}
+              onChange={(event) =>
+                onChange({ ...item, repsHigh: event.target.value })
+              }
+            />
+          </Field>
+        </>
       )}
 
       {perSideOffered ? (
@@ -356,6 +388,25 @@ function ItemRow({
       </Field>
 
       <Field
+        label="RIR up to"
+        htmlFor={`${base}-rir-high`}
+        className="w-[68px]"
+      >
+        <Input
+          id={`${base}-rir-high`}
+          inputMode="numeric"
+          className="h-7 font-mono"
+          placeholder="—"
+          aria-invalid={ranges.rir ? true : undefined}
+          aria-describedby={ranges.rir ? `${base}-ranges` : undefined}
+          value={item.rirHigh}
+          onChange={(event) =>
+            onChange({ ...item, rirHigh: event.target.value })
+          }
+        />
+      </Field>
+
+      <Field
         label="Rest"
         hint="s"
         htmlFor={`${base}-rest`}
@@ -370,6 +421,96 @@ function ItemRow({
         />
       </Field>
 
+      <Field
+        label="Set kind"
+        htmlFor={`${base}-set-kind`}
+        className="w-[128px]"
+      >
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-set-kind`}
+          value={item.setKind}
+          onChange={(event) =>
+            onChange({ ...item, setKind: event.target.value as SetKind | "" })
+          }
+        >
+          <NativeSelectOption value="">Standard</NativeSelectOption>
+          {SET_KINDS.map((kind) => (
+            <NativeSelectOption key={kind} value={kind}>
+              {SET_KIND_LABELS[kind]}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </Field>
+
+      <Field label="Main lift" htmlFor={`${base}-main`} className="w-[86px]">
+        {/* "Default" is not "no": unset, the first multi-joint movement of
+            each pattern is the main lift (`resolve_main_lines`), and "no" is
+            how a line opts out of that. */}
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-main`}
+          value={item.main}
+          onChange={(event) =>
+            onChange({
+              ...item,
+              main: event.target.value as DraftStrengthItem["main"],
+            })
+          }
+        >
+          <NativeSelectOption value="">Default</NativeSelectOption>
+          <NativeSelectOption value="yes">Main</NativeSelectOption>
+          <NativeSelectOption value="no">Not main</NativeSelectOption>
+        </NativeSelect>
+      </Field>
+
+      <Field label="Warm-up" htmlFor={`${base}-warmup`} className="w-[86px]">
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-warmup`}
+          value={item.warmup}
+          onChange={(event) =>
+            onChange({
+              ...item,
+              warmup: event.target.value as WarmupMode | "",
+            })
+          }
+        >
+          <NativeSelectOption value="">Default</NativeSelectOption>
+          <NativeSelectOption value="auto">Auto</NativeSelectOption>
+          <NativeSelectOption value="none">None</NativeSelectOption>
+        </NativeSelect>
+      </Field>
+
+      <Field
+        label="Progression"
+        htmlFor={`${base}-progression`}
+        className="w-[150px]"
+      >
+        <NativeSelect
+          className="w-full"
+          size="sm"
+          id={`${base}-progression`}
+          value={item.progression}
+          onChange={(event) =>
+            onChange({
+              ...item,
+              progression: event.target.value as Progression | "",
+            })
+          }
+        >
+          <NativeSelectOption value="">Not set</NativeSelectOption>
+          {PROGRESSIONS.map((rule) => (
+            <NativeSelectOption key={rule} value={rule}>
+              {PROGRESSION_LABELS[rule]}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </Field>
+
       {removable ? (
         <Button
           type="button"
@@ -381,6 +522,20 @@ function ItemRow({
         >
           Remove
         </Button>
+      ) : null}
+
+      {ranges.reps || ranges.rir ? (
+        // Said under the line, as it is typed, rather than only in the list
+        // above the form after a save attempt: the editor will not save a
+        // backwards range, and a disabled button with no reason beside it is
+        // a dead end.
+        <p
+          id={`${base}-ranges`}
+          role="alert"
+          className="w-full text-2xs text-destructive"
+        >
+          {[ranges.reps, ranges.rir].filter(Boolean).join(" ")}
+        </p>
       ) : null}
     </FieldRow>
   );

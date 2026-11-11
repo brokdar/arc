@@ -6790,6 +6790,12 @@
         "title": "PredictedVolumeRead",
         "type": "object"
       },
+      "Progression": {
+        "description": "How the next session's weight is decided from this line.\n\n``rir_load`` adjusts the load from the effort the athlete reports against\nthe ``rir`` target; ``double_progression`` adds reps across the range and\nthen weight once the top of it is reached; ``top_backoff`` progresses the\ntop set and derives the backoffs from it; ``simple`` adds a fixed step\nwhenever every set is completed.",
+        "enum": ["rir_load", "double_progression", "top_backoff", "simple"],
+        "title": "Progression",
+        "type": "string"
+      },
       "ProposalChangeDiff": {
         "description": "What one change would do, computed when the proposal was written.",
         "properties": {
@@ -9291,6 +9297,21 @@
         "title": "SetConfidence",
         "type": "string"
       },
+      "SetKind": {
+        "description": "What kind of set a prescription line asks for.\n\nAbsent means an ordinary working set, which is what every line stored\nbefore the field existed was; ``working`` says the same thing explicitly.\nThe rest name the set structures a programme writes differently on the\ncard: a heavy ``top`` single followed by lighter ``backoff`` sets, an\n``amrap`` (as many reps as possible), a ``drop`` set, ``myo`` reps (an\nactivation set and mini-sets on short rests), a set taken to ``failure``,\nand ``lengthened_partial`` reps in the stretched half of the range.",
+        "enum": [
+          "working",
+          "top",
+          "backoff",
+          "amrap",
+          "drop",
+          "myo",
+          "failure",
+          "lengthened_partial"
+        ],
+        "title": "SetKind",
+        "type": "string"
+      },
       "SetSide": {
         "description": "Which side a logged set worked: both at once, or one of them.",
         "enum": ["both", "left", "right"],
@@ -9793,6 +9814,17 @@
           "load": {
             "$ref": "#/components/schemas/LoadSchema"
           },
+          "main": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main"
+          },
           "notes": {
             "anyOf": [
               {
@@ -9818,10 +9850,28 @@
             ],
             "title": "Per Side"
           },
+          "progression": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Progression"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reps": {
             "anyOf": [
               {
                 "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
               },
               {
                 "type": "null"
@@ -9846,10 +9896,28 @@
                 "type": "integer"
               },
               {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              {
                 "type": "null"
               }
             ],
             "title": "Rir"
+          },
+          "set_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SetKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sets": {
             "title": "Sets",
@@ -9868,6 +9936,16 @@
               }
             ],
             "title": "Tempo"
+          },
+          "warmup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WarmupMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": ["exercise_id", "sets", "load"],
@@ -10610,6 +10688,12 @@
           "nothing_contradicts"
         ],
         "title": "VerdictRule",
+        "type": "string"
+      },
+      "WarmupMode": {
+        "description": "Whether the gym screen generates warm-up sets before the line.\n\n``auto`` ramps up to the first working weight; ``none`` starts straight\nin \u2014 a second exercise for an already-warm muscle, say. Absent leaves the\nchoice to the screen.",
+        "enum": ["auto", "none"],
+        "title": "WarmupMode",
         "type": "string"
       },
       "WeekSessionRead": {

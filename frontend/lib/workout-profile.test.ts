@@ -8,6 +8,7 @@ import {
   COGGAN_7_LOWER,
   describeSets,
   flattenSteps,
+  formatCount,
   profileBars,
   type StrengthItem,
   totalDurationS,
@@ -429,6 +430,17 @@ describe("describeSets", () => {
 
   it("renders a hold in seconds, with no invented rep count", () => {
     expect(describeSets(line({ reps: null, duration_s: 45 }))).toBe("3×45 s");
+  });
+
+  it("writes a rep range end to end, not as a comma list", () => {
+    expect(describeSets(line({ reps: [8, 12] }))).toBe("3×8–12");
+  });
+});
+
+describe("formatCount", () => {
+  it("writes a fixed count as itself and a range with an en dash", () => {
+    expect(formatCount(2)).toBe("2");
+    expect(formatCount([1, 3])).toBe("1–3");
   });
 });
 
