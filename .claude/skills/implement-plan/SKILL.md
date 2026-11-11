@@ -162,6 +162,7 @@ logged.
     is wrong.
   - `gate red …` / `gate-red-after-review-fix` / `gate-red-after-ci-fix` — `just gate` will not pass.
     `gateExit` is in the report; run `just gate` in the worktree to see it yourself.
+  - `ci-red-no-code-change` — CI went red, but the fix seat found nothing in the code to change and the gate is green: usually an infrastructure failure (a tool download, a runner). The agent identity cannot re-run Actions, so re-run the failed jobs yourself, then re-launch with `onlyBranch`.
   - `commit-refused` — the gate passed but the commit seat found a path in the tree it did not
     recognise. Look before you re-launch: something else wrote in that worktree.
   - `CI RED/UNKNOWN …` — the PR is open but red. CI runs the tiers `just gate` omits, so this is
