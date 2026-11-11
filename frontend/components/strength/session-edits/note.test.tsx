@@ -11,8 +11,10 @@ import {
   openScreen,
   outbox,
   storePacket,
+  today,
 } from "@/components/strength/session-edits/test-kit";
-import { THURSDAY_ID } from "@/tests/mocks/handlers-strength";
+import { putPacket } from "@/lib/offline/db";
+import { strengthPacket, THURSDAY_ID } from "@/tests/mocks/handlers-strength";
 import { resetSyncState, syncServer } from "@/tests/mocks/sync-state";
 
 /**
@@ -117,6 +119,24 @@ describe("exercise notes (AC-57)", () => {
         text: "",
       }),
     );
+    await openThursdayOffline();
+    expect(screen.queryByRole("region", { name: "Your note" })).toBeNull();
+  });
+
+  it("a packet stored before notes existed still opens offline", async () => {
+    // The previous build stored packets without `notes` under the same
+    // schema_version 1; a phone that synced before this build and then
+    // went offline still holds one, and must train from it.
+    syncServer().healthy = false;
+    const { notes: _dropped, ...older } = strengthPacket(
+      today,
+      new Date(Date.now() - 60_000),
+      { thursday: true },
+    );
+    await putPacket({
+      packet: older as ReturnType<typeof strengthPacket>,
+      storedAt: Date.now(),
+    });
     await openThursdayOffline();
     expect(screen.queryByRole("region", { name: "Your note" })).toBeNull();
   });

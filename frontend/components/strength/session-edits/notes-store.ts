@@ -58,6 +58,12 @@ export function noteFor(
   if (mine && mine.savedAt > Date.parse(packet.generated_at)) {
     return mine.text || null;
   }
-  const served = packet.notes.find((n) => n.exercise_id === exerciseId);
+  // `notes` joined the packet without a schema_version bump, so a phone that
+  // synced on the previous build holds a packet without it — and offline in
+  // the gym that stored packet is all there is. Read its absence as "no
+  // notes" rather than crashing the screen; the next sync replaces it.
+  const served = (packet.notes as Packet["notes"] | undefined)?.find(
+    (n) => n.exercise_id === exerciseId,
+  );
   return served?.text || null;
 }
