@@ -42,6 +42,7 @@ from app.api.routes.purposes import router as purposes_router
 from app.api.routes.scoring import planned_router as planned_reasons_router
 from app.api.routes.scoring import router as scores_router
 from app.api.routes.settings_training import router as training_settings_router
+from app.api.routes.sync import router as sync_router
 from app.api.routes.wellness import router as wellness_router
 from app.api.routes.workouts import labels_router as workout_labels_router
 from app.api.routes.workouts import router as workouts_router
@@ -75,6 +76,7 @@ GUARDED_ROUTERS: tuple[APIRouter, ...] = (
     power_curve_router,
     cards_router,
     training_settings_router,
+    sync_router,
     plans_router,
     exports_router,
     session_export_router,

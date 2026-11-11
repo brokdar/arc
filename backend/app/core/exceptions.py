@@ -53,6 +53,16 @@ class AppError(Exception):
         self.headers = headers
         super().__init__(detail)
 
+    def body(self) -> dict[str, Any]:
+        """The JSON response body: ``detail``, plus what a subclass adds.
+
+        A subclass whose client must *branch* on the refusal — not just print
+        it — adds a stable machine-readable field here (the outbox's
+        ``code: "schema_version_unsupported"``), so the client never has to
+        match on the wording of ``detail``.
+        """
+        return {"detail": self.detail}
+
 
 class UnauthorizedError(AppError):
     """The caller has no valid session (or presented bad credentials)."""
@@ -265,7 +275,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_app_error(_request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": exc.detail},
+            content=exc.body(),
             headers=exc.headers,
         )
 

@@ -24,6 +24,18 @@
     "ready": "Ready offline",
     "readySynced": "Ready offline · synced {time}"
   },
+  "outbox": {
+    "waiting": "{count} waiting to upload",
+    "updateRequired": "Update arc to upload",
+    "signedOut": "Log in to upload",
+    "failed": "Couldn't upload {count}",
+    "failedTitle": "Couldn't upload",
+    "failedHelp": "The server refused these. They are kept here so nothing you logged is lost.",
+    "copy": "Copy",
+    "export": "Export",
+    "copied": "Copied",
+    "clear": "Clear"
+  },
   "weekdays": {
     "mon": "Mon",
     "tue": "Tue",

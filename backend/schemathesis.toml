@@ -355,6 +355,25 @@ include-name = "PUT /api/v1/connections/dropbox/app"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
+# `POST /sync` (the phone's outbox) refuses two things by design, each pinned
+# in `test_sync_api.py`:
+#
+#   * a `schema_version` above the server's is a 409 with `code:
+#     "schema_version_unsupported"` — not malformed, a phone on a newer build,
+#     so the schema leaves the field unbounded above and a fuzzer's large
+#     integer gets the 409 (`test_version_skew`,
+#     `test_a_huge_schema_version_is_the_same_409`);
+#   * a mutation that cannot be applied is a 422 naming it — a set for a
+#     session never started, an unknown exercise, a set with neither reps nor
+#     a hold, a finish before the start — rules about stored state and about
+#     fields together, which a schema cannot state
+#     (`test_a_set_for_a_session_never_started_is_422` and its neighbours).
+
+[[operations]]
+include-name = "POST /api/v1/sync"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
 # Plans (feat/plans-entity) carry rules a JSON schema cannot express, each
 # pinned in test_plans_api.py: a plan's `ends_before` must be after its
 # `starts_on`, the default plan stays undated and active, and a week is keyed

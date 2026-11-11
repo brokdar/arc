@@ -332,8 +332,12 @@ class SessionUpdate(BaseModel):
     )
 
 
-class LoggedSetCreate(BaseModel):
-    """One set of a manually entered session.
+class LoggedSetFields(BaseModel):
+    """What one logged set says about itself — everything but its identity.
+
+    Shared by the two doors a set comes in through: `LoggedSetCreate`, which
+    adds the optional ``client_id``, and the outbox's `SyncSet`, whose set is
+    named by its mutation's ``set_client_id`` instead.
 
     ``reps`` and ``duration_s`` are both optional *here* and exactly one of
     them is required by the service: the exactly-one-of rule cannot be stated
@@ -364,9 +368,6 @@ class LoggedSetCreate(BaseModel):
     #: set was not rated. "4+" is ``rir: 4, rir_capped: true``.
     rir: int | None = Field(default=None, ge=MIN_RIR, le=MAX_RIR)
     notes: PostgresText | None = Field(default=None, max_length=MAX_NOTES_LENGTH)
-    #: The phone-minted uuid7. A set uploaded twice with the same id is stored
-    #: once; omitted, the server mints one.
-    client_id: uuid.UUID | None = None
     set_kind: LoggedSetKind = LoggedSetKind.WORKING
     #: A single side is refused on a movement the catalogue marks bilateral.
     side: SetSide = SetSide.BOTH
@@ -396,6 +397,14 @@ class LoggedSetCreate(BaseModel):
     pain_kind: PainKind | None = None
     #: Needs ``pain_kind``.
     pain_band: PainBand | None = None
+
+
+class LoggedSetCreate(LoggedSetFields):
+    """One set of a manually entered session."""
+
+    #: The phone-minted uuid7. A set uploaded twice with the same id is stored
+    #: once; omitted, the server mints one.
+    client_id: uuid.UUID | None = None
 
 
 class ManualSessionCreate(BaseModel):

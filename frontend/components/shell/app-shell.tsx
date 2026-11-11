@@ -2,6 +2,7 @@ import type * as React from "react";
 
 import { RedFlagBanner } from "@/components/coach/red-flag";
 import { BottomNav } from "@/components/shell/bottom-nav";
+import { OutboxBadge } from "@/components/shell/outbox-badge";
 import { SidebarNav } from "@/components/shell/sidebar-nav";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,10 @@ import { cn } from "@/lib/utils";
  * Under 768 px the sidebar hides and the bottom bar shows, below the
  * scrolling column so it stays put while the page scrolls — both drawn from
  * `NAV_ITEMS`.
+ *
+ * The outbox badge heads the scrolling column, so it renders on every
+ * signed-in page and drives the outbox's flushes from there; it renders
+ * nothing while nothing needs the athlete.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -27,6 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <SidebarNav />
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+          <OutboxBadge />
           {children}
         </div>
       </div>
