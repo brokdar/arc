@@ -39,6 +39,7 @@ import {
   noteList,
   patchAthlete,
   patchWellnessDay,
+  planFixtures,
   plannedSessionFixture,
   planWeekFixture,
   proposalById,
@@ -139,6 +140,40 @@ export const handlers = [
   ),
   http.patch("/api/v1/settings/training", async ({ request, response }) =>
     response(200).json(patchTrainingSettings(await request.json())),
+  ),
+
+  // Plans. A PATCH answers with the plan as it now stands — the fixture with
+  // exactly the fields it was sent applied — so a panel that drops a field
+  // reads back the old value rather than passing.
+  http.get("/api/v1/plans", ({ response }) =>
+    response(200).json(planFixtures()),
+  ),
+  http.get("/api/v1/plans/{plan_id}", ({ params, response }) => {
+    const plan = planFixtures().find((one) => one.id === params.plan_id);
+    return plan
+      ? response(200).json(plan)
+      : response(404).json({ detail: "Plan not found" });
+  }),
+  http.patch(
+    "/api/v1/plans/{plan_id}",
+    async ({ params, request, response }) => {
+      const plan = planFixtures().find((one) => one.id === params.plan_id);
+      if (!plan) {
+        return response(404).json({ detail: "Plan not found" });
+      }
+      const body = await request.json();
+      return response(200).json({
+        ...plan,
+        name: body.name ?? plan.name,
+        phase: body.phase ?? plan.phase,
+        follow_exactly: body.follow_exactly ?? plan.follow_exactly,
+        active: body.active ?? plan.active,
+        starts_on:
+          body.starts_on === undefined ? plan.starts_on : body.starts_on,
+        ends_before:
+          body.ends_before === undefined ? plan.ends_before : body.ends_before,
+      });
+    },
   ),
 
   // The week the calendar asks for, built around whatever `start` it sends.
@@ -1535,6 +1570,10 @@ function applyIntent(
   return {
     ...session,
     date: body.date ?? session.date,
+    // Session fields, not intent: echoed as sent, `null` clearing the time.
+    key: body.key ?? session.key,
+    time_of_day:
+      body.time_of_day === undefined ? session.time_of_day : body.time_of_day,
     intent: {
       ...session.intent,
       version: session.intent.version + 1,

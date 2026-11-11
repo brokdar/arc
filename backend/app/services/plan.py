@@ -49,6 +49,7 @@ from app.domain.metrics import (
     polarization_index,
 )
 from app.domain.plan import WEEK_DAYS, week_dates, week_start
+from app.domain.plans import PlanPhase, PlanWeekTag
 from app.domain.prediction import (
     PinnedAnchor,
     predict_endurance_load,
@@ -76,6 +77,7 @@ from app.persistence.scoring import (
 from app.persistence.workouts import WorkoutRepository
 from app.services.anchors import AnchorService, parse_pins, resolve_pins
 from app.services.metrics import SessionMetricsService, summarise
+from app.services.plans import PlansService
 from app.services.workouts import WorkoutSummary
 
 #: Most sessions one week's projection will read. Not pagination — a week is
@@ -146,6 +148,26 @@ class WeekSession:
     #: one, by the machine's suggestion. `completed` means matched and not yet
     #: judged, which is a real state and not a verdict.
     completion_state: CompletionState = CompletionState.PLANNED
+    #: The plan this session belongs to.
+    plan_id: uuid.UUID | None = None
+    #: A key session — the one the week is arranged around.
+    key: bool = False
+    #: When in the athlete-local day it is planned; ``None`` when untimed.
+    time_of_day: dt.time | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WeekPlan:
+    """The plan the week's first day belongs to, as the coach reads it."""
+
+    id: uuid.UUID
+    name: str
+    phase: PlanPhase
+    follow_exactly: bool
+    is_default: bool
+    #: The tags on this week of that plan (a `recovery` week). Empty unless
+    #: the window starts on a Monday — a tag is keyed by the week's Monday.
+    tags: tuple[PlanWeekTag, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +364,13 @@ class PlanWeek:
     #: agent is the caller with no cheap join, and giving it a second way to
     #: read the same rows over HTTP would be two contracts for one fact.
     unplanned_sessions: tuple[CompletedSession, ...]
+    #: The plan ``start`` belongs to, with this week's tags; ``None`` only on
+    #: a database with no plan at all. A week's sessions can straddle two
+    #: plans — each card names its own `plan_id` — and this is the one the
+    #: week begins in. **Rendered by the MCP adapter only**, for the same
+    #: reason as `unplanned_sessions`: the browser reads plans from
+    #: `GET /api/v1/plans`.
+    plan: WeekPlan | None = None
 
 
 class PlanService:
@@ -351,6 +380,7 @@ class PlanService:
         self,
         session: AsyncSession,
         sessions: PlannedSessionRepository,
+        plans: PlansService,
         workouts: WorkoutRepository,
         anchors: AnchorService,
         completed: SessionRepository,
@@ -361,6 +391,7 @@ class PlanService:
     ) -> None:
         self._session = session
         self._sessions = sessions
+        self._plans = plans
         self._workouts = workouts
         self._anchors = anchors
         self._completed = completed
@@ -375,6 +406,7 @@ class PlanService:
         return cls(
             session,
             PlannedSessionRepository(session),
+            PlansService.from_session(session),
             WorkoutRepository(session),
             AnchorService.from_session(session),
             SessionRepository(session),
@@ -535,6 +567,24 @@ class PlanService:
             unplanned_sessions=tuple(
                 entry for entry in done if entry.id not in claimed
             ),
+            plan=await self._week_plan(first),
+        )
+
+    async def _week_plan(self, first: dt.date) -> WeekPlan | None:
+        """The plan ``first`` belongs to, with that week's tags. Never writes."""
+        row = await self._plans.plan_covering(first)
+        if row is None:
+            return None
+        tags: tuple[PlanWeekTag, ...] = ()
+        if first.weekday() == 0:
+            tags = await self._plans.week_tags(row.id, first)
+        return WeekPlan(
+            id=row.id,
+            name=row.name,
+            phase=row.phase,
+            follow_exactly=row.follow_exactly,
+            is_default=row.default,
+            tags=tags,
         )
 
     async def _verdicts(
@@ -683,6 +733,9 @@ def _card(
         matched_session_id=link.session_id if link is not None else None,
         match_status=link.status if link is not None else None,
         completion_state=completion_state(row.status, verdict),
+        plan_id=row.plan_id,
+        key=row.key,
+        time_of_day=row.time_of_day,
     )
 
 

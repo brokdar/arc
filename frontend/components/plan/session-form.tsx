@@ -80,6 +80,11 @@ export interface SessionFormProps {
  * offer to save while the purpose's template is still in flight: submitting
  * then would post `success_criteria: []` and freeze a session judged by
  * nothing, which is indistinguishable afterwards from having chosen that.
+ *
+ * **Key and time sit beside the date, not in the intent.** Like the date they
+ * are facts about the calendar, and the backend stores them on the session
+ * row, so changing either writes no intent version. An emptied time field is
+ * sent as `null` — "no time" — never as an empty string the API would refuse.
  */
 export function SessionForm({
   date,
@@ -253,6 +258,8 @@ export function SessionForm({
         purpose: form.purpose,
         intent_text: emptyToNull(form.intentText),
         coach_notes: emptyToNull(form.coachNotes),
+        key: form.key,
+        time_of_day: timeOrNull(form.timeOfDay),
         success_criteria: [...form.criteria],
         ...(form.source === "library"
           ? { workout_id: form.workoutId }
@@ -340,6 +347,46 @@ export function SessionForm({
                   size="md"
                   className="mb-2"
                 />
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <Field
+                  label="Time"
+                  htmlFor={`${base}-time`}
+                  className="w-[150px]"
+                >
+                  <Input
+                    id={`${base}-time`}
+                    type="time"
+                    className="font-mono"
+                    value={form.timeOfDay}
+                    onChange={(event) =>
+                      edit({ ...form, timeOfDay: event.target.value })
+                    }
+                  />
+                </Field>
+                <Button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.key}
+                  variant={form.key ? "secondary" : "ghost"}
+                  size="sm"
+                  className="mb-0.5 text-ink-secondary"
+                  onClick={() => edit({ ...form, key: !form.key })}
+                >
+                  <span
+                    aria-hidden
+                    className={
+                      form.key
+                        ? "size-1.5 rounded-full bg-accent"
+                        : "size-1.5 rounded-full border border-hairline-card"
+                    }
+                  />
+                  Key session
+                </Button>
+                <span className="mb-2 text-ink-muted text-xs">
+                  The session the week is arranged around.
+                </span>
               </div>
 
               <section className="flex flex-col gap-2.5">
@@ -497,6 +544,10 @@ interface FormState {
   readonly draft: WorkoutDraft;
   readonly intentText: string;
   readonly coachNotes: string;
+  /** A key session — the one the week is arranged around. */
+  readonly key: boolean;
+  /** `HH:MM`, or `""` for an untimed session. */
+  readonly timeOfDay: string;
   readonly criteria: readonly SuccessCriterion[];
   /** Once true, the purpose no longer re-derives the criteria. */
   readonly criteriaTouched: boolean;
@@ -511,6 +562,8 @@ function blankForm(date: string): FormState {
     draft: emptyDraft("cycling"),
     intentText: "",
     coachNotes: "",
+    key: false,
+    timeOfDay: "",
     criteria: [],
     criteriaTouched: false,
   };
@@ -527,6 +580,8 @@ function formFromSession(session: Schemas["PlannedSessionRead"]): FormState {
       draftFromStructure(intent.structure) ?? emptyDraft(session.discipline),
     intentText: intent.intent_text ?? "",
     coachNotes: intent.coach_notes ?? "",
+    key: session.key,
+    timeOfDay: session.time_of_day ?? "",
     criteria: intent.success_criteria,
     // A saved session's criteria are its own, whatever they started as.
     criteriaTouched: true,
@@ -561,6 +616,12 @@ function diff(
   if (after.coachNotes !== before.coachNotes) {
     body.coach_notes = emptyToNull(after.coachNotes);
   }
+  if (after.key !== before.key) {
+    body.key = after.key;
+  }
+  if (after.timeOfDay !== before.timeOfDay) {
+    body.time_of_day = timeOrNull(after.timeOfDay);
+  }
   if (JSON.stringify(after.criteria) !== JSON.stringify(before.criteria)) {
     body.success_criteria = [...after.criteria];
   }
@@ -578,6 +639,11 @@ function diff(
     body.structure = next;
   }
   return body;
+}
+
+/** An emptied time field means "no time": `null`, never `""`. */
+function timeOrNull(value: string): string | null {
+  return value === "" ? null : value;
 }
 
 function emptyToNull(text: string): string | null {

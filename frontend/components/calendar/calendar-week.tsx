@@ -13,6 +13,7 @@ import { WeekGrid } from "@/components/calendar/week-grid";
 import { WeekRail } from "@/components/calendar/week-rail";
 import { WeekCoachNotes } from "@/components/coach/coach-notes";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
+import { PlanSettings } from "@/components/plan/plan-settings";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
@@ -179,6 +180,8 @@ export function CalendarWeek() {
   const [moveFailure, setMoveFailure] = useState<readonly string[] | null>(
     null,
   );
+  /** Whether the plan settings panel under its toolbar button is open. */
+  const [planPanelOpen, setPlanPanelOpen] = useState(false);
   /** The date a copy landed on, for the confirmation in the sheet. */
   const [copiedTo, setCopiedTo] = useState<string | null>(null);
 
@@ -334,7 +337,22 @@ export function CalendarWeek() {
         >
           This week
         </Button>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="relative ml-auto flex items-center gap-2">
+          {/* An inline panel under its trigger, the tier for settings toggles. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-ink-muted"
+            aria-expanded={planPanelOpen}
+            onClick={() => setPlanPanelOpen((open) => !open)}
+          >
+            Plan settings
+          </Button>
+          {planPanelOpen ? (
+            <div className="absolute top-full right-0 z-20 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-card border border-hairline-card bg-panel p-4">
+              <PlanSettings />
+            </div>
+          ) : null}
           <PlanStateToggle />
           <Button size="sm" onClick={() => setPlanning({ date: planningDate })}>
             Plan a session

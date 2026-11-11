@@ -30,6 +30,7 @@ from app.domain.activity import parse_timezone
 from app.domain.anchors import AnchorType, AnchorVersion
 from app.domain.athlete import AthleteProfile
 from app.domain.criteria import criteria_to_json
+from app.domain.plans import format_time_of_day
 from app.domain.pmc import (
     FitnessTrend,
     SeriesMaturity,
@@ -86,7 +87,7 @@ from app.services.connections import (
 from app.services.history import HistorySummary, HistoryWeek
 from app.services.metrics import MetricSummary, measured_channels
 from app.services.note_search import NoteHit
-from app.services.plan import CompletedSession, PlanWeek, WeekSession
+from app.services.plan import CompletedSession, PlanWeek, WeekPlan, WeekSession
 from app.services.proposals import ProposalOutcome
 from app.services.wellness import (
     DayResult,
@@ -248,6 +249,29 @@ def week_session(card: WeekSession) -> dict[str, Any]:
         "matched_session_id": (
             None if card.matched_session_id is None else str(card.matched_session_id)
         ),
+        "plan_id": None if card.plan_id is None else str(card.plan_id),
+        "key": card.key,
+        "time_of_day": (
+            None if card.time_of_day is None else format_time_of_day(card.time_of_day)
+        ),
+    }
+
+
+def week_plan(plan: WeekPlan | None) -> dict[str, Any] | None:
+    """The plan a week begins in, with this week's tags.
+
+    Its phase and whether it is followed exactly ride along; null only on a
+    database with no plan at all.
+    """
+    if plan is None:
+        return None
+    return {
+        "id": str(plan.id),
+        "name": plan.name,
+        "phase": plan.phase.value,
+        "follow_exactly": plan.follow_exactly,
+        "is_default": plan.is_default,
+        "week_tags": [tag.value for tag in plan.tags],
     }
 
 
@@ -309,6 +333,7 @@ def plan_week(week: PlanWeek) -> dict[str, Any]:
         "completed_session_count": week.completed_session_count,
         "completed_duration_s": week.completed_duration_s,
         "completed_load": week.completed_load,
+        "plan": week_plan(week.plan),
         "sessions": [week_session(card) for day in week.days for card in day.sessions],
         "unplanned_sessions": [
             week_completed_session(entry) for entry in week.unplanned_sessions

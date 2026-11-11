@@ -1280,6 +1280,78 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/plans": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Plans
+     * @description Every plan, oldest first, the default plan included.
+     */
+    get: operations["plans-list_plans"];
+    put?: never;
+    /**
+     * Create Plan
+     * @description Create a plan. An active plan may not overlap another active one.
+     */
+    post: operations["plans-create_plan"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/plans/{plan_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Plan
+     * @description One plan.
+     */
+    get: operations["plans-get_plan"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Plan
+     * @description Change a plan's name, phase, follow-exactly flag, activity or dates.
+     */
+    patch: operations["plans-update_plan"];
+    trace?: never;
+  };
+  "/api/v1/plans/{plan_id}/weeks/{week_start}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Plan Week Tags
+     * @description The tags on one week of one plan; ``week_start`` is its Monday.
+     */
+    get: operations["plans-get_plan_week_tags"];
+    /**
+     * Set Plan Week Tags
+     * @description Replace one week's tags; ``[]`` clears them.
+     */
+    put: operations["plans-set_plan_week_tags"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/proposals": {
     parameters: {
       query?: never;
@@ -5088,6 +5160,75 @@ export interface components {
       value: number;
     };
     /**
+     * PlanCreate
+     * @description Payload for creating a plan.
+     */
+    PlanCreate: {
+      /**
+       * Active
+       * @default true
+       */
+      active: boolean;
+      /** Ends Before */
+      ends_before?: string | null;
+      /**
+       * Follow Exactly
+       * @default false
+       */
+      follow_exactly: boolean;
+      /** Name */
+      name: string;
+      phase: components["schemas"]["PlanPhase"];
+      /** Starts On */
+      starts_on?: string | null;
+    };
+    /**
+     * PlanPhase
+     * @description Where in the season a plan sits.
+     * @enum {string}
+     */
+    PlanPhase:
+      | "base"
+      | "build"
+      | "peak"
+      | "taper"
+      | "maintenance"
+      | "transition";
+    /**
+     * PlanRead
+     * @description One plan.
+     */
+    PlanRead: {
+      /** Active */
+      active: boolean;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Ends Before */
+      ends_before: string | null;
+      /** Follow Exactly */
+      follow_exactly: boolean;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Is Default */
+      is_default: boolean;
+      /** Name */
+      name: string;
+      phase: components["schemas"]["PlanPhase"];
+      /** Starts On */
+      starts_on: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       */
+      updated_at: string;
+    };
+    /**
      * PlanState
      * @description Whether the plan is being enforced.
      *
@@ -5096,6 +5237,27 @@ export interface components {
      * @enum {string}
      */
     PlanState: "active" | "paused";
+    /**
+     * PlanUpdate
+     * @description A partial change to a plan. Omitted fields are left alone.
+     *
+     *     Only the dates take ``null``, meaning "unbounded on that side"
+     *     (`.claude/rules/api-nullability.md`).
+     */
+    PlanUpdate: {
+      /** Active */
+      active?: boolean;
+      /** Ends Before */
+      ends_before?: string | null;
+      /** Follow Exactly */
+      follow_exactly?: boolean;
+      /** Name */
+      name?: string;
+      /** Phase */
+      phase?: components["schemas"]["PlanPhase"];
+      /** Starts On */
+      starts_on?: string | null;
+    };
     /**
      * PlanWeekDayRead
      * @description One day of the week: what was planned for it, and what was recorded.
@@ -5212,6 +5374,38 @@ export interface components {
       start: string;
     };
     /**
+     * PlanWeekTag
+     * @description A label on one week of one plan.
+     * @enum {string}
+     */
+    PlanWeekTag: "recovery";
+    /**
+     * PlanWeekTagsRead
+     * @description The tags on one week of one plan.
+     */
+    PlanWeekTagsRead: {
+      /**
+       * Plan Id
+       * Format: uuid
+       */
+      plan_id: string;
+      /** Tags */
+      tags: components["schemas"]["PlanWeekTag"][];
+      /**
+       * Week Start
+       * Format: date
+       */
+      week_start: string;
+    };
+    /**
+     * PlanWeekTagsWrite
+     * @description The whole set of tags one week carries. ``[]`` clears it.
+     */
+    PlanWeekTagsWrite: {
+      /** Tags */
+      tags: components["schemas"]["PlanWeekTag"][];
+    };
+    /**
      * PlannedSessionCopy
      * @description Payload for copying a planned session onto another date.
      */
@@ -5236,6 +5430,11 @@ export interface components {
       date: string;
       /** Intent Text */
       intent_text?: string | null;
+      /**
+       * Key
+       * @default false
+       */
+      key: boolean;
       purpose: components["schemas"]["Purpose"];
       /** Structure */
       structure?:
@@ -5254,6 +5453,8 @@ export interface components {
             | components["schemas"]["LoadWithinSchema"]
           )[]
         | null;
+      /** Time Of Day */
+      time_of_day?: string | null;
       /** Workout Id */
       workout_id?: string | null;
     };
@@ -5292,10 +5493,19 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      /** Key */
+      key: boolean;
       match?: components["schemas"]["MatchSummary"] | null;
       /** Pinned Anchors */
       pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      /**
+       * Plan Id
+       * Format: uuid
+       */
+      plan_id: string;
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Time Of Day */
+      time_of_day: string | null;
       /**
        * Updated At
        * Format: date-time
@@ -5341,14 +5551,23 @@ export interface components {
       intent: components["schemas"]["SessionIntentRead"];
       /** Intent Versions */
       intent_versions: number;
+      /** Key */
+      key: boolean;
       match?: components["schemas"]["MatchSummary"] | null;
       /** Pinned Anchors */
       pinned_anchors: components["schemas"]["PinnedAnchorRead"][];
+      /**
+       * Plan Id
+       * Format: uuid
+       */
+      plan_id: string;
       predicted_load: components["schemas"]["PredictedLoadRead"] | null;
       predicted_volume: components["schemas"]["PredictedVolumeRead"] | null;
       /** Resolved Steps */
       resolved_steps: components["schemas"]["ResolvedStepRead"][];
       status: components["schemas"]["app__domain__sessions__SessionStatus"];
+      /** Time Of Day */
+      time_of_day: string | null;
       /**
        * Updated At
        * Format: date-time
@@ -5361,7 +5580,8 @@ export interface components {
      *
      *     Touching ``purpose``, ``intent_text``, ``coach_notes``,
      *     ``success_criteria``, ``workout_id`` or ``structure`` appends a new intent
-     *     version. Touching only ``date`` or ``status`` does not.
+     *     version. Touching only ``date``, ``status``, ``key`` or ``time_of_day``
+     *     does not. ``time_of_day: null`` clears the time; ``key`` cannot be cleared.
      */
     PlannedSessionUpdate: {
       /** Coach Notes */
@@ -5370,6 +5590,8 @@ export interface components {
       date?: string | null;
       /** Intent Text */
       intent_text?: string | null;
+      /** Key */
+      key?: boolean;
       purpose?: components["schemas"]["Purpose"] | null;
       status?: components["schemas"]["SessionStatus-Input"] | null;
       /** Structure */
@@ -5389,6 +5611,8 @@ export interface components {
             | components["schemas"]["LoadWithinSchema"]
           )[]
         | null;
+      /** Time Of Day */
+      time_of_day?: string | null;
       /** Workout Id */
       workout_id?: string | null;
     };
@@ -11600,6 +11824,364 @@ export interface operations {
         };
       };
       /** @description The request violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "plans-list_plans": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanRead"][];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
+  "plans-create_plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlanCreate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The plan would overlap another active plan */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Plan violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "plans-get_plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        plan_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such plan */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "plans-update_plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        plan_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlanUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such plan */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The plan would overlap another active plan */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Plan violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "plans-get_plan_week_tags": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        plan_id: string;
+        week_start: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanWeekTagsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such plan */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Plan violates a schema or domain rule */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "plans-set_plan_week_tags": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        plan_id: string;
+        week_start: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PlanWeekTagsWrite"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PlanWeekTagsRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such plan */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Plan violates a schema or domain rule */
       422: {
         headers: {
           [name: string]: unknown;

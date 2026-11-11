@@ -353,6 +353,31 @@ include-name = "PUT /api/v1/connections/dropbox/app"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
+# Plans (feat/plans-entity) carry rules a JSON schema cannot express, each
+# pinned in test_plans_api.py: a plan's `ends_before` must be after its
+# `starts_on`, the default plan stays undated and active, and a week is keyed
+# by its Monday — so a schema-valid date that is not a Monday is a 422.
+
+[[operations]]
+include-name = "POST /api/v1/plans"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PATCH /api/v1/plans/{plan_id}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "GET /api/v1/plans/{plan_id}/weeks/{week_start}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
+[[operations]]
+include-name = "PUT /api/v1/plans/{plan_id}/weeks/{week_start}"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
 # `allow_header_conformance` (schemathesis 4.30) wants `Allow` to list every
 # method the contract documents at a path. An anchor version documents PUT,
 # PATCH and DELETE only to refuse them, and those handlers answer with
