@@ -318,6 +318,19 @@ group("groupsOf — only MERGED branches satisfy a dependency");
     JSON.stringify(r),
   );
 
+  // An open (unmerged) prerequisite blocks only its own dependents. Strength
+  // plan, 11 Nov 2026: one PR awaiting the operator's review refused a whole
+  // run although a full group did not depend on it.
+  r = G.groupsOf([b, c], []);
+  ok(
+    "what is ready still builds; the rest is reported as blocked",
+    !r.error && r.groups.length === 1 && r.groups[0].map((p) => p.branch).join() === "feat/c" &&
+      (r.blocked || []).map((p) => p.branch).join() === "feat/b",
+    JSON.stringify(r),
+  );
+  r = G.groupsOf([a, b], []);
+  ok("nothing is blocked when the whole DAG layers", !r.error && (r.blocked || []).length === 0);
+
   // cycle
   const x = pr({ branch: "feat/x", title: "feat(x): x", depends: ["feat/y"] });
   const y = pr({ branch: "feat/y", title: "feat(y): y", depends: ["feat/x"] });
