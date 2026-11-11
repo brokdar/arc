@@ -561,6 +561,47 @@ group("CLI");
   ok("  …says why, on stderr", /Remote state unavailable/.test(remoteFail.err));
   ok("  …and prints nothing on stdout", remoteFail.out === "");
 
+  // A launching checkout whose tooling is behind origin/main: the run would
+  // execute the old pipeline. Two throwaway repos — `origin` a commit ahead —
+  // and a fake `gh` that answers an empty PR list.
+  const stale = (touch) => {
+    const base = join(dir, `stale-${touch.replace(/\W/g, "")}`);
+    // Without the GIT_* a commit hook exports, these would act on the repo
+    // being committed to instead of the throwaway one.
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+    const g = (cwd, ...a) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, env, stdio: "ignore" });
+    execFileSync("mkdir", ["-p", `${base}/origin`]);
+    g(`${base}/origin`, "init", "-q", "-b", "main");
+    writeFileSync(`${base}/origin/README`, "x\n");
+    g(`${base}/origin`, "add", "-A");
+    g(`${base}/origin`, "commit", "-qm", "init");
+    g(base, "clone", "-q", `${base}/origin`, "launch");
+    execFileSync("mkdir", ["-p", `${base}/origin/${touch.split("/").slice(0, -1).join("/") || "."}`]);
+    writeFileSync(`${base}/origin/${touch}`, "new\n");
+    g(`${base}/origin`, "add", "-A");
+    g(`${base}/origin`, "commit", "-qm", `touch ${touch}`);
+    const okGh = join(dir, "bin-ok");
+    execFileSync("mkdir", ["-p", okGh]);
+    writeFileSync(join(okGh, "gh"), "#!/bin/sh\necho '[]'\n");
+    execFileSync("chmod", ["+x", join(okGh, "gh")]);
+    try {
+      const out = execFileSync("node", [script, good, "--no-snapshot"], {
+        cwd: `${base}/launch`, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+        env: { ...env, PATH: `${okGh}:${process.env.PATH}` },
+      });
+      return { code: 0, out, err: "" };
+    } catch (e) {
+      return { code: e.status, out: e.stdout || "", err: e.stderr || "" };
+    }
+  };
+  const behind = stale("scripts/ci-status.mjs");
+  ok("exits 5 when origin/main changed scripts/ since this checkout", behind.code === 5, JSON.stringify(behind).slice(0, 300));
+  ok("  …names the commit and the fix", /touch scripts\/ci-status\.mjs/.test(behind.err) && /ff-only/.test(behind.err));
+  ok("  …and prints nothing on stdout", behind.out === "");
+  ok("exits 5 for the workflow script too", stale(".claude/workflows/implement-plan.js").code === 5);
+  const featureOnly = stale("backend/app/thing.py");
+  ok("feature code behind origin/main does not stop a run", featureOnly.code === 0, JSON.stringify(featureOnly).slice(0, 300));
+
   // The snapshot is what makes the run survive the plan being deleted.
   const snap = call([good, "--no-remote"]);
   const snapPath = snap.code === 0 ? JSON.parse(snap.out).planSnapshot : null;
