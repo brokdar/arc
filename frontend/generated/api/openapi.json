@@ -49,6 +49,59 @@
         "title": "AbsoluteRangeSchema",
         "type": "object"
       },
+      "ActiveSessionRead": {
+        "description": "A session between Start and Finish, and the device holding it.",
+        "properties": {
+          "device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "planned_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Session Id"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_time": {
+            "format": "date-time",
+            "title": "Start Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_client_id",
+          "session_id",
+          "planned_session_id",
+          "device_id",
+          "start_time"
+        ],
+        "title": "ActiveSessionRead",
+        "type": "object"
+      },
       "AgentNoteDispute": {
         "description": "The athlete's one-tap answer to a note.\n\nGenuinely nullable, unlike an optional query parameter: `null` is the\nthird state of the toggle \u2014 \"I take that back\" \u2014 and the athlete must be\nable to say it, or they will stop giving ratings at all.",
         "properties": {
@@ -5591,8 +5644,10 @@
           "mapping": {
             "dont_learn": "#/components/schemas/DontLearn",
             "note_upsert": "#/components/schemas/NoteUpsert",
+            "session_claim": "#/components/schemas/SessionClaim",
             "session_finish": "#/components/schemas/SessionFinish",
             "session_rating": "#/components/schemas/SessionRating",
+            "session_reopen": "#/components/schemas/SessionReopen",
             "session_start": "#/components/schemas/SessionStart",
             "set_delete": "#/components/schemas/SetDelete",
             "set_upsert": "#/components/schemas/SetUpsert"
@@ -5620,6 +5675,12 @@
           },
           {
             "$ref": "#/components/schemas/NoteUpsert"
+          },
+          {
+            "$ref": "#/components/schemas/SessionClaim"
+          },
+          {
+            "$ref": "#/components/schemas/SessionReopen"
           }
         ]
       },
@@ -5855,6 +5916,13 @@
             "title": "Library",
             "type": "array"
           },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/ExerciseNoteRead"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
@@ -5885,7 +5953,8 @@
           "gym",
           "sessions",
           "last_numbers",
-          "library"
+          "library",
+          "notes"
         ],
         "title": "PacketRead",
         "type": "object"
@@ -9182,6 +9251,46 @@
         "title": "SessionAlignmentRead",
         "type": "object"
       },
+      "SessionClaim": {
+        "additionalProperties": false,
+        "description": "Continue here, accepted: this device now holds the session.\n\nThe latest claim wins under the conflict rule; every other device reads\nfrom `SyncResult.active_sessions` that it no longer holds it and stops\nlogging into it.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_claim",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "device_id"
+        ],
+        "title": "SessionClaim",
+        "type": "object"
+      },
       "SessionDiscipline": {
         "description": "What a *recorded* session was.\n\nA superset of `app.domain.athlete.Discipline`, and deliberately a separate\nenum: `Discipline` is the vocabulary of things we **prescribe**, and every\npurpose, workout and planned session is one of its two members. A device\nfile, by contrast, can hold a walk, a swim or a sport the head unit does\nnot name \u2014 things we never plan and never score, but must still be able to\ningest without lying about. ``OTHER`` is that bucket.\n\nThe two shared members carry the **same string values** as `Discipline`,\nso the WP-6 candidate query is a value comparison and the athlete-facing\nvocabulary is one vocabulary (see :func:`as_planned_discipline`).",
         "enum": ["cycling", "strength", "other"],
@@ -10031,6 +10140,40 @@
         "title": "SessionRead",
         "type": "object"
       },
+      "SessionReopen": {
+        "additionalProperties": false,
+        "description": "Open a finished session again, within 24 hours of its end.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_reopen",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind"
+        ],
+        "title": "SessionReopen",
+        "type": "object"
+      },
       "SessionScoreRead": {
         "description": "One version of one session's score, with what it was computed from.",
         "properties": {
@@ -10164,6 +10307,11 @@
             "title": "Client Edit Time",
             "type": "string"
           },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
           "kind": {
             "const": "session_start",
             "title": "Kind",
@@ -10172,6 +10320,11 @@
           "mutation_id": {
             "format": "uuid",
             "title": "Mutation Id",
+            "type": "string"
+          },
+          "planned_session_id": {
+            "format": "uuid",
+            "title": "Planned Session Id",
             "type": "string"
           },
           "session_client_id": {
@@ -11178,8 +11331,15 @@
         "type": "object"
       },
       "SyncResult": {
-        "description": "One result per mutation, in the order sent.",
+        "description": "One result per mutation, in the order sent, and the active sessions.",
         "properties": {
+          "active_sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ActiveSessionRead"
+            },
+            "title": "Active Sessions",
+            "type": "array"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/MutationResultRead"
@@ -11192,7 +11352,7 @@
             "type": "integer"
           }
         },
-        "required": ["schema_version", "results"],
+        "required": ["schema_version", "results", "active_sessions"],
         "title": "SyncResult",
         "type": "object"
       },

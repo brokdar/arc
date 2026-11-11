@@ -7,6 +7,7 @@ from app.ingest.feeds import FEED_POLL_JOB_ID
 from app.ingest.inbox import INBOX_JOB_ID
 from app.main import create_app
 from app.services.cards import EXPIRY_JOB_ID as CARD_EXPIRY_JOB_ID
+from app.services.sync import ABANDONED_JOB_ID, ABANDONED_SWEEP_SECONDS
 from app.services.wellness import PROMPT_SWEEP_JOB_ID
 
 
@@ -103,5 +104,21 @@ async def test_the_card_expiry_sweep_is_registered_at_startup(data_root: Path) -
         assert job.trigger.interval.total_seconds() == (
             get_settings().cards.expiry_interval_seconds
         )
+        assert job.max_instances == 1
+        assert job.coalesce is True
+
+
+async def test_the_abandoned_session_sweep_is_registered_at_startup(
+    data_root: Path,
+) -> None:
+    # A phone put away mid-session never syncs again that evening; the sweep
+    # is what closes its session at the last set (AC-55).
+    app = create_app()
+
+    async with LifespanManager(app):
+        job = app.state.scheduler.get_job(ABANDONED_JOB_ID)
+
+        assert job is not None
+        assert job.trigger.interval.total_seconds() == ABANDONED_SWEEP_SECONDS
         assert job.max_instances == 1
         assert job.coalesce is True

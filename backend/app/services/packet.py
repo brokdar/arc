@@ -4,8 +4,8 @@ The phone renders, it does not decide. A basement gym has no signal, so the
 server prepares each strength session of the next seven days — every line's
 pre-fill, its warm-up ramp and plates, which effort question to ask, whether
 the plan must be followed exactly — together with the last numbers logged for
-every exercise, the library entries those name, and the gym the plates were
-computed for. The phone fetches it on sync and keeps it in IndexedDB
+every exercise, the exercise library, the athlete's exercise notes, and the
+gym the plates were computed for. The phone fetches it on sync and keeps it in IndexedDB
 (`frontend/lib/offline/packet-store.ts`). This module is the only producer of
 offline numbers: a later rule (progression, swaps) changes a number the gym
 sees by changing it here, not by teaching the phone.
@@ -37,6 +37,16 @@ plates for 60.
 
 The window is the athlete-local ``[today, today + 7)``, half-open like every
 range; only sessions still ``planned`` are in it.
+
+**The library is the whole catalogue**, not the entries the window names.
+The gym screen adds an exercise mid-session and starts an unplanned session
+from it, offline, so the picker must hold every movement; a subset made the
+exercise the athlete was most likely to add — one not in this week's plan —
+the one it could not offer. The catalogue is bundled reference data of about
+a hundred entries, a few tens of kilobytes in the packet.
+
+**Every exercise note travels with it**, so a note written on Monday shows on
+that exercise in Thursday's session in a gym with no signal.
 """
 
 import datetime as dt
@@ -69,7 +79,7 @@ from app.persistence.activity import LoggedSetRow, SessionRepository
 from app.persistence.exercises import ExerciseRow
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.services.athlete_settings import AthleteSettingsService
-from app.services.exercises import ExerciseService
+from app.services.exercises import ExerciseNote, ExerciseService
 from app.services.planned_sessions import PlannedSessionService
 from app.services.plans import PlansService
 
@@ -208,6 +218,7 @@ class Packet:
     sessions: list[PacketSession]
     last_numbers: list[LastNumbers]
     library: list[ExerciseRow]
+    notes: list[ExerciseNote]
 
 
 class PacketService:
@@ -284,8 +295,8 @@ class PacketService:
             )
             for slug, (logged, logged_on) in sorted(last.items())
         ]
-        named = {line.exercise_id for s in sessions for line in s.lines} | set(last)
-        library = [catalogue[slug] for slug in sorted(named) if slug in catalogue]
+        library = [catalogue[slug] for slug in sorted(catalogue)]
+        notes = [note for note in await self._exercises.notes() if note.text]
         return Packet(
             schema_version=SCHEMA_VERSION,
             generated_at=generated_at,
@@ -299,6 +310,7 @@ class PacketService:
             sessions=sessions,
             last_numbers=last_numbers,
             library=library,
+            notes=notes,
         )
 
 

@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.api.schemas.exercises import ExerciseRead
+from app.api.schemas.exercises import ExerciseNoteRead, ExerciseRead
 from app.api.schemas.packet import (
     EffortQuestionRead,
     GymRead,
@@ -106,4 +106,5 @@ def _packet_read(packet: Packet) -> PacketRead:
             LastNumbersRead(**asdict(entry)) for entry in packet.last_numbers
         ],
         library=[ExerciseRead.model_validate(row) for row in packet.library],
+        notes=[ExerciseNoteRead.model_validate(note) for note in packet.notes],
     )

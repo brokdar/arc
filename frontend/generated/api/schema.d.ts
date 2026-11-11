@@ -2435,6 +2435,31 @@ export interface components {
       unit: components["schemas"]["ChannelUnit"];
     };
     /**
+     * ActiveSessionRead
+     * @description A session between Start and Finish, and the device holding it.
+     */
+    ActiveSessionRead: {
+      /** Device Id */
+      device_id: string | null;
+      /** Planned Session Id */
+      planned_session_id: string | null;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /**
+       * Start Time
+       * Format: date-time
+       */
+      start_time: string;
+    };
+    /**
      * AgentNoteDispute
      * @description The athlete's one-tap answer to a note.
      *
@@ -5311,7 +5336,9 @@ export interface components {
       | components["schemas"]["SetDelete"]
       | components["schemas"]["SessionRating"]
       | components["schemas"]["DontLearn"]
-      | components["schemas"]["NoteUpsert"];
+      | components["schemas"]["NoteUpsert"]
+      | components["schemas"]["SessionClaim"]
+      | components["schemas"]["SessionReopen"];
     /**
      * MutationResultRead
      * @description What the server did with one mutation.
@@ -5442,6 +5469,8 @@ export interface components {
       last_numbers: components["schemas"]["LastNumbersRead"][];
       /** Library */
       library: components["schemas"]["ExerciseRead"][];
+      /** Notes */
+      notes: components["schemas"]["ExerciseNoteRead"][];
       /** Schema Version */
       schema_version: number;
       /** Sessions */
@@ -6985,6 +7014,41 @@ export interface components {
       version: number;
     };
     /**
+     * SessionClaim
+     * @description Continue here, accepted: this device now holds the session.
+     *
+     *     The latest claim wins under the conflict rule; every other device reads
+     *     from `SyncResult.active_sessions` that it no longer holds it and stops
+     *     logging into it.
+     */
+    SessionClaim: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * Device Id
+       * Format: uuid
+       */
+      device_id: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_claim";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+    };
+    /**
      * SessionDiscipline
      * @description What a *recorded* session was.
      *
@@ -7330,6 +7394,32 @@ export interface components {
       wellness: components["schemas"]["WellnessDayRead"] | null;
     };
     /**
+     * SessionReopen
+     * @description Open a finished session again, within 24 hours of its end.
+     */
+    SessionReopen: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_reopen";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+    };
+    /**
      * SessionScoreRead
      * @description One version of one session's score, with what it was computed from.
      */
@@ -7390,6 +7480,11 @@ export interface components {
        */
       client_edit_time: string;
       /**
+       * Device Id
+       * Format: uuid
+       */
+      device_id?: string;
+      /**
        * @description discriminator enum property added by openapi-typescript
        * @enum {string}
        */
@@ -7399,6 +7494,11 @@ export interface components {
        * Format: uuid
        */
       mutation_id: string;
+      /**
+       * Planned Session Id
+       * Format: uuid
+       */
+      planned_session_id?: string;
       /**
        * Session Client Id
        * Format: uuid
@@ -7963,9 +8063,11 @@ export interface components {
     };
     /**
      * SyncResult
-     * @description One result per mutation, in the order sent.
+     * @description One result per mutation, in the order sent, and the active sessions.
      */
     SyncResult: {
+      /** Active Sessions */
+      active_sessions: components["schemas"]["ActiveSessionRead"][];
       /** Results */
       results: components["schemas"]["MutationResultRead"][];
       /** Schema Version */

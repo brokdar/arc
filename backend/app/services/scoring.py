@@ -57,6 +57,7 @@ from app.core.exceptions import (
     domain_rules,
 )
 from app.core.logging import get_logger
+from app.domain.activity import LoggedSetKind
 from app.domain.actor import Actor, ActorKind
 from app.domain.alignment import (
     Alignment,
@@ -1077,7 +1078,7 @@ def _inputs(
         anchor_type: pinned.version.value for anchor_type, pinned in anchors.items()
     }
     if isinstance(body, StrengthWorkout):
-        logged = sorted(row.logged_sets, key=lambda one: one.set_index)
+        logged = _in_prescription_order(row.logged_sets, body)
         prescribed_loads, prescribed_units = _prescribed_loads(body)
         return ScoringInputs(
             purpose=purpose,
@@ -1114,6 +1115,61 @@ def _inputs(
         ),
         unmatched_steps=alignment.unmatched_steps if alignment else (),
     )
+
+
+def _in_prescription_order(
+    logged: Iterable[LoggedSetRow], body: StrengthWorkout
+) -> list[LoggedSetRow]:
+    """The logged sets in the order the prescription lists their lines.
+
+    Positional pairing (`app.domain.alignment.align_strength`) puts the n-th
+    logged entry against the n-th prescribed one, so the order handed to it
+    decides what is compared with what. Execution order (`set_index`) was that
+    order until the gym screen let the athlete reorder exercises and add sets:
+    squats done after rows would then be paired against the row prescription,
+    and one extra bench set would push every later set one slot along.
+
+    So a set that names the line it answered (``planned_line_ref``, the
+    packet's ``"<group>.<item>"``) is filed under that line: each line takes
+    its own working sets, in execution order, up to the sides it prescribes;
+    then come the sets past a line's count (an added set), then everything
+    that names no line of this prescription — warm-ups, a swapped-in
+    exercise logged without a ref, a typed-in set. Doing the prescribed work
+    in a different order therefore scores exactly as doing it in order.
+
+    A session in which no set names a line — every typed-in or imported one —
+    keeps execution order, so nothing scored before the gym screen changes.
+    A line logged short still shifts the lines after it: positional pairing
+    has no way to say "this slot was skipped", and fixing that is the
+    alignment's job, not this ordering's.
+    """
+    ordered = sorted(logged, key=lambda one: one.set_index)
+    refs = [
+        f"{group_index}.{item_index}"
+        for group_index, group in enumerate(body.groups)
+        for item_index, _ in enumerate(group.items)
+    ]
+    by_line: dict[str, list[LoggedSetRow]] = {ref: [] for ref in refs}
+    if not any(one.planned_line_ref in by_line for one in ordered):
+        return ordered
+    unfiled: list[LoggedSetRow] = []
+    for one in ordered:
+        ref = one.planned_line_ref
+        if ref in by_line and one.set_kind is not LoggedSetKind.WARMUP:
+            by_line[ref].append(one)
+        else:
+            unfiled.append(one)
+    head: list[LoggedSetRow] = []
+    extra: list[LoggedSetRow] = []
+    for ref, prescription in zip(refs, body.prescriptions, strict=True):
+        room = prescription.sets * prescription.sides
+        for one in by_line[ref]:
+            if room > 0:
+                head.append(one)
+                room -= logged_sides(one)
+            else:
+                extra.append(one)
+    return head + extra + unfiled
 
 
 def _prescribed_loads(

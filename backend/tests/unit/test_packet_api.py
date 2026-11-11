@@ -461,3 +461,40 @@ async def test_the_packet_is_read_only(client: AsyncClient, method: str) -> None
     response = await getattr(client, method)(PACKET)
 
     assert response.status_code == 405
+
+
+async def test_the_packet_carries_every_exercise_note(client: AsyncClient) -> None:
+    """AC-57's server half: a note saved on Monday is in Thursday's packet,
+    so the phone shows it on that exercise with no signal."""
+    saved = await client.put(
+        "/api/v1/exercises/barbell_row/note", json={"text": "Straps from 80 kg"}
+    )
+    assert saved.status_code == 200, saved.text
+    await plan(client, lift(item("barbell_row")), offset=3)
+
+    body = await packet(client)
+
+    assert [(n["exercise_id"], n["text"]) for n in body["notes"]] == [
+        ("barbell_row", "Straps from 80 kg")
+    ]
+
+
+async def test_an_emptied_note_leaves_the_packet(client: AsyncClient) -> None:
+    """AC-57 edge: an empty note removes it, here too."""
+    await client.put("/api/v1/exercises/barbell_row/note", json={"text": "Straps"})
+    await client.put("/api/v1/exercises/barbell_row/note", json={"text": ""})
+
+    body = await packet(client)
+
+    assert body["notes"] == []
+
+
+async def test_the_library_is_the_whole_catalogue(client: AsyncClient) -> None:
+    """ "Add exercise" and an unplanned session pick from the packet offline,
+    so the packet carries every movement, not only the planned ones."""
+    catalogue = (await client.get("/api/v1/exercises", params={"limit": 200})).json()
+
+    body = await packet(client)
+
+    assert len(body["library"]) == catalogue["total"]
+    assert "goblet_squat" in {e["id"] for e in body["library"]}

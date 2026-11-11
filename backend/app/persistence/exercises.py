@@ -252,6 +252,13 @@ class ExerciseNoteRepository:
         """Return the note on one exercise, or None."""
         return await self._session.get(ExerciseNoteRow, exercise_id)
 
+    async def all(self) -> Sequence[ExerciseNoteRow]:
+        """Every note, by exercise slug. One per exercise at most, so unpaged."""
+        result = await self._session.execute(
+            select(ExerciseNoteRow).order_by(ExerciseNoteRow.exercise_id)
+        )
+        return list(result.scalars())
+
     async def put(self, exercise_id: str, text: str) -> ExerciseNoteRow:
         """Create or replace the note on one exercise.
 

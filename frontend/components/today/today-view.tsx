@@ -17,6 +17,10 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
+import {
+  RecapLink,
+  UnplannedLink,
+} from "@/components/strength/session-edits/today-links";
 import { StartLink } from "@/components/strength/start-link";
 import { FirstRunQuestion } from "@/components/today/first-run";
 import { OfflineSessions } from "@/components/today/offline-sessions";
@@ -100,6 +104,7 @@ export function TodayView() {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <RedFlagControl />
+          <UnplannedLink />
           <Button size="sm" onClick={() => setPlanning(true)}>
             {t("today.plan")}
           </Button>
@@ -259,7 +264,10 @@ function SessionPanel({
               (`components/strength/logging-screen.tsx`). The prescription
               below stays read-only; logging happens there, not here. */}
           {session.discipline === "strength" && session.status === "planned" ? (
-            <StartLink id={session.id} name={headline} />
+            <div className="flex flex-wrap gap-2">
+              <StartLink id={session.id} name={headline} />
+              <RecapLink id={session.id} name={headline} />
+            </div>
           ) : null}
           {intent?.intent_text ? (
             <p className="max-w-[640px] text-ink-muted text-lg leading-relaxed">

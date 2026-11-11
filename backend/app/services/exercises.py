@@ -141,6 +141,15 @@ class ExerciseService:
         await self.ensure_seeded()
         return {row.id: row for row in await self._repository.all()}
 
+    async def notes(self) -> Sequence[ExerciseNote]:
+        """Every note written, by exercise slug; an empty note is no note."""
+        return [
+            ExerciseNote(
+                exercise_id=row.exercise_id, text=row.text, updated_at=row.updated_at
+            )
+            for row in await self._notes.all()
+        ]
+
     async def get_note(self, exercise_id: str) -> ExerciseNote:
         """Return the note on one exercise, empty when none was written.
 

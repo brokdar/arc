@@ -11,6 +11,7 @@ import {
 import { type Mutation, putPacket, queued } from "@/lib/offline/db";
 import { athleteToday } from "@/tests/mocks/fixtures";
 import { strengthPacket } from "@/tests/mocks/handlers-strength";
+import { syncServer } from "@/tests/mocks/sync-state";
 
 /**
  * AC-50: what the logging screen writes to the outbox — the IndexedDB store
@@ -310,6 +311,9 @@ describe("numbers and fixes", () => {
   });
 
   it("finishing without a rating leaves it empty", async () => {
+    // No signal, so what Finish wrote is still in the outbox to read: online,
+    // the flush after Finish races the read.
+    syncServer().healthy = false;
     await open({ mode: "standard" });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(

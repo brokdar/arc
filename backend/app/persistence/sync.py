@@ -29,7 +29,9 @@ from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint, func, sele
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domain.activity import SessionLifecycle
 from app.domain.sync import MutationKind
+from app.persistence.activity import SessionRow
 from app.persistence.db import Base, flush
 from app.persistence.types import JSONColumn, UtcDateTime, enum_column
 
@@ -122,6 +124,19 @@ class SyncRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def active_sessions(self) -> list[tuple[SyncEntityRow, SessionRow]]:
+        """Every synced session still active, with its row, oldest first."""
+        result = await self._session.execute(
+            select(SyncEntityRow, SessionRow)
+            .join(SessionRow, SessionRow.id == SyncEntityRow.session_id)
+            .where(
+                SyncEntityRow.entity == "session",
+                SessionRow.lifecycle == SessionLifecycle.ACTIVE,
+            )
+            .order_by(SessionRow.start_time.asc(), SessionRow.id.asc())
+        )
+        return [(entity, row) for entity, row in result.all()]
 
     async def save(self, row: SyncEntityRow) -> SyncEntityRow:
         """Persist a new or changed entity state.
