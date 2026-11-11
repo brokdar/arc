@@ -104,6 +104,18 @@
       "aLittle": "Ein wenig",
       "regularly": "Regelmäßig",
       "skip": "Überspringen"
+    },
+    "beforeYouStart": {
+      "title": "Bevor du anfängst",
+      "lead": "Ein paar Dinge vor deiner ersten Einheit.",
+      "pain": "Stechender Schmerz oder Schmerz im Gelenk: hör mit der Übung auf. Tippe auf ⋯ und dann auf Schmerz.",
+      "redFlag": "Brustschmerz, Ohnmacht oder Taubheit: sofort aufhören. Tippe auf ⋯ und dann auf Stopp.",
+      "easy": "Fang leicht an. Lass ein paar Wiederholungen übrig, solange du eine Übung lernst.",
+      "notAdvice": "arc ist ein Trainingstagebuch. Es ist kein ärztlicher Rat.",
+      "under18": "Ich bin unter 18",
+      "under18Message": "Unter 18: arc fragt nie nach deinem Maximum. Lern es mit einem Coach.",
+      "gotIt": "Verstanden",
+      "skip": "Überspringen"
     }
   },
   "train": {
@@ -208,5 +220,36 @@
     "reasonGym": "Volles Studio",
     "reasonOther": "Anderes",
     "back": "Weiter trainieren"
+  },
+  "safety": {
+    "menuPain": "Schmerz",
+    "menuStop": "Stopp — etwas stimmt nicht",
+    "pain": {
+      "title": "Wo tut es weh?",
+      "which": "Wie fühlt es sich an?",
+      "ache": "Muskelkater oder Brennen",
+      "sharp": "Stechend oder im Gelenk",
+      "howBad": "Wie stark, von 0 bis 10?",
+      "mild": "0–3",
+      "moderate": "4–5",
+      "severe": "6+",
+      "back": "Zurück",
+      "stopped": "{exercise}: für heute vorbei. Grund: stechender Schmerz.",
+      "undo": "Rückgängig",
+      "undoLabel": "Schmerznotiz bei {exercise} zurücknehmen"
+    },
+    "redFlag": {
+      "title": "Was ist los?",
+      "chestPain": "Schmerz oder Druck in der Brust",
+      "cannotBreathe": "Atemnot",
+      "fainted": "Mir wird schwarz vor Augen",
+      "numbness": "Taubheit oder Kribbeln",
+      "dizziness": "Schwindel",
+      "swelling": "Plötzliche Schwellung",
+      "back": "Zurück",
+      "emergency": "Stopp. Ruf jetzt den Notruf.",
+      "advice": "Hör auf zu trainieren und hol dir heute ärztlichen Rat.",
+      "ended": "Die Einheit ist beendet. Was du eingetragen hast, ist gespeichert."
+    }
   }
 }

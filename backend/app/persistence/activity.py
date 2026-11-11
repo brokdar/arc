@@ -635,6 +635,35 @@ class SessionRepository:
                 latest[row.exercise_id] = (row, local_date)
         return latest
 
+    async def latest_session_pain(self) -> dict[str, Sequence[PainKind | None]]:
+        """Each exercise's working-set pain kinds in the latest session that logged it.
+
+        "Latest" as in :meth:`last_logged_sets` — by session start, ties by
+        id, never `created_at`. What `app.domain.safety.blocks_increase` reads.
+        """
+        result = await self._session.execute(
+            select(
+                LoggedSetRow.exercise_id,
+                LoggedSetRow.session_id,
+                LoggedSetRow.pain_kind,
+            )
+            .join(SessionRow, LoggedSetRow.session_id == SessionRow.id)
+            .where(
+                LoggedSetRow.exercise_id.is_not(None),
+                LoggedSetRow.set_kind != LoggedSetKind.WARMUP,
+            )
+            .order_by(SessionRow.start_time.desc(), SessionRow.id.desc())
+        )
+        latest: dict[str, uuid.UUID] = {}
+        pain: dict[str, Sequence[PainKind | None]] = {}
+        for exercise_id, session_id, kind in result.all():
+            if exercise_id is None:  # pragma: no cover — filtered above
+                continue
+            if latest.setdefault(exercise_id, session_id) != session_id:
+                continue
+            pain[exercise_id] = [*pain.get(exercise_id, ()), kind]
+        return pain
+
     async def by_ids(
         self, session_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, SessionRow]:

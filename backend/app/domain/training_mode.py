@@ -110,6 +110,11 @@ class TrainingSettings:
     #: but not to "have you lifted before?".
     first_run_seen: bool = False
     lifted_before: LiftedBefore | None = None
+    #: Never ask for or plan a max effort — a one-rep max test, a set to
+    #: failure. Set when the athlete marks themselves under 18 on the
+    #: before-you-start screen: a young lifter's numbers come from technique
+    #: and easy progress, not from testing a limit.
+    no_max_efforts: bool = False
 
 
 #: Every field a change may name.

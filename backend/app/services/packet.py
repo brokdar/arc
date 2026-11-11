@@ -52,6 +52,7 @@ from app.core.clock import athlete_today
 from app.domain.athlete import Discipline
 from app.domain.loading import DEFAULT_GYM, Equipment, Gym, plates_per_side
 from app.domain.purpose import Purpose
+from app.domain.safety import blocks_increase
 from app.domain.sessions import SessionStatus
 from app.domain.strength import (
     Exercise,
@@ -184,6 +185,7 @@ class LastNumbers:
     duration_s: int | None
     per_side: bool
     logged_on: dt.date
+    increase_blocked: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +260,7 @@ class PacketService:
             plan.id: plan.follow_exactly for plan in await self._plans.list()
         }
         last = await self._history.last_logged_sets()
+        pain = await self._history.latest_session_pain()
 
         domain = {slug: entry.to_domain() for slug, entry in catalogue.items()}
         sessions = [
@@ -281,6 +284,7 @@ class PacketService:
                 duration_s=logged.duration_s,
                 per_side=logged.per_side,
                 logged_on=logged_on,
+                increase_blocked=blocks_increase(pain.get(slug, ())),
             )
             for slug, (logged, logged_on) in sorted(last.items())
         ]

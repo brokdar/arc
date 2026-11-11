@@ -60,6 +60,7 @@ from app.domain.activity import (
     session_date,
 )
 from app.domain.actor import Actor, ActorKind
+from app.domain.safety import RedFlagSymptom
 from app.domain.sync import (
     EXISTS,
     MAX_BATCH_MUTATIONS,
@@ -90,6 +91,7 @@ from app.services.activity import (
 )
 from app.services.exercises import ExerciseService
 from app.services.guardrails import check_write_cap
+from app.services.safety import SafetyService
 
 #: The `reason` on a metric version a sync recomputed.
 SYNC_REASON = "synced from the phone"
@@ -106,6 +108,7 @@ AUDIT_ENTITY = {
     MutationKind.SET_UPSERT: "logged_set",
     MutationKind.SET_DELETE: "logged_set",
     MutationKind.NOTE_UPSERT: "exercise_note",
+    MutationKind.RED_FLAG: "session",
 }
 
 #: LoggedSetRow columns a synced edit may change on an existing row. Not
@@ -237,7 +240,9 @@ class SyncService:
         session_service: SessionService,
         exercises: ExerciseService,
         notes: ExerciseNoteRepository,
+        safety: SafetyService,
     ) -> None:
+        self._safety = safety
         self._session = session
         self._repository = repository
         self._sessions = sessions
@@ -257,6 +262,7 @@ class SyncService:
             SessionService.from_session(session),
             ExerciseService.from_session(session),
             ExerciseNoteRepository(session),
+            SafetyService.from_session(session),
         )
 
     async def apply(
@@ -390,6 +396,14 @@ class SyncService:
             changed = await self._set(mutation, row, stamp=stamp, actor=actor)
             return row, changed
 
+        if mutation.kind is MutationKind.RED_FLAG:
+            # Not a session field: the flag is the athlete's, so there is
+            # nothing to merge — each red flag is applied once, as received.
+            with domain_rules():
+                symptom = RedFlagSymptom(str(mutation.fields.get("symptom")))
+            await self._safety.raise_red_flag(symptom, session_id=row.id, actor=actor)
+            return row, ("red_flag",)
+
         patch = _session_patch(mutation)
         merged = merge(entity.values, decode_clocks(entity.clocks), patch, stamp)
         _project_session(row, merged.values)
@@ -444,6 +458,7 @@ class SyncService:
             )
 
         existing = next((s for s in row.logged_sets if str(s.client_id) == key), None)
+        pain_before = None if existing is None else existing.pain_kind
         if mutation.kind is MutationKind.SET_DELETE:
             patch: dict[str, Any] = {EXISTS: False}
         else:
@@ -466,6 +481,19 @@ class SyncService:
                     setattr(existing, column, getattr(built, column))
         elif existing is not None:
             row.logged_sets.remove(existing)
+
+        alive = is_alive(merged.values)
+        values = merged.values
+        await self._safety.pain_changed(
+            set_client_id=mutation.set_client_id,
+            session_id=row.id,
+            before=pain_before,
+            after=_optional(values, "pain_kind", PainKind) if alive else None,
+            exercise_id=values.get("exercise_id"),
+            exercise_name=values.get("exercise_name"),
+            band=_optional(values, "pain_band", PainBand) if alive else None,
+            actor=actor,
+        )
 
         entity.values = merged.values
         entity.clocks = encode_clocks(merged.clocks)
