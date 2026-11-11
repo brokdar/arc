@@ -2346,6 +2346,70 @@
         "title": "ErrorDetail",
         "type": "object"
       },
+      "EstimateLineRead": {
+        "description": "The estimated-max line \u2014 a rough guide, never a personal best.",
+        "properties": {
+          "current_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Kg"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/EstimatePointRead"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "status": {
+            "enum": ["ok", "not_enough_data"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["status", "current_kg", "points"],
+        "title": "EstimateLineRead",
+        "type": "object"
+      },
+      "EstimatePointRead": {
+        "description": "One session's best estimated max, and the line's value after it.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "estimate_kg": {
+            "title": "Estimate Kg",
+            "type": "number"
+          },
+          "median_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Kg"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["session_id", "date", "estimate_kg", "median_kg"],
+        "title": "EstimatePointRead",
+        "type": "object"
+      },
       "ExcludedStepRead": {
         "description": "A pair the assignment made and the confidence gate then refused.\n\nDifferent from a step that was never performed, and shown differently:\n\"we matched this step to that effort and did not trust the match\".",
         "properties": {
@@ -2414,6 +2478,50 @@
         ],
         "title": "ExerciseEquipment",
         "type": "string"
+      },
+      "ExerciseHistoryRead": {
+        "description": "One exercise's personal bests, rep maxes and estimated max.",
+        "properties": {
+          "bests": {
+            "items": {
+              "$ref": "#/components/schemas/PersonalBestRead"
+            },
+            "title": "Bests",
+            "type": "array"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/EstimateLineRead"
+          },
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          },
+          "exposures": {
+            "title": "Exposures",
+            "type": "integer"
+          },
+          "rep_maxes": {
+            "items": {
+              "$ref": "#/components/schemas/RepMaxRead"
+            },
+            "title": "Rep Maxes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "exercise_id",
+          "exercise_name",
+          "exposures",
+          "bests",
+          "rep_maxes",
+          "estimate"
+        ],
+        "title": "ExerciseHistoryRead",
+        "type": "object"
       },
       "ExerciseNoteRead": {
         "description": "The athlete's note on one exercise.\n\n``text`` is empty and ``updated_at`` null when there is no note \u2014 every\nexercise has a note slot, so \"nothing written\" is a value, not a 404.",
@@ -6275,6 +6383,32 @@
         "title": "PercentOfAnchorSchema",
         "type": "object"
       },
+      "PersonalBestRead": {
+        "description": "A set no other set of the exercise beat on both weight and reps.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "load_kg": {
+            "title": "Load Kg",
+            "type": "number"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["load_kg", "reps", "date", "session_id"],
+        "title": "PersonalBestRead",
+        "type": "object"
+      },
       "PinnedAnchorRead": {
         "description": "One anchor version this session's percentages resolve against.\n\nThe pin is the product's most distinctive invariant (build-plan invariant\n4) and it is worth nothing invisible: showing the provenance is what\nmakes an `estimated` FTP read as an estimate rather than a fact.",
         "properties": {
@@ -8619,6 +8753,36 @@
         "title": "RedFlagSeverity",
         "type": "string"
       },
+      "RepMaxRead": {
+        "description": "The heaviest weight lifted for at least ``target_reps`` reps.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "load_kg": {
+            "title": "Load Kg",
+            "type": "number"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "target_reps": {
+            "title": "Target Reps",
+            "type": "integer"
+          }
+        },
+        "required": ["target_reps", "load_kg", "reps", "date", "session_id"],
+        "title": "RepMaxRead",
+        "type": "object"
+      },
       "RepeatBlockSchema-Input": {
         "additionalProperties": false,
         "description": "Perform ``children`` ``times`` over.",
@@ -9180,6 +9344,52 @@
         },
         "required": ["version", "computed_at", "offset_s"],
         "title": "SessionAlignmentRead",
+        "type": "object"
+      },
+      "SessionBestRead": {
+        "description": "A new personal best in one session, named as it was logged.",
+        "properties": {
+          "exercise_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exercise Id"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          },
+          "load_kg": {
+            "title": "Load Kg",
+            "type": "number"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          }
+        },
+        "required": ["exercise_id", "exercise_name", "load_kg", "reps"],
+        "title": "SessionBestRead",
+        "type": "object"
+      },
+      "SessionBestsRead": {
+        "description": "The finish summary's new bests; empty when the session set none.",
+        "properties": {
+          "bests": {
+            "items": {
+              "$ref": "#/components/schemas/SessionBestRead"
+            },
+            "title": "Bests",
+            "type": "array"
+          }
+        },
+        "required": ["bests"],
+        "title": "SessionBestsRead",
         "type": "object"
       },
       "SessionDiscipline": {
@@ -15749,6 +15959,82 @@
         "tags": ["exercises"]
       }
     },
+    "/api/v1/exercises/{exercise_id}/history": {
+      "get": {
+        "description": "Personal bests, heaviest-for-N-reps and the estimated-max line of one exercise.\n\nDerived from every logged set on each read. An exercise never logged\nanswers empty lists, not 404; a slug outside the catalogue is 404.",
+        "operationId": "exercises-get_exercise_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExerciseHistoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Exercise History",
+        "tags": ["exercises"]
+      }
+    },
     "/api/v1/exercises/{exercise_id}/note": {
       "get": {
         "description": "Get the athlete's note on an exercise; empty text when there is none.",
@@ -17783,6 +18069,85 @@
         ],
         "summary": "Reject Match",
         "tags": ["matches"]
+      }
+    },
+    "/api/v1/personal-bests": {
+      "get": {
+        "description": "New personal bests set in one session; an empty list when there were none.",
+        "operationId": "strength-get_session_bests",
+        "parameters": [
+          {
+            "description": "The session id the phone minted at Start.",
+            "in": "query",
+            "name": "session_client_id",
+            "required": true,
+            "schema": {
+              "description": "The session id the phone minted at Start.",
+              "format": "uuid",
+              "title": "Session Client Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBestsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No session with that phone id"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session Bests",
+        "tags": ["strength"]
       }
     },
     "/api/v1/plan/week": {

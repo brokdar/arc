@@ -208,5 +208,24 @@
     "reasonGym": "Chaotic gym",
     "reasonOther": "Other",
     "back": "Keep training"
+  },
+  "records": {
+    "bestsTitle": "New bests",
+    "newBest": "New best: {reps} reps at {weight} on {exercise}",
+    "historyLoading": "Loading the history…",
+    "historyMissing": "This exercise is not in the catalogue.",
+    "historyEmpty": "No sets of this exercise logged yet. Log it in a session and your bests appear here.",
+    "estimateTitle": "Estimated max",
+    "estimateValue": "About {weight}",
+    "estimateNote": "A rough guide from rated sets, never a personal best.",
+    "notEnoughData": "Not enough data yet",
+    "notEnoughDataHelp": "Rate the last set of this exercise in three sessions to see an estimate.",
+    "repMaxesTitle": "Heaviest for reps",
+    "repMaxLabel": "{reps} or more reps",
+    "repMaxValue": "{weight} × {reps}",
+    "bestsListTitle": "Personal bests",
+    "bestLine": "{weight} × {reps}",
+    "sessions": "{count} sessions logged",
+    "repMaxMissing": "No set of {reps} or more reps yet"
   }
 }

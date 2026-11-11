@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,8 @@ import {
 import { type Mutation, putPacket, queued } from "@/lib/offline/db";
 import { athleteToday } from "@/tests/mocks/fixtures";
 import { strengthPacket } from "@/tests/mocks/handlers-strength";
+import { server } from "@/tests/mocks/server";
+import { syncServer } from "@/tests/mocks/sync-state";
 
 /**
  * AC-50: what the logging screen writes to the outbox — the IndexedDB store
@@ -283,6 +286,9 @@ describe("numbers and fixes", () => {
   });
 
   it("finishes with the rating, don't learn and its private reason", async () => {
+    // No network: the outbox is read as Finish wrote it, which an upload
+    // racing the read would otherwise drain first.
+    syncServer().healthy = false;
     await open({ mode: "standard" });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
@@ -310,6 +316,7 @@ describe("numbers and fixes", () => {
   });
 
   it("finishing without a rating leaves it empty", async () => {
+    syncServer().healthy = false;
     await open({ mode: "standard" });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
@@ -321,5 +328,40 @@ describe("numbers and fixes", () => {
       "session_start",
       "session_finish",
     ]);
+  });
+});
+
+describe("the finish summary", () => {
+  it("asks for the session's new bests once its upload has drained", async () => {
+    const asked = new Promise<string | null>((resolve) => {
+      const listener = ({ request }: { request: Request }) => {
+        const url = new URL(request.url);
+        if (url.pathname !== "/api/v1/personal-bests") return;
+        server.events.removeListener("request:start", listener);
+        resolve(url.searchParams.get("session_client_id"));
+      };
+      server.events.on("request:start", listener);
+    });
+    await putPacket({
+      packet: strengthPacket(today, new Date(), { mode: "standard" }),
+      storedAt: Date.now(),
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LoggingScreen plannedSessionId={SESSION_ID} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Finish without rating" }),
+    );
+
+    // The id it asks with is the one the phone started the session under —
+    // the only id the server knows the session by from the phone's side.
+    const id = await asked;
+    expect([...syncServer().sessions]).toContain(id);
   });
 });
