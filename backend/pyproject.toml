@@ -58,6 +58,12 @@ dev = [
     # regex would break on a reflow that changes nothing about what runs. Named
     # here because it currently arrives transitively, one `uv lock` from gone.
     "pyyaml>=6.0.3",
+    # Checks `GET /exports/workouts.json` against the vendored openweight
+    # schema (`tests/vectors/openweight/`, `test_exports_api.py`). Arrives
+    # transitively with schemathesis today; named for the same reason as
+    # pyyaml above. Dev-only: the application emits the format, it never
+    # validates it at runtime.
+    "jsonschema>=4.26.0",
 ]
 
 [build-system]
