@@ -64,7 +64,9 @@ expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 #   * a step states exactly one of duration_s and distance_m, repeat blocks
 #     nest at most four deep, a percentage target names an anchor its channel
 #     derives from, an absolute one uses that channel's unit (app.domain.workout),
-#   * a strength prescription references the bundled exercise catalogue,
+#   * a strength prescription references the bundled exercise catalogue, and
+#     a rep or RIR range runs low to high inside its field's bounds
+#     (app.domain.strength),
 #   * a planned session takes exactly one of workout_id and structure, its
 #     purpose and workout agree on a discipline, and every anchor it refers to
 #     has a version in force (build-plan invariant 4).

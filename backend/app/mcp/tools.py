@@ -1966,6 +1966,55 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
           neither.** A 45-second plank is `duration_s: 45`; writing `reps: 1`
           for it puts an invented number into volume arithmetic.
 
+        Reps and `rir` take a number or an inclusive `[low, high]` range
+        (`[8, 12]` is 8 to 12 reps, both ends allowed; low must be below
+        high). Four optional tags shape how the gym screen runs a line and
+        how its next weight is chosen: `set_kind` (absent is an ordinary
+        working set), `main` (absent makes the first multi-joint line of each
+        squat / hinge / lunge / push / pull pattern the main lift; `true` or
+        `false` overrides that), `warmup` (`auto` generates warm-up sets,
+        `none` starts straight in) and `progression` (`rir_load`,
+        `double_progression` — reps up the range, then weight — `top_backoff`
+        or `simple`). One item per set kind:
+
+        ```json
+        {
+          "discipline": "strength",
+          "groups": [
+            {"items": [
+              {"exercise_id": "back_squat", "sets": 1, "reps": 3,
+               "load": {"kind": "rpe", "value": 8}, "set_kind": "top",
+               "main": true, "warmup": "auto", "progression": "top_backoff"},
+              {"exercise_id": "back_squat", "sets": 3, "reps": 5,
+               "load": {"kind": "percent_e1rm", "value": 0.75},
+               "set_kind": "backoff", "warmup": "none"}
+            ]},
+            {"items": [
+              {"exercise_id": "bench_press", "sets": 3, "reps": [8, 12],
+               "load": {"kind": "kg", "value": 70}, "rir": 2,
+               "set_kind": "working", "main": true, "warmup": "auto",
+               "progression": "double_progression"}
+            ]},
+            {"items": [
+              {"exercise_id": "push_up", "sets": 1, "reps": [10, 30],
+               "load": {"kind": "bodyweight"}, "set_kind": "amrap"},
+              {"exercise_id": "lateral_raise", "sets": 2, "reps": [12, 20],
+               "load": {"kind": "kg", "value": 8}, "set_kind": "drop",
+               "rir": [0, 1]},
+              {"exercise_id": "barbell_curl", "sets": 1, "reps": [15, 20],
+               "load": {"kind": "kg", "value": 25}, "set_kind": "myo"},
+              {"exercise_id": "leg_extension", "sets": 2, "reps": [10, 15],
+               "load": {"kind": "kg", "value": 40}, "set_kind": "failure",
+               "rir": 0, "progression": "rir_load"},
+              {"exercise_id": "seated_leg_curl", "sets": 2, "reps": [8, 12],
+               "load": {"kind": "kg", "value": 35},
+               "set_kind": "lengthened_partial", "main": false,
+               "progression": "simple"}
+            ]}
+          ]
+        }
+        ```
+
         An unparseable structure, or one naming an exercise the catalogue
         does not have, is refused with the reason. Every answer carries
         `budget_remaining` — how many writes the hourly cap still admits,

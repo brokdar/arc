@@ -46,6 +46,7 @@ from app.domain.connections import ConnectionProvider, ConnectionStatus
 from app.domain.integrations import IntegrationKind
 from app.domain.plan import week_start
 from app.domain.purpose import Purpose
+from app.domain.strength import SetKind
 from app.domain.workout import workout_body_from_json, workout_body_to_json
 from app.mcp import views
 from app.mcp.analysis_tools import ANALYSIS_TOOLS, register_analysis_tools
@@ -1363,6 +1364,22 @@ async def test_the_documented_structure_examples_validate(
         "cycling",
         "strength",
     }, "one complete example per discipline"
+
+    # One example per set kind, and the range, main-lift, warm-up and
+    # progression fields shown at least once: an agent writes what it is shown.
+    items = [
+        item
+        for document in documents
+        for group in document.get("groups", [])
+        for item in group["items"]
+    ]
+    assert {item.get("set_kind") for item in items} >= {
+        kind.value for kind in SetKind
+    }, "one documented example per set kind"
+    assert any(isinstance(item.get("reps"), list) for item in items)
+    assert any(isinstance(item.get("rir"), list) for item in items)
+    for name in ("main", "warmup", "progression"):
+        assert any(name in item for item in items), f"`{name}` is never shown"
 
     async with session_scope() as session:
         service = WorkoutService.from_session(session)
