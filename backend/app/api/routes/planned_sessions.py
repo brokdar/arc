@@ -45,6 +45,7 @@ from app.api.schemas.workouts import (
 )
 from app.core.exceptions import ErrorDetail, ValidationErrorDetail
 from app.domain.anchors import AnchorType
+from app.domain.plans import format_time_of_day, parse_time_of_day
 from app.domain.prediction import PinnedAnchor, PredictedLoad, PredictedVolume
 from app.domain.resolution import ResolvedStep, ResolvedTarget
 from app.domain.sessions import SessionStatus
@@ -208,6 +209,11 @@ def _volume_to_read(predicted: PredictedVolume | None) -> PredictedVolumeRead | 
     )
 
 
+def _time_to_read(value: dt.time | None) -> str | None:
+    """A stored time of day as ``HH:MM``."""
+    return None if value is None else format_time_of_day(value)
+
+
 def to_list_item(
     row: PlannedSessionRow,
     anchors: Mapping[AnchorType, PinnedAnchor],
@@ -220,6 +226,9 @@ def to_list_item(
         date=row.date,
         discipline=row.discipline,
         status=row.status,
+        plan_id=row.plan_id,
+        key=row.key,
+        time_of_day=_time_to_read(row.time_of_day),
         intent=intent_to_read(row.current_intent),
         intent_versions=len(row.intents),
         created_at=row.created_at,
@@ -240,6 +249,9 @@ def to_read(
         date=row.date,
         discipline=row.discipline,
         status=row.status,
+        plan_id=row.plan_id,
+        key=row.key,
+        time_of_day=_time_to_read(row.time_of_day),
         intent=intent_to_read(row.current_intent),
         intent_versions=len(row.intents),
         created_at=row.created_at,
@@ -328,6 +340,12 @@ async def create_planned_session(
         ),
         intent_text=payload.intent_text,
         coach_notes=payload.coach_notes,
+        key=payload.key,
+        time_of_day=(
+            None
+            if payload.time_of_day is None
+            else parse_time_of_day(payload.time_of_day)
+        ),
         success_criteria=(
             None
             if payload.success_criteria is None
@@ -363,6 +381,8 @@ async def update_planned_session(
     `edited_post_hoc`, and triggers a rescore (build-plan invariant 4).
     """
     updates = payload.model_dump(exclude_unset=True)
+    if payload.time_of_day is not None:
+        updates["time_of_day"] = parse_time_of_day(payload.time_of_day)
     if payload.structure is not None:
         updates["structure"] = structure_document(payload.structure)
     if payload.success_criteria is not None:

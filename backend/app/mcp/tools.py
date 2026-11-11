@@ -834,6 +834,12 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         is kilograms. A `planned_load` of null with sessions present means the
         week could not be priced, not that it is easy.
 
+        `plan` is the plan the week begins in: its `phase`, whether it must be
+        `follow_exactly` (a physio's programme — do not adapt its sessions),
+        and this week's `week_tags` (`recovery`). Each session names its own
+        `plan_id`, says whether it is a `key` session, and carries its
+        athlete-local `time_of_day` as `HH:MM` (null when untimed).
+
         `sessions` is what was **planned**; `unplanned_sessions` is what was
         **ridden that no card here accounts for** — each with its id, local
         date, discipline, duration, training load and `match_status`. Together
