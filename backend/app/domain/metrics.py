@@ -60,7 +60,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
-from app.domain.activity import LoggedSetKind, SessionDiscipline, SetSide
+from app.domain.activity import (
+    EffortSimple,
+    LoggedSetKind,
+    SessionDiscipline,
+    SetSide,
+)
 from app.domain.anchors import AnchorVersion, describe_anchor
 from app.domain.athlete import Sex
 from app.domain.streams import MOVING_SPEED_MS
@@ -2001,6 +2006,9 @@ class PerformedSet:
     rir: int | None = None
     rir_capped: bool = False
     rpe: float | None = None
+    #: Simple mode's Easy / Good / Hard, as reported. Read only by
+    #: `app.domain.progression`, whose Simple rule reads nothing else.
+    effort_simple: EffortSimple | None = None
 
     def __post_init__(self) -> None:
         """Reject a set that is both reps and a hold, or neither.

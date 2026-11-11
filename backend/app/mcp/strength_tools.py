@@ -13,10 +13,12 @@ read.
 """
 
 import datetime as dt
+import uuid
 from typing import Any
 
 from fastmcp import FastMCP
 
+from app.domain.progression import Suggestion
 from app.mcp import views
 from app.mcp.auth import Scope
 from app.mcp.identity import require_scope
@@ -25,10 +27,11 @@ from app.persistence.cards import CardRow
 from app.persistence.db import session_scope
 from app.services.cards import CardService
 from app.services.guardrails import current_profile
+from app.services.packet import PacketLine, PacketService, PacketSession, Prefill
 from app.services.strength_history import ExerciseHistory, StrengthHistoryService
 
 #: Every tool this module registers. Later PRs append; never reorder.
-STRENGTH_TOOLS = frozenset({"get_cards", "get_exercise_history"})
+STRENGTH_TOOLS = frozenset({"get_cards", "get_exercise_history", "get_next_targets"})
 
 
 def _iso(moment: dt.datetime | None) -> str | None:
@@ -97,6 +100,79 @@ def exercise_history(history: ExerciseHistory) -> dict[str, Any]:
     }
 
 
+def _prefill(prefill: Prefill) -> dict[str, Any]:
+    return {
+        "source": prefill.source.value,
+        "load_kg": prefill.load_kg,
+        "reps": prefill.reps,
+        "duration_s": prefill.duration_s,
+        "starting_flow": prefill.starting_flow,
+    }
+
+
+def suggestion(value: Suggestion | None) -> dict[str, Any] | None:
+    """A suggestion and its explanation — `PacketLineRead.suggestion`'s fields."""
+    if value is None:
+        return None
+    why = value.explanation
+    return {
+        "outcome": value.outcome.value,
+        "load_kg": value.load_kg,
+        "reps": value.reps,
+        "change_kg": value.change_kg,
+        "explanation": {
+            "rule": why.rule,
+            "evidence": None if why.evidence is None else why.evidence.value,
+            "reason": why.reason.value,
+            "inputs": [
+                {
+                    "session_id": str(i.session_id),
+                    "date": i.date.isoformat(),
+                    "load_kg": i.load_kg,
+                    "reps": i.reps,
+                    "reps_left": i.reps_left,
+                    "reps_left_capped": i.reps_left_capped,
+                    "effort_simple": (
+                        None if i.effort_simple is None else i.effort_simple.value
+                    ),
+                    "trimmed": i.trimmed,
+                }
+                for i in why.inputs
+            ],
+            "target_reps": why.target_reps,
+            "target_reps_left": why.target_reps_left,
+            "computed_kg": why.computed_kg,
+            "limit": why.limit,
+        },
+    }
+
+
+def _target_line(line: PacketLine) -> dict[str, Any]:
+    return {
+        "line_ref": line.line_ref,
+        "exercise_id": line.exercise_id,
+        "exercise_name": line.exercise_name,
+        "main": line.main,
+        "prefill": _prefill(line.prefill),
+        "suggestion": suggestion(line.suggestion),
+    }
+
+
+def next_targets(session: PacketSession) -> dict[str, Any]:
+    """The tool's projection of one packet session's lines.
+
+    ``prefill`` and ``suggestion`` are key for key the packet line's, so the
+    coach reads exactly what the phone will pre-fill (`test_mcp_tools.py`
+    compares the two).
+    """
+    return {
+        "planned_session_id": str(session.planned_session_id),
+        "date": session.date.isoformat(),
+        "follow_exactly": session.follow_exactly,
+        "lines": [_target_line(line) for line in session.lines],
+    }
+
+
 def register_strength_tools(mcp: FastMCP) -> None:
     """Register the strength tools on ``mcp``."""
 
@@ -158,5 +234,37 @@ def register_strength_tools(mcp: FastMCP) -> None:
                 ).exercise_history(exercise_id)
                 return {
                     **exercise_history(history),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def get_next_targets(planned_session_id: uuid.UUID) -> dict[str, Any]:
+        """Next weights for each line of one planned strength session, and why.
+
+        Exactly what the athlete's phone will pre-fill: per line, `prefill`
+        (`source` is `progression` for a suggested weight, else
+        `prescription`, `last_logged` or `blank`) and `suggestion` — the
+        suggested `load_kg` and `reps`, the `outcome` (`up`, `down`, `same`,
+        `reps`, `first_time`), `change_kg`, and an `explanation`: the
+        registry `rule` id that set the value, its `evidence`, a `reason`
+        code, the sessions read (`inputs`), the target, `computed_kg` (the
+        rule's result before limits and rounding) and the `limit` that held it
+        back, if any.
+
+        `suggestion` is null for every line when the athlete keeps a Plain
+        logbook or the session's plan is follow-exactly: those lines pre-fill
+        the prescription (or the last numbers) unchanged. A planned session
+        that is not a strength session is an error.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                found = await PacketService.from_session(session).session(
+                    planned_session_id
+                )
+                return {
+                    **next_targets(found),
                     "red_flag": views.red_flag(await current_profile(session)),
                 }

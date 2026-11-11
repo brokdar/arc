@@ -20,6 +20,7 @@ from app.api.schemas.packet import (
     PacketSettingsRead,
     PlatePairRead,
     PrefillRead,
+    SuggestionRead,
     WarmupRead,
 )
 from app.api.schemas.workouts import StrengthSetSchema
@@ -61,6 +62,11 @@ def _line_read(line: PacketLine) -> PacketLineRead:
         prefill=PrefillRead.model_validate(line.prefill),
         warmups=[WarmupRead.model_validate(step) for step in line.warmups],
         plates_per_side=line.plates_per_side,
+        suggestion=(
+            None
+            if line.suggestion is None
+            else SuggestionRead.model_validate(line.suggestion)
+        ),
     )
 
 

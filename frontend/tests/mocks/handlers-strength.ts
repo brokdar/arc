@@ -50,6 +50,18 @@ export function strengthPacket(
             rir: line.line_ref === "0.0" ? plannedRir : line.prescription.rir,
             rest_s: restS,
           },
+          // The server's first-time suggestion names the target it would hold
+          // the effort to, so a planned reps-left target appears in it too.
+          suggestion:
+            line.suggestion && line.line_ref === "0.0"
+              ? {
+                  ...line.suggestion,
+                  explanation: {
+                    ...line.suggestion.explanation,
+                    target_reps_left: plannedRir,
+                  },
+                }
+              : line.suggestion,
         })),
       },
     ],

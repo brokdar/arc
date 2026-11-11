@@ -56,6 +56,7 @@ import {
 } from "@/components/strength/session-model";
 import { loadSession, saveSession } from "@/components/strength/session-store";
 import { Stepper } from "@/components/strength/stepper";
+import { WhySheet } from "@/components/strength/why-sheet";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -985,12 +986,14 @@ function LineBody({
   };
 
   const planned = draftFor({ ...session, sets: [] }, line);
+  // Without a suggestion (Plain logbook, follow-exactly, a line with no
+  // loadable weight) the chip says where the pre-fill came from.
   const reason =
     line.prefill.source === "prescription"
       ? t("train.reasonPlan")
-      : line.prefill.source === "last_logged"
-        ? t("train.reasonLast")
-        : t("train.reasonBlank");
+      : line.prefill.source === "blank"
+        ? t("train.reasonBlank")
+        : t("train.reasonLast");
   const plates =
     equipment === "barbell" && draft?.loadKg
       ? platesPerSide(draft.loadKg, "barbell", gym)
@@ -1177,11 +1180,11 @@ function LineBody({
                 })}
               </p>
             ) : null}
-            <p>
-              <span className="inline-flex rounded-md border border-accent-border bg-accent-surface px-2 py-0.5 text-accent-quiet text-xs">
-                {reason}
-              </span>
-            </p>
+            <WhySheet
+              suggestion={line.suggestion}
+              fallback={reason}
+              weightText={weightText}
+            />
             {plates ? (
               <p className="font-mono text-ink-muted">
                 {t("train.plates", {

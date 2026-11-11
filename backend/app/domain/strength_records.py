@@ -86,6 +86,11 @@ class Exposure:
     date: dt.date
     sets: Sequence[PerformedSet]
     dont_learn: bool = False
+    #: Fewer working sets were logged than the line now prescribes — the
+    #: session lost sets. Records ignore it; `app.domain.progression` never
+    #: raises a weight from such a session, because effort after fewer sets
+    #: reads easier than it was.
+    trimmed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
