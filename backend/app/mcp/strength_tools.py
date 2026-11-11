@@ -24,11 +24,12 @@ from app.mcp.tools import tool_errors
 from app.persistence.cards import CardRow
 from app.persistence.db import session_scope
 from app.services.cards import CardService
+from app.services.exercise_preferences import ExercisePreferencesService
 from app.services.guardrails import current_profile
 from app.services.strength_history import ExerciseHistory, StrengthHistoryService
 
 #: Every tool this module registers. Later PRs append; never reorder.
-STRENGTH_TOOLS = frozenset({"get_cards", "get_exercise_history"})
+STRENGTH_TOOLS = frozenset({"get_cards", "get_exercise_history", "suggest_substitutes"})
 
 
 def _iso(moment: dt.datetime | None) -> str | None:
@@ -158,5 +159,40 @@ def register_strength_tools(mcp: FastMCP) -> None:
                 ).exercise_history(exercise_id)
                 return {
                     **exercise_history(history),
+                    "red_flag": views.red_flag(await current_profile(session)),
+                }
+
+    @mcp.tool
+    async def suggest_substitutes(exercise_id: str) -> dict[str, Any]:
+        """Up to three catalogue exercises to swap in for one, best first.
+
+        The same ranking the athlete's phone carries for every planned line,
+        so what you suggest is what the gym screen offers. A swap shares a
+        main muscle group and the movement pattern (or a close one: squat and
+        lunge, horizontal and vertical push or pull), needs only equipment the
+        gym has, and never makes a demand recent sharp pain rules out or names
+        an exercise the athlete avoids. Order: the athlete's remembered pick,
+        then more shared main groups, same pattern, same mechanic, fewer new
+        demands, exercises they have logged before; "less often" ones last.
+        Fewer than three, or none, when fewer qualify — never a poor fit.
+
+        `exercise_id` is a catalogue slug (`get_exercise_catalogue`); an
+        unknown slug is an error. Returns `substitutes` as
+        `{exercise_id, exercise_name}`.
+
+        Requires a `read` key.
+        """
+        require_scope(Scope.READ)
+        with tool_errors():
+            async with session_scope() as session:
+                rows = await ExercisePreferencesService.from_session(
+                    session
+                ).substitutes(exercise_id)
+                return {
+                    "exercise_id": exercise_id,
+                    "substitutes": [
+                        {"exercise_id": row.id, "exercise_name": row.name}
+                        for row in rows
+                    ],
                     "red_flag": views.red_flag(await current_profile(session)),
                 }

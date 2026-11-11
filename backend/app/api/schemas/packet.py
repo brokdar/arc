@@ -11,6 +11,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict
 
+from app.api.schemas.exercise_preferences import EaseBackRead, SwapRead
 from app.api.schemas.exercises import ExerciseRead
 from app.api.schemas.workouts import StrengthSetSchema
 from app.domain.loading import Equipment
@@ -71,6 +72,15 @@ class PacketLineRead(BaseModel):
     warmups: list[WarmupRead]
     #: Plates for the pre-filled weight; null off a barbell or with no weight.
     plates_per_side: list[float] | None
+    #: Up to three movements to swap in, best first (`app.domain.swaps`), so
+    #: a swap needs no signal. Each is in ``library``. A swapped line's weight
+    #: comes from the swap's own ``last_numbers`` or the starting flow, never
+    #: from this line's pre-fill.
+    swaps: list[SwapRead]
+    #: The athlete avoids this exercise: the phone opens it on the swap prompt.
+    avoided: bool
+    #: Where the athlete stands on *Ease back in* for it; null when not easing back.
+    ease_back: EaseBackRead | None
 
 
 class PacketSessionRead(BaseModel):

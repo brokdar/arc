@@ -2243,6 +2243,28 @@
         "title": "DurationFloorSchema",
         "type": "object"
       },
+      "EaseBackRead": {
+        "description": "Where the athlete stands on *Ease back in* for one exercise.\n\n``steps`` runs easiest first; ``step`` is the 0-based index of\n``current``, the variation to train now. It moves only when the athlete\ntaps *advance*.",
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/SwapRead"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/SwapRead"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": ["step", "steps", "current"],
+        "title": "EaseBackRead",
+        "type": "object"
+      },
       "EffortQuestionRead": {
         "description": "Which effort question follows a set, and how often it is asked.",
         "properties": {
@@ -2585,6 +2607,86 @@
         },
         "required": ["text"],
         "title": "ExerciseNoteWrite",
+        "type": "object"
+      },
+      "ExercisePreferenceRead": {
+        "description": "What the athlete prefers about one exercise; defaults when nothing was said.",
+        "properties": {
+          "avoid": {
+            "title": "Avoid",
+            "type": "boolean"
+          },
+          "ease_back": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EaseBackRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "less_often": {
+            "title": "Less Often",
+            "type": "boolean"
+          },
+          "remembered_swap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remembered Swap Id"
+          }
+        },
+        "required": [
+          "exercise_id",
+          "avoid",
+          "less_often",
+          "remembered_swap_id",
+          "ease_back"
+        ],
+        "title": "ExercisePreferenceRead",
+        "type": "object"
+      },
+      "ExercisePreferenceUpdate": {
+        "additionalProperties": false,
+        "description": "Change some of one exercise's preferences; an omitted field is left alone.\n\n``remembered_swap_id: null`` forgets the pick (the computed order comes\nback); ``ease_back: true`` starts *Ease back in* at its easiest step and\n``false`` stops it.",
+        "properties": {
+          "avoid": {
+            "title": "Avoid",
+            "type": "boolean"
+          },
+          "ease_back": {
+            "title": "Ease Back",
+            "type": "boolean"
+          },
+          "less_often": {
+            "title": "Less Often",
+            "type": "boolean"
+          },
+          "remembered_swap_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remembered Swap Id"
+          }
+        },
+        "title": "ExercisePreferenceUpdate",
         "type": "object"
       },
       "ExerciseRead": {
@@ -5730,7 +5832,8 @@
             "session_rating": "#/components/schemas/SessionRating",
             "session_start": "#/components/schemas/SessionStart",
             "set_delete": "#/components/schemas/SetDelete",
-            "set_upsert": "#/components/schemas/SetUpsert"
+            "set_upsert": "#/components/schemas/SetUpsert",
+            "swap": "#/components/schemas/Swap"
           },
           "propertyName": "kind"
         },
@@ -5758,6 +5861,9 @@
           },
           {
             "$ref": "#/components/schemas/RedFlag"
+          },
+          {
+            "$ref": "#/components/schemas/Swap"
           }
         ]
       },
@@ -5870,6 +5976,20 @@
       "PacketLineRead": {
         "description": "One prescription line with everything the gym screen needs.",
         "properties": {
+          "avoided": {
+            "title": "Avoided",
+            "type": "boolean"
+          },
+          "ease_back": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EaseBackRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "equipment": {
             "anyOf": [
               {
@@ -5935,6 +6055,13 @@
           "prescription": {
             "$ref": "#/components/schemas/StrengthSetSchema"
           },
+          "swaps": {
+            "items": {
+              "$ref": "#/components/schemas/SwapRead"
+            },
+            "title": "Swaps",
+            "type": "array"
+          },
           "warmups": {
             "items": {
               "$ref": "#/components/schemas/WarmupRead"
@@ -5955,7 +6082,10 @@
           "equipment",
           "prefill",
           "warmups",
-          "plates_per_side"
+          "plates_per_side",
+          "swaps",
+          "avoided",
+          "ease_back"
         ],
         "title": "PacketLineRead",
         "type": "object"
@@ -11422,6 +11552,99 @@
         "title": "SubjectiveScaleRead",
         "type": "object"
       },
+      "SubstitutesRead": {
+        "description": "The ranked swaps for one exercise, best first; at most three, maybe none.",
+        "properties": {
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "substitutes": {
+            "items": {
+              "$ref": "#/components/schemas/SwapRead"
+            },
+            "title": "Substitutes",
+            "type": "array"
+          }
+        },
+        "required": ["exercise_id", "substitutes"],
+        "title": "SubstitutesRead",
+        "type": "object"
+      },
+      "Swap": {
+        "additionalProperties": false,
+        "description": "\u22ef \u2192 Swap \u2192 pick: a planned exercise swapped in the gym.\n\nThe pick is remembered (it is offered first next time); ``rest_of_block``\nalso queues a pending card asking to keep it (`app.domain.swaps.SwapScope`).\nThe sets logged after it carry the substitute's ``exercise_id`` and this\nexercise as ``replaced_exercise_id``.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "exercise_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "swap",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SwapScope",
+            "default": "session"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "swap_exercise_id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Swap Exercise Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "exercise_id",
+          "swap_exercise_id"
+        ],
+        "title": "Swap",
+        "type": "object"
+      },
+      "SwapRead": {
+        "description": "One movement offered in place of another.",
+        "properties": {
+          "exercise_id": {
+            "title": "Exercise Id",
+            "type": "string"
+          },
+          "exercise_name": {
+            "title": "Exercise Name",
+            "type": "string"
+          }
+        },
+        "required": ["exercise_id", "exercise_name"],
+        "title": "SwapRead",
+        "type": "object"
+      },
+      "SwapScope": {
+        "description": "How long a swap made in the gym is meant to hold.\n\n``session`` is the default \u2014 the rack is taken *today* \u2014 and changes\nnothing beyond remembering the pick. ``rest_of_block`` is a wish to\nchange the plan, which the gym floor does not do on its own: it is\nstored as a pending card (:data:`SWAP_REST_OF_BLOCK`) for the athlete to\nconfirm off the gym floor and the coach to read, never applied to the\nplanned sessions directly. Editing every remaining session from a tap\nbetween two sets was the alternative; a plan change has its own reviewed\npath (proposals), and a swap picked in a hurry should not take it.",
+        "enum": ["session", "rest_of_block"],
+        "title": "SwapScope",
+        "type": "string"
+      },
       "SyncBatch": {
         "additionalProperties": false,
         "description": "One upload from the outbox, applied in order, all or nothing.",
@@ -15835,6 +16058,55 @@
         "tags": ["connections"]
       }
     },
+    "/api/v1/exercise-preferences": {
+      "get": {
+        "description": "Every exercise the athlete has stated a preference on, by slug.",
+        "operationId": "exercises-list_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExercisePreferenceRead"
+                  },
+                  "title": "Response Exercises-List Preferences",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Preferences",
+        "tags": ["exercises"]
+      }
+    },
     "/api/v1/exercises": {
       "get": {
         "description": "List catalogue exercises, by family then name; every filter narrows.",
@@ -16298,6 +16570,328 @@
           }
         ],
         "summary": "Put Exercise Note",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exercises/{exercise_id}/preferences": {
+      "get": {
+        "description": "The athlete's preferences on one exercise; defaults when none were stated.",
+        "operationId": "exercises-get_preferences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExercisePreferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Preferences",
+        "tags": ["exercises"]
+      },
+      "patch": {
+        "description": "Change some of one exercise's preferences; omitted fields are left alone.",
+        "operationId": "exercises-update_preferences",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExercisePreferenceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExercisePreferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Not easing back in, or nothing easier to ease back in on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorDetail"
+                }
+              }
+            },
+            "description": "An exercise named as its own swap"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Update Preferences",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exercises/{exercise_id}/preferences/ease-back/advance": {
+      "post": {
+        "description": "The athlete's tap: one step up *Ease back in*; past the last, it ends.",
+        "operationId": "exercises-advance_ease_back",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExercisePreferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "Not easing back in, or nothing easier to ease back in on"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Advance Ease Back",
+        "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exercises/{exercise_id}/substitutes": {
+      "get": {
+        "description": "Up to three swaps for an exercise, best first \u2014 the packet's three.\n\nNever an avoided movement, one needing equipment the gym lacks, or one\nmaking a demand recent sharp pain rules out; fewer than three when fewer\nqualify. The athlete's remembered pick comes first.",
+        "operationId": "exercises-get_substitutes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exercise_id",
+            "required": true,
+            "schema": {
+              "title": "Exercise Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstitutesRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such exercise"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Substitutes",
         "tags": ["exercises"]
       }
     },

@@ -10,6 +10,158 @@ import { syncServer } from "@/tests/mocks/sync-state";
 const http = createOpenApiHttp<paths>({ baseUrl: "http://localhost:8000" });
 
 type Packet = components["schemas"]["PacketRead"];
+type Exercise = components["schemas"]["ExerciseRead"];
+
+/**
+ * Every slug the captured packet's library names: the two planned movements
+ * and each line's three swaps — the server's own ranking, pinned by
+ * `test_exercise_preferences_api.py::test_the_frontend_packet_fixtures_swaps_are_the_servers`.
+ */
+const PACKET_LIBRARY = [
+  "ab_wheel_rollout",
+  "barbell_row",
+  "dead_bug",
+  "front_plank",
+  "hollow_body_hold",
+  "inverted_row",
+  "pendlay_row",
+  "single_arm_dumbbell_row",
+];
+
+const STAMP = "2026-01-01T00:00:00Z";
+
+/** The swaps' catalogue entries, copied from `exercise_catalogue.json`. */
+export const SWAP_LIBRARY: Exercise[] = [
+  {
+    id: "barbell_row",
+    name: "Barbell Row",
+    category: "pull",
+    unilateral: false,
+    muscles: {
+      lats: 1.0,
+      rhomboids: 1.0,
+      traps_middle: 1.0,
+      delt_posterior: 0.5,
+      biceps: 0.5,
+      brachialis: 0.5,
+      erector_spinae: 0.5,
+      teres_major: 0.5,
+      forearm_flexors: 0.5,
+    },
+    mechanic: "multi_joint",
+    pattern: "horizontal_pull",
+    equipment: ["barbell"],
+    load_type: "barbell",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+  {
+    id: "pendlay_row",
+    name: "Pendlay Row",
+    category: "pull",
+    unilateral: false,
+    muscles: {
+      lats: 1.0,
+      rhomboids: 1.0,
+      traps_middle: 1.0,
+      delt_posterior: 0.5,
+      biceps: 0.5,
+      brachialis: 0.5,
+      erector_spinae: 0.5,
+      teres_major: 0.5,
+      forearm_flexors: 0.5,
+    },
+    mechanic: "multi_joint",
+    pattern: "horizontal_pull",
+    equipment: ["barbell"],
+    load_type: "barbell",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+  {
+    id: "inverted_row",
+    name: "Inverted Row",
+    category: "pull",
+    unilateral: false,
+    muscles: {
+      rhomboids: 1.0,
+      traps_middle: 1.0,
+      lats: 1.0,
+      delt_posterior: 0.5,
+      biceps: 0.5,
+      brachialis: 0.5,
+      erector_spinae: 0.5,
+    },
+    mechanic: "multi_joint",
+    pattern: "horizontal_pull",
+    equipment: ["barbell", "rack"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+  {
+    id: "dead_bug",
+    name: "Dead Bug",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      transversus_abdominis: 1.0,
+      rectus_abdominis: 1.0,
+      obliques: 0.5,
+      hip_flexors: 0.5,
+    },
+    mechanic: "single_joint",
+    pattern: "anti_extension",
+    equipment: ["bodyweight"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+  {
+    id: "hollow_body_hold",
+    name: "Hollow Body Hold",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      rectus_abdominis: 1.0,
+      transversus_abdominis: 1.0,
+      hip_flexors: 0.5,
+      obliques: 0.5,
+    },
+    mechanic: "single_joint",
+    pattern: "anti_extension",
+    equipment: ["bodyweight"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+  {
+    id: "ab_wheel_rollout",
+    name: "Ab Wheel Rollout",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      rectus_abdominis: 1.0,
+      transversus_abdominis: 1.0,
+      lats: 0.5,
+      obliques: 0.5,
+      delt_anterior: 0.5,
+      serratus_anterior: 0.5,
+    },
+    mechanic: "multi_joint",
+    pattern: "anti_extension",
+    equipment: ["ab_wheel"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: STAMP,
+    updated_at: STAMP,
+  },
+];
 
 /**
  * A session packet the real API could produce — captured from
@@ -24,9 +176,10 @@ type Packet = components["schemas"]["PacketRead"];
  * itself.
  */
 export function packetFixture(today: string, generatedAt: Date): Packet {
-  const library = EXERCISES.filter((exercise) =>
-    ["front_plank", "single_arm_dumbbell_row"].includes(exercise.id),
-  );
+  // Sorted by slug, as the server sends it.
+  const library = [...EXERCISES, ...SWAP_LIBRARY]
+    .filter((exercise) => PACKET_LIBRARY.includes(exercise.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
   return {
     schema_version: 1,
     generated_at: generatedAt.toISOString(),
@@ -94,6 +247,13 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            swaps: [
+              { exercise_id: "barbell_row", exercise_name: "Barbell Row" },
+              { exercise_id: "pendlay_row", exercise_name: "Pendlay Row" },
+              { exercise_id: "inverted_row", exercise_name: "Inverted Row" },
+            ],
+            avoided: false,
+            ease_back: null,
           },
           {
             line_ref: "1.0",
@@ -129,6 +289,19 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            swaps: [
+              { exercise_id: "dead_bug", exercise_name: "Dead Bug" },
+              {
+                exercise_id: "hollow_body_hold",
+                exercise_name: "Hollow Body Hold",
+              },
+              {
+                exercise_id: "ab_wheel_rollout",
+                exercise_name: "Ab Wheel Rollout",
+              },
+            ],
+            avoided: false,
+            ease_back: null,
           },
         ],
       },

@@ -20,6 +20,7 @@ from pydantic.json_schema import SkipJsonSchema
 from app.api.schemas.activity import LoggedSetFields, TimezoneName
 from app.api.validation import PostgresText
 from app.domain.safety import RedFlagSymptom
+from app.domain.swaps import SwapScope
 from app.domain.sync import (
     MAX_BATCH_MUTATIONS,
     MIN_SCHEMA_VERSION,
@@ -135,6 +136,23 @@ class RedFlag(_SessionMutation):
     symptom: RedFlagSymptom
 
 
+class Swap(_SessionMutation):
+    """⋯ → Swap → pick: a planned exercise swapped in the gym.
+
+    The pick is remembered (it is offered first next time); ``rest_of_block``
+    also queues a pending card asking to keep it (`app.domain.swaps.SwapScope`).
+    The sets logged after it carry the substitute's ``exercise_id`` and this
+    exercise as ``replaced_exercise_id``.
+    """
+
+    kind: Literal["swap"]
+    #: The planned exercise that was swapped out.
+    exercise_id: str = Field(min_length=1, max_length=MAX_SLUG_LENGTH)
+    #: The exercise picked in its place.
+    swap_exercise_id: str = Field(min_length=1, max_length=MAX_SLUG_LENGTH)
+    scope: SwapScope = SwapScope.SESSION
+
+
 type Mutation = Annotated[
     SessionStart
     | SessionFinish
@@ -143,7 +161,8 @@ type Mutation = Annotated[
     | SessionRating
     | DontLearn
     | NoteUpsert
-    | RedFlag,
+    | RedFlag
+    | Swap,
     Field(discriminator="kind"),
 ]
 
