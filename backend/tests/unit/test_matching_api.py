@@ -195,9 +195,7 @@ async def inbox(client: AsyncClient, status: str = "pending") -> list[dict[str, 
 
 async def actions(session: AsyncSession) -> list[str]:
     """Every audit action so far, oldest first."""
-    result = await session.execute(
-        select(AuditLogEntry).order_by(AuditLogEntry.at.asc(), AuditLogEntry.id.asc())
-    )
+    result = await session.execute(select(AuditLogEntry).order_by(AuditLogEntry.id))
     return [entry.action for entry in result.scalars()]
 
 

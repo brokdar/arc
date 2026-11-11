@@ -97,7 +97,7 @@ async def create(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
 async def audit_actions(session: AsyncSession) -> list[str]:
     """Every audit action so far, oldest first."""
     result = await session.execute(
-        select(AuditLogEntry.action).order_by(AuditLogEntry.at, AuditLogEntry.id)
+        select(AuditLogEntry.action).order_by(AuditLogEntry.id)
     )
     return list(result.scalars())
 
