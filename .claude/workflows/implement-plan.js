@@ -1844,6 +1844,16 @@ as a clean run.
       gatePrompt(p, `fix(ci): ${(ci.failing || ["ci"]).join(", ").slice(0, 40)}`),
       cheap(`gate-ci${ciLoops}`, GATE_SCHEMA),
     );
+    // A green gate with nothing to commit means the fix seat changed nothing: it
+    // judged the red check an infrastructure failure (PR #140, 11 Nov 2026: bun
+    // failed to download in `smoke`, no test ran). That is not a red gate, and
+    // reporting it as one sent the operator hunting a defect that did not exist.
+    if (regate && regate.gateExit === 0 && !regate.committed) {
+      return fail("ci-red-no-code-change", {
+        pr, verdict, ci, gate: regate, fixSummary: fixed.summary,
+        recovery: `PR #${pr.number} is red on ${(ci.failing || []).join(", ") || "CI"}, and the fix seat changed nothing: ${String(fixed.summary || "").slice(0, 300)} Re-run the failed jobs (the agent identity cannot re-run Actions), then re-launch.`,
+      });
+    }
     if (regate == null || regate.gateExit !== 0 || !regate.committed) {
       return fail("gate-red-after-ci-fix", {
         pr, verdict, gate: regate,
