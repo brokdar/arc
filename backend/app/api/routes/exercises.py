@@ -24,6 +24,7 @@ from app.api.schemas.exercises import (
     ExerciseRead,
     ExercisesPage,
 )
+from app.api.schemas.strength_history import ExerciseHistoryRead, to_history_read
 from app.api.validation import PostgresText
 from app.core.exceptions import ErrorDetail
 from app.domain.muscles import MuscleGroup
@@ -35,6 +36,7 @@ from app.domain.strength import (
 )
 from app.persistence.db import SessionDep
 from app.services.exercises import ExerciseService
+from app.services.strength_history import StrengthHistoryService
 
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
@@ -115,6 +117,19 @@ async def list_exercises(
 async def get_exercise(service: ServiceDep, exercise_id: str) -> ExerciseRead:
     """Get one catalogue exercise by its slug."""
     return ExerciseRead.model_validate(await service.get(exercise_id))
+
+
+@router.get("/{exercise_id}/history", responses=NOT_FOUND)
+async def get_exercise_history(
+    session: SessionDep, exercise_id: str
+) -> ExerciseHistoryRead:
+    """Personal bests, heaviest-for-N-reps and the estimated-max line of one exercise.
+
+    Derived from every logged set on each read. An exercise never logged
+    answers empty lists, not 404; a slug outside the catalogue is 404.
+    """
+    service = StrengthHistoryService.from_session(session)
+    return to_history_read(await service.exercise_history(exercise_id))
 
 
 @router.get("/{exercise_id}/note", responses=NOT_FOUND)

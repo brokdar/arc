@@ -8,6 +8,7 @@ import {
   type FinishChoice,
   FinishPanel,
 } from "@/components/strength/finish-panel";
+import { FinishSummary } from "@/components/strength/history/finish-summary";
 import {
   type Clock,
   primeRestSound,
@@ -188,6 +189,9 @@ export function LoggingScreen({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<LoggedSet | null>(null);
   const [menu, setMenu] = useState(false);
+  // The finish summary asks the server for the session's new bests, so it
+  // waits until the outbox has drained: before that the server cannot know.
+  const [uploaded, setUploaded] = useState(false);
   const [sheet, setSheet] = useState<"pain" | "redFlag" | null>(null);
   const opened = useRef(false);
   // Outbox writes and state saves run one after another, in action order.
@@ -250,6 +254,9 @@ export function LoggingScreen({
       const existing = await loadSession(plannedSessionId);
       if (existing) {
         setSession(existing);
+        if (existing.finished) {
+          void flush().then((outcome) => setUploaded(outcome === "drained"));
+        }
         setPhase(
           existing.finished
             ? "done"
@@ -507,9 +514,9 @@ export function LoggingScreen({
     });
     setUndo(null);
     setPhase("done");
-    void commit({ ...session, finished: true, rest: null }, mutations).then(
-      () => flush(),
-    );
+    void commit({ ...session, finished: true, rest: null }, mutations)
+      .then(() => flush())
+      .then((outcome) => setUploaded(outcome === "drained"));
   };
 
   /** The set a pain note is about: the current exercise's last, else the last. */
@@ -635,6 +642,12 @@ export function LoggingScreen({
             count: String(session.sets.filter((s) => !s.warmup).length),
           })}
         </p>
+        {uploaded ? (
+          <FinishSummary
+            sessionClientId={session.sessionClientId}
+            units={units}
+          />
+        ) : null}
         <BackToToday />
       </Centered>
     );

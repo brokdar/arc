@@ -221,6 +221,25 @@
     "reasonOther": "Anderes",
     "back": "Weiter trainieren"
   },
+  "records": {
+    "bestsTitle": "Neue Rekorde",
+    "newBest": "Neuer Rekord: {reps} Mal {weight} bei {exercise}",
+    "historyLoading": "Verlauf wird geladen…",
+    "historyMissing": "Diese Übung ist nicht im Katalog.",
+    "historyEmpty": "Für diese Übung ist noch kein Satz eingetragen. Trag sie in einer Einheit ein, dann erscheinen hier deine Bestleistungen.",
+    "estimateTitle": "Geschätztes Maximum",
+    "estimateValue": "Etwa {weight}",
+    "estimateNote": "Nur ein grober Wert aus deinen Sätzen, kein Rekord.",
+    "notEnoughData": "Noch nicht genug Daten",
+    "notEnoughDataHelp": "Bewerte den letzten Satz dieser Übung in drei Einheiten, um eine Schätzung zu sehen.",
+    "repMaxesTitle": "Am meisten Gewicht",
+    "repMaxLabel": "{reps} oder mehr Wiederholungen",
+    "repMaxValue": "{weight} × {reps}",
+    "bestsListTitle": "Deine Rekorde",
+    "bestLine": "{weight} × {reps}",
+    "sessions": "{count} Einheiten eingetragen",
+    "repMaxMissing": "Noch kein Satz mit {reps} oder mehr Wiederholungen"
+  },
   "safety": {
     "menuPain": "Schmerz",
     "menuStop": "Stopp — etwas stimmt nicht",

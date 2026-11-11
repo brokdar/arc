@@ -588,6 +588,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/exercises/{exercise_id}/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Exercise History
+     * @description Personal bests, heaviest-for-N-reps and the estimated-max line of one exercise.
+     *
+     *     Derived from every logged set on each read. An exercise never logged
+     *     answers empty lists, not 404; a slug outside the catalogue is 404.
+     */
+    get: operations["exercises-get_exercise_history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/exercises/{exercise_id}/note": {
     parameters: {
       query?: never;
@@ -1126,6 +1149,26 @@ export interface paths {
      *     something else.
      */
     post: operations["matches-reject_match"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/personal-bests": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Bests
+     * @description New personal bests set in one session; an empty list when there were none.
+     */
+    get: operations["strength-get_session_bests"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3680,6 +3723,41 @@ export interface components {
       detail: string;
     };
     /**
+     * EstimateLineRead
+     * @description The estimated-max line — a rough guide, never a personal best.
+     */
+    EstimateLineRead: {
+      /** Current Kg */
+      current_kg: number | null;
+      /** Points */
+      points: components["schemas"]["EstimatePointRead"][];
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "ok" | "not_enough_data";
+    };
+    /**
+     * EstimatePointRead
+     * @description One session's best estimated max, and the line's value after it.
+     */
+    EstimatePointRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Estimate Kg */
+      estimate_kg: number;
+      /** Median Kg */
+      median_kg: number | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+    };
+    /**
      * ExcludedStepRead
      * @description A pair the assignment made and the confidence gate then refused.
      *
@@ -3752,6 +3830,23 @@ export interface components {
       | "ski_erg"
       | "air_bike"
       | "bodyweight";
+    /**
+     * ExerciseHistoryRead
+     * @description One exercise's personal bests, rep maxes and estimated max.
+     */
+    ExerciseHistoryRead: {
+      /** Bests */
+      bests: components["schemas"]["PersonalBestRead"][];
+      estimate: components["schemas"]["EstimateLineRead"];
+      /** Exercise Id */
+      exercise_id: string;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Exposures */
+      exposures: number;
+      /** Rep Maxes */
+      rep_maxes: components["schemas"]["RepMaxRead"][];
+    };
     /**
      * ExerciseNoteRead
      * @description The athlete's note on one exercise.
@@ -5645,6 +5740,26 @@ export interface components {
       pct_low: number;
     };
     /**
+     * PersonalBestRead
+     * @description A set no other set of the exercise beat on both weight and reps.
+     */
+    PersonalBestRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+    };
+    /**
      * PinnedAnchorRead
      * @description One anchor version this session's percentages resolve against.
      *
@@ -6773,6 +6888,28 @@ export interface components {
       | "dizziness"
       | "sudden_swelling";
     /**
+     * RepMaxRead
+     * @description The heaviest weight lifted for at least ``target_reps`` reps.
+     */
+    RepMaxRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Target Reps */
+      target_reps: number;
+    };
+    /**
      * RepeatBlockSchema
      * @description Perform ``children`` ``times`` over.
      */
@@ -7046,6 +7183,28 @@ export interface components {
       unmatched_steps: number[];
       /** Version */
       version: number;
+    };
+    /**
+     * SessionBestRead
+     * @description A new personal best in one session, named as it was logged.
+     */
+    SessionBestRead: {
+      /** Exercise Id */
+      exercise_id: string | null;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+    };
+    /**
+     * SessionBestsRead
+     * @description The finish summary's new bests; empty when the session set none.
+     */
+    SessionBestsRead: {
+      /** Bests */
+      bests: components["schemas"]["SessionBestRead"][];
     };
     /**
      * SessionDiscipline
@@ -10651,6 +10810,64 @@ export interface operations {
       };
     };
   };
+  "exercises-get_exercise_history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExerciseHistoryRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "exercises-get_exercise_note": {
     parameters: {
       query?: never;
@@ -12157,6 +12374,65 @@ export interface operations {
         };
       };
       /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "strength-get_session_bests": {
+    parameters: {
+      query: {
+        /** @description The session id the phone minted at Start. */
+        session_client_id: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionBestsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No session with that phone id */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
       409: {
         headers: {
           [name: string]: unknown;

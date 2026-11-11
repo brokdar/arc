@@ -264,6 +264,15 @@ power-curve-fixture:
 	cd backend && uv run python scripts/emit_power_curve_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-power-curve.ts
 
+# Regenerate the frontend's personal-best and exercise-history fixtures from
+# the real domain. Run after changing app/domain/strength_records.py or the
+# history read shapes, and commit the result: whether a set is a new best
+# depends on every earlier set, and each estimate is arithmetic a hand-typed
+# fixture would only imitate.
+strength-records-fixture:
+	cd backend && uv run python scripts/emit_strength_records_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-strength-records.ts
+
 # Regenerate the loading vectors both languages are tested against.
 # Run after changing app/domain/loading.py, and commit the result: the phone's
 # twin in frontend/lib/strength must agree with every case, and the backend

@@ -121,6 +121,7 @@ EXPECTED_TOOLS = {
     "get_fitness_trend",
     "get_power_curve",
     "get_cards",
+    "get_exercise_history",
     # writes
     "append_anchor",
     "create_workout",
@@ -162,6 +163,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_fitness_trend", {}),
     ("get_power_curve", {"session_id": "{session}"}),
     ("get_cards", {}),
+    ("get_exercise_history", {"exercise_id": "back_squat"}),
 )
 
 
@@ -4532,3 +4534,75 @@ async def test_get_cards_on_an_empty_queue_is_an_empty_list(
 async def test_get_cards_needs_a_read_key(session_factory: Any) -> None:
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "get_cards")
+
+
+# --- get_exercise_history (strength_tools) ---------------------------------------------
+
+
+def _rdl(day: int, load: float, reps: int, **extra: Any) -> dict[str, Any]:
+    """One manual session holding one Romanian deadlift set."""
+    start = dt.datetime(2026, 9, 1, 17, 0, tzinfo=dt.UTC) + dt.timedelta(days=day)
+    return {
+        "start_time": start.isoformat(),
+        "timezone": "UTC",
+        "duration_s": 3600,
+        "sets": [
+            {"exercise_id": "romanian_deadlift", "load_kg": load, "reps": reps, **extra}
+        ],
+    }
+
+
+async def test_get_exercise_history_is_the_endpoints_bests_and_estimate_line(
+    client: AsyncClient,
+) -> None:
+    for day, payload in enumerate(
+        [
+            _rdl(0, 100.0, 5, rir=2),
+            _rdl(2, 100.0, 7),
+            _rdl(4, 105.0, 5, rir=1),
+            _rdl(6, 100.0, 5, rir=0),
+        ]
+    ):
+        response = await client.post(MANUAL, json=payload)
+        assert response.status_code == 201, (day, response.text)
+    response = await client.get("/api/v1/exercises/romanian_deadlift/history")
+    assert response.status_code == 200, response.text
+    endpoint = response.json()
+
+    data = await call(
+        READER, "get_exercise_history", {"exercise_id": "romanian_deadlift"}
+    )
+
+    assert endpoint["estimate"]["status"] == "ok"
+    assert endpoint["bests"], "the history must hold bests for the comparison to bite"
+    assert data["bests"] == endpoint["bests"]
+    assert data["rep_maxes"] == endpoint["rep_maxes"]
+    assert data["estimate"] == endpoint["estimate"]
+    assert {k: v for k, v in data.items() if k != "red_flag"} == endpoint
+    assert "red_flag" in data
+
+
+async def test_get_exercise_history_of_an_unlogged_exercise_is_empty(
+    session_factory: Any,
+) -> None:
+    data = await call(READER, "get_exercise_history", {"exercise_id": "back_squat"})
+
+    assert data["bests"] == []
+    assert data["rep_maxes"] == []
+    assert data["estimate"] == {
+        "status": "not_enough_data",
+        "current_kg": None,
+        "points": [],
+    }
+
+
+async def test_get_exercise_history_of_an_unknown_slug_is_a_tool_error(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="not in the catalogue"):
+        await call(READER, "get_exercise_history", {"exercise_id": "no_such_lift"})
+
+
+async def test_get_exercise_history_needs_a_read_key(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_exercise_history", {"exercise_id": "back_squat"})
