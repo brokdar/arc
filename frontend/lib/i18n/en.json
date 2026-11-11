@@ -143,6 +143,7 @@
     "reasonPlan": "From your plan",
     "reasonLast": "Same as last time",
     "reasonBlank": "No history yet",
+    "reasonStepDown": "Next sets {weight} lighter: that set was a lot harder",
     "plates": "per side: {plates}",
     "bar": "bar {weight}",
     "next": "next: {summary}",

@@ -143,6 +143,7 @@
     "reasonPlan": "Aus deinem Plan",
     "reasonLast": "Wie letztes Mal",
     "reasonBlank": "Noch kein Verlauf",
+    "reasonStepDown": "Nächste Sätze {weight} leichter: Der Satz war viel schwerer",
     "plates": "pro Seite: {plates}",
     "bar": "Stange {weight}",
     "next": "als Nächstes: {summary}",

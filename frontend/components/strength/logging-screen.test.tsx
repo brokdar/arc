@@ -11,6 +11,7 @@ import {
 import { type Mutation, putPacket, queued } from "@/lib/offline/db";
 import { athleteToday } from "@/tests/mocks/fixtures";
 import { strengthPacket } from "@/tests/mocks/handlers-strength";
+import { syncServer } from "@/tests/mocks/sync-state";
 
 /**
  * AC-50: what the logging screen writes to the outbox — the IndexedDB store
@@ -284,6 +285,9 @@ describe("numbers and fixes", () => {
 
   it("finishes with the rating, don't learn and its private reason", async () => {
     await open({ mode: "standard" });
+    // Finishing flushes the outbox; with signal the upload can empty it
+    // before the read below, so these read it as a basement with none.
+    syncServer().healthy = false;
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Don't learn from today" }),
@@ -311,6 +315,9 @@ describe("numbers and fixes", () => {
 
   it("finishing without a rating leaves it empty", async () => {
     await open({ mode: "standard" });
+    // Finishing flushes the outbox; with signal the upload can empty it
+    // before the read below, so these read it as a basement with none.
+    syncServer().healthy = false;
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),
@@ -321,5 +328,95 @@ describe("numbers and fixes", () => {
       "session_start",
       "session_finish",
     ]);
+  });
+});
+
+describe("AC-74: a missed set steps the rest down, on the screen", () => {
+  const squat = { kg: 100, sets: 4, reps: 8 };
+
+  async function openSquat(followExactly = false) {
+    await putPacket({
+      packet: strengthPacket(today, new Date(), {
+        barbell: squat,
+        followExactly,
+      }),
+      storedAt: Date.now(),
+    });
+    render(<LoggingScreen plannedSessionId={SESSION_ID} />);
+    await screen.findByRole("heading", { name: "Set 1 of 4" });
+  }
+
+  async function logSet(n: number, summary: string, reps = 8) {
+    for (let r = 8; r > reps; r--) {
+      fireEvent.click(screen.getByRole("button", { name: "Reps: less" }));
+    }
+    fireEvent.click(
+      await screen.findByRole("button", { name: `Log set ${n}: ${summary}` }),
+    );
+    await screen.findByRole("heading", { name: `Set ${n + 1} of 4` });
+  }
+
+  it("set 2 at 6 reps: sets 3 and 4 show 97.5 kg, with the reason", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 97.5 kg × 8" }),
+    ).toBeVisible();
+    expect(screen.getByText("next: set 4 · 97.5 kg × 8")).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+    // The logged rows keep what was lifted.
+    expect(
+      screen.getByRole("button", { name: "Edit set 1: 100 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Edit set 2: 100 kg × 6" }),
+    ).toBeVisible();
+
+    const [first, second] = await setItems();
+    expect(first.set.load_kg).toBe(100);
+    expect(second.set).toMatchObject({ load_kg: 100, reps: 6 });
+  });
+
+  it("set 2 at 7 reps changes nothing", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 7", 7);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 7" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+    expect(screen.getByText("From your plan")).toBeVisible();
+  });
+
+  it("on a follow-exactly plan nothing changes", async () => {
+    await openSquat(true);
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 6" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+  });
+
+  it("a second miss lowers one more step", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 6", 6);
+    await logSet(2, "97.5 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 95 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Edit set 1: 100 kg × 6" }),
+    ).toBeVisible();
   });
 });
