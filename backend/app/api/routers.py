@@ -25,6 +25,8 @@ from app.api.routes.cards import router as cards_router
 from app.api.routes.clock import router as clock_router
 from app.api.routes.connections import router as connections_router
 from app.api.routes.exercises import router as exercises_router
+from app.api.routes.exports import router as exports_router
+from app.api.routes.exports import session_router as session_export_router
 from app.api.routes.fitness import router as fitness_router
 from app.api.routes.ingest import router as ingest_router
 from app.api.routes.integrations import catalogue_router as integration_catalogue_router
@@ -76,4 +78,6 @@ GUARDED_ROUTERS: tuple[APIRouter, ...] = (
     training_settings_router,
     sync_router,
     plans_router,
+    exports_router,
+    session_export_router,
 )

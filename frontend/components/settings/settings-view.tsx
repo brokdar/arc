@@ -10,6 +10,7 @@ import {
   AnchorHistory,
   CurrentAnchors,
 } from "@/components/settings/anchors";
+import { ExportPanel } from "@/components/settings/export-panel";
 import { IntegrationsPanel } from "@/components/settings/integrations/integrations-panel";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { TrainingSettingsPanel } from "@/components/settings/training-settings";
@@ -97,6 +98,10 @@ export function SettingsView() {
             — once at setup and once when a ride stops arriving — while
             everything above it is read on the way past. */}
         <IntegrationsPanel />
+
+        {/* After where rides come from, where everything goes: visited
+            even more rarely, and never on the way to anything else. */}
+        <ExportPanel />
       </PageBody>
     </>
   );

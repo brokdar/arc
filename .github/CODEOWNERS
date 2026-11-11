@@ -33,13 +33,14 @@
 /caddy/                               @brokdar
 /docker-compose.yml                   @brokdar
 
-# The gate and the agents: CI, this file, hooks, the agent definitions, rules
-# and settings, and the scripts that ARE the gate or the agent identity
-# (migration heuristic, api-sync, ci-status, as-agent.sh, the lane classifier
-# and merge breaker, this file's checker, the repo setup) with their tests.
+# The guards themselves: CI and repo settings (`.github/`, `setup-repo.sh`), the
+# agent's identity and what it may run (`as-agent.sh`, `.claude/settings.json`,
+# `.claude/hooks/`), the lane classifier and the merge breaker, and this file's
+# checker — with their tests. Each of these decides whether an agent PR needs
+# the operator or whether agents may merge at all.
 /.github/                             @brokdar
-/.claude/                             @brokdar
-/backend/schemathesis.toml            @brokdar
+/.claude/settings.json                @brokdar
+/.claude/hooks/                       @brokdar
 /scripts/as-agent.sh                  @brokdar
 /scripts/as-agent.test.sh             @brokdar
 /scripts/risk-tier.mjs                @brokdar
@@ -48,14 +49,7 @@
 /scripts/review-breaker.test.mjs      @brokdar
 /scripts/check-codeowners.sh          @brokdar
 /scripts/check-codeowners.test.sh     @brokdar
-/scripts/check-migration-required.sh  @brokdar
-/scripts/check-migration-required.test.sh @brokdar
-/scripts/check-api-schema-sync.sh     @brokdar
-/scripts/check-api-schema-sync.test.sh @brokdar
-/scripts/ci-status.mjs                @brokdar
-/scripts/ci-status.test.mjs           @brokdar
 /scripts/setup-repo.sh                @brokdar
-/scripts/workflow-guards.test.mjs     @brokdar
 
 # DELIBERATELY NOT OWNED, and the hole it leaves: `justfile` (its `gate` recipe),
 # `.pre-commit-config.yaml`, `mise.toml`, `.agents/` (skill text agents follow),
@@ -73,8 +67,19 @@
 # development, and owning them sent almost every feature PR to the operator.
 # What still stands between an agent and a bad migration: CI runs
 # `alembic upgrade head` and `alembic check` against real Postgres, the
-# migration heuristic (`scripts/check-migration-required.sh`, owned) fails a
-# model change without one, and docs/review/rollback.md says how to step back.
+# migration heuristic (`scripts/check-migration-required.sh`) fails a model
+# change without one, and docs/review/rollback.md says how to step back.
 # A router added to the guarded list is behind the session guard by
 # construction, and `test_router_protection.py` demands a 401 from every
 # endpoint off its open list; making one public still needs `app/main.py`.
+#
+# And by the operator's decision on 2026-11-11, cutting the lane to the guards
+# alone: `backend/schemathesis.toml` (every new endpoint adds a block there, so
+# it sent nearly every feature PR to the operator), the rest of `.claude/`
+# (skills, rules, agent definitions, workflows, plugins, the status line), and
+# the build's helper scripts (`check-migration-required`, `check-api-schema-sync`,
+# `ci-status`, `workflow-guards.test.mjs`). The hole it leaves: an agent PR can
+# narrow the fuzzer, loosen a CI helper or rewrite a skill and merge without the
+# operator — the same trade already made for `justfile` and `.pre-commit-config.yaml`
+# above. CI itself (`.github/workflows/`) still runs the fuzzer and every
+# check, and changing which checks run or are required stays owned.

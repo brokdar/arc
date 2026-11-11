@@ -11,6 +11,7 @@ import { NotAssessed } from "@/components/design/not-assessed";
 import { Panel } from "@/components/design/panel";
 import { SectionLabel } from "@/components/design/section-label";
 import { DisciplineIcon } from "@/components/icons";
+import { ExportAction } from "@/components/sessions/export-action";
 import { MatchPanel } from "@/components/sessions/match-panel";
 import { PowerCurveCard } from "@/components/sessions/power-curve-card";
 import { ScoringPanel } from "@/components/sessions/scoring-panel";
@@ -140,8 +141,12 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           {weekdayLabel(session.local_date)}{" "}
           {formatDayMonthYear(session.local_date)}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2.5">
           <MatchBadge status={session.status} link={session.match} />
+          {/* Every session, not only gym ones: a ride's text says when and
+              how long, and its CSV is the header alone — an honest answer
+              rather than a button that appears and disappears. */}
+          <ExportAction sessionId={session.id} />
         </div>
       </Toolbar>
 

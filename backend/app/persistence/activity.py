@@ -579,6 +579,23 @@ class SessionRepository:
         )
         return list(result.scalars())
 
+    async def with_logged_sets_oldest_first(self) -> Sequence[SessionRow]:
+        """Every session holding at least one logged set, oldest first.
+
+        Unpaged for the reason `all_oldest_first` gives: the exports
+        (`app.services.exports`) hand over the whole history in one file, and
+        a session with no sets has nothing to put in a set-level export.
+        """
+        has_sets = select(LoggedSetRow.id).where(
+            LoggedSetRow.session_id == SessionRow.id
+        )
+        result = await self._session.execute(
+            select(SessionRow)
+            .where(has_sets.exists())
+            .order_by(SessionRow.start_time.asc(), SessionRow.id.asc())
+        )
+        return list(result.scalars())
+
     async def by_ids(
         self, session_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, SessionRow]:
