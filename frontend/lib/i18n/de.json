@@ -22,7 +22,12 @@
   },
   "offline": {
     "ready": "Offline bereit",
-    "readySynced": "Offline bereit · Stand {time}"
+    "readySynced": "Offline bereit · Stand {time}",
+    "packetTitle": "Letzter Stand",
+    "packetStale": "Verbinde dich neu",
+    "packetSynced": "Vorbereitet {date}",
+    "noWeight": "Gewicht finden",
+    "bodyweight": "Körpergewicht"
   },
   "outbox": {
     "waiting": "{count} warten auf Upload",

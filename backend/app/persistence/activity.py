@@ -596,6 +596,38 @@ class SessionRepository:
         )
         return list(result.scalars())
 
+    async def last_logged_sets(self) -> dict[str, tuple[LoggedSetRow, dt.date]]:
+        """The last non-warm-up set of every catalogue exercise ever logged.
+
+        Keyed by exercise slug, with the local date of the session it was
+        logged in. "Last" is the latest session by start time (ties by id,
+        uuid7 insertion order), then the highest `set_index` in it — never
+        `created_at`, which the wall clock can step behind
+        (`.claude/rules/clock-monotonicity.md`). Warm-ups are skipped: they
+        say nothing about the working weight. Free-text sets have no slug to
+        key by. One query over the set history; a single athlete's lifetime
+        of sets is tens of thousands of narrow rows at most.
+        """
+        result = await self._session.execute(
+            select(LoggedSetRow, SessionRow.local_date)
+            .join(SessionRow, LoggedSetRow.session_id == SessionRow.id)
+            .where(
+                LoggedSetRow.exercise_id.is_not(None),
+                LoggedSetRow.set_kind != LoggedSetKind.WARMUP,
+            )
+            .order_by(
+                SessionRow.start_time.desc(),
+                SessionRow.id.desc(),
+                LoggedSetRow.set_index.desc(),
+                LoggedSetRow.id.desc(),
+            )
+        )
+        latest: dict[str, tuple[LoggedSetRow, dt.date]] = {}
+        for row, local_date in result.all():
+            if row.exercise_id is not None and row.exercise_id not in latest:
+                latest[row.exercise_id] = (row, local_date)
+        return latest
+
     async def by_ids(
         self, session_ids: Sequence[uuid.UUID]
     ) -> dict[uuid.UUID, SessionRow]:

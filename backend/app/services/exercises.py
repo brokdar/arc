@@ -132,6 +132,15 @@ class ExerciseService:
             raise NotFoundError(f"Exercise {exercise_id!r} is not in the catalogue")
         return row
 
+    async def catalogue(self) -> dict[str, ExerciseRow]:
+        """The whole catalogue by slug, seeding it first if it is empty.
+
+        For readers that resolve a prescription against the library rather
+        than page through it — the session packet needs every line's entry.
+        """
+        await self.ensure_seeded()
+        return {row.id: row for row in await self._repository.all()}
+
     async def get_note(self, exercise_id: str) -> ExerciseNote:
         """Return the note on one exercise, empty when none was written.
 

@@ -240,7 +240,9 @@ WARMUP_RAMP = Rule(
     value=((0.4, 5), (0.6, 3), (0.8, 2)),
     summary=(
         "After the bar, warm-ups climb at 40 %, 60 % and 80 % of the working "
-        "weight for 5, 3 and 2 reps, skipping steps at or below the bar."
+        "weight, each rounded down to a loadable weight, skipping steps at or "
+        "below the bar or less than two loadable steps above the previous one; "
+        "the steps that remain take 5, 3 and 2 reps in order."
     ),
     evidence=Evidence.PRACTICE,
     certainty=Certainty.MODERATE,

@@ -13,6 +13,7 @@ import {
   startOutbox,
   subscribe,
 } from "@/lib/offline/outbox";
+import { syncNow } from "@/lib/offline/packet-store";
 
 /** How often the badge re-reads the queue, so the 60 s rule can trip. */
 const TICK_MS = 5_000;
@@ -26,7 +27,8 @@ const TICK_MS = 5_000;
  * Mounted once in the signed-in shell, which makes it the outbox's driver as
  * well: mounting starts `startOutbox` (a flush on launch, on visibility, on
  * `online`, every 30 s). So logging in again drains a queue a 401 kept — the
- * shell mounts and the launch flush runs.
+ * shell mounts and the launch flush runs. Each of those syncs also refreshes
+ * the session packet after the upload (`syncNow`, `lib/offline/packet-store.ts`).
  *
  * The list is an inline panel under the badge (the filter/toggle tier): it is
  * a glance at a few items, with Copy and Export so nothing typed in the gym is
@@ -54,7 +56,7 @@ export function OutboxBadge() {
     if (typeof indexedDB === "undefined") return;
     reread();
     const unsubscribe = subscribe(reread);
-    const stop = startOutbox();
+    const stop = startOutbox(syncNow);
     const tick = window.setInterval(reread, TICK_MS);
     return () => {
       unsubscribe();
