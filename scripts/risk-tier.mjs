@@ -2,8 +2,9 @@
 // Classify a pull request into a review lane — auto, agent or owner — from what
 // it changes, never from who wrote it or what an LLM thinks of it.
 //
-//   owner  touches a path in .github/CODEOWNERS (auth, MCP auth, migrations,
-//          proxy and deploy files, CI, hooks, .claude, scripts, toolchain pins),
+//   owner  touches a path in .github/CODEOWNERS (auth, MCP auth, proxy and
+//          deploy files, CI, the agent-identity hooks and settings, and the
+//          scripts that decide lanes and agent merging),
 //          or cannot be classified at all. The operator's approving review is
 //          required by GitHub itself; this label only says so early.
 //   auto   cannot change behaviour: a small docs/test-only change, or a

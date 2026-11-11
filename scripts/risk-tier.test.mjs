@@ -267,6 +267,24 @@ group("the live .github/CODEOWNERS, through the classifier");
   ]) {
     ok(`${p} is owned`, ownedBy(p, entries) !== null);
   }
+  // Un-owned by the operator on 2026-11-11: the lane is the guards alone.
+  for (const p of [
+    "backend/schemathesis.toml",
+    ".claude/skills/commit/SKILL.md",
+    ".claude/rules/clock-monotonicity.md",
+    ".claude/agents/arc-reviewer.md",
+    ".claude/workflows/implement-plan.js",
+    ".claude/statusline.sh",
+    "scripts/check-migration-required.sh",
+    "scripts/check-api-schema-sync.sh",
+    "scripts/ci-status.mjs",
+    "scripts/workflow-guards.test.mjs",
+  ]) {
+    ok(`${p} is not owned`, ownedBy(p, entries) === null);
+  }
+  for (const p of [".claude/hooks/block_npm.py", "scripts/review-breaker.mjs", "scripts/check-codeowners.sh", "scripts/setup-repo.sh"]) {
+    ok(`${p} is owned`, ownedBy(p, entries) !== null);
+  }
   for (const p of ["backend/app/services/athlete.py", "backend/app/persistence/alembic/versions/anything.py", "backend/app/api/routers.py", "frontend/components/x.tsx", "docs/a.md", "CLAUDE.md", "backend/tests/unit/test_auth.py", "justfile", ".env.example", ".pre-commit-config.yaml", ".agents/skills/alembic/SKILL.md", "scripts/bootstrap-env.sh"]) {
     ok(`${p} is not owned`, ownedBy(p, entries) === null);
   }
