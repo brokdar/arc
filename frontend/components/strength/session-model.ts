@@ -1,5 +1,6 @@
 import type { components } from "@/generated/api/schema";
 import type { Mutation, SetPatch } from "@/lib/offline/db";
+import { type Gym, loadableWeights, startingStep } from "@/lib/strength";
 
 /**
  * The logging screen's state, and the outbox mutations each action writes.
@@ -60,7 +61,24 @@ export interface ActiveSession {
   lineIndex: number;
   rest: Rest | null;
   finished: boolean;
+  /**
+   * The starting-weight flow per line ref (`starting-flow.tsx`). Optional so
+   * a session stored before the flow existed still resumes.
+   */
+  starting?: Record<string, StartingState>;
 }
+
+/** Where a line's starting-weight flow stands. */
+export interface StartingState {
+  /** The weight of the next easy set, or the working weight once settled. */
+  kg: number;
+  settled: boolean;
+}
+
+/** Reps in each easy set of the starting-weight flow. */
+export const STARTING_REPS = 5;
+
+export type StartingAnswer = "easy" | "good" | "hard";
 
 /** Rest after a set when the line names none: main lifts 3 min, else 2. */
 export const MAIN_REST_S = 180;
@@ -107,7 +125,10 @@ export interface Draft {
   durationS: number | null;
 }
 
-/** The numbers a line's next set opens with: its last set here, else the packet's pre-fill. */
+/**
+ * The numbers a line's next set opens with: its last set here, else the
+ * weight its starting-weight flow settled on, else the packet's pre-fill.
+ */
 export function draftFor(session: ActiveSession, line: PacketLine): Draft {
   const done = workingSetsOf(session, line.line_ref);
   const last = done[done.length - 1];
@@ -119,8 +140,9 @@ export function draftFor(session: ActiveSession, line: PacketLine): Draft {
     ? prescription.reps[1]
     : prescription.reps;
   const durationS = prefill.duration_s ?? prescription.duration_s ?? null;
+  const started = session.starting?.[line.line_ref];
   return {
-    loadKg: prefill.load_kg,
+    loadKg: started?.settled ? started.kg : prefill.load_kg,
     reps: durationS !== null ? null : (prefill.reps ?? plannedReps ?? 8),
     durationS,
   };
@@ -293,4 +315,98 @@ export function allDone(
   lines: readonly PacketLine[],
 ): boolean {
   return nextOpenLine(session, lines, 0) === null;
+}
+
+/**
+ * Whether `line` opens with the starting-weight flow instead of its first set.
+ *
+ * Only for a line the packet flags `starting_flow` (never logged, no weight
+ * prescribed) that has equipment to find a weight on and counts reps — a
+ * timed hold has no "5 easy reps" — and only until the flow settles or a
+ * working set is logged, whichever comes first.
+ */
+export function inStartingFlow(
+  session: ActiveSession,
+  line: PacketLine,
+): boolean {
+  return (
+    line.prefill.starting_flow &&
+    line.equipment !== null &&
+    (line.prescription.duration_s ?? null) === null &&
+    session.starting?.[line.line_ref]?.settled !== true &&
+    workingSetsOf(session, line.line_ref).length === 0
+  );
+}
+
+/** The weight of the flow's next easy set: the lightest start, then each step. */
+export function startingKg(
+  session: ActiveSession,
+  line: PacketLine,
+  gym: Gym,
+): number {
+  const state = session.starting?.[line.line_ref];
+  if (state) return state.kg;
+  // The empty bar, the lightest dumbbell, the lightest stack weight.
+  return line.equipment === null ? 0 : loadableWeights(line.equipment, gym)[0];
+}
+
+function withStarting(
+  session: ActiveSession,
+  lineRef: string,
+  state: StartingState,
+): ActiveSession {
+  return {
+    ...session,
+    starting: { ...(session.starting ?? {}), [lineRef]: state },
+  };
+}
+
+/**
+ * One answer in the flow: the easy set just done is logged as a warm-up, and
+ * the next weight is `startingStep` of it — Easy +20 %, Good +10 %, both
+ * rounded to loadable. **Hard settles**: the working weight is one loadable
+ * step below the set that felt hard, so 20 Easy, 25 Good, 27.5 Hard settles
+ * 25 kg (AC-58). Hard is the only answer that ends the flow, because Easy and
+ * Good both say the weight can still go up; nobody is ever asked for a max.
+ */
+export function answerStarting(
+  session: ActiveSession,
+  line: PacketLine,
+  gym: Gym,
+  answer: StartingAnswer,
+  clientId: string,
+): { next: ActiveSession; set: LoggedSet } {
+  const kg = startingKg(session, line, gym);
+  const equipment = line.equipment ?? "barbell";
+  const set: LoggedSet = {
+    clientId,
+    lineRef: line.line_ref,
+    exerciseId: line.exercise_id,
+    warmup: true,
+    loadKg: kg,
+    reps: STARTING_REPS,
+    durationS: null,
+    perSide: line.prescription.per_side === true,
+    rir: null,
+    rirCapped: false,
+    effortSimple: null,
+  };
+  const next = withStarting(
+    { ...session, sets: [...session.sets, set] },
+    line.line_ref,
+    {
+      kg: startingStep(kg, answer, equipment, gym),
+      settled: answer === "hard",
+    },
+  );
+  return { next, set };
+}
+
+/** A typed weight ends the flow at once: it is the working weight. */
+export function settleStarting(
+  session: ActiveSession,
+  lineRef: string,
+  kg: number,
+): ActiveSession {
+  return withStarting(session, lineRef, { kg, settled: true });
 }

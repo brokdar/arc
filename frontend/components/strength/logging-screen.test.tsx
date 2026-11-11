@@ -11,6 +11,7 @@ import {
 import { type Mutation, putPacket, queued } from "@/lib/offline/db";
 import { athleteToday } from "@/tests/mocks/fixtures";
 import { strengthPacket } from "@/tests/mocks/handlers-strength";
+import { syncServer } from "@/tests/mocks/sync-state";
 
 /**
  * AC-50: what the logging screen writes to the outbox — the IndexedDB store
@@ -45,6 +46,16 @@ async function logAsPlanned(n: number) {
     await screen.findByRole("button", { name: `Log set ${n}: 20 kg × 10` }),
   );
   await screen.findByRole("heading", { name: `Set ${n + 1} of 3` });
+}
+
+/**
+ * Finish flushes the outbox right after writing it, and with the sync mock
+ * up that upload can drain the queue before a test reads it — the read then
+ * races the flush and finds nothing. With the network down the flush fails,
+ * the items stay, and the test reads what Finish wrote, every time.
+ */
+function offline() {
+  syncServer().healthy = false;
 }
 
 type SetUpsert = Extract<Mutation, { kind: "set_upsert" }>;
@@ -284,6 +295,7 @@ describe("numbers and fixes", () => {
 
   it("finishes with the rating, don't learn and its private reason", async () => {
     await open({ mode: "standard" });
+    offline();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Don't learn from today" }),
@@ -311,6 +323,7 @@ describe("numbers and fixes", () => {
 
   it("finishing without a rating leaves it empty", async () => {
     await open({ mode: "standard" });
+    offline();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),

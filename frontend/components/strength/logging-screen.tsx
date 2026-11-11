@@ -19,11 +19,13 @@ import {
   type ActiveSession,
   advance,
   allDone,
+  answerStarting,
   applyRating,
   asksEffort,
   type Draft,
   deleteMutation,
   draftFor,
+  inStartingFlow,
   type LoggedSet,
   lineComplete,
   nextOpenLine,
@@ -36,12 +38,16 @@ import {
   ratingSnapshot,
   restFor,
   type Stamp,
+  type StartingAnswer,
   setMutation,
+  settleStarting,
+  startingKg,
   startMutation,
   warmupsDone,
   workingSetsOf,
 } from "@/components/strength/session-model";
 import { loadSession, saveSession } from "@/components/strength/session-store";
+import { StartingFlow } from "@/components/strength/starting-flow";
 import { Stepper } from "@/components/strength/stepper";
 import { Button } from "@/components/ui/button";
 import {
@@ -88,6 +94,11 @@ import { cn } from "@/lib/utils";
  * reload offers "Resume" at the next unlogged set with the rest timer
  * intact. Opening the screen for a session not yet started starts it — the
  * tap on Today's "Start" is the whole of starting.
+ *
+ * **A line never logged** (`starting_flow` in the packet) opens with the
+ * starting-weight flow (`starting-flow.tsx`) in place of its current set and
+ * ✓; its easy sets are logged as warm-ups, and the first working set opens at
+ * the weight it settled on.
  *
  * **Undo** takes the last action's mutations back out of the outbox for 6 s;
  * one that already uploaded is compensated (a delete, or the rating it
@@ -277,10 +288,11 @@ export function LoggingScreen({
   const units = packet?.settings.units ?? "kg";
 
   // The current set's numbers open with the line's pre-fill or its last set,
-  // and reset whenever the set they are for changes.
+  // and reset whenever the set they are for changes — or the starting-weight
+  // flow settles the weight it opens with.
   const draftKey =
     session && line
-      ? `${line.line_ref}:${workingSetsOf(session, line.line_ref).length}`
+      ? `${line.line_ref}:${workingSetsOf(session, line.line_ref).length}:${session.starting?.[line.line_ref]?.settled === true}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
   if (session && line && draftKey !== draftFor_) {
@@ -301,6 +313,7 @@ export function LoggingScreen({
   }
 
   const done = allDone(session, lines);
+  const starting = line !== undefined && inStartingFlow(session, line);
   const weightText = (kg: number | null) =>
     kg === null
       ? t("train.bodyweight")
@@ -405,6 +418,34 @@ export function LoggingScreen({
       })),
     });
     void commit({ ...session, sets: [...session.sets, ...created] }, mutations);
+  };
+
+  const answerStart = (answer: StartingAnswer) => {
+    if (!line) return;
+    const st = stamp();
+    const { next, set } = answerStarting(
+      session,
+      line,
+      gym,
+      answer,
+      uuid7(st.now),
+    );
+    const create = setMutation(session, set, session.sets.length, scale, st);
+    setUndo({
+      before: session,
+      writes: [
+        {
+          mutationId: create.mutation_id,
+          compensate: () => deleteMutation(session, set.clientId, stamp()),
+        },
+      ],
+    });
+    void commit(next, [create]);
+  };
+
+  const typeStart = (kg: number) => {
+    if (!line) return;
+    void commit(settleStarting(session, line.line_ref, kg));
   };
 
   const undoLast = () => {
@@ -619,7 +660,17 @@ export function LoggingScreen({
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
             <WakeLockNotice />
-            {line ? (
+            {line && starting && line.equipment ? (
+              <StartingFlow
+                kg={startingKg(session, line, gym)}
+                equipment={line.equipment}
+                gym={gym}
+                units={units}
+                weightText={weightText}
+                onAnswer={answerStart}
+                onType={typeStart}
+              />
+            ) : line ? (
               <LineBody
                 line={line}
                 session={session}
@@ -659,7 +710,7 @@ export function LoggingScreen({
                 {t("train.undo")}
               </Button>
             ) : null}
-            {done ? (
+            {starting ? null : done ? (
               <Button
                 className="h-[72px] text-xl"
                 onClick={() => setPhase("finishing")}
