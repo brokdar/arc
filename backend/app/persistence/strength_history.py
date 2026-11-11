@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.activity import SessionLifecycle
+from app.domain.activity import LoggedSetKind, SessionLifecycle, SetSide
 from app.domain.metrics import PerformedSet
 from app.domain.strength_records import Exposure
 from app.persistence.activity import LoggedSetRow, SessionRow
@@ -52,6 +52,16 @@ _SET_COLUMNS = (
 )
 
 
+#: `_SET_COLUMNS` with the two enums read as the stored strings. A history
+#: read converts them only once per distinct set (`exposures` shares identical
+#: rows), not 40,000 times through the column type for 20,000 rows.
+_RAW_SET_COLUMNS = (
+    type_coerce(LoggedSetRow.set_kind, String).label("set_kind"),
+    type_coerce(LoggedSetRow.side, String).label("side"),
+    *_SET_COLUMNS[2:],
+)
+
+
 def _raw(column: ColumnExpressionArgument[uuid.UUID]) -> ColumnElement[Any]:
     """A session id as the driver returns it, labelled ``key``.
 
@@ -71,6 +81,21 @@ def _performed(row: Row[*tuple[Any, ...]]) -> PerformedSet:
         per_side=row.per_side,
         side=row.side,
         kind=row.set_kind,
+        rir=row.rir,
+        rir_capped=row.rir_capped,
+        rpe=row.rpe,
+    )
+
+
+def _performed_raw(row: Row[*tuple[Any, ...]]) -> PerformedSet:
+    """`_performed` over `_RAW_SET_COLUMNS`: the enums built from their values."""
+    return PerformedSet(
+        reps=row.reps,
+        load_kg=row.load_kg,
+        duration_s=row.duration_s,
+        per_side=row.per_side,
+        side=SetSide(row.side),
+        kind=LoggedSetKind(row.set_kind),
         rir=row.rir,
         rir_capped=row.rir_capped,
         rpe=row.rpe,
@@ -154,7 +179,7 @@ class StrengthHistoryRepository:
         sets: dict[Any, list[PerformedSet]] = {row.key: [] for row in sessions}
         seen: dict[tuple[Any, ...], PerformedSet] = {}
         result = await self._session.execute(
-            select(_raw(LoggedSetRow.session_id), *_SET_COLUMNS)
+            select(_raw(LoggedSetRow.session_id), *_RAW_SET_COLUMNS)
             .where(
                 match,
                 LoggedSetRow.session_id.in_(select(SessionRow.id).where(*finished)),
@@ -168,7 +193,7 @@ class StrengthHistoryRepository:
             values = row[1:]
             performed = seen.get(values)
             if performed is None:
-                performed = seen[values] = _performed(row)
+                performed = seen[values] = _performed_raw(row)
             bucket.append(performed)
         return [
             Exposure(
