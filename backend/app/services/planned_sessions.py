@@ -17,7 +17,8 @@ Build-plan invariant 4, in one place:
   would rewrite the prescription the ride was actually judged by. Kept, not
   frozen wholesale: a pin the new version no longer needs is dropped, and an
   anchor the new version introduces is pinned at today's version.
-* Editing a session's *date* or *status* is not an intent edit and writes no
+* Editing a session's *date*, *status*, *key* flag or *time of day* is not an
+  intent edit and writes no
   version. Those are facts about the calendar, not about what the session is
   for — which is also why **moving** a session (`move`) touches nothing but
   the date and its audit row.
@@ -63,6 +64,7 @@ from app.domain.criteria import (
     criteria_to_json,
 )
 from app.domain.criteria import referenced_anchor_types as criteria_anchors
+from app.domain.plans import format_time_of_day
 from app.domain.prediction import (
     PinnedAnchor,
     PredictedLoad,
@@ -92,6 +94,7 @@ from app.persistence.planned_sessions import (
     PlannedSessionRow,
 )
 from app.services.anchors import AnchorService, parse_pins, resolve_pins
+from app.services.plans import PlansService
 from app.services.scoring import REASON_INTENT_EDITED, ScoringService
 from app.services.templates import purpose_templates
 from app.services.workouts import WorkoutService
@@ -110,8 +113,9 @@ INTENT_FIELDS = (
     "structure",
 )
 
-#: Session fields an edit may touch without versioning anything.
-SESSION_FIELDS = ("date", "status")
+#: Session fields an edit may touch without versioning anything. `key` and
+#: `time_of_day` are among them by design: see `app.persistence.planned_sessions`.
+SESSION_FIELDS = ("date", "status", "key", "time_of_day")
 
 #: Everything `update` accepts.
 UPDATABLE_FIELDS = (*INTENT_FIELDS, *SESSION_FIELDS)
@@ -120,7 +124,7 @@ UPDATABLE_FIELDS = (*INTENT_FIELDS, *SESSION_FIELDS)
 #: are nullable by design and clearing them is an edit; these three name
 #: something a planned session cannot be without, and a null would reach the
 #: template lookup or a NOT NULL column as a 500 rather than a 422.
-UNCLEARABLE_FIELDS = ("purpose", "date", "status")
+UNCLEARABLE_FIELDS = ("purpose", "date", "status", "key")
 
 #: `recompute_reason` written on an ordinary pre-execution edit.
 REASON_EDITED = "intent edited"
@@ -311,12 +315,14 @@ class PlannedSessionService:
         audit: AuditRepository,
         anchors: AnchorService,
         workouts: WorkoutService,
+        plans: PlansService,
     ) -> None:
         self._session = session
         self._repository = repository
         self._audit = audit
         self._anchors = anchors
         self._workouts = workouts
+        self._plans = plans
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
@@ -327,6 +333,7 @@ class PlannedSessionService:
             AuditRepository(session),
             AnchorService.from_session(session),
             WorkoutService.from_session(session),
+            PlansService.from_session(session),
         )
 
     # --- reads ---------------------------------------------------------------
@@ -593,6 +600,8 @@ class PlannedSessionService:
         intent_text: str | None = None,
         coach_notes: str | None = None,
         success_criteria: Sequence[Mapping[str, Any]] | None = None,
+        key: bool = False,
+        time_of_day: dt.time | None = None,
     ) -> PlannedSessionRow:
         """Plan a session, freezing its prescription, and commit.
 
@@ -615,6 +624,8 @@ class PlannedSessionService:
             intent_text=intent_text,
             coach_notes=coach_notes,
             success_criteria=success_criteria,
+            key=key,
+            time_of_day=time_of_day,
         )
         await commit(self._session)
         await refresh(self._session, row)
@@ -631,8 +642,17 @@ class PlannedSessionService:
         intent_text: str | None = None,
         coach_notes: str | None = None,
         success_criteria: Sequence[Mapping[str, Any]] | None = None,
+        key: bool = False,
+        time_of_day: dt.time | None = None,
     ) -> PlannedSessionRow:
-        """:meth:`create` without the commit — see :meth:`stage_delete`."""
+        """:meth:`create` without the commit — see :meth:`stage_delete`.
+
+        The session joins the plan its date belongs to
+        (`PlansService.plan_for`): the active dated plan covering it, else the
+        default plan. Moving it later keeps that plan — membership is decided
+        when a session is planned, and a drag across a plan boundary does not
+        silently change which phase it was planned under.
+        """
         body, resolved_workout_id = await self.resolve_body(workout_id, structure)
         criteria = await self._resolve_criteria(purpose, success_criteria)
         # Shape first, pins second: resolving anchors is a round-trip per
@@ -651,11 +671,15 @@ class PlannedSessionService:
             coach_notes=coach_notes,
         )
 
+        plan = await self._plans.plan_for(date)
         row = await self._repository.add(
             PlannedSessionRow(
                 date=date,
                 discipline=intent.discipline,
                 status=SessionStatus.PLANNED,
+                plan_id=plan.id,
+                key=key,
+                time_of_day=time_of_day,
             )
         )
         await self._repository.append_intent(
@@ -751,6 +775,10 @@ class PlannedSessionService:
             row.date = updates["date"]
         if "status" in updates:
             row.status = updates["status"]
+        if "key" in updates:
+            row.key = updates["key"]
+        if "time_of_day" in updates:
+            row.time_of_day = updates["time_of_day"]
         row.discipline = purpose_discipline(row.current_intent.purpose)
         row = await self._repository.add(row)
 
@@ -764,6 +792,12 @@ class PlannedSessionService:
                     "changed": sorted(set(updates) & set(SESSION_FIELDS)),
                     "date": row.date.isoformat(),
                     "status": row.status.value,
+                    "key": row.key,
+                    "time_of_day": (
+                        None
+                        if row.time_of_day is None
+                        else format_time_of_day(row.time_of_day)
+                    ),
                     "intent_version": row.current_intent.version,
                 },
             )
@@ -833,8 +867,9 @@ class PlannedSessionService:
         frozen structure (the snapshot, not a fresh read of the library
         workout, so a library edit since cannot change what is being
         repeated), the intent text, the coach notes, the success criteria as
-        they stand — edited or not — and the provenance link to the library
-        workout.
+        they stand — edited or not — the provenance link to the library
+        workout, and the key flag and time of day. The *plan* is not
+        inherited: the copy joins whichever plan its own date belongs to.
 
         Raises:
             NotFoundError: When no session has that id.
@@ -858,11 +893,15 @@ class PlannedSessionService:
             coach_notes=current.coach_notes,
         )
 
+        plan = await self._plans.plan_for(date)
         row = await self._repository.add(
             PlannedSessionRow(
                 date=date,
                 discipline=intent.discipline,
                 status=SessionStatus.PLANNED,
+                plan_id=plan.id,
+                key=source.key,
+                time_of_day=source.time_of_day,
             )
         )
         await self._repository.append_intent(

@@ -17,6 +17,7 @@ import uuid
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from app.api.pagination import Page
 from app.api.schemas.criteria import SuccessCriterionSchema
@@ -25,11 +26,23 @@ from app.api.schemas.workouts import WorkoutStructureSchema, WorkoutSummarySchem
 from app.api.validation import PostgresText
 from app.domain.anchors import AnchorType, AnchorUnit, Provenance
 from app.domain.athlete import Discipline
+from app.domain.plans import TIME_OF_DAY_PATTERN
 from app.domain.purpose import Purpose
 from app.domain.sessions import MAX_INTENT_CHARS, SessionStatus
 from app.domain.workout import Channel, ChannelUnit, StepRole
 
 IntentText = Annotated[PostgresText, Field(min_length=1, max_length=MAX_INTENT_CHARS)]
+
+#: ``HH:MM`` on a 24-hour clock. A string, not a JSON-schema ``time``: that
+#: format takes seconds and an offset, and a planned session has neither.
+TimeOfDay = Annotated[
+    str,
+    Field(
+        pattern=TIME_OF_DAY_PATTERN,
+        examples=["17:30"],
+        description="Athlete-local time of day, HH:MM on a 24-hour clock.",
+    ),
+]
 
 
 class PlannedSessionCreate(BaseModel):
@@ -48,6 +61,10 @@ class PlannedSessionCreate(BaseModel):
     coach_notes: IntentText | None = None
     #: Omit to take the purpose template's defaults, which is the normal case.
     success_criteria: list[SuccessCriterionSchema] | None = None
+    #: A key session — the one the week is arranged around.
+    key: bool = False
+    #: When in the day it is planned; omit or null for an untimed session.
+    time_of_day: TimeOfDay | None = None
 
 
 class PlannedSessionUpdate(BaseModel):
@@ -55,10 +72,14 @@ class PlannedSessionUpdate(BaseModel):
 
     Touching ``purpose``, ``intent_text``, ``coach_notes``,
     ``success_criteria``, ``workout_id`` or ``structure`` appends a new intent
-    version. Touching only ``date`` or ``status`` does not.
+    version. Touching only ``date``, ``status``, ``key`` or ``time_of_day``
+    does not. ``time_of_day: null`` clears the time; ``key`` cannot be cleared.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    key: bool | SkipJsonSchema[None] = None
+    time_of_day: TimeOfDay | None = None
 
     date: dt.date | None = None
     status: SessionStatus | None = None
@@ -258,6 +279,12 @@ class PlannedSessionListItem(BaseModel):
     date: dt.date
     discipline: Discipline
     status: SessionStatus
+    #: The plan this session belongs to.
+    plan_id: uuid.UUID
+    #: A key session — the one the week is arranged around.
+    key: bool
+    #: Athlete-local ``HH:MM``; null when the session is not timed.
+    time_of_day: str | None
     intent: SessionIntentRead
     #: How many intent versions exist, including the one in force.
     intent_versions: int

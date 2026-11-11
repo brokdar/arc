@@ -465,6 +465,22 @@ group("a push that carries a different commit than the one reviewed is a stop");
   ok("  …and CI was not re-watched as if nothing happened", !sim.labels.includes("feat/a:ci-recheck1"));
 }
 
+group("a CI fix that changes nothing is an infrastructure stop, not a red gate");
+{
+  const sim = await simulate({
+    plan: planOf([prOf()]),
+    replies: {
+      "feat/a:ci": { exitCode: 1, status: "RED", failing: ["smoke"], detail: "setup-bun: fetch failed", invocations: 1 },
+      "feat/a:gate-ci1": { gateExit: 0, gateTail: "GATE OK", committed: false, sha: "2744cc3", files: [], detail: "tree clean" },
+    },
+    argsIn: { plan: "p.md" },
+  });
+  const st = sim.result.stopped[0] || {};
+  ok("stopped as ci-red-no-code-change", st.reason === "ci-red-no-code-change", JSON.stringify(sim.result.stopped));
+  ok("  …the recovery says to re-run the failed jobs", /Re-run the failed jobs/.test(st.recovery || ""));
+  ok("  …and nothing was re-reviewed or pushed", !sim.labels.some((l) => l.includes("review-ci") || l.includes("ci-push")));
+}
+
 group("CI that stays red stops with the PR open, and the worktree is reclaimed");
 {
   const red = { exitCode: 1, status: "RED", failing: ["integration"], detail: "alembic drift", invocations: 1 };

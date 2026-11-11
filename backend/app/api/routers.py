@@ -33,6 +33,7 @@ from app.api.routes.matching import router as matches_router
 from app.api.routes.matching import session_router as session_matches_router
 from app.api.routes.plan import router as plan_router
 from app.api.routes.planned_sessions import router as planned_sessions_router
+from app.api.routes.plans import router as plans_router
 from app.api.routes.power_curve import router as power_curve_router
 from app.api.routes.proposals import router as proposals_router
 from app.api.routes.purposes import router as purposes_router
@@ -74,4 +75,5 @@ GUARDED_ROUTERS: tuple[APIRouter, ...] = (
     cards_router,
     training_settings_router,
     sync_router,
+    plans_router,
 )

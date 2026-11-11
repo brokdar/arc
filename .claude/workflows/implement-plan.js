@@ -549,7 +549,12 @@ function migrationCollisions(groups) {
 
 // Topological layering. `mergedBranches` is the set that is actually ON main —
 // an OPEN prerequisite must not satisfy a dependency, or the next group is cut
-// from a main that lacks it. Returns {groups} or {error, remaining}.
+// from a main that lacks it. Returns {groups, blocked} or {error, remaining}.
+// A PR whose prerequisite is unmerged and not in scope (an open PR awaiting
+// review) lands in `blocked`, and only it: the groups that layer without it
+// still build. Refusing the whole run displaced that — one PR waiting on the
+// operator once stopped a group that did not depend on it. With no group at all
+// it is still an error, which is how a cycle or an over-scoped run shows up.
 function groupsOf(pending, mergedBranches) {
   const remaining = pending.slice();
   const done = new Set(mergedBranches);
@@ -557,14 +562,16 @@ function groupsOf(pending, mergedBranches) {
   let spins = 0;
   while (remaining.length && spins++ < 50) {
     const ready = remaining.filter((p) => (p.depends || []).every((d) => done.has(d)));
-    if (!ready.length) return { error: "unbuildable", remaining };
+    if (!ready.length) {
+      return groups.length ? { groups, blocked: remaining } : { error: "unbuildable", remaining };
+    }
     groups.push(ready);
     for (const p of ready) {
       done.add(p.branch);
       remaining.splice(remaining.indexOf(p), 1);
     }
   }
-  return remaining.length ? { error: "unbuildable", remaining } : { groups };
+  return remaining.length ? { error: "unbuildable", remaining } : { groups, blocked: [] };
 }
 
 // Does the DAG actually WAIT on this branch? Only then is it merged unattended.
@@ -1512,6 +1519,13 @@ if (layered.error) {
   return { feature: parsed.feature, error: "dependency-cycle" };
 }
 const groups = layered.groups;
+const blockedPrs = layered.blocked || [];
+if (blockedPrs.length) {
+  log(
+    `Not building ${blockedPrs.length} PR(s) whose prerequisite is not merged yet; the rest proceeds:\n` +
+      blockedPrs.map((p) => `  - ${p.branch} waits on [${(p.depends || []).join(", ")}]`).join("\n"),
+  );
+}
 
 // `plan-template.md` promises the executor refuses this, so it must actually do
 // it: two branches cut from one head both writing a revision give main two heads.
@@ -1830,6 +1844,16 @@ as a clean run.
       gatePrompt(p, `fix(ci): ${(ci.failing || ["ci"]).join(", ").slice(0, 40)}`),
       cheap(`gate-ci${ciLoops}`, GATE_SCHEMA),
     );
+    // A green gate with nothing to commit means the fix seat changed nothing: it
+    // judged the red check an infrastructure failure (PR #140, 11 Nov 2026: bun
+    // failed to download in `smoke`, no test ran). That is not a red gate, and
+    // reporting it as one sent the operator hunting a defect that did not exist.
+    if (regate && regate.gateExit === 0 && !regate.committed) {
+      return fail("ci-red-no-code-change", {
+        pr, verdict, ci, gate: regate, fixSummary: fixed.summary,
+        recovery: `PR #${pr.number} is red on ${(ci.failing || []).join(", ") || "CI"}, and the fix seat changed nothing: ${String(fixed.summary || "").slice(0, 300)} Re-run the failed jobs (the agent identity cannot re-run Actions), then re-launch.`,
+      });
+    }
     if (regate == null || regate.gateExit !== 0 || !regate.committed) {
       return fail("gate-red-after-ci-fix", {
         pr, verdict, gate: regate,
@@ -2094,6 +2118,13 @@ for (let gi = 0; gi < groups.length && !halted; gi++) {
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────
+
+if (!halted && blockedPrs.length) {
+  halted = `not built, prerequisite unmerged: ${blockedPrs
+    .map((p) => `${p.branch} waits on [${(p.depends || []).join(", ")}]`)
+    .join("; ")}`;
+  log(`STOPPING: ${halted}`);
+}
 
 const green = done.filter((r) => r.ok);
 const stopped = done.filter((r) => !r.ok);

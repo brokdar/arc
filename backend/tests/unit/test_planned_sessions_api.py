@@ -12,6 +12,7 @@ both as explicit seams. These tests drive them, which is the point of having
 seams rather than silence: the machinery is complete and exercised now.
 """
 
+import datetime as dt
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -237,7 +238,7 @@ async def plan(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
 async def audit_actions(session: AsyncSession) -> list[str]:
     """Every audit action so far, oldest first."""
     result = await session.execute(
-        select(AuditLogEntry.action).order_by(AuditLogEntry.at, AuditLogEntry.id)
+        select(AuditLogEntry.action).order_by(AuditLogEntry.id)
     )
     return list(result.scalars())
 
@@ -1591,3 +1592,143 @@ async def test_a_rejected_plan_leaves_no_audit_row(
 
     assert response.status_code == 422
     assert await audit_actions(db_session) == []
+
+
+# --- AC-39: key sessions and time of day ---------------------------------------
+
+
+async def test_a_key_session_with_a_time_of_day_is_stored_and_reaches_the_coach(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    planned = await plan(
+        client,
+        purpose="max_strength",
+        structure=KG_LIFT,
+        key=True,
+        time_of_day="17:30",
+    )
+
+    assert planned["key"] is True
+    assert planned["time_of_day"] == "17:30"
+    row = (
+        await db_session.execute(
+            select(PlannedSessionRow).where(
+                PlannedSessionRow.id == uuid.UUID(planned["id"])
+            )
+        )
+    ).scalar_one()
+    assert row.key is True
+    assert row.time_of_day == dt.time(17, 30)
+    async with connected_as(server_for(READER), READER) as mcp:
+        week = (await mcp.call_tool("get_plan_week", {"start": "2026-08-10"})).data
+    [card] = week["week"]["sessions"]
+    assert card["id"] == planned["id"]
+    assert card["key"] is True
+    assert card["time_of_day"] == "17:30"
+
+
+async def test_an_impossible_time_of_day_is_refused(client: AsyncClient) -> None:
+    for bad in ("25:00", "17:60", "5:30", "17:30:00", ""):
+        response = await client.post(
+            SESSIONS,
+            json={
+                "date": "2026-08-10",
+                "purpose": "max_strength",
+                "structure": KG_LIFT,
+                "time_of_day": bad,
+            },
+        )
+        assert response.status_code == 422, (bad, response.text)
+    listed = await client.get(SESSIONS)
+    assert listed.json()["total"] == 0
+
+
+async def test_omitting_key_and_time_leaves_an_ordinary_untimed_session(
+    client: AsyncClient,
+) -> None:
+    planned = await plan(client, purpose="max_strength", structure=KG_LIFT)
+
+    assert planned["key"] is False
+    assert planned["time_of_day"] is None
+    async with connected_as(server_for(READER), READER) as mcp:
+        week = (await mcp.call_tool("get_plan_week", {"start": "2026-08-10"})).data
+    [card] = week["week"]["sessions"]
+    assert card["key"] is False
+    assert card["time_of_day"] is None
+
+
+async def test_key_and_time_are_edited_without_versioning_the_intent(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """They live on the session row: *when* and *how much it matters* are not
+    what the session is for, so an edit writes no intent version."""
+    planned = await plan(client, purpose="max_strength", structure=KG_LIFT)
+
+    response = await client.patch(
+        f"{SESSIONS}/{planned['id']}", json={"key": True, "time_of_day": "06:15"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["key"] is True
+    assert body["time_of_day"] == "06:15"
+    assert body["intent_versions"] == 1
+    entry = (
+        await db_session.execute(
+            select(AuditLogEntry).where(
+                AuditLogEntry.action == "planned_session.updated"
+            )
+        )
+    ).scalar_one()
+    assert entry.payload_json["changed"] == ["key", "time_of_day"]
+
+
+async def test_clearing_the_time_of_day_sends_it_back_to_null(
+    client: AsyncClient,
+) -> None:
+    planned = await plan(
+        client, purpose="max_strength", structure=KG_LIFT, time_of_day="17:30"
+    )
+
+    response = await client.patch(
+        f"{SESSIONS}/{planned['id']}", json={"time_of_day": None}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["time_of_day"] is None
+
+
+async def test_key_cannot_be_cleared(client: AsyncClient) -> None:
+    planned = await plan(client, purpose="max_strength", structure=KG_LIFT, key=True)
+
+    response = await client.patch(f"{SESSIONS}/{planned['id']}", json={"key": None})
+
+    assert response.status_code == 422, response.text
+
+
+async def test_a_patched_impossible_time_is_refused(client: AsyncClient) -> None:
+    planned = await plan(client, purpose="max_strength", structure=KG_LIFT)
+
+    response = await client.patch(
+        f"{SESSIONS}/{planned['id']}", json={"time_of_day": "25:00"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
+async def test_a_copy_keeps_key_and_time(client: AsyncClient) -> None:
+    planned = await plan(
+        client,
+        purpose="max_strength",
+        structure=KG_LIFT,
+        key=True,
+        time_of_day="17:30",
+    )
+
+    response = await client.post(
+        f"{SESSIONS}/{planned['id']}/copy", json={"date": "2026-08-17"}
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["key"] is True
+    assert response.json()["time_of_day"] == "17:30"

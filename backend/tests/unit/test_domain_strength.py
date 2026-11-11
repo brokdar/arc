@@ -21,15 +21,20 @@ from app.domain.strength import (
     LoadType,
     Mechanic,
     MovementPattern,
+    Progression,
     Restriction,
+    SetKind,
     StrengthGroup,
     StrengthSet,
     StrengthWorkout,
+    TargetRange,
+    WarmupMode,
     check_sidedness,
     exercise_ids,
     logged_set_units,
     logged_sides_worked,
     parse_catalogue,
+    resolve_main_lines,
     strength_workout_from_json,
     strength_workout_to_json,
 )
@@ -628,6 +633,278 @@ def test_a_semantic_failure_keeps_its_place_in_the_document() -> None:
                 ]
             }
         )
+
+
+# --- ranges, set kinds and main lifts (AC-29) ---------------------------------
+
+#: Every shape a strength workout could be stored in before ranges, set kinds
+#: and main lifts existed, written as the serializer wrote them — key order
+#: included, because a stored document is `strength_set_to_json`'s output and
+#: byte-identical means the same bytes, not an equal dict. One entry per field
+#: and per combination the old grammar allowed: a fixed rep count, a hold, a
+#: per-side round, every load kind, every optional key, a labelled superset.
+#: (Loads are written as floats: the decoder reads every load value through
+#: ``as_float``, so ``100.0`` is the only form a stored document ever held.)
+GOLDEN_CORPUS: tuple[str, ...] = (
+    (
+        '{"discipline": "strength", "groups": [{"items": [{"exercise_id": '
+        '"back_squat", "sets": 5, "reps": 3, "load": {"kind": "kg", "value": '
+        "100.0}}]}]}"
+    ),
+    json.dumps(bodyweight(3)),
+    (
+        '{"discipline": "strength", "groups": [{"items": [{"exercise_id": '
+        '"back_squat", "sets": 5, "reps": 3, "load": {"kind": "percent_e1rm", '
+        '"value": 0.85}, "rir": 2, "rest_s": 180, "tempo": "3-1-1-0", "notes": '
+        '"brace hard"}]}]}'
+    ),
+    (
+        '{"discipline": "strength", "groups": [{"items": [{"exercise_id": '
+        '"romanian_deadlift", "sets": 3, "reps": 8, "load": {"kind": "kg", '
+        '"value": 80.0}}, {"exercise_id": "front_plank", "sets": 3, '
+        '"duration_s": 45, "load": {"kind": "bodyweight"}}], "label": "B1/B2"}]}'
+    ),
+    (
+        '{"discipline": "strength", "groups": [{"items": [{"exercise_id": '
+        '"single_arm_dumbbell_row", "sets": 3, "reps": 11, "load": {"kind": '
+        '"kg", "value": 15.0}, "per_side": true, "rir": 0}]}, {"items": '
+        '[{"exercise_id": "side_plank", "sets": 2, "duration_s": 30, "load": '
+        '{"kind": "bodyweight"}, "per_side": true, "rest_s": 0}]}]}'
+    ),
+    (
+        '{"discipline": "strength", "groups": [{"items": [{"exercise_id": '
+        '"bench_press", "sets": 4, "reps": 6, "load": {"kind": "rpe", "value": '
+        '8.5}, "rir": 10}]}]}'
+    ),
+)
+
+
+@pytest.mark.parametrize("stored", GOLDEN_CORPUS)
+def test_every_stored_workout_re_serialises_byte_identical(stored: str) -> None:
+    """AC-29: nothing stored before this change grows, loses or moves a key."""
+    body = workout_body_from_json(json.loads(stored))
+
+    assert json.dumps(workout_body_to_json(body)) == stored
+
+
+#: The AC-29 line: "8-12 reps, 2 reps left, main lift, auto warm-ups, reps
+#: first then weight".
+RANGE_LINE: dict[str, Any] = {
+    "exercise_id": "back_squat",
+    "sets": 3,
+    "reps": [8, 12],
+    "load": {"kind": "kg", "value": 100.0},
+    "rir": 2,
+    "main": True,
+    "warmup": "auto",
+    "progression": "double_progression",
+}
+
+
+def strength_document(*items: dict[str, Any]) -> dict[str, Any]:
+    """A one-group strength body holding ``items``."""
+    return {"discipline": "strength", "groups": [{"items": list(items)}]}
+
+
+def test_a_range_line_round_trips_unchanged() -> None:
+    stored = json.dumps(strength_document(RANGE_LINE))
+
+    body = workout_body_from_json(json.loads(stored))
+
+    assert isinstance(body, StrengthWorkout)
+    [line] = body.prescriptions
+    assert line.reps == TargetRange(8, 12)
+    assert line.rir == 2
+    assert line.main is True
+    assert line.warmup is WarmupMode.AUTO
+    assert line.progression is Progression.DOUBLE_PROGRESSION
+    assert json.dumps(workout_body_to_json(body)) == stored
+
+
+@pytest.mark.parametrize("kind", list(SetKind))
+def test_every_set_kind_round_trips(kind: SetKind) -> None:
+    document = strength_document(
+        {
+            "exercise_id": "bench_press",
+            "sets": 2,
+            "reps": 10,
+            "load": {"kind": "kg", "value": 60.0},
+            "rir": [1, 3],
+            "set_kind": kind.value,
+            "main": False,
+            "warmup": "none",
+            "progression": "simple",
+        }
+    )
+
+    body = workout_body_from_json(document)
+
+    assert isinstance(body, StrengthWorkout)
+    assert body.prescriptions[0].set_kind is kind
+    assert body.prescriptions[0].rir == TargetRange(1, 3)
+    assert workout_body_to_json(body) == document
+
+
+def test_the_vocabularies_are_the_ones_the_plan_names() -> None:
+    assert [kind.value for kind in SetKind] == [
+        "working",
+        "top",
+        "backoff",
+        "amrap",
+        "drop",
+        "myo",
+        "failure",
+        "lengthened_partial",
+    ]
+    assert [mode.value for mode in WarmupMode] == ["auto", "none"]
+    assert [rule.value for rule in Progression] == [
+        "rir_load",
+        "double_progression",
+        "top_backoff",
+        "simple",
+    ]
+
+
+def test_a_reversed_rep_range_is_refused_where_it_is() -> None:
+    with pytest.raises(
+        ValueError, match=r"groups\[0\]\.items\[0\]\.reps: .*low end .* below"
+    ):
+        strength_workout_from_json(
+            {"groups": [{"items": [RANGE_LINE | {"reps": [12, 8]}]}]}
+        )
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        pytest.param(
+            {"reps": [0, 5]}, r"items\[0\].*reps must be between 1", id="reps-0"
+        ),
+        pytest.param(
+            {"rir": [3, 11]}, r"items\[0\].*rir must be between 0", id="rir-11"
+        ),
+        pytest.param({"reps": [8, 8]}, r"items\[0\]\.reps: .*low end", id="empty"),
+        pytest.param({"reps": [8]}, r"items\[0\]\.reps: .*two", id="one-end"),
+        pytest.param({"reps": [8, "12"]}, r"items\[0\]\.reps\[1\]", id="text"),
+        pytest.param({"set_kind": "cluster"}, r"items\[0\]\.set_kind", id="kind"),
+        pytest.param({"main": "yes"}, r"items\[0\]\.main", id="main"),
+        pytest.param({"warmup": "ramp"}, r"items\[0\]\.warmup", id="warmup"),
+        pytest.param({"progression": "linear"}, r"items\[0\]\.progression", id="rule"),
+    ],
+)
+def test_an_impossible_range_or_tag_is_refused(
+    override: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        strength_workout_from_json({"groups": [{"items": [RANGE_LINE | override]}]})
+
+
+def test_an_unknown_key_beside_the_new_ones_is_still_refused() -> None:
+    with pytest.raises(ValueError, match=r"items\[0\]: unknown field\(s\): rep_range"):
+        strength_workout_from_json(
+            {"groups": [{"items": [RANGE_LINE | {"rep_range": [8, 12]}]}]}
+        )
+
+
+def test_a_hold_takes_no_rep_range_and_volume_counts_the_floor() -> None:
+    # Predicted volume reads `total_reps`; for a range it is the floor, the
+    # reps the prescription promises — the ceiling is where load goes up.
+    line = squat(sets=3, reps=TargetRange(8, 12))
+    assert line.total_reps == 24
+    assert line.rep_floor == 8
+
+
+# --- resolve_main_lines --------------------------------------------------------
+
+
+def catalogue_of(*entries: Exercise) -> dict[str, Exercise]:
+    """A slug-keyed catalogue."""
+    return {entry.id: entry for entry in entries}
+
+
+BENCH = exercise()
+INCLINE = exercise(id="incline_bench_press", name="Incline Bench Press")
+OHP = exercise(
+    id="overhead_press",
+    name="Overhead Press",
+    pattern=MovementPattern.VERTICAL_PUSH,
+)
+FLY = exercise(
+    id="cable_fly",
+    name="Cable Fly",
+    mechanic=Mechanic.SINGLE_JOINT,
+    pattern=MovementPattern.CHEST_FLY,
+)
+ROW = exercise(
+    id="barbell_row",
+    name="Barbell Row",
+    category=ExerciseCategory.PULL,
+    pattern=MovementPattern.HORIZONTAL_PULL,
+)
+CURL = exercise(
+    id="biceps_curl",
+    name="Biceps Curl",
+    category=ExerciseCategory.PULL,
+    mechanic=Mechanic.SINGLE_JOINT,
+    pattern=MovementPattern.ELBOW_FLEXION,
+)
+
+
+def line(slug: str, main: bool | None = None) -> StrengthSet:
+    """Three sets of eight of ``slug``, with ``main`` as given."""
+    return StrengthSet(
+        exercise_id=slug, sets=3, reps=8, load=Load(LoadKind.KG, 50.0), main=main
+    )
+
+
+def session_of(*lines: StrengthSet) -> StrengthWorkout:
+    """One group per line."""
+    return StrengthWorkout(groups=tuple(StrengthGroup(items=(item,)) for item in lines))
+
+
+def test_resolve_main_lines() -> None:
+    """Unset ``main`` defaults to the first multi-joint line of each pattern.
+
+    Push counts horizontal and vertical together, as does pull; a single-joint
+    line is never a default main lift, however early it comes.
+    """
+    catalogue = catalogue_of(BENCH, INCLINE, OHP, FLY, ROW, CURL)
+    session = session_of(
+        line("cable_fly"),
+        line("bench_press"),
+        line("incline_bench_press"),
+        line("overhead_press"),
+        line("biceps_curl"),
+        line("barbell_row"),
+    )
+
+    assert resolve_main_lines(session, catalogue) == (
+        False,
+        True,
+        False,
+        False,
+        False,
+        True,
+    )
+
+
+def test_an_explicit_main_wins_over_the_default() -> None:
+    catalogue = catalogue_of(BENCH, INCLINE, ROW, CURL)
+    session = session_of(
+        line("bench_press"),
+        line("incline_bench_press", main=True),
+        line("barbell_row", main=False),
+        line("biceps_curl", main=True),
+    )
+
+    # The incline is named main, so the bench is not promoted beside it; the
+    # row opts out, and nothing else in the pull pattern takes its place —
+    # the curl is main only because it says so.
+    assert resolve_main_lines(session, catalogue) == (False, True, False, True)
+
+
+def test_a_movement_the_catalogue_does_not_know_is_not_a_default_main() -> None:
+    assert resolve_main_lines(session_of(line("mystery_lift")), {}) == (False,)
 
 
 # --- the catalogue ------------------------------------------------------------

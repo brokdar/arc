@@ -64,6 +64,7 @@ from app.domain.metrics import (
 from app.domain.purpose import Purpose
 from app.domain.session_analysis import assessment_to_json
 from app.domain.sessions import SessionStatus
+from app.domain.strength import Count, TargetRange
 from app.domain.templates import DEFERRED_AXES, ScoringAxis
 from app.domain.workout import Channel, FlatStep
 
@@ -379,6 +380,13 @@ class ScoringInputs:
     #: One entry per **side worked** of each logged set, in the order they
     #: were logged.
     performed_loads_kg: tuple[float | None, ...] = ()
+    #: The reps each entry of :attr:`prescribed_loads_kg` asked for — a
+    #: number or an inclusive range — or ``None`` for a hold. Same expansion,
+    #: same order; empty when nothing prescribes reps.
+    prescribed_reps: tuple[Count | None, ...] = ()
+    #: The reps each entry of :attr:`performed_loads_kg` logged, or ``None``
+    #: for a hold.
+    performed_reps: tuple[int | None, ...] = ()
     #: The cleaned 1 Hz columns, nulls preserved.
     channels: Mapping[Channel, Sequence[float | None]] = dataclass_field(
         default_factory=dict
@@ -1219,6 +1227,7 @@ def _score_sets_load(
     sets_fraction = min(1.0, inputs.performed_sets / planned)
     tolerance = load_criteria[0][1].pct_tolerance if load_criteria else None
     within, comparable, light, heavy = _load_agreement(inputs, tolerance)
+    rep_hits, rep_comparable = _rep_agreement(inputs)
     load_fraction = within / comparable if comparable else None
 
     outcomes = [
@@ -1240,6 +1249,21 @@ def _score_sets_load(
             "no set could be compared by weight, so the load term is left out "
             "rather than counted as zero"
         )
+    explained = {
+        "sets prescribed": f"{planned:g}",
+        "sets logged": f"{inputs.performed_sets:g}",
+        "sets comparable by weight": f"{comparable:g}",
+        "sets within tolerance": f"{within:g}",
+        "tolerance": ("none prescribed" if tolerance is None else f"±{tolerance:.0%}"),
+    }
+    if rep_comparable:
+        explained["sets comparable by reps"] = f"{rep_comparable:g}"
+        explained["sets within the prescribed reps"] = f"{rep_hits:g}"
+        assumptions.append(
+            "a set hits a rep range when its reps lie inside it, both ends "
+            "included, and a fixed count when it reaches it; the rep agreement "
+            "is reported beside the score and does not scale it"
+        )
     return _SetsLoadResult(
         Measured(
             value=sets_fraction * (1.0 if load_fraction is None else load_fraction),
@@ -1248,15 +1272,7 @@ def _score_sets_load(
                     "sets_load = min(1, sets logged / sets prescribed) × "
                     "fraction of comparable sets within the prescribed tolerance"
                 ),
-                inputs={
-                    "sets prescribed": f"{planned:g}",
-                    "sets logged": f"{inputs.performed_sets:g}",
-                    "sets comparable by weight": f"{comparable:g}",
-                    "sets within tolerance": f"{within:g}",
-                    "tolerance": (
-                        "none prescribed" if tolerance is None else f"±{tolerance:.0%}"
-                    ),
-                },
+                inputs=explained,
                 assumptions=tuple(assumptions),
             ),
         ),
@@ -1292,6 +1308,45 @@ def _load_agreement(
         else:
             heavy += weight
     return within, comparable, light, heavy
+
+
+def reps_hit(prescribed: Count, performed: int) -> bool:
+    """Whether a logged set's reps answer the reps its line prescribed.
+
+    **Range scoring: reps in ``[lo, hi]`` count as a hit, both ends
+    included** — 8, 10 and 12 against ``8-12``; 7 and 13 do not. This
+    displaces scoring a range by its lower bound only ("8-12" read as "at
+    least 8"), which would call 15 reps a hit: past the top of a range the
+    load was too light, and that is the signal double progression reads to
+    add weight, so it must not be filed with the sets that were right.
+
+    A fixed count is still hit by reaching it: one rep past "5" is the
+    prescription done, not missed. Pinned by
+    `test_domain_scoring.py::test_range_hit`.
+    """
+    if isinstance(prescribed, TargetRange):
+        return performed in prescribed
+    return performed >= prescribed
+
+
+def _rep_agreement(inputs: ScoringInputs) -> tuple[float, float]:
+    """``(hits, comparable)`` over the positional pairs, in sets.
+
+    Weighted by :attr:`ScoringInputs.prescribed_load_units` exactly as the
+    load agreement is, so one side of a per-side round is ½. A pair where
+    either side is a hold has no reps to compare and is skipped.
+    """
+    hits = comparable = 0.0
+    units = inputs.prescribed_load_units
+    pairs = zip(inputs.prescribed_reps, inputs.performed_reps, strict=False)
+    for index, (prescribed, performed) in enumerate(pairs):
+        if prescribed is None or performed is None:
+            continue
+        weight = units[index] if index < len(units) else 1.0
+        comparable += weight
+        if reps_hit(prescribed, performed):
+            hits += weight
+    return hits, comparable
 
 
 def _sets_completed_outcome(

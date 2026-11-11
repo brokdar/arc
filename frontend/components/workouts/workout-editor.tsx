@@ -23,6 +23,7 @@ import {
   type Discipline,
   draftFromStructure,
   emptyDraft,
+  hasRangeProblem,
   structureFromDraft,
   validateDraft,
   type WorkoutDraft,
@@ -229,7 +230,11 @@ export function WorkoutEditor({ workoutId }: WorkoutEditorProps) {
               }
             />
           ) : null}
-          <Button type="submit" size="sm" disabled={saving}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={saving || hasRangeProblem(form.draft)}
+          >
             {saving ? "Saving…" : "Save workout"}
           </Button>
         </div>

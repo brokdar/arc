@@ -82,7 +82,7 @@ from app.domain.scoring import (
     score_session,
     score_to_json,
 )
-from app.domain.strength import LoadKind, StrengthWorkout
+from app.domain.strength import Count, LoadKind, StrengthWorkout
 from app.domain.templates import ScoringAxis
 from app.domain.versioning import FIRST_VERSION, next_version
 from app.domain.workout import (
@@ -1094,6 +1094,8 @@ def _inputs(
             prescribed_loads_kg=prescribed_loads,
             prescribed_load_units=prescribed_units,
             performed_loads_kg=_performed_loads(logged),
+            prescribed_reps=_prescribed_reps(body),
+            performed_reps=_performed_reps(logged),
         )
     steps = tuple(flatten(body))
     return ScoringInputs(
@@ -1137,6 +1139,22 @@ def _prescribed_loads(
         loads.extend([kilograms] * entries)
         units.extend([1.0 / prescription.sides] * entries)
     return tuple(loads), tuple(units)
+
+
+def _prescribed_reps(body: StrengthWorkout) -> tuple[Count | None, ...]:
+    """The reps each entry of `_prescribed_loads` asked for, in the same order."""
+    reps: list[Count | None] = []
+    for prescription in body.prescriptions:
+        reps.extend([prescription.reps] * (prescription.sets * prescription.sides))
+    return tuple(reps)
+
+
+def _performed_reps(logged: Sequence[LoggedSetRow]) -> tuple[int | None, ...]:
+    """The reps each entry of `_performed_loads` logged, in the same order."""
+    reps: list[int | None] = []
+    for row in logged:
+        reps.extend([row.reps] * logged_sides(row))
+    return tuple(reps)
 
 
 def _performed_loads(logged: Sequence[LoggedSetRow]) -> tuple[float | None, ...]:

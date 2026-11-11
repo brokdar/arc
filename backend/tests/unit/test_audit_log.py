@@ -23,14 +23,29 @@ ANCHORS = "/api/v1/anchors"
 async def entries(session: AsyncSession) -> list[AuditLogEntry]:
     """Every audit row, oldest first.
 
-    Ordered by id as well as time: SQLite's ``CURRENT_TIMESTAMP`` has
-    second resolution, so rows written in one request tie on ``at`` — and
-    uuid7 ids are time-ordered, which is exactly what breaks the tie right.
+    Ordered by id alone. ``at`` is the database's wall clock (SQLite's
+    ``CURRENT_TIMESTAMP``, second resolution), and the dev host's clock steps
+    backwards now and then (`.claude/rules/clock-monotonicity.md`), so a row
+    written later can carry an earlier ``at`` and ordering by it flaked the
+    audit-order tests. The uuid7 id is minted in-process, and CPython keeps it
+    monotonic even when the clock goes back. ``test_audit_order_is_by_id`` keeps
+    every test helper on this ordering.
     """
-    result = await session.execute(
-        select(AuditLogEntry).order_by(AuditLogEntry.at, AuditLogEntry.id)
-    )
+    result = await session.execute(select(AuditLogEntry).order_by(AuditLogEntry.id))
     return list(result.scalars())
+
+
+def test_audit_order_is_by_id() -> None:
+    """No test orders audit rows by ``at``: see :func:`entries` for why."""
+    import pathlib
+    import re
+
+    offenders = [
+        str(path)
+        for path in pathlib.Path(__file__).resolve().parents[1].rglob("test_*.py")
+        if re.search(r"order_by\(\s*AuditLogEntry\.at", path.read_text())
+    ]
+    assert offenders == []
 
 
 async def test_bootstrapping_the_profile_is_audited(

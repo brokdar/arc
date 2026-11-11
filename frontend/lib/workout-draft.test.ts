@@ -13,6 +13,7 @@ import {
   findStep,
   insertStep,
   moveStep,
+  rangeProblems,
   removeStep,
   repeatDepth,
   replaceStep,
@@ -338,6 +339,10 @@ describe("draftFromStructure", () => {
               rest_s: null,
               tempo: null,
               notes: null,
+              set_kind: null,
+              main: null,
+              warmup: null,
+              progression: null,
             },
             {
               exercise_id: "front_plank",
@@ -350,6 +355,10 @@ describe("draftFromStructure", () => {
               rest_s: null,
               tempo: null,
               notes: null,
+              set_kind: null,
+              main: null,
+              warmup: null,
+              progression: null,
             },
           ],
         },
@@ -365,6 +374,50 @@ describe("draftFromStructure", () => {
       expect(row).toMatchObject({ mode: "reps", reps: "11", perSide: true });
       // A hold's rep box is empty rather than holding a `1` nobody typed.
       expect(hold).toMatchObject({ mode: "hold", reps: "", durationS: "45" });
+    }
+    expect(back).toEqual(structure);
+  });
+
+  it("round-trips a rep range, an RIR range and the line's tags", () => {
+    const structure = {
+      discipline: "strength" as const,
+      groups: [
+        {
+          label: null,
+          items: [
+            {
+              exercise_id: "back_squat",
+              sets: 3,
+              reps: [8, 12],
+              duration_s: null,
+              per_side: null,
+              load: { kind: "kg" as const, value: 100 },
+              rir: [1, 2],
+              rest_s: null,
+              tempo: null,
+              notes: null,
+              set_kind: "top" as const,
+              main: false,
+              warmup: "none" as const,
+              progression: "top_backoff" as const,
+            },
+          ],
+        },
+      ],
+    };
+
+    const draft = draftFromStructure(structure);
+    const back = draft ? structureFromDraft(draft) : null;
+
+    if (draft?.discipline === "strength") {
+      expect(draft.groups[0]?.items[0]).toMatchObject({
+        reps: "8",
+        repsHigh: "12",
+        rir: "1",
+        rirHigh: "2",
+        setKind: "top",
+        main: "no",
+      });
     }
     expect(back).toEqual(structure);
   });
@@ -489,5 +542,31 @@ describe("validateDraft", () => {
     expect(problems).toContain(
       "Group 1 · back_squat: a kg load needs a value.",
     );
+  });
+
+  it("refuses a range written top first, and an RIR top with no bottom", () => {
+    const backwards = {
+      ...blankStrengthItem("back_squat"),
+      loadValue: "100",
+      reps: "12",
+      repsHigh: "8",
+    };
+    const problems = validateDraft({
+      discipline: "strength",
+      groups: [
+        {
+          ...blankStrengthGroup(),
+          items: [backwards, { ...backwards, reps: "8", rirHigh: "2" }],
+        },
+      ],
+    });
+
+    expect(problems).toEqual([
+      "Group 1 · back_squat: The top of the rep range is below its bottom.",
+      "Group 1 · back_squat: give the bottom of the RIR range too.",
+    ]);
+    expect(rangeProblems(backwards)).toEqual({
+      reps: "The top of the rep range is below its bottom.",
+    });
   });
 });

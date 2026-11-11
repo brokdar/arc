@@ -18,6 +18,18 @@ The prescription is **snapshotted** into every intent version
 (``structure``), even when it came from the library. ``workout_id`` records
 where it came from and is nulled if that library entry is later deleted; the
 snapshot is what makes the frozen prescription survive an edit to the library.
+
+**`key` and `time_of_day` live on the session row, not on the intent.** Whether
+a session is a key session and when in the day it happens are facts about the
+calendar, like its date: they say how the week is arranged around it, not what
+it is for. Versioning them with the intent would write a new intent version —
+and re-pin anchors before a match, or trigger a rescore after one — for
+dragging a ride from the morning to the evening, which invariant 4 does not
+ask for and no score depends on.
+
+**`plan_id`** names the plan the session belongs to (`app.persistence.plans`).
+Required: migration `0028` moved every existing session into the default plan,
+and a new session joins the active plan covering its date, else the default.
 """
 
 import datetime as dt
@@ -31,8 +43,10 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Time,
     UniqueConstraint,
     Uuid,
+    false,
     func,
     select,
 )
@@ -126,6 +140,16 @@ class PlannedSessionRow(Base):
     status: Mapped[SessionStatus] = mapped_column(
         enum_column(SessionStatus), default=SessionStatus.PLANNED, index=True
     )
+    #: The plan this session belongs to. RESTRICT: a plan holding sessions is
+    #: not deleted out from under them.
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("plans.id", ondelete="RESTRICT"), index=True
+    )
+    #: A key session — the one the week is arranged around. See the module
+    #: docstring for why this is not part of the intent.
+    key: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    #: When in the athlete-local day it is planned; NULL when it is not timed.
+    time_of_day: Mapped[dt.time | None] = mapped_column(Time)
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )

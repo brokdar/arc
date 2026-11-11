@@ -4,8 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
+import { PlanSettings } from "@/components/plan/plan-settings";
 import { SessionForm } from "@/components/plan/session-form";
 import {
+  PLAN_IDS,
+  plannedSessionFixture,
   purposeTemplateFixture,
   SESSION_IDS,
   WORKOUT_IDS,
@@ -458,6 +461,243 @@ describe("editing a planned session", () => {
   });
 });
 
+describe("key sessions and time of day (AC-40)", () => {
+  it("shows a Key toggle and a time field, and posts both", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    server.use(
+      http.post("/api/v1/planned-sessions", async ({ request, response }) => {
+        const body = await request.json();
+        bodies.push(body);
+        return response(201).json({
+          ...plannedSessionFixture(SESSION_IDS.vo2),
+          key: body.key ?? false,
+          time_of_day: body.time_of_day ?? null,
+        });
+      }),
+    );
+    const { onClose } = renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+
+    const key = screen.getByRole("switch", { name: "Key session" });
+    expect(key).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByLabelText("Time")).toHaveValue("");
+
+    await userEvent.click(key);
+    expect(key).toHaveAttribute("aria-checked", "true");
+    await userEvent.type(screen.getByLabelText("Time"), "17:30");
+    await userEvent.selectOptions(
+      screen.getByLabelText("Workout"),
+      WORKOUT_IDS.long,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Plan it" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ key: true, time_of_day: "17:30" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("posts an untimed, ordinary session when neither is touched", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    server.use(
+      http.post("/api/v1/planned-sessions", async ({ request, response }) => {
+        const body = await request.json();
+        bodies.push(body);
+        return response(201).json({
+          ...plannedSessionFixture(SESSION_IDS.vo2),
+          key: body.key ?? false,
+          time_of_day: body.time_of_day ?? null,
+        });
+      }),
+    );
+    renderForm();
+    await waitFor(() => expect(criteria()).toHaveLength(2));
+
+    await userEvent.selectOptions(
+      screen.getByLabelText("Workout"),
+      WORKOUT_IDS.long,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Plan it" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ key: false, time_of_day: null });
+  });
+
+  it("loads a saved session's key flag and time, and PATCHes only those", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.patch(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        async ({ params, request, response }) => {
+          const body = await request.json();
+          bodies.push(body);
+          const saved = plannedSessionFixture(params.planned_session_id);
+          return response(200).json({
+            ...saved,
+            key: body.key ?? saved.key,
+            time_of_day:
+              body.time_of_day === undefined
+                ? saved.time_of_day
+                : body.time_of_day,
+          });
+        },
+      ),
+    );
+    renderForm({ sessionId: SESSION_IDS.vo2 });
+    await waitFor(() => expect(criteria()).toHaveLength(3));
+
+    await userEvent.click(screen.getByRole("switch", { name: "Key session" }));
+    await userEvent.type(screen.getByLabelText("Time"), "06:15");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({ key: true, time_of_day: "06:15" });
+  });
+
+  it("sends null when the athlete clears the time", async () => {
+    const bodies: unknown[] = [];
+    const timed = {
+      ...plannedSessionFixture(SESSION_IDS.vo2),
+      key: true,
+      time_of_day: "17:30",
+    };
+    server.use(
+      http.get(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        ({ response }) => response(200).json(timed),
+      ),
+      http.patch(
+        "/api/v1/planned-sessions/{planned_session_id}",
+        async ({ request, response }) => {
+          const body = await request.json();
+          bodies.push(body);
+          return response(200).json({
+            ...timed,
+            time_of_day:
+              body.time_of_day === undefined
+                ? timed.time_of_day
+                : body.time_of_day,
+          });
+        },
+      ),
+    );
+    renderForm({ sessionId: SESSION_IDS.vo2 });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Time")).toHaveValue("17:30"),
+    );
+    expect(screen.getByRole("switch", { name: "Key session" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    await userEvent.clear(screen.getByLabelText("Time"));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({ time_of_day: null });
+  });
+});
+
+describe("the plan panel (AC-40)", () => {
+  function renderPanel() {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <PlanSettings />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("saves the phase and follow-exactly of the chosen plan", async () => {
+    const bodies: unknown[] = [];
+    const patched: string[] = [];
+    server.use(
+      http.patch(
+        "/api/v1/plans/{plan_id}",
+        async ({ params, request, response }) => {
+          const body = await request.json();
+          bodies.push(body);
+          patched.push(params.plan_id);
+          return response(200).json({
+            id: params.plan_id,
+            name: "My plan",
+            phase: body.phase ?? "base",
+            follow_exactly: body.follow_exactly ?? false,
+            active: true,
+            is_default: true,
+            starts_on: null,
+            ends_before: null,
+            created_at: "2026-07-01T00:00:00Z",
+            updated_at: "2026-07-01T00:00:00Z",
+          });
+        },
+      ),
+    );
+    renderPanel();
+
+    // The default plan is the one on offer first: every date no dated plan
+    // covers belongs to it.
+    const plan = await screen.findByLabelText("Plan");
+    expect(plan).toHaveValue(PLAN_IDS.default);
+    expect(screen.getByLabelText("Phase")).toHaveValue("base");
+    const follow = screen.getByRole("checkbox", { name: /Follow exactly/ });
+    expect(follow).not.toBeChecked();
+
+    await userEvent.selectOptions(screen.getByLabelText("Phase"), "peak");
+    await userEvent.click(follow);
+    await userEvent.click(screen.getByRole("button", { name: "Save plan" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(patched).toEqual([PLAN_IDS.default]);
+    expect(bodies[0]).toEqual({ phase: "peak", follow_exactly: true });
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
+  it("edits the plan the athlete picks", async () => {
+    const patched: string[] = [];
+    const bodies: unknown[] = [];
+    server.use(
+      http.patch(
+        "/api/v1/plans/{plan_id}",
+        async ({ params, request, response }) => {
+          const body = await request.json();
+          bodies.push(body);
+          patched.push(params.plan_id);
+          return response(200).json({
+            id: params.plan_id,
+            name: "Spring block",
+            phase: body.phase ?? "build",
+            follow_exactly: body.follow_exactly ?? false,
+            active: true,
+            is_default: false,
+            starts_on: "2026-03-02",
+            ends_before: "2026-05-04",
+            created_at: "2026-07-02T00:00:00Z",
+            updated_at: "2026-07-02T00:00:00Z",
+          });
+        },
+      ),
+    );
+    renderPanel();
+    await userEvent.selectOptions(
+      await screen.findByLabelText("Plan"),
+      PLAN_IDS.spring,
+    );
+    expect(screen.getByLabelText("Phase")).toHaveValue("build");
+
+    await userEvent.selectOptions(screen.getByLabelText("Phase"), "taper");
+    await userEvent.click(screen.getByRole("button", { name: "Save plan" }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(patched).toEqual([PLAN_IDS.spring]);
+    expect(bodies[0]).toEqual({ phase: "taper" });
+  });
+});
+
 function plannedSession() {
   // The shape the endpoints answer with; the form only reads it back on GET.
   return {
@@ -465,6 +705,9 @@ function plannedSession() {
     date: DATE,
     discipline: "cycling" as const,
     status: "planned" as const,
+    plan_id: PLAN_IDS.default,
+    key: false,
+    time_of_day: null,
     intent_versions: 1,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",

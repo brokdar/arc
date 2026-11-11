@@ -247,9 +247,19 @@ export function totalSets(
 export function describeSets(item: StrengthItem): string {
   const each =
     item.duration_s === null || item.duration_s === undefined
-      ? `${item.reps ?? "?"}`
+      ? item.reps === null || item.reps === undefined
+        ? "?"
+        : formatCount(item.reps)
       : `${item.duration_s} s`;
   return `${item.sets}×${each}${item.per_side ? " per side" : ""}`;
+}
+
+/**
+ * A prescribed count — reps or RIR — as written on a card: `8`, or `8–12` for
+ * an inclusive range (`app.domain.strength.TargetRange`).
+ */
+export function formatCount(count: number | readonly number[]): string {
+  return typeof count === "number" ? String(count) : count.join("–");
 }
 
 /** Whether a prescription line is held for seconds rather than repeated. */
