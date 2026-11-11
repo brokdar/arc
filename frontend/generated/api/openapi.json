@@ -659,6 +659,16 @@
             "title": "Red Flag Active",
             "type": "boolean"
           },
+          "red_flag_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedFlagKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "red_flag_note": {
             "anyOf": [
               {
@@ -699,6 +709,7 @@
           "red_flag_active",
           "red_flag_note",
           "red_flag_severity",
+          "red_flag_kind",
           "created_at",
           "updated_at"
         ],
@@ -780,6 +791,16 @@
               }
             ],
             "title": "Red Flag Active"
+          },
+          "red_flag_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedFlagKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "red_flag_note": {
             "anyOf": [
@@ -3869,6 +3890,10 @@
             "title": "Exercise Name",
             "type": "string"
           },
+          "increase_blocked": {
+            "title": "Increase Blocked",
+            "type": "boolean"
+          },
           "load_kg": {
             "anyOf": [
               {
@@ -3908,7 +3933,8 @@
           "reps",
           "duration_s",
           "per_side",
-          "logged_on"
+          "logged_on",
+          "increase_blocked"
         ],
         "title": "LastNumbersRead",
         "type": "object"
@@ -5591,6 +5617,7 @@
           "mapping": {
             "dont_learn": "#/components/schemas/DontLearn",
             "note_upsert": "#/components/schemas/NoteUpsert",
+            "red_flag": "#/components/schemas/RedFlag",
             "session_finish": "#/components/schemas/SessionFinish",
             "session_rating": "#/components/schemas/SessionRating",
             "session_start": "#/components/schemas/SessionStart",
@@ -5620,6 +5647,9 @@
           },
           {
             "$ref": "#/components/schemas/NoteUpsert"
+          },
+          {
+            "$ref": "#/components/schemas/RedFlag"
           }
         ]
       },
@@ -8613,10 +8643,67 @@
         "title": "RecordingStopRead",
         "type": "object"
       },
+      "RedFlag": {
+        "additionalProperties": false,
+        "description": "*Stop \u2014 something's wrong*: one symptom, which raises the red flag.\n\nThe phone shows the symptom group's text at once, offline\n(`app.domain.safety.RED_FLAG_TEXT`), and sends ``session_finish`` after\nthis; the server raises the athlete's flag and queues its follow-up card.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "red_flag",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          },
+          "symptom": {
+            "$ref": "#/components/schemas/RedFlagSymptom"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind",
+          "symptom"
+        ],
+        "title": "RedFlag",
+        "type": "object"
+      },
+      "RedFlagKind": {
+        "description": "Which of the two red-flag answers the athlete was given.\n\nThe gym screen's *Stop \u2014 something's wrong* offers symptoms in two groups\n(`app.domain.safety.RedFlagSymptom`), and each group has one text:\n``EMERGENCY`` (chest pain, fainting, \u2026) is told to call emergency\nservices now; ``ADVICE`` (numbness, dizziness, \u2026) to stop and get medical\nadvice today. A flag raised anywhere else \u2014 the profile form, the coach \u2014\nis ``ADVICE``: it says \"I am unwell\", not \"call an ambulance\", and every\nflag that predates this field was migrated to it for the same reason\n(migration 0031).",
+        "enum": ["emergency", "advice"],
+        "title": "RedFlagKind",
+        "type": "string"
+      },
       "RedFlagSeverity": {
         "description": "How bad the illness or injury is (WP-8.4).\n\nThree grades and no numbers: the athlete is answering this on a phone\nwhile feeling unwell, and a scale finer than \"mild / moderate / severe\"\nwould be answered inconsistently and read as if it were not.\n\nThe MVP's safety rule is deterministic and reads the *boolean* only \u2014 a\nflag of any grade refuses every proposal that adds or intensifies work\n(`app.domain.proposals.intensifies`). The grade is carried so the coaching\nagent can say something useful about it, and so a later autonomy tier has\nsomething to graduate on; it is never the difference between allowed and\nrefused.",
         "enum": ["mild", "moderate", "severe"],
         "title": "RedFlagSeverity",
+        "type": "string"
+      },
+      "RedFlagSymptom": {
+        "description": "What *Stop \u2014 something's wrong* offers, in its two groups.",
+        "enum": [
+          "chest_pain",
+          "cannot_breathe",
+          "fainted",
+          "numbness",
+          "dizziness",
+          "sudden_swelling"
+        ],
+        "title": "RedFlagSymptom",
         "type": "string"
       },
       "RepeatBlockSchema-Input": {
@@ -11646,6 +11733,10 @@
           "mode": {
             "$ref": "#/components/schemas/TrainingMode"
           },
+          "no_max_efforts": {
+            "title": "No Max Efforts",
+            "type": "boolean"
+          },
           "plain_logbook": {
             "title": "Plain Logbook",
             "type": "boolean"
@@ -11663,7 +11754,8 @@
           "high_contrast",
           "before_you_start_seen",
           "first_run_seen",
-          "lifted_before"
+          "lifted_before",
+          "no_max_efforts"
         ],
         "title": "TrainingSettingsRead",
         "type": "object"
@@ -11698,6 +11790,10 @@
           "mode": {
             "$ref": "#/components/schemas/TrainingMode",
             "title": "Mode"
+          },
+          "no_max_efforts": {
+            "title": "No Max Efforts",
+            "type": "boolean"
           },
           "plain_logbook": {
             "title": "Plain Logbook",

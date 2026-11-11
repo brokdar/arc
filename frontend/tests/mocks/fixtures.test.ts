@@ -244,8 +244,8 @@ describe("the coach's fixtures", () => {
     });
     expect(refusal).toEqual({
       detail:
-        "red_flag_note and red_flag_severity may only be set while " +
-        "red_flag_active is set",
+        "red_flag_note, red_flag_severity and red_flag_kind may only be " +
+        "set while red_flag_active is set",
     });
 
     // Lowering it on its own is honoured, and clears the pair.

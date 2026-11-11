@@ -429,6 +429,8 @@ async def test_a_read_returns_the_seeded_athlete_and_the_red_flag(
         "active": True,
         "severity": "moderate",
         "note": "chest infection",
+        # Raised from the profile without a kind: the "I am unwell" text.
+        "kind": "advice",
     }
 
 

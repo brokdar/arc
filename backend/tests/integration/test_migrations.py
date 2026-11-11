@@ -496,3 +496,93 @@ def test_downgrading_0025_drops_the_table_and_round_trips(
     command.upgrade(alembic_config, "head")
     assert rows("SELECT count(*) FROM athlete_settings") == [(1,)]
     command.check(alembic_config)
+
+
+# --- 0031: which red-flag text applies (AC-62) -------------------------------------
+#
+# The plan named this 0030 over 0029; 0030 merged first, so it is 0031 over 0030
+# (see the migration's docstring). The athlete row is seeded the way 0030 left
+# the table — no `red_flag_kind` column yet.
+
+ATHLETE_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+def seed_athlete(*, flagged: bool) -> None:
+    run_sql(
+        [
+            (
+                (
+                    "INSERT INTO athlete (id, sex, capabilities, plan_state, "
+                    "red_flag_active, red_flag_note, red_flag_severity, "
+                    "created_at, updated_at) VALUES (:id, 'unspecified', "
+                    "'{}'::jsonb, 'active', :active, :note, :severity, now(), "
+                    "now())"
+                ),
+                {
+                    "id": ATHLETE_ID,
+                    "active": flagged,
+                    "note": "sore knee" if flagged else None,
+                    "severity": "mild" if flagged else None,
+                },
+            )
+        ]
+    )
+
+
+ATHLETE_COLUMNS = (
+    "SELECT red_flag_active, red_flag_note, red_flag_severity, sex, plan_state "
+    "FROM athlete"
+)
+
+
+def test_0031_maps_an_existing_red_flag_to_advice(alembic_config: Config) -> None:
+    at_revision(alembic_config, "0030")
+    seed_athlete(flagged=True)
+    # The settings row as it stood before 0031 (tables are emptied per test).
+    seed_training_settings(alembic_config)
+
+    command.upgrade(alembic_config, "0031")
+
+    assert rows("SELECT red_flag_kind FROM athlete") == [("advice",)]
+    assert rows(ATHLETE_COLUMNS) == [
+        (True, "sore knee", "mild", "unspecified", "active")
+    ]
+    assert rows("SELECT no_max_efforts FROM athlete_settings") == [(False,)]
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)
+
+
+def test_0031_leaves_a_profile_with_no_red_flag_unchanged(
+    alembic_config: Config,
+) -> None:
+    at_revision(alembic_config, "0030")
+    seed_athlete(flagged=False)
+    before = rows(ATHLETE_COLUMNS)
+
+    command.upgrade(alembic_config, "0031")
+
+    assert (
+        rows(ATHLETE_COLUMNS)
+        == before
+        == [(False, None, None, "unspecified", "active")]
+    )
+    assert rows("SELECT red_flag_kind FROM athlete") == [(None,)]
+    command.check(alembic_config)
+
+
+def test_downgrading_0031_drops_both_columns_and_round_trips(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+
+    command.downgrade(alembic_config, "0030")
+    assert (
+        rows(
+            "SELECT column_name FROM information_schema.columns WHERE "
+            "column_name IN ('red_flag_kind', 'no_max_efforts')"
+        )
+        == []
+    )
+
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)

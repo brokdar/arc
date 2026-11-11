@@ -17,6 +17,7 @@ import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
+import { BeforeYouStart } from "@/components/strength/safety/before-you-start";
 import { StartLink } from "@/components/strength/start-link";
 import { FirstRunQuestion } from "@/components/today/first-run";
 import { OfflineSessions } from "@/components/today/offline-sessions";
@@ -119,6 +120,7 @@ export function TodayView() {
               no card or a session is under way (`components/cards/card.tsx`). */}
           {/* Before the card: on a fresh install it is the first thing arc
               needs to know, and it is asked once (`first-run.tsx`). */}
+          <BeforeYouStart />
           <FirstRunQuestion />
           <TodayCard />
           {week.isPending ? (
