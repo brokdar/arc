@@ -2431,6 +2431,12 @@
         "title": "EstimatePointRead",
         "type": "object"
       },
+      "Evidence": {
+        "description": "What supports a rule's value; see the module docstring.",
+        "enum": ["backed", "practice", "default"],
+        "title": "Evidence",
+        "type": "string"
+      },
       "ExcludedStepRead": {
         "description": "A pair the assignment made and the confidence gate then refused.\n\nDifferent from a step that was never performed, and shown differently:\n\"we matched this step to that effort and did not trust the match\".",
         "properties": {
@@ -5935,6 +5941,16 @@
           "prescription": {
             "$ref": "#/components/schemas/StrengthSetSchema"
           },
+          "suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuggestionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "warmups": {
             "items": {
               "$ref": "#/components/schemas/WarmupRead"
@@ -5955,7 +5971,8 @@
           "equipment",
           "prefill",
           "warmups",
-          "plates_per_side"
+          "plates_per_side",
+          "suggestion"
         ],
         "title": "PacketLineRead",
         "type": "object"
@@ -7822,7 +7839,7 @@
       },
       "PrefillSource": {
         "description": "Where a line's pre-filled numbers came from.",
-        "enum": ["prescription", "last_logged", "blank"],
+        "enum": ["prescription", "last_logged", "blank", "progression"],
         "title": "PrefillSource",
         "type": "string"
       },
@@ -11421,6 +11438,262 @@
         "required": ["field", "low", "high", "polarity", "prompt", "anchors"],
         "title": "SubjectiveScaleRead",
         "type": "object"
+      },
+      "SuggestionExplanationRead": {
+        "description": "Why a suggestion says what it says: the Why sheet and its Details.",
+        "properties": {
+          "computed_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed Kg"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/SuggestionInputRead"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SuggestionReason"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          },
+          "target_reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Reps"
+          },
+          "target_reps_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Reps Left"
+          }
+        },
+        "required": [
+          "rule",
+          "evidence",
+          "reason",
+          "inputs",
+          "target_reps",
+          "target_reps_left",
+          "computed_kg",
+          "limit"
+        ],
+        "title": "SuggestionExplanationRead",
+        "type": "object"
+      },
+      "SuggestionInputRead": {
+        "description": "One session a suggestion read, as the set it was judged by.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "effort_simple": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffortSimple"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          },
+          "reps_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps Left"
+          },
+          "reps_left_capped": {
+            "title": "Reps Left Capped",
+            "type": "boolean"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "trimmed": {
+            "title": "Trimmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "date",
+          "load_kg",
+          "reps",
+          "reps_left",
+          "reps_left_capped",
+          "effort_simple",
+          "trimmed"
+        ],
+        "title": "SuggestionInputRead",
+        "type": "object"
+      },
+      "SuggestionOutcome": {
+        "description": "What the suggestion does to the last weight.",
+        "enum": ["up", "down", "same", "reps", "first_time"],
+        "title": "SuggestionOutcome",
+        "type": "string"
+      },
+      "SuggestionRead": {
+        "description": "Next session's numbers for one line, from what was lifted.",
+        "properties": {
+          "change_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Kg"
+          },
+          "explanation": {
+            "$ref": "#/components/schemas/SuggestionExplanationRead"
+          },
+          "load_kg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Kg"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/SuggestionOutcome"
+          },
+          "reps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reps"
+          }
+        },
+        "required": ["outcome", "load_kg", "reps", "change_kg", "explanation"],
+        "title": "SuggestionRead",
+        "type": "object"
+      },
+      "SuggestionReason": {
+        "description": "Why, as a code the phone turns into the chip and the Why sheet.",
+        "enum": [
+          "harder_once",
+          "harder_twice",
+          "easier_once",
+          "easier_twice",
+          "easier_capped",
+          "on_target",
+          "unrated",
+          "top_of_range",
+          "top_of_range_twice",
+          "top_at_limit",
+          "range_building",
+          "range_missed",
+          "simple_easy",
+          "simple_good",
+          "simple_good_twice",
+          "simple_hard",
+          "simple_hard_twice",
+          "backoff",
+          "big_step",
+          "trimmed",
+          "increase_blocked",
+          "plateau_step",
+          "plateau_reps",
+          "plateau_reset",
+          "no_rule",
+          "first_time"
+        ],
+        "title": "SuggestionReason",
+        "type": "string"
       },
       "SyncBatch": {
         "additionalProperties": false,

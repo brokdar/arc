@@ -71,6 +71,17 @@ async function mergedSets(): Promise<Map<string, Record<string, unknown>>> {
   return sets;
 }
 
+describe("the reason chip (AC-73)", () => {
+  it("says No history yet for an exercise never logged", async () => {
+    await open({ mode: "standard" });
+
+    expect(screen.getByText("No history yet")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Why this weight?" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("Standard: rating the last set rates the exercise", () => {
   it("4+ writes rir 4, capped, for all three sets", async () => {
     await open({ mode: "standard", plannedRir: 2 });

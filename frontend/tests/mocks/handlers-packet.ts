@@ -94,6 +94,24 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            // Never logged and not under Plain logbook: the server's
+            // first-time suggestion, which keeps the prescription's pre-fill.
+            suggestion: {
+              outcome: "first_time",
+              load_kg: null,
+              reps: 10,
+              change_kg: null,
+              explanation: {
+                rule: null,
+                evidence: null,
+                reason: "first_time",
+                inputs: [],
+                target_reps: 10,
+                target_reps_left: null,
+                computed_kg: null,
+                limit: null,
+              },
+            },
           },
           {
             line_ref: "1.0",
@@ -129,6 +147,8 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            // A hold has no weight to suggest.
+            suggestion: null,
           },
         ],
       },

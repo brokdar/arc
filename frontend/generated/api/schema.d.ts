@@ -3758,6 +3758,12 @@ export interface components {
       session_id: string;
     };
     /**
+     * Evidence
+     * @description What supports a rule's value; see the module docstring.
+     * @enum {string}
+     */
+    Evidence: "backed" | "practice" | "default";
+    /**
      * ExcludedStepRead
      * @description A pair the assignment made and the confidence gate then refused.
      *
@@ -5518,6 +5524,7 @@ export interface components {
       plates_per_side: number[] | null;
       prefill: components["schemas"]["PrefillRead"];
       prescription: components["schemas"]["StrengthSetSchema"];
+      suggestion: components["schemas"]["SuggestionRead"] | null;
       /** Warmups */
       warmups: components["schemas"]["WarmupRead"][];
     };
@@ -6357,7 +6364,7 @@ export interface components {
      * @description Where a line's pre-filled numbers came from.
      * @enum {string}
      */
-    PrefillSource: "prescription" | "last_logged" | "blank";
+    PrefillSource: "prescription" | "last_logged" | "blank" | "progression";
     /**
      * Progression
      * @description How the next session's weight is decided from this line.
@@ -8152,6 +8159,105 @@ export interface components {
       /** Prompt */
       prompt: string;
     };
+    /**
+     * SuggestionExplanationRead
+     * @description Why a suggestion says what it says: the Why sheet and its Details.
+     */
+    SuggestionExplanationRead: {
+      /** Computed Kg */
+      computed_kg: number | null;
+      evidence: components["schemas"]["Evidence"] | null;
+      /** Inputs */
+      inputs: components["schemas"]["SuggestionInputRead"][];
+      /** Limit */
+      limit: string | null;
+      reason: components["schemas"]["SuggestionReason"];
+      /** Rule */
+      rule: string | null;
+      /** Target Reps */
+      target_reps: number | null;
+      /** Target Reps Left */
+      target_reps_left: number | null;
+    };
+    /**
+     * SuggestionInputRead
+     * @description One session a suggestion read, as the set it was judged by.
+     */
+    SuggestionInputRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      effort_simple: components["schemas"]["EffortSimple"] | null;
+      /** Load Kg */
+      load_kg: number | null;
+      /** Reps */
+      reps: number | null;
+      /** Reps Left */
+      reps_left: number | null;
+      /** Reps Left Capped */
+      reps_left_capped: boolean;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Trimmed */
+      trimmed: boolean;
+    };
+    /**
+     * SuggestionOutcome
+     * @description What the suggestion does to the last weight.
+     * @enum {string}
+     */
+    SuggestionOutcome: "up" | "down" | "same" | "reps" | "first_time";
+    /**
+     * SuggestionRead
+     * @description Next session's numbers for one line, from what was lifted.
+     */
+    SuggestionRead: {
+      /** Change Kg */
+      change_kg: number | null;
+      explanation: components["schemas"]["SuggestionExplanationRead"];
+      /** Load Kg */
+      load_kg: number | null;
+      outcome: components["schemas"]["SuggestionOutcome"];
+      /** Reps */
+      reps: number | null;
+    };
+    /**
+     * SuggestionReason
+     * @description Why, as a code the phone turns into the chip and the Why sheet.
+     * @enum {string}
+     */
+    SuggestionReason:
+      | "harder_once"
+      | "harder_twice"
+      | "easier_once"
+      | "easier_twice"
+      | "easier_capped"
+      | "on_target"
+      | "unrated"
+      | "top_of_range"
+      | "top_of_range_twice"
+      | "top_at_limit"
+      | "range_building"
+      | "range_missed"
+      | "simple_easy"
+      | "simple_good"
+      | "simple_good_twice"
+      | "simple_hard"
+      | "simple_hard_twice"
+      | "backoff"
+      | "big_step"
+      | "trimmed"
+      | "increase_blocked"
+      | "plateau_step"
+      | "plateau_reps"
+      | "plateau_reset"
+      | "no_rule"
+      | "first_time";
     /**
      * SyncBatch
      * @description One upload from the outbox, applied in order, all or nothing.

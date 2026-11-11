@@ -273,6 +273,14 @@ strength-records-fixture:
 	cd backend && uv run python scripts/emit_strength_records_fixture.py
 	cd frontend && bunx biome check --write tests/mocks/generated-strength-records.ts
 
+# Regenerate the frontend's suggested-weight fixtures from the real domain.
+# Run after changing app/domain/progression.py or the suggestion read shape,
+# and commit the result: a suggestion is Epley arithmetic, limits and loadable
+# rounding, which a hand-typed `computed_kg` would only imitate.
+progression-fixture:
+	cd backend && uv run python scripts/emit_progression_fixture.py
+	cd frontend && bunx biome check --write tests/mocks/generated-progression.ts
+
 # Regenerate the loading vectors both languages are tested against.
 # Run after changing app/domain/loading.py, and commit the result: the phone's
 # twin in frontend/lib/strength must agree with every case, and the backend

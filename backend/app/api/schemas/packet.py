@@ -13,8 +13,11 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.schemas.exercises import ExerciseRead
 from app.api.schemas.workouts import StrengthSetSchema
+from app.domain.activity import EffortSimple
 from app.domain.loading import Equipment
+from app.domain.progression import SuggestionOutcome, SuggestionReason
 from app.domain.purpose import Purpose
+from app.domain.rules import Evidence
 from app.domain.training_mode import AskFrequency, TrainingMode, Units
 from app.services.packet import EffortScale, PrefillSource
 
@@ -47,6 +50,60 @@ class WarmupRead(BaseModel):
     plates_per_side: list[float] | None
 
 
+class SuggestionInputRead(BaseModel):
+    """One session a suggestion read, as the set it was judged by."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: uuid.UUID
+    #: The athlete-local date of the session.
+    date: dt.date
+    load_kg: float | None
+    reps: int | None
+    #: Reps left as reported (a set RPE converted); null when unrated.
+    reps_left: float | None
+    #: The rating was "4+": ``reps_left`` is a floor, not a count.
+    reps_left_capped: bool
+    effort_simple: EffortSimple | None
+    #: The session logged fewer working sets than prescribed.
+    trimmed: bool
+
+
+class SuggestionExplanationRead(BaseModel):
+    """Why a suggestion says what it says: the Why sheet and its Details."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: The registry id of the rule that set the value
+    #: (`app.domain.rules`); null only for a first time.
+    rule: str | None
+    evidence: Evidence | None
+    reason: SuggestionReason
+    #: The sessions read, oldest first.
+    inputs: list[SuggestionInputRead]
+    target_reps: int | None
+    #: The reps left the effort was held to (a range's nearer end).
+    target_reps_left: float | None
+    #: The rule's result before limits and rounding, unrounded.
+    computed_kg: float | None
+    #: The registry id of the limit that held the result back, if any.
+    limit: str | None
+
+
+class SuggestionRead(BaseModel):
+    """Next session's numbers for one line, from what was lifted."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    outcome: SuggestionOutcome
+    #: Null for a first time: the plan or the starting flow decides.
+    load_kg: float | None
+    reps: int | None
+    #: ``load_kg`` minus the last weight lifted (made loadable).
+    change_kg: float | None
+    explanation: SuggestionExplanationRead
+
+
 class PacketLineRead(BaseModel):
     """One prescription line with everything the gym screen needs."""
 
@@ -71,6 +128,9 @@ class PacketLineRead(BaseModel):
     warmups: list[WarmupRead]
     #: Plates for the pre-filled weight; null off a barbell or with no weight.
     plates_per_side: list[float] | None
+    #: The suggested next weight and why. Null under Plain logbook or
+    #: follow-exactly, and for a line with no loadable weight.
+    suggestion: SuggestionRead | None
 
 
 class PacketSessionRead(BaseModel):

@@ -160,14 +160,110 @@ BACKOFF_DROP = Rule(
 PLATEAU_WINDOW_SHORT = Rule(
     id="progression.plateau.short_window",
     value=4,
-    summary="Four exposures without progress on a lift raise a holding-steady check.",
+    summary=(
+        "Four exposures without a personal best (and no rise in the estimate) "
+        "mean a lift is holding steady, and one plateau response is offered."
+    ),
     evidence=Evidence.DEFAULT,
     certainty=Certainty.LOW,
 )
 PLATEAU_WINDOW_LONG = Rule(
     id="progression.plateau.long_window",
     value=6,
-    summary="Six exposures without progress call a plateau and suggest a response.",
+    summary=(
+        "Single-joint exercises progress more slowly, so they hold steady "
+        "only after six exposures without a personal best."
+    ),
+    evidence=Evidence.DEFAULT,
+    certainty=Certainty.LOW,
+)
+PLATEAU_RESET = Rule(
+    id="progression.plateau.reset",
+    value=0.075,
+    summary=(
+        "The third plateau response drops the weight 7.5 % and rebuilds from "
+        "there, after a smallest step and then a rep have not moved it."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.LOW,
+)
+PLATEAU_OFF_PHASES = Rule(
+    id="progression.plateau.off_phases",
+    value=("peak", "taper", "maintenance"),
+    summary=(
+        "No plateau response in a peak, race-week (taper) or maintenance "
+        "phase: holding steady is the point of those phases."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.MODERATE,
+)
+WEIGHT_FROM_EFFORT = Rule(
+    id="progression.weight_from_effort",
+    value=2,
+    summary=(
+        "Two or more reps left away from the target in one session moves the "
+        "weight by the estimate's arithmetic; the same threshold both ways."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.LOW,
+)
+EFFORT_GAP_TWICE = Rule(
+    id="progression.weight_from_effort.gap_twice",
+    value=1,
+    summary=(
+        "One rep left away from the target moves the weight only when two "
+        "sessions in a row at the same weight say so."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.LOW,
+)
+STREAK_SESSIONS = Rule(
+    id="progression.streak_sessions",
+    value=2,
+    summary=(
+        '"Twice in a row" means the last two learnable sessions of the '
+        "exercise, at the same weight."
+    ),
+    evidence=Evidence.DEFAULT,
+    certainty=Certainty.LOW,
+)
+REPS_THEN_WEIGHT = Rule(
+    id="progression.reps_then_weight",
+    value=1,
+    summary=(
+        "With a rep range, every working set at the top of it rated 1+ reps "
+        "left (or unrated) adds the smallest step and aims for the bottom."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.MODERATE,
+)
+SIMPLE_PROGRESSION = Rule(
+    id="progression.simple",
+    value=1,
+    summary=(
+        "Simple mode: Easy adds one smallest step, Good twice in a row adds "
+        "one, Hard holds and Hard twice drops the most a drop may."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.LOW,
+)
+BIG_STEP = Rule(
+    id="progression.big_step",
+    value=0.05,
+    summary=(
+        "When the smallest step on a main lift is more than 5 % of the weight, "
+        "add a rep first instead of the step."
+    ),
+    evidence=Evidence.PRACTICE,
+    certainty=Certainty.LOW,
+)
+PROGRESSION_HOLD = Rule(
+    id="progression.hold",
+    value=0.0,
+    summary=(
+        "A line no rule applies to keeps the weight last lifted, rounded to "
+        "a loadable weight."
+    ),
     evidence=Evidence.DEFAULT,
     certainty=Certainty.LOW,
 )
@@ -292,6 +388,15 @@ REGISTRY: Mapping[str, Rule[object]] = build_registry(
     BACKOFF_DROP,
     PLATEAU_WINDOW_SHORT,
     PLATEAU_WINDOW_LONG,
+    PLATEAU_RESET,
+    PLATEAU_OFF_PHASES,
+    WEIGHT_FROM_EFFORT,
+    EFFORT_GAP_TWICE,
+    STREAK_SESSIONS,
+    REPS_THEN_WEIGHT,
+    SIMPLE_PROGRESSION,
+    BIG_STEP,
+    PROGRESSION_HOLD,
     HARD_SET_MAX_RIR,
     E1RM_MAX_REPS,
     E1RM_LINE_WINDOW,
