@@ -332,7 +332,9 @@ const CI_SCHEMA = {
     // is a local verification, not a fix agent hunting a defect that isn't there.
     // Named exactly as `scripts/ci-status.mjs` prints it, so the seat relays a
     // word instead of translating one.
-    status: { type: "string", enum: ["GREEN", "RED", "NO_RUNS", "UNKNOWN"] },
+    // CONFLICT: exit 5 — the PR conflicts with main, so GitHub runs no CI on it
+    // at all; the answer is merging main in, not a local verification.
+    status: { type: "string", enum: ["GREEN", "RED", "NO_RUNS", "UNKNOWN", "CONFLICT"] },
     failing: { type: "array", items: { type: "string" } },
     detail: { type: "string" },
     invocations: { type: "number" },
@@ -1119,6 +1121,39 @@ ${AS_AGENT_NOTE}
 Report the pushed SHA. Do not merge.`;
 }
 
+function syncMainPrompt(p, pr) {
+  const wt = wtPath(p);
+  return `PR #${pr.number} ("${p.title}") conflicts with main, so GitHub will not run CI on it. Merge main
+into the branch in \`${wt}\`, resolve, gate, and push. A MERGE, never a rebase: the branch is already
+pushed, and a force-push is refused.
+
+  \`cd ${wt} && git fetch origin && git merge --no-edit origin/main\`
+
+Resolve every conflict by keeping BOTH sides' intent — these are almost always two PRs appending to
+the same list:
+- \`backend/app/api/routers.py\`: keep main's routers, then this PR's, each once; keep both imports.
+- \`backend/schemathesis.toml\`, \`backend/app/mcp/strength_tools.py\`, test tool sets: keep main's
+  blocks, then this PR's; each block stays whole.
+- \`frontend/generated/api/*\`: never hand-merge. Take main's (\`git checkout --theirs\`), then run
+  \`just api-sync\`.
+- A migration conflict (two heads, or two files claiming one number): STOP and report \`ok: false\` —
+  renumbering is a decision, not a merge.
+- Anything else you cannot resolve without changing what either side does: STOP, \`git merge --abort\`,
+  report \`ok: false\` naming the files.
+
+Then \`cd ${wt} && just gate > /tmp/sync-${p.branch.replace(/\//g, "-")}.log 2>&1; echo $?\`. Red: fix only
+what the merge broke (a duplicate import, a list order), never a test's expectation, and re-run. Still
+red after one fix: \`git merge --abort\` (or reset to the pre-merge head if you committed) and report
+\`ok: false\`. Green: \`git add -A && git commit --no-edit\`, then push in the background and poll its log:
+  \`cd ${wt} && scripts/as-agent.sh git push > /tmp/syncpush-${p.branch.replace(/\//g, "-")}.log 2>&1 &\`
+Never \`--no-verify\`.
+
+${AS_AGENT_NOTE}
+
+Report \`ok\`, the pushed \`sha\`, and in \`detail\` every file that conflicted and how you resolved it.
+Do not merge the PR.`;
+}
+
 function ciPrompt(p, pr) {
   return `Report CI on PR #${pr.number} (${pr.url}). One script decides this — you only relay it.
 
@@ -1137,6 +1172,7 @@ not. Map its EXIT CODE, and nothing else, to \`status\`:
   3 → UNKNOWN    still pending at the deadline, or a check was cancelled. RE-RUN the script (up to 4
                  times total) before reporting UNKNOWN; report the number of invocations.
   4 → UNKNOWN    the PR could not be read; put the stderr in \`detail\`.
+  5 → CONFLICT   the PR conflicts with main, so GitHub will not run CI on it. Do not investigate.
 
 Put the script's exit code in \`exitCode\` verbatim. Do not change any code, do not push, do not merge.`;
 }
@@ -1827,6 +1863,28 @@ as a clean run.
   let ci = await agent(ciPrompt(p, pr), cheap("ci", CI_SCHEMA));
   if (ci && ci.invocations > 1) {
     log(`${p.branch}: CI status took ${ci.invocations} bounded polls — ${ci.status}.`);
+  }
+  // main moved while this PR was built and it now conflicts: GitHub runs no CI
+  // on it. Merge main in once and watch CI again. The merge is gated but not
+  // re-reviewed — what it adds is main's, already merged, and the seat may only
+  // keep both sides of an append; a conflict that needs a decision stops it.
+  if (ci && ci.status === "CONFLICT") {
+    log(`${p.branch}: PR #${pr.number} conflicts with main — merging main in.`);
+    const synced = await agent(syncMainPrompt(p, pr), { ...dev, label: `${title}:sync-main`, schema: PR_SCHEMA });
+    if (!synced || !synced.ok) {
+      return fail("conflict-with-main", {
+        pr, verdict,
+        recovery: `PR #${pr.number} conflicts with main and the merge could not be finished: ${synced ? synced.detail : "the merge seat died"}. Merge origin/main into ${p.branch} in ${wtPath(p)} by hand (merge, do not rebase), gate, push, then re-launch with onlyBranch.`,
+      });
+    }
+    log(`${p.branch}: merged main in (${String(synced.sha || "").slice(0, 9)}) — ${synced.detail}`);
+    ci = await agent(ciPrompt(p, pr), cheap("ci-after-sync", CI_SCHEMA));
+    if (ci && ci.status === "CONFLICT") {
+      return fail("conflict-with-main", {
+        pr, verdict, ci,
+        recovery: `PR #${pr.number} still conflicts with main after one merge (main moved again?). Merge origin/main into ${p.branch} by hand, push, then re-launch with onlyBranch.`,
+      });
+    }
   }
   let ciLoops = 0;
   while (ci && ci.status === "RED" && ciLoops < MAX_CI_LOOPS) {

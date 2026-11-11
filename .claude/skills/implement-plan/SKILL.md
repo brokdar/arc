@@ -120,6 +120,16 @@ bookkeeping: per-PR review structurally cannot see cross-PR gaps — duplicated 
 contradicting another, a capability that reached the API but not MCP. It runs against integrated
 `main` and is the only gate that catches them.
 
+## When the PR conflicts with main
+
+GitHub runs no `pull_request` workflow on a PR it cannot merge, so a PR that opens after `main` moved
+gets no CI at all. `scripts/ci-status.mjs` reports that as exit **5** (`CONFLICT`), not as `NO_RUNS`,
+and the workflow merges `origin/main` into the branch once (a merge, never a rebase: the branch is
+pushed and a force-push is refused), keeps both sides of appended lists, regenerates
+`frontend/generated/api/` with `just api-sync`, gates, pushes and watches CI again. A conflict that
+needs a decision — two migrations claiming one number, or code where keeping both sides changes
+behaviour — stops as `conflict-with-main` with the seat's words in `recovery`.
+
 ## When CI never runs
 
 `scripts/ci-status.mjs` exiting **2** (`NO_RUNS`) means no workflow run ever registered for the PR's
@@ -162,6 +172,9 @@ logged.
     is wrong.
   - `gate red …` / `gate-red-after-review-fix` / `gate-red-after-ci-fix` — `just gate` will not pass.
     `gateExit` is in the report; run `just gate` in the worktree to see it yourself.
+  - `conflict-with-main` — the PR conflicts with main and the merge seat would not finish it (a migration
+    clash, or a conflict that needs a decision), or it still conflicted after one merge. Merge `origin/main`
+    in by hand, push, then re-launch with `onlyBranch`.
   - `ci-red-no-code-change` — CI went red, but the fix seat found nothing in the code to change and the gate is green: usually an infrastructure failure (a tool download, a runner). The agent identity cannot re-run Actions, so re-run the failed jobs yourself, then re-launch with `onlyBranch`.
   - `commit-refused` — the gate passed but the commit seat found a path in the tree it did not
     recognise. Look before you re-launch: something else wrote in that worktree.
