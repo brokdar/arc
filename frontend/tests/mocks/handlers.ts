@@ -80,6 +80,7 @@ import {
   zonesFixture,
 } from "@/tests/mocks/fixtures";
 import { cardHandlers } from "@/tests/mocks/handlers-cards";
+import { exportHandlers } from "@/tests/mocks/handlers-exports";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
 import {
@@ -1836,3 +1837,4 @@ handlers.push(...appKeyHandlers);
 handlers.push(...fitnessHandlers);
 handlers.push(...powerHandlers);
 handlers.push(...cardHandlers);
+handlers.push(...exportHandlers);

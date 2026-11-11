@@ -612,6 +612,69 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/exports/sets.csv": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Sets
+     * @description Every logged set, one row each, with formula-looking text escaped.
+     */
+    get: operations["exports-export_sets"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exports/strong.csv": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Strong
+     * @description Every logged set in Strong's column layout (lossy: no side, W/D/F only).
+     */
+    get: operations["exports-export_strong"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exports/workouts.json": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Workouts
+     * @description Every session with logged sets, as openweight `WorkoutLog` documents.
+     *
+     *     Wrapped in arc's ``arc-export`` envelope; arc's own fields are the
+     *     ``arc*`` keys openweight leaves free.
+     */
+    get: operations["exports-export_workouts"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/fitness": {
     parameters: {
       query?: never;
@@ -1569,6 +1632,29 @@ export interface paths {
      *     alignment that is not the one in force (A7.1).
      */
     put: operations["scores-set_session_alignment_offset"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/sessions/{session_id}/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Export Session
+     * @description One session as text (to read or paste) or as the set-level CSV.
+     *
+     *     The CSV of a session with no sets is its header line alone. ``variant``
+     *     applies to the CSV only.
+     */
+    get: operations["exports-export_session"];
+    put?: never;
     post?: never;
     delete?: never;
     options?: never;
@@ -3258,6 +3344,12 @@ export interface components {
       required?: number | null;
     };
     /**
+     * CsvVariant
+     * @description Which separators a CSV uses: the field delimiter and decimal mark.
+     * @enum {string}
+     */
+    CsvVariant: "comma" | "semicolon";
+    /**
      * DataKind
      * @description Which arc subsystem consumes what an integration brings in.
      *
@@ -3626,6 +3718,125 @@ export interface components {
       inputs: {
         [key: string]: string;
       };
+    };
+    /**
+     * ExportedExercise
+     * @description openweight's ``ExerciseLog``: a run of sets of one movement.
+     */
+    ExportedExercise: {
+      /** Arcexerciseid */
+      arcExerciseId?: string;
+      exercise: components["schemas"]["ExportedExerciseName"];
+      /** Order */
+      order: number;
+      /** Sets */
+      sets: components["schemas"]["ExportedSet"][];
+    };
+    /**
+     * ExportedExerciseName
+     * @description openweight's ``Exercise``: the movement's name and equipment.
+     */
+    ExportedExerciseName: {
+      /** Equipment */
+      equipment?: string;
+      /** Name */
+      name: string;
+    };
+    /**
+     * ExportedSet
+     * @description One logged set: openweight's ``SetLog`` plus arc's ``arc*`` fields.
+     */
+    ExportedSet: {
+      /** Arcassistancekg */
+      arcAssistanceKg?: number;
+      /**
+       * Arcclientid
+       * Format: uuid
+       */
+      arcClientId: string;
+      /**
+       * Arccompletedat
+       * Format: date-time
+       */
+      arcCompletedAt?: string;
+      /** Arcconfidence */
+      arcConfidence: string;
+      /** Archoldquality */
+      arcHoldQuality?: string;
+      /** Arcpainband */
+      arcPainBand?: string;
+      /** Arcpainkind */
+      arcPainKind?: string;
+      /** Arcperside */
+      arcPerSide: boolean;
+      /** Arcplannedlineref */
+      arcPlannedLineRef?: string;
+      /** Arcreplacedexerciseid */
+      arcReplacedExerciseId?: string;
+      /** Arcrircapped */
+      arcRirCapped?: boolean;
+      /** Arcsetkind */
+      arcSetKind: string;
+      /** Arcside */
+      arcSide: string;
+      /** Arcsource */
+      arcSource: string;
+      /** Durationseconds */
+      durationSeconds?: number;
+      /** Notes */
+      notes?: string;
+      /** Reps */
+      reps?: number;
+      /** Restseconds */
+      restSeconds?: number;
+      /** Rir */
+      rir?: number;
+      /** Rpe */
+      rpe?: number;
+      /** Tofailure */
+      toFailure?: boolean;
+      /** Type */
+      type: string;
+      /** Unit */
+      unit?: string;
+      /** Weight */
+      weight?: number;
+    };
+    /**
+     * ExportedWorkout
+     * @description openweight's ``WorkoutLog``: one session with logged sets.
+     */
+    ExportedWorkout: {
+      /** Arcbodyweightkg */
+      arcBodyweightKg?: number;
+      /** Arcdiscipline */
+      arcDiscipline: string;
+      /**
+       * Arcid
+       * Format: uuid
+       */
+      arcId: string;
+      /** Arcsessionrating */
+      arcSessionRating?: number;
+      /** Arcsessionrpe */
+      arcSessionRpe?: number;
+      /** Arcstarttimeknown */
+      arcStartTimeKnown: boolean;
+      /** Arctimezone */
+      arcTimezone: string;
+      /**
+       * Date
+       * Format: date-time
+       */
+      date: string;
+      /** Durationseconds */
+      durationSeconds: number;
+      /** Exercises */
+      exercises: components["schemas"]["ExportedExercise"][];
+      /** Name */
+      name: string;
+      /** Notes */
+      notes?: string;
     };
     /**
      * FeedDeliveryState
@@ -6447,6 +6658,12 @@ export interface components {
      */
     SessionDiscipline: "cycling" | "strength" | "other";
     /**
+     * SessionExportFormat
+     * @description What one session is exported as.
+     * @enum {string}
+     */
+    SessionExportFormat: "text" | "csv";
+    /**
      * SessionIntentRead
      * @description One version of a planned session's intent.
      *
@@ -8063,6 +8280,23 @@ export interface components {
         | null;
       /** Tags */
       tags?: string[] | null;
+    };
+    /**
+     * WorkoutsExport
+     * @description The whole file: arc's envelope around openweight workouts.
+     */
+    WorkoutsExport: {
+      /**
+       * Exportedat
+       * Format: date-time
+       */
+      exportedAt: string;
+      /** Format */
+      format: string;
+      /** Version */
+      version: number;
+      /** Workouts */
+      workouts: components["schemas"]["ExportedWorkout"][];
     };
     /**
      * ZoneModel
@@ -9864,6 +10098,144 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exports-export_sets": {
+    parameters: {
+      query?: {
+        /** @description comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel). */
+        variant?: components["schemas"]["CsvVariant"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/csv": string;
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exports-export_strong": {
+    parameters: {
+      query?: {
+        /** @description comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel). */
+        variant?: components["schemas"]["CsvVariant"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/csv": string;
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exports-export_workouts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkoutsExport"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
         };
       };
     };
@@ -12877,6 +13249,69 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "exports-export_session": {
+    parameters: {
+      query?: {
+        format?: components["schemas"]["SessionExportFormat"];
+        /** @description comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel). */
+        variant?: components["schemas"]["CsvVariant"];
+      };
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The session as text, or as the set-level CSV */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/csv": string;
+          "text/plain": string;
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such session */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

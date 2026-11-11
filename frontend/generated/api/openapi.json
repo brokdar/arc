@@ -1927,6 +1927,12 @@
         "title": "CriterionOutcomeRead",
         "type": "object"
       },
+      "CsvVariant": {
+        "description": "Which separators a CSV uses: the field delimiter and decimal mark.",
+        "enum": ["comma", "semicolon"],
+        "title": "CsvVariant",
+        "type": "string"
+      },
       "DataKind": {
         "description": "Which arc subsystem consumes what an integration brings in.\n\n**Two members, because arc has exactly two destinations**: a file becomes\na recording (`IngestPipeline.ingest_file` \u2192 `recordings` \u2192 `sessions` and\n`logged_sets`), or a reading becomes a wellness day (`WellnessService`\n\u2192 `wellness_days`). Nothing else in arc eats ingested data.\n\nThis is emphatically **not the sport**. \"Apple Workouts provides rides and\nstrength training\" is one `DataKind` \u2014 `recordings` \u2014 not two, because arc\nclassifies each file itself: `app.domain.activity.SessionDiscipline` exists\nbecause \"a device file ... can hold a walk, a swim or a sport the head unit\ndoes not name\", and a folder cannot tell you what wrote a file nor what\nsport it was. A vocabulary of `rides | strength | wellness` would put a\nguess about the sport into configuration, where nothing can correct it,\nand every disagreement between the guess and the file would be resolved in\nfavour of the guess. `IngestSource` already makes this argument for where a\nfile came from; this extends it rather than overturning it.",
         "enum": ["recordings", "wellness"],
@@ -2489,6 +2495,233 @@
         },
         "required": ["formula", "inputs", "assumptions", "citation"],
         "title": "ExplanationRead",
+        "type": "object"
+      },
+      "ExportedExercise": {
+        "description": "openweight's ``ExerciseLog``: a run of sets of one movement.",
+        "properties": {
+          "arcExerciseId": {
+            "title": "Arcexerciseid",
+            "type": "string"
+          },
+          "exercise": {
+            "$ref": "#/components/schemas/ExportedExerciseName"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "sets": {
+            "items": {
+              "$ref": "#/components/schemas/ExportedSet"
+            },
+            "title": "Sets",
+            "type": "array"
+          }
+        },
+        "required": ["exercise", "order", "sets"],
+        "title": "ExportedExercise",
+        "type": "object"
+      },
+      "ExportedExerciseName": {
+        "description": "openweight's ``Exercise``: the movement's name and equipment.",
+        "properties": {
+          "equipment": {
+            "title": "Equipment",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "title": "ExportedExerciseName",
+        "type": "object"
+      },
+      "ExportedSet": {
+        "description": "One logged set: openweight's ``SetLog`` plus arc's ``arc*`` fields.",
+        "properties": {
+          "arcAssistanceKg": {
+            "title": "Arcassistancekg",
+            "type": "number"
+          },
+          "arcClientId": {
+            "format": "uuid",
+            "title": "Arcclientid",
+            "type": "string"
+          },
+          "arcCompletedAt": {
+            "format": "date-time",
+            "title": "Arccompletedat",
+            "type": "string"
+          },
+          "arcConfidence": {
+            "title": "Arcconfidence",
+            "type": "string"
+          },
+          "arcHoldQuality": {
+            "title": "Archoldquality",
+            "type": "string"
+          },
+          "arcPainBand": {
+            "title": "Arcpainband",
+            "type": "string"
+          },
+          "arcPainKind": {
+            "title": "Arcpainkind",
+            "type": "string"
+          },
+          "arcPerSide": {
+            "title": "Arcperside",
+            "type": "boolean"
+          },
+          "arcPlannedLineRef": {
+            "title": "Arcplannedlineref",
+            "type": "string"
+          },
+          "arcReplacedExerciseId": {
+            "title": "Arcreplacedexerciseid",
+            "type": "string"
+          },
+          "arcRirCapped": {
+            "title": "Arcrircapped",
+            "type": "boolean"
+          },
+          "arcSetKind": {
+            "title": "Arcsetkind",
+            "type": "string"
+          },
+          "arcSide": {
+            "title": "Arcside",
+            "type": "string"
+          },
+          "arcSource": {
+            "title": "Arcsource",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "title": "Durationseconds",
+            "type": "integer"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "restSeconds": {
+            "title": "Restseconds",
+            "type": "integer"
+          },
+          "rir": {
+            "title": "Rir",
+            "type": "integer"
+          },
+          "rpe": {
+            "title": "Rpe",
+            "type": "number"
+          },
+          "toFailure": {
+            "title": "Tofailure",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "weight": {
+            "minimum": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "arcClientId",
+          "arcSide",
+          "arcSetKind",
+          "arcPerSide",
+          "arcSource",
+          "arcConfidence"
+        ],
+        "title": "ExportedSet",
+        "type": "object"
+      },
+      "ExportedWorkout": {
+        "description": "openweight's ``WorkoutLog``: one session with logged sets.",
+        "properties": {
+          "arcBodyweightKg": {
+            "title": "Arcbodyweightkg",
+            "type": "number"
+          },
+          "arcDiscipline": {
+            "title": "Arcdiscipline",
+            "type": "string"
+          },
+          "arcId": {
+            "format": "uuid",
+            "title": "Arcid",
+            "type": "string"
+          },
+          "arcSessionRating": {
+            "title": "Arcsessionrating",
+            "type": "integer"
+          },
+          "arcSessionRpe": {
+            "title": "Arcsessionrpe",
+            "type": "number"
+          },
+          "arcStartTimeKnown": {
+            "title": "Arcstarttimeknown",
+            "type": "boolean"
+          },
+          "arcTimezone": {
+            "title": "Arctimezone",
+            "type": "string"
+          },
+          "date": {
+            "format": "date-time",
+            "title": "Date",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "title": "Durationseconds",
+            "type": "integer"
+          },
+          "exercises": {
+            "items": {
+              "$ref": "#/components/schemas/ExportedExercise"
+            },
+            "title": "Exercises",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "name",
+          "durationSeconds",
+          "exercises",
+          "arcId",
+          "arcDiscipline",
+          "arcTimezone",
+          "arcStartTimeKnown"
+        ],
+        "title": "ExportedWorkout",
         "type": "object"
       },
       "FeedDeliveryState": {
@@ -8295,6 +8528,12 @@
         "title": "SessionDiscipline",
         "type": "string"
       },
+      "SessionExportFormat": {
+        "description": "What one session is exported as.",
+        "enum": ["text", "csv"],
+        "title": "SessionExportFormat",
+        "type": "string"
+      },
       "SessionIntentRead": {
         "description": "One version of a planned session's intent.\n\nCarries WP-1's versioning vocabulary verbatim, because it is one of the\nversioned artefacts invariant 1 describes.",
         "properties": {
@@ -12000,6 +12239,34 @@
         "title": "WorkoutUpdate",
         "type": "object"
       },
+      "WorkoutsExport": {
+        "description": "The whole file: arc's envelope around openweight workouts.",
+        "properties": {
+          "exportedAt": {
+            "format": "date-time",
+            "title": "Exportedat",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "workouts": {
+            "items": {
+              "$ref": "#/components/schemas/ExportedWorkout"
+            },
+            "title": "Workouts",
+            "type": "array"
+          }
+        },
+        "required": ["format", "version", "exportedAt", "workouts"],
+        "title": "WorkoutsExport",
+        "type": "object"
+      },
       "ZoneModel": {
         "description": "The zone schemes the MVP supports.\n\nOne per channel: power zones off FTP, heart-rate zones off LTHR. Adding a\nmodel is adding a member plus a row in :data:`_ZONE_SCHEMES`.",
         "enum": ["coggan_7", "lthr_5"],
@@ -14416,6 +14683,187 @@
         ],
         "summary": "Put Exercise Note",
         "tags": ["exercises"]
+      }
+    },
+    "/api/v1/exports/sets.csv": {
+      "get": {
+        "description": "Every logged set, one row each, with formula-looking text escaped.",
+        "operationId": "exports-export_sets",
+        "parameters": [
+          {
+            "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel).",
+            "in": "query",
+            "name": "variant",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CsvVariant",
+              "default": "comma",
+              "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Export Sets",
+        "tags": ["exports"]
+      }
+    },
+    "/api/v1/exports/strong.csv": {
+      "get": {
+        "description": "Every logged set in Strong's column layout (lossy: no side, W/D/F only).",
+        "operationId": "exports-export_strong",
+        "parameters": [
+          {
+            "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel).",
+            "in": "query",
+            "name": "variant",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CsvVariant",
+              "default": "comma",
+              "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Export Strong",
+        "tags": ["exports"]
+      }
+    },
+    "/api/v1/exports/workouts.json": {
+      "get": {
+        "description": "Every session with logged sets, as openweight `WorkoutLog` documents.\n\nWrapped in arc's ``arc-export`` envelope; arc's own fields are the\n``arc*`` keys openweight leaves free.",
+        "operationId": "exports-export_workouts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkoutsExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Export Workouts",
+        "tags": ["exports"]
       }
     },
     "/api/v1/fitness": {
@@ -18544,6 +18992,108 @@
         ],
         "summary": "Set Session Alignment Offset",
         "tags": ["scores"]
+      }
+    },
+    "/api/v1/sessions/{session_id}/export": {
+      "get": {
+        "description": "One session as text (to read or paste) or as the set-level CSV.\n\nThe CSV of a session with no sets is its header line alone. ``variant``\napplies to the CSV only.",
+        "operationId": "exports-export_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SessionExportFormat",
+              "default": "text"
+            }
+          },
+          {
+            "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel).",
+            "in": "query",
+            "name": "variant",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CsvVariant",
+              "default": "comma",
+              "description": "comma: comma and decimal point; semicolon: semicolon and decimal comma (German Excel)."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The session as text, or as the set-level CSV"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No valid session"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "No such session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            },
+            "description": "The write lost a race against a concurrent one"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Export Session",
+        "tags": ["exports"]
       }
     },
     "/api/v1/sessions/{session_id}/merge": {
