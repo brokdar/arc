@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import ActorDep
 from app.api.schemas.sync import (
+    ActiveSessionRead,
     MutationResultRead,
     SchemaVersionUnsupported,
     SyncBatch,
@@ -96,5 +97,9 @@ async def sync(service: ServiceDep, actor: ActorDep, payload: SyncBatch) -> Sync
         results=[
             MutationResultRead(mutation_id=r.mutation_id, status=r.status)
             for r in results
+        ],
+        active_sessions=[
+            ActiveSessionRead.model_validate(one)
+            for one in await service.active_sessions()
         ],
     )

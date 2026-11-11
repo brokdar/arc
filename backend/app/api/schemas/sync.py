@@ -11,6 +11,7 @@ defined 409 that tells it to update (`app.api.routes.sync`) rather than a
 schema 422 it could not tell from a broken request.
 """
 
+import datetime as dt
 import uuid
 from typing import Annotated, Literal
 
@@ -59,6 +60,11 @@ class SessionStart(_SessionMutation):
     start_time: Instant
     #: Omitted, the athlete's configured zone.
     timezone: TimezoneName | SkipJsonSchema[None] = None
+    #: The phone-minted id of the device that started it, which then holds
+    #: it until another device claims it (`SessionClaim`).
+    device_id: uuid.UUID | SkipJsonSchema[None] = None
+    #: The planned session it was started from; omitted for an unplanned one.
+    planned_session_id: uuid.UUID | SkipJsonSchema[None] = None
 
 
 class SessionFinish(_SessionMutation):
@@ -66,6 +72,24 @@ class SessionFinish(_SessionMutation):
 
     kind: Literal["session_finish"]
     end_time: Instant
+
+
+class SessionClaim(_SessionMutation):
+    """Continue here, accepted: this device now holds the session.
+
+    The latest claim wins under the conflict rule; every other device reads
+    from `SyncResult.active_sessions` that it no longer holds it and stops
+    logging into it.
+    """
+
+    kind: Literal["session_claim"]
+    device_id: uuid.UUID
+
+
+class SessionReopen(_SessionMutation):
+    """Open a finished session again, within 24 hours of its end."""
+
+    kind: Literal["session_reopen"]
 
 
 class SyncSet(LoggedSetFields):
@@ -129,7 +153,9 @@ type Mutation = Annotated[
     | SetDelete
     | SessionRating
     | DontLearn
-    | NoteUpsert,
+    | NoteUpsert
+    | SessionClaim
+    | SessionReopen,
     Field(discriminator="kind"),
 ]
 
@@ -151,12 +177,30 @@ class MutationResultRead(BaseModel):
     status: MutationStatus
 
 
+class ActiveSessionRead(BaseModel):
+    """A session between Start and Finish, and the device holding it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_client_id: uuid.UUID
+    #: The server's id: what `GET /sessions/{id}` reads its sets from.
+    session_id: uuid.UUID
+    #: The planned session it was started from; null for an unplanned one.
+    planned_session_id: uuid.UUID | None
+    #: The device holding it; null for one started before devices were named.
+    device_id: uuid.UUID | None
+    start_time: dt.datetime
+
+
 class SyncResult(BaseModel):
-    """One result per mutation, in the order sent."""
+    """One result per mutation, in the order sent, and the active sessions."""
 
     #: The batch shape this server writes.
     schema_version: int
     results: list[MutationResultRead]
+    #: Every session still active after this batch (and the abandoned-session
+    #: close it ran), oldest first — read even from an empty batch.
+    active_sessions: list[ActiveSessionRead]
 
 
 class SchemaVersionUnsupported(BaseModel):

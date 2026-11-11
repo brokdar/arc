@@ -21,18 +21,29 @@ batches (`frontend/lib/offline/`). This service takes one batch and
   phone sets that one item aside in "Couldn't upload" and resends the rest.
   Displaced: per-item partial success, which would need a savepoint per item
   and leave the phone reconciling a half-applied batch.
+* **closes what was abandoned.** After the batch, every session still active
+  whose last sign of life is three hours old is finished at its last logged
+  set (`app.domain.sync.auto_close_end`) — a phone left in the locker, a
+  session started twice and forgotten. The same sweep runs on a schedule
+  (`register_abandoned_session_job`) so a session nobody syncs still closes.
 * **commits once,** then refreshes every finished session the batch changed
   (`SessionService.refresh_derived`): a new metric version, and on Finish the
   matching and proposal resolution a typed-in session gets. `create_manual`
   was not reused whole because it commits per session and has no idempotency.
+
+Every answer also lists the sessions still active and the device holding each
+(`active_sessions`), which is how a second phone opening the same session is
+offered "Continue here?" and how the first learns, within one sync, that it
+has handed over (`session_claim`).
 """
 
 import datetime as dt
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+from apscheduler.schedulers.base import BaseScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_timezone
@@ -43,6 +54,7 @@ from app.core.exceptions import (
     ValidationError,
     domain_rules,
 )
+from app.core.scheduler import add_sweep_job, run_sweep
 from app.domain.activity import (
     ClassificationSource,
     EffortSimple,
@@ -67,16 +79,18 @@ from app.domain.sync import (
     MutationKind,
     MutationStatus,
     Stamp,
+    auto_close_end,
     decode_clocks,
     encode_clocks,
     is_alive,
+    may_reopen,
     merge,
     schema_version_supported,
     stamp_for,
 )
 from app.persistence.activity import SessionRepository, SessionRow
 from app.persistence.audit import AuditRepository
-from app.persistence.db import commit, refresh
+from app.persistence.db import commit, refresh, session_scope
 from app.persistence.exercises import MAX_NOTE_LENGTH, ExerciseNoteRepository
 from app.persistence.sync import SyncEntityRow, SyncRepository
 from app.services.activity import (
@@ -93,6 +107,14 @@ from app.services.guardrails import check_write_cap
 
 #: The `reason` on a metric version a sync recomputed.
 SYNC_REASON = "synced from the phone"
+#: The `reason` on a metric version an abandoned session's close computed.
+AUTO_CLOSE_REASON = "closed after three hours without a set"
+
+#: The scheduled sweep for abandoned sessions. A quarter-hour, so a session
+#: nobody syncs closes at most fifteen minutes past its three hours; the
+#: sweep is idempotent and reads a handful of active rows.
+ABANDONED_JOB_ID = "abandoned_sessions"
+ABANDONED_SWEEP_SECONDS = 15 * 60
 
 #: Entity names in `sync_entities`.
 SESSION, SET, NOTE = "session", "set", "note"
@@ -106,6 +128,8 @@ AUDIT_ENTITY = {
     MutationKind.SET_UPSERT: "logged_set",
     MutationKind.SET_DELETE: "logged_set",
     MutationKind.NOTE_UPSERT: "exercise_note",
+    MutationKind.SESSION_CLAIM: "session",
+    MutationKind.SESSION_REOPEN: "session",
 }
 
 #: LoggedSetRow columns a synced edit may change on an existing row. Not
@@ -217,6 +241,17 @@ class MutationResult:
     status: MutationStatus
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveSession:
+    """A session between Start and Finish, and the device that holds it."""
+
+    session_client_id: uuid.UUID
+    session_id: uuid.UUID
+    planned_session_id: uuid.UUID | None
+    device_id: uuid.UUID | None
+    start_time: dt.datetime
+
+
 @dataclass(slots=True)
 class _Touched:
     """A session this batch changed, and whether it changed its finish."""
@@ -237,7 +272,9 @@ class SyncService:
         session_service: SessionService,
         exercises: ExerciseService,
         notes: ExerciseNoteRepository,
+        now: Callable[[], dt.datetime] | None = None,
     ) -> None:
+        self._now = now or (lambda: dt.datetime.now(dt.UTC))
         self._session = session
         self._repository = repository
         self._sessions = sessions
@@ -247,8 +284,14 @@ class SyncService:
         self._notes = notes
 
     @classmethod
-    def from_session(cls, session: AsyncSession) -> Self:
-        """Wire the service and its repositories to one session."""
+    def from_session(
+        cls, session: AsyncSession, *, now: Callable[[], dt.datetime] | None = None
+    ) -> Self:
+        """Wire the service and its repositories to one session.
+
+        ``now`` is the server clock (default: the wall clock); the abandoned
+        session rule and a coach's edit stamp read it.
+        """
         return cls(
             session,
             SyncRepository(session),
@@ -257,6 +300,7 @@ class SyncService:
             SessionService.from_session(session),
             ExerciseService.from_session(session),
             ExerciseNoteRepository(session),
+            now=now,
         )
 
     async def apply(
@@ -310,11 +354,97 @@ class SyncService:
             known.add(mutation.mutation_id)
             results.append(MutationResult(mutation.mutation_id, MutationStatus.APPLIED))
 
-        if all(r.status is MutationStatus.ALREADY_APPLIED for r in results):
+        closed = await self._close_abandoned(touched)
+        if not closed and all(
+            r.status is MutationStatus.ALREADY_APPLIED for r in results
+        ):
             return results
         await commit(self._session)
         await self._refresh_derived(touched, actor=actor)
         return results
+
+    async def close_abandoned(self, *, actor: Actor) -> int:
+        """The scheduled sweep: close every abandoned session and commit.
+
+        Returns how many sessions it closed.
+        """
+        touched: dict[uuid.UUID, _Touched] = {}
+        closed = await self._close_abandoned(touched)
+        if closed:
+            await commit(self._session)
+            await self._refresh_derived(touched, actor=actor, reason=AUTO_CLOSE_REASON)
+        return closed
+
+    async def active_sessions(self) -> list[ActiveSession]:
+        """Every session between Start and Finish, oldest first."""
+        out: list[ActiveSession] = []
+        for entity, row in await self._repository.active_sessions():
+            values = entity.values
+            planned = values.get("planned_session_id")
+            device = values.get("device")
+            out.append(
+                ActiveSession(
+                    session_client_id=uuid.UUID(entity.key),
+                    session_id=row.id,
+                    planned_session_id=None if planned is None else uuid.UUID(planned),
+                    device_id=None if device is None else uuid.UUID(device),
+                    start_time=row.start_time,
+                )
+            )
+        return out
+
+    async def _close_abandoned(self, touched: dict[uuid.UUID, _Touched]) -> int:
+        """Finish every active session idle for three hours, at its last set.
+
+        Written through the conflict rule like any finish, stamped with the
+        server's clock: a reopen or a finish the athlete makes *after* the
+        close is newer and wins; one made before it but uploaded later loses
+        only its end time — the session is finished either way. Audited as the
+        system, since nobody asked for it.
+        """
+        now = self._now()
+        closed = 0
+        for entity, row in await self._repository.active_sessions():
+            clocks = decode_clocks(entity.clocks)
+            end = auto_close_end(
+                start=row.start_time,
+                set_times=[
+                    one.completed_at
+                    for one in row.logged_sets
+                    if one.completed_at is not None
+                ],
+                last_edit=max((c.edit_time for c in clocks.values()), default=None),
+                now=now,
+            )
+            if end is None:
+                continue
+            merged = merge(
+                entity.values,
+                clocks,
+                {"end_time": end.isoformat()},
+                Stamp(edit_time=now, received=0),
+            )
+            if "end_time" not in merged.changed:
+                continue
+            _project_session(row, merged.values)
+            entity.values = merged.values
+            entity.clocks = encode_clocks(merged.clocks)
+            await self._repository.save(entity)
+            await self._sessions.add(row)
+            await self._audit.record(
+                actor=Actor.system(),
+                action="sync.auto_close",
+                entity_type="session",
+                entity_id=row.id,
+                payload={
+                    "session_client_id": entity.key,
+                    "end_time": end.isoformat(),
+                },
+            )
+            entry = touched.setdefault(row.id, _Touched(row))
+            entry.finished = True
+            closed += 1
+        return closed
 
     async def _apply_one(
         self,
@@ -330,7 +460,7 @@ class SyncService:
         stamp = stamp_for(
             agent=actor.kind is ActorKind.AGENT,
             client_edit_time=mutation.client_edit_time,
-            server_now=dt.datetime.now(dt.UTC),
+            server_now=self._now(),
             received=received,
         )
         payload: dict[str, Any] = {
@@ -390,6 +520,16 @@ class SyncService:
             changed = await self._set(mutation, row, stamp=stamp, actor=actor)
             return row, changed
 
+        if mutation.kind is MutationKind.SESSION_REOPEN:
+            ended = entity.values.get("end_time")
+            if ended is None:
+                raise ValidationError(f"session {key} is not finished")
+            if not may_reopen(
+                ended=_instant(ended, "end_time"), at=mutation.client_edit_time
+            ):
+                raise ValidationError(
+                    "a session can be reopened only within 24 hours of its end"
+                )
         patch = _session_patch(mutation)
         merged = merge(entity.values, decode_clocks(entity.clocks), patch, stamp)
         _project_session(row, merged.values)
@@ -504,7 +644,11 @@ class SyncService:
     # --- after the commit ---------------------------------------------------
 
     async def _refresh_derived(
-        self, touched: Mapping[uuid.UUID, _Touched], *, actor: Actor
+        self,
+        touched: Mapping[uuid.UUID, _Touched],
+        *,
+        actor: Actor,
+        reason: str = SYNC_REASON,
     ) -> None:
         """Recompute every finished session the batch changed."""
         for session_id, entry in touched.items():
@@ -516,8 +660,30 @@ class SyncService:
             if row.lifecycle is not SessionLifecycle.FINISHED:
                 continue
             await self._session_service.refresh_derived(
-                row, actor=actor, reason=SYNC_REASON, match=entry.finished
+                row, actor=actor, reason=reason, match=entry.finished
             )
+
+
+async def run_abandoned_sessions_sweep() -> None:
+    """The scheduled sweep. Never raises — a failed run must not kill the job."""
+
+    async def sweep() -> int:
+        async with session_scope() as session:
+            return await SyncService.from_session(session).close_abandoned(
+                actor=Actor.system()
+            )
+
+    await run_sweep("abandoned_sessions", sweep)
+
+
+def register_abandoned_session_job(scheduler: BaseScheduler) -> None:
+    """Register the abandoned-session sweep on the shared sweep shape."""
+    add_sweep_job(
+        scheduler,
+        run_abandoned_sessions_sweep,
+        job_id=ABANDONED_JOB_ID,
+        seconds=ABANDONED_SWEEP_SECONDS,
+    )
 
 
 def _session_patch(mutation: MutationInput) -> dict[str, Any]:
@@ -525,12 +691,23 @@ def _session_patch(mutation: MutationInput) -> dict[str, Any]:
     fields = mutation.fields
     match mutation.kind:
         case MutationKind.SESSION_START:
-            return {
+            patch = {
                 "start_time": fields.get("start_time"),
                 "timezone": fields.get("timezone") or athlete_timezone(),
             }
+            # The device that started it holds it; the planned session lets
+            # a second device opening that plan find this one.
+            if fields.get("device_id") is not None:
+                patch["device"] = fields["device_id"]
+            if fields.get("planned_session_id") is not None:
+                patch["planned_session_id"] = fields["planned_session_id"]
+            return patch
         case MutationKind.SESSION_FINISH:
             return {"end_time": fields.get("end_time")}
+        case MutationKind.SESSION_REOPEN:
+            return {"end_time": None}
+        case MutationKind.SESSION_CLAIM:
+            return {"device": fields.get("device_id")}
         case MutationKind.SESSION_RATING:
             return {"session_rating": fields.get("session_rating")}
         case MutationKind.DONT_LEARN:

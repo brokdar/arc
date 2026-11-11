@@ -24,9 +24,9 @@ type Packet = components["schemas"]["PacketRead"];
  * itself.
  */
 export function packetFixture(today: string, generatedAt: Date): Packet {
-  const library = EXERCISES.filter((exercise) =>
-    ["front_plank", "single_arm_dumbbell_row"].includes(exercise.id),
-  );
+  // The server sends the whole catalogue; these are the entries the
+  // fixtures carry.
+  const library = EXERCISES;
   return {
     schema_version: 1,
     generated_at: generatedAt.toISOString(),
@@ -135,6 +135,7 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
     ],
     last_numbers: [],
     library,
+    notes: [],
   };
 }
 

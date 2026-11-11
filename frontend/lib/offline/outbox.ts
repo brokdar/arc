@@ -60,6 +60,39 @@ export type FlushOutcome =
   | "updateRequired"
   | "error";
 
+type ActiveSessionRead = components["schemas"]["ActiveSessionRead"];
+
+/**
+ * The sessions the server last said were active, and the device holding each
+ * — every 200 from `POST /sync` carries the list. Null until this page has
+ * heard from the server: offline, nobody knows who holds what, and the
+ * logging screen keeps logging (two phones offline both keep their sets).
+ */
+let active: ActiveSessionRead[] | null = null;
+let watchers = 0;
+
+export function activeSessions(): ActiveSessionRead[] | null {
+  return active;
+}
+
+/**
+ * Ask every flush to read the active sessions, even with nothing queued —
+ * the logging screen does while it is open, so a phone that handed its
+ * session to another learns so within one sync. An empty batch is what the
+ * server answers that with. Returns the function that stops asking.
+ */
+/** Forget what the server said — a test's fresh start. */
+export function resetActiveSessions(): void {
+  active = null;
+}
+
+export function watchActiveSessions(): () => void {
+  watchers += 1;
+  return () => {
+    watchers -= 1;
+  };
+}
+
 export interface OutboxStatus {
   pending: number;
   /** When the oldest waiting item was queued, epoch ms; null when none. */
@@ -158,6 +191,7 @@ async function drain(): Promise<FlushOutcome> {
   let items: QueuedItem[] = await queued();
   if (items.length === 0) {
     await setBlocked(null);
+    if (watchers > 0 && (await reachable())) await readActive();
     return "drained";
   }
   if (!(await reachable())) return "offline";
@@ -170,8 +204,9 @@ async function drain(): Promise<FlushOutcome> {
     } catch {
       return "offline";
     }
-    const { error, response } = answer;
+    const { data, error, response } = answer;
     if (response.ok) {
+      if (data) active = data.active_sessions;
       await removeQueued(slice.map((item) => item.seq));
       items = items.slice(slice.length);
       continue;
@@ -218,6 +253,16 @@ async function drain(): Promise<FlushOutcome> {
   }
   await setBlocked(null);
   return "drained";
+}
+
+/** An empty batch: applies nothing, answers with the active sessions. */
+async function readActive(): Promise<void> {
+  try {
+    const { data } = await post([]);
+    if (data) active = data.active_sessions;
+  } catch {
+    // Unreachable after all: keep what was last heard.
+  }
 }
 
 function post(slice: QueuedItem[]) {

@@ -43,7 +43,7 @@ and, against Postgres through the service, by
 """
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -62,6 +62,13 @@ MAX_BATCH_MUTATIONS = 500
 #: The field holding whether the entity exists (see the module docstring).
 EXISTS = "_exists"
 
+#: An active session with no logged set for this long is closed at its last
+#: set (see :func:`auto_close_end`).
+AUTO_CLOSE_AFTER = dt.timedelta(hours=3)
+
+#: How long after its end a finished session may be reopened.
+REOPEN_WINDOW = dt.timedelta(hours=24)
+
 
 class MutationKind(StrEnum):
     """What one outbox item does."""
@@ -73,6 +80,10 @@ class MutationKind(StrEnum):
     SESSION_RATING = "session_rating"
     DONT_LEARN = "dont_learn"
     NOTE_UPSERT = "note_upsert"
+    #: "Continue here?" accepted: this device now holds the session.
+    SESSION_CLAIM = "session_claim"
+    #: A finished session opened again to add or fix sets (within 24 h).
+    SESSION_REOPEN = "session_reopen"
 
 
 class MutationStatus(StrEnum):
@@ -160,6 +171,41 @@ def decode_clocks(raw: Mapping[str, Any]) -> dict[str, Stamp]:
         field: Stamp(edit_time=dt.datetime.fromisoformat(edit), received=int(seq))
         for field, (edit, seq) in raw.items()
     }
+
+
+def auto_close_end(
+    *,
+    start: dt.datetime,
+    set_times: Sequence[dt.datetime],
+    last_edit: dt.datetime | None,
+    now: dt.datetime,
+) -> dt.datetime | None:
+    """When an abandoned active session ends, or None while it is still live.
+
+    A session is abandoned once `AUTO_CLOSE_AFTER` has passed since its last
+    sign of life — its latest logged set, or a later edit of the session
+    itself (a reopen, a claim by another device) — and it then ends **at its
+    last logged set**, or at its start when nothing was logged: the time the
+    athlete stopped lifting, not the time somebody noticed. Displaced: ending
+    it "now", which would credit three idle hours to the session's duration
+    and every load number derived from it.
+
+    The boundary is inclusive: at exactly three hours the session closes.
+    """
+    last_set = max(set_times, default=None)
+    alive = max(moment for moment in (start, last_set, last_edit) if moment is not None)
+    if now - alive < AUTO_CLOSE_AFTER:
+        return None
+    return last_set if last_set is not None else start
+
+
+def may_reopen(*, ended: dt.datetime, at: dt.datetime) -> bool:
+    """Whether a session that ended at ``ended`` may be reopened at ``at``.
+
+    Judged on the reopening device's edit time, not on upload time, so a
+    reopen made offline in time still counts when it arrives late.
+    """
+    return at - ended <= REOPEN_WINDOW
 
 
 def schema_version_supported(version: int) -> bool:

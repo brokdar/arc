@@ -85,6 +85,7 @@ import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { packetHandlers } from "@/tests/mocks/handlers-packet";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
 import { syncHandlers } from "@/tests/mocks/handlers-sync";
+import { type SyncedSession, syncedSession } from "@/tests/mocks/sync-state";
 import {
   patchTrainingSettings,
   trainingSettings,
@@ -570,6 +571,8 @@ export const handlers = [
     );
   }),
   http.get("/api/v1/sessions/{session_id}", ({ params, response }) => {
+    const synced = syncedSession(params.session_id);
+    if (synced) return response(200).json(syncedSessionRead(synced));
     const session = ingestState().sessions.find(
       (row) => row.id === params.session_id,
     );
@@ -1842,3 +1845,89 @@ handlers.push(...cardHandlers);
 handlers.push(...exportHandlers);
 handlers.push(...syncHandlers);
 handlers.push(...packetHandlers);
+
+/**
+ * A session the phone uploaded through `/sync`, read back as
+ * `GET /sessions/{id}` serves it: the sets in `set_index` order with the
+ * fields the outbox sent and the server's defaults for the rest (a phone set
+ * is `source: "app"` unless it said `recap`). Still active, so no load was
+ * computed and nothing matched it yet.
+ */
+function syncedSessionRead(
+  synced: SyncedSession,
+): components["schemas"]["SessionRead"] {
+  const sets = [...synced.sets.entries()]
+    .map(([clientId, set], n) => ({ clientId, set, n }))
+    .sort((a, b) => (a.set.set_index ?? a.n) - (b.set.set_index ?? b.n));
+  const end = synced.endTime ?? synced.startTime;
+  return {
+    id: synced.id,
+    weight_kg_in_force: null,
+    wellness: null,
+    dont_learn: false,
+    dont_learn_reason: null,
+    session_rating: null,
+    local_date: synced.startTime.slice(0, 10),
+    start_time: synced.startTime,
+    start_time_known: true,
+    end_time: end,
+    timezone: "UTC",
+    discipline: "strength",
+    classification_source: "manual",
+    discipline_overridden: false,
+    recording_kind: "manual",
+    status: "unmatched",
+    duration_s: (Date.parse(end) - Date.parse(synced.startTime)) / 1000,
+    recording_time_s: null,
+    rpe: null,
+    temperature_c: null,
+    notes: null,
+    load: null,
+    load_basis: null,
+    metrics: null,
+    recordings: [],
+    logged_sets: sets.map(({ clientId, set }, index) => ({
+      id: clientId.replace(/^.{4}/, "0199"),
+      client_id: clientId,
+      set_index: index,
+      exercise_id: set.exercise_id ?? null,
+      // The server names a catalogue set from the catalogue.
+      exercise_name: set.exercise_name ?? catalogueName(set.exercise_id),
+      reps: set.reps ?? null,
+      duration_s: set.duration_s ?? null,
+      per_side: set.per_side ?? false,
+      load_kg: set.load_kg ?? null,
+      rir: set.rir ?? null,
+      notes: set.notes ?? null,
+      set_kind: set.set_kind ?? "working",
+      side: set.side ?? "both",
+      planned_line_ref: set.planned_line_ref ?? null,
+      replaced_exercise_id: set.replaced_exercise_id ?? null,
+      source: set.source ?? "app",
+      confidence: set.confidence ?? "high",
+      rir_capped: set.rir_capped ?? false,
+      rpe: set.rpe ?? null,
+      hold_quality: set.hold_quality ?? null,
+      effort_simple: set.effort_simple ?? null,
+      rest_s: set.rest_s ?? null,
+      completed_at: set.completed_at ?? null,
+      utc_offset_min: set.utc_offset_min ?? null,
+      pain_kind: set.pain_kind ?? null,
+      pain_band: set.pain_band ?? null,
+    })),
+    created_at: synced.startTime,
+    updated_at: end,
+  };
+}
+
+function catalogueName(slug: string | null | undefined): string {
+  if (!slug) return "";
+  const known = EXERCISES.find((exercise) => exercise.id === slug);
+  return (
+    known?.name ??
+    slug
+      .split("_")
+      .map((word) => word[0].toUpperCase() + word.slice(1))
+      .join(" ")
+  );
+}

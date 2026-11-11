@@ -10,13 +10,17 @@ import datetime as dt
 import pytest
 
 from app.domain.sync import (
+    AUTO_CLOSE_AFTER,
     EXISTS,
     MAX_SCHEMA_VERSION,
     MIN_SCHEMA_VERSION,
+    REOPEN_WINDOW,
     Stamp,
+    auto_close_end,
     decode_clocks,
     encode_clocks,
     is_alive,
+    may_reopen,
     merge,
     schema_version_supported,
     stamp_for,
@@ -137,3 +141,66 @@ def test_schema_versions_outside_the_window_are_unsupported(
     version: int, supported: bool
 ) -> None:
     assert schema_version_supported(version) is supported
+
+
+# --- abandoned sessions and reopening -------------------------------------------
+
+_START = dt.datetime(2026, 11, 9, 17, 30, tzinfo=dt.UTC)
+_LAST_SET = dt.datetime(2026, 11, 9, 18, 10, tzinfo=dt.UTC)
+
+
+def test_an_abandoned_session_ends_at_its_last_set() -> None:
+    end = auto_close_end(
+        start=_START,
+        set_times=[_START + dt.timedelta(minutes=5), _LAST_SET],
+        last_edit=None,
+        now=_LAST_SET + AUTO_CLOSE_AFTER,
+    )
+    assert end == _LAST_SET
+
+
+def test_a_session_one_minute_short_of_three_idle_hours_stays_open() -> None:
+    end = auto_close_end(
+        start=_START,
+        set_times=[_LAST_SET],
+        last_edit=None,
+        now=_LAST_SET + AUTO_CLOSE_AFTER - dt.timedelta(minutes=1),
+    )
+    assert end is None
+
+
+def test_a_session_with_no_set_ends_at_its_start() -> None:
+    end = auto_close_end(
+        start=_START, set_times=[], last_edit=None, now=_START + AUTO_CLOSE_AFTER
+    )
+    assert end == _START
+
+
+def test_a_later_edit_of_the_session_keeps_it_alive() -> None:
+    """A reopen or a claim is a sign of life; the end stays the last set."""
+    reopened = _LAST_SET + dt.timedelta(hours=2)
+    assert (
+        auto_close_end(
+            start=_START,
+            set_times=[_LAST_SET],
+            last_edit=reopened,
+            now=_LAST_SET + AUTO_CLOSE_AFTER,
+        )
+        is None
+    )
+    assert (
+        auto_close_end(
+            start=_START,
+            set_times=[_LAST_SET],
+            last_edit=reopened,
+            now=reopened + AUTO_CLOSE_AFTER,
+        )
+        == _LAST_SET
+    )
+
+
+def test_reopening_is_allowed_for_24_hours_after_the_end() -> None:
+    assert may_reopen(ended=_LAST_SET, at=_LAST_SET + REOPEN_WINDOW)
+    assert not may_reopen(
+        ended=_LAST_SET, at=_LAST_SET + REOPEN_WINDOW + dt.timedelta(seconds=1)
+    )
