@@ -104,6 +104,18 @@
       "aLittle": "A little",
       "regularly": "Regularly",
       "skip": "Skip"
+    },
+    "beforeYouStart": {
+      "title": "Before you start",
+      "lead": "A few things to know before your first session.",
+      "pain": "Sharp pain, or pain in a joint: stop that exercise. Tap ⋯ and then Pain.",
+      "redFlag": "Chest pain, fainting or numbness: stop at once. Tap ⋯ and then Stop.",
+      "easy": "Start light. Leave a few reps in the tank while you learn a move.",
+      "notAdvice": "arc is a training log. It is not medical advice.",
+      "under18": "I'm under 18",
+      "under18Message": "Under 18: arc will never ask for a max effort. Lift with an adult who knows how to coach you.",
+      "gotIt": "Got it",
+      "skip": "Skip"
     }
   },
   "train": {
@@ -227,5 +239,36 @@
     "bestLine": "{weight} × {reps}",
     "sessions": "{count} sessions logged",
     "repMaxMissing": "No set of {reps} or more reps yet"
+  },
+  "safety": {
+    "menuPain": "Pain",
+    "menuStop": "Stop — something's wrong",
+    "pain": {
+      "title": "Where is the pain?",
+      "which": "How does it feel?",
+      "ache": "Muscle ache or burn",
+      "sharp": "Sharp, or in a joint",
+      "howBad": "How bad, from 0 to 10?",
+      "mild": "0–3",
+      "moderate": "4–5",
+      "severe": "6+",
+      "back": "Back",
+      "stopped": "{exercise}: stopped for today because of sharp pain.",
+      "undo": "Undo",
+      "undoLabel": "Undo the pain note on {exercise}"
+    },
+    "redFlag": {
+      "title": "What is happening?",
+      "chestPain": "Chest pain or pressure",
+      "cannotBreathe": "Trouble breathing",
+      "fainted": "Fainting or nearly fainting",
+      "numbness": "Numbness or tingling",
+      "dizziness": "Dizziness",
+      "swelling": "Sudden swelling",
+      "back": "Back",
+      "emergency": "Stop. Call emergency services now.",
+      "advice": "Stop training and get medical advice today.",
+      "ended": "The session has ended. What you logged is saved."
+    }
   }
 }

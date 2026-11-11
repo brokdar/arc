@@ -2790,6 +2790,7 @@ export interface components {
       plan_state: components["schemas"]["PlanState"];
       /** Red Flag Active */
       red_flag_active: boolean;
+      red_flag_kind: components["schemas"]["RedFlagKind"] | null;
       /** Red Flag Note */
       red_flag_note: string | null;
       red_flag_severity: components["schemas"]["RedFlagSeverity"] | null;
@@ -2823,6 +2824,7 @@ export interface components {
       plan_state?: components["schemas"]["PlanState"] | null;
       /** Red Flag Active */
       red_flag_active?: boolean | null;
+      red_flag_kind?: components["schemas"]["RedFlagKind"] | null;
       /** Red Flag Note */
       red_flag_note?: string | null;
       red_flag_severity?: components["schemas"]["RedFlagSeverity"] | null;
@@ -4590,6 +4592,8 @@ export interface components {
       exercise_id: string;
       /** Exercise Name */
       exercise_name: string;
+      /** Increase Blocked */
+      increase_blocked: boolean;
       /** Load Kg */
       load_kg: number | null;
       /**
@@ -5406,7 +5410,8 @@ export interface components {
       | components["schemas"]["SetDelete"]
       | components["schemas"]["SessionRating"]
       | components["schemas"]["DontLearn"]
-      | components["schemas"]["NoteUpsert"];
+      | components["schemas"]["NoteUpsert"]
+      | components["schemas"]["RedFlag"];
     /**
      * MutationResultRead
      * @description What the server did with one mutation.
@@ -6808,6 +6813,52 @@ export interface components {
       start_index: number;
     };
     /**
+     * RedFlag
+     * @description *Stop — something's wrong*: one symptom, which raises the red flag.
+     *
+     *     The phone shows the symptom group's text at once, offline
+     *     (`app.domain.safety.RED_FLAG_TEXT`), and sends ``session_finish`` after
+     *     this; the server raises the athlete's flag and queues its follow-up card.
+     */
+    RedFlag: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "red_flag";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      symptom: components["schemas"]["RedFlagSymptom"];
+    };
+    /**
+     * RedFlagKind
+     * @description Which of the two red-flag answers the athlete was given.
+     *
+     *     The gym screen's *Stop — something's wrong* offers symptoms in two groups
+     *     (`app.domain.safety.RedFlagSymptom`), and each group has one text:
+     *     ``EMERGENCY`` (chest pain, fainting, …) is told to call emergency
+     *     services now; ``ADVICE`` (numbness, dizziness, …) to stop and get medical
+     *     advice today. A flag raised anywhere else — the profile form, the coach —
+     *     is ``ADVICE``: it says "I am unwell", not "call an ambulance", and every
+     *     flag that predates this field was migrated to it for the same reason
+     *     (migration 0031).
+     * @enum {string}
+     */
+    RedFlagKind: "emergency" | "advice";
+    /**
      * RedFlagSeverity
      * @description How bad the illness or injury is (WP-8.4).
      *
@@ -6824,6 +6875,18 @@ export interface components {
      * @enum {string}
      */
     RedFlagSeverity: "mild" | "moderate" | "severe";
+    /**
+     * RedFlagSymptom
+     * @description What *Stop — something's wrong* offers, in its two groups.
+     * @enum {string}
+     */
+    RedFlagSymptom:
+      | "chest_pain"
+      | "cannot_breathe"
+      | "fainted"
+      | "numbness"
+      | "dizziness"
+      | "sudden_swelling";
     /**
      * RepMaxRead
      * @description The heaviest weight lifted for at least ``target_reps`` reps.
@@ -8269,6 +8332,8 @@ export interface components {
       lifted_before: components["schemas"]["LiftedBefore"] | null;
       locale: components["schemas"]["Locale"];
       mode: components["schemas"]["TrainingMode"];
+      /** No Max Efforts */
+      no_max_efforts: boolean;
       /** Plain Logbook */
       plain_logbook: boolean;
       units: components["schemas"]["Units"];
@@ -8298,6 +8363,8 @@ export interface components {
       locale?: components["schemas"]["Locale"];
       /** Mode */
       mode?: components["schemas"]["TrainingMode"];
+      /** No Max Efforts */
+      no_max_efforts?: boolean;
       /** Plain Logbook */
       plain_logbook?: boolean;
       units?: components["schemas"]["Units"];

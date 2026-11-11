@@ -19,6 +19,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.api.schemas.activity import LoggedSetFields, TimezoneName
 from app.api.validation import PostgresText
+from app.domain.safety import RedFlagSymptom
 from app.domain.sync import (
     MAX_BATCH_MUTATIONS,
     MIN_SCHEMA_VERSION,
@@ -122,6 +123,18 @@ class NoteUpsert(_Mutation):
     text: PostgresText = Field(max_length=MAX_NOTE_LENGTH)
 
 
+class RedFlag(_SessionMutation):
+    """*Stop — something's wrong*: one symptom, which raises the red flag.
+
+    The phone shows the symptom group's text at once, offline
+    (`app.domain.safety.RED_FLAG_TEXT`), and sends ``session_finish`` after
+    this; the server raises the athlete's flag and queues its follow-up card.
+    """
+
+    kind: Literal["red_flag"]
+    symptom: RedFlagSymptom
+
+
 type Mutation = Annotated[
     SessionStart
     | SessionFinish
@@ -129,7 +142,8 @@ type Mutation = Annotated[
     | SetDelete
     | SessionRating
     | DontLearn
-    | NoteUpsert,
+    | NoteUpsert
+    | RedFlag,
     Field(discriminator="kind"),
 ]
 

@@ -116,6 +116,9 @@ def red_flag(profile: AthleteProfile) -> dict[str, Any]:
             else profile.red_flag_severity.value
         ),
         "note": profile.red_flag_note,
+        "kind": (
+            None if profile.red_flag_kind is None else profile.red_flag_kind.value
+        ),
     }
 
 

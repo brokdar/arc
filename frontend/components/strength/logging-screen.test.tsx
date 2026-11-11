@@ -286,8 +286,7 @@ describe("numbers and fixes", () => {
   });
 
   it("finishes with the rating, don't learn and its private reason", async () => {
-    // No network: the outbox is read as Finish wrote it, which an upload
-    // racing the read would otherwise drain first.
+    // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
@@ -316,6 +315,7 @@ describe("numbers and fixes", () => {
   });
 
   it("finishing without a rating leaves it empty", async () => {
+    // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));

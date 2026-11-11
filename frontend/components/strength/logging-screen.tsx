@@ -16,6 +16,17 @@ import {
   SYSTEM_CLOCK,
   WakeLockNotice,
 } from "@/components/strength/rest-timer";
+import { PainPanel } from "@/components/strength/safety/pain-panel";
+import {
+  RedFlagPanel,
+  RedFlagStop,
+} from "@/components/strength/safety/red-flag";
+import {
+  type PainBand,
+  type PainKind,
+  RED_FLAG_GROUP,
+  type RedFlagSymptom,
+} from "@/components/strength/safety/safety-model";
 import {
   type ActiveSession,
   advance,
@@ -39,6 +50,7 @@ import {
   type Stamp,
   setMutation,
   startMutation,
+  stoppedByPain,
   warmupsDone,
   workingSetsOf,
 } from "@/components/strength/session-model";
@@ -180,6 +192,7 @@ export function LoggingScreen({
   // The finish summary asks the server for the session's new bests, so it
   // waits until the outbox has drained: before that the server cannot know.
   const [uploaded, setUploaded] = useState(false);
+  const [sheet, setSheet] = useState<"pain" | "redFlag" | null>(null);
   const opened = useRef(false);
   // Outbox writes and state saves run one after another, in action order.
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -506,6 +519,102 @@ export function LoggingScreen({
       .then((outcome) => setUploaded(outcome === "drained"));
   };
 
+  /** The set a pain note is about: the current exercise's last, else the last. */
+  const painTarget = (() => {
+    const working = session.sets.filter((s) => !s.warmup);
+    const here = line ? working.filter((s) => s.lineRef === line.line_ref) : [];
+    return here[here.length - 1] ?? working[working.length - 1] ?? null;
+  })();
+
+  const setPain = (
+    target: LoggedSet,
+    kind: PainKind | null,
+    band: PainBand | null,
+  ) => {
+    const st = stamp();
+    const previous = {
+      pain_kind: target.painKind ?? null,
+      pain_band: target.painBand ?? null,
+    };
+    const patch = patchMutation(
+      session,
+      target.clientId,
+      { pain_kind: kind, pain_band: band },
+      st,
+    );
+    let next: ActiveSession = {
+      ...session,
+      sets: session.sets.map((s) =>
+        s.clientId === target.clientId
+          ? { ...s, painKind: kind, painBand: band }
+          : s,
+      ),
+    };
+    if (kind === null) {
+      // The sets come back: put the exercise they belong to in front again.
+      const index = lines.findIndex((l) => l.line_ref === target.lineRef);
+      if (index >= 0) next = { ...next, lineIndex: index };
+    } else {
+      next = advance(next, lines);
+      if (allDone(next, lines)) next = { ...next, rest: null };
+    }
+    setUndo({
+      before: session,
+      writes: [
+        {
+          mutationId: patch.mutation_id,
+          compensate: () =>
+            patchMutation(session, target.clientId, previous, stamp()),
+        },
+      ],
+    });
+    void commit(next, [patch]);
+  };
+
+  const reportPain = (kind: PainKind, band: PainBand) => {
+    setSheet(null);
+    if (painTarget) setPain(painTarget, kind, band);
+  };
+
+  /** One tap takes back the sharp-pain note that stopped `stopped`. */
+  const undoPain = (stopped: PacketLine) => {
+    const target = session.sets.find(
+      (s) =>
+        s.lineRef === stopped.line_ref && !s.warmup && s.painKind === "sharp",
+    );
+    if (target) setPain(target, null, null);
+  };
+
+  const stopForRedFlag = (symptom: RedFlagSymptom) => {
+    setSheet(null);
+    const st = stamp();
+    const base = (id: string) => ({
+      mutation_id: id,
+      client_edit_time: new Date(st.now).toISOString(),
+      session_client_id: session.sessionClientId,
+    });
+    // The flag first: the server raises it before the session ends.
+    const mutations: Mutation[] = [
+      { kind: "red_flag", ...base(st.id()), symptom },
+      {
+        kind: "session_finish",
+        ...base(st.id()),
+        end_time: new Date(st.now).toISOString(),
+      },
+    ];
+    setUndo(null);
+    setPhase("done");
+    void commit(
+      {
+        ...session,
+        finished: true,
+        rest: null,
+        redFlag: RED_FLAG_GROUP[symptom],
+      },
+      mutations,
+    ).then(() => flush());
+  };
+
   const moveLine = (direction: 1 | -1) => {
     setMenu(false);
     const count = lines.length;
@@ -514,6 +623,15 @@ export function LoggingScreen({
   };
 
   // --- views ----------------------------------------------------------------
+
+  if (phase === "done" && session.redFlag) {
+    return (
+      <Centered>
+        <RedFlagStop kind={session.redFlag} />
+        <BackToToday />
+      </Centered>
+    );
+  }
 
   if (phase === "done") {
     return (
@@ -619,6 +737,29 @@ export function LoggingScreen({
               >
                 {t("train.previousExercise")}
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={painTarget === null}
+                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
+                onClick={() => {
+                  setMenu(false);
+                  setSheet("pain");
+                }}
+              >
+                {t("safety.menuPain")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="min-h-[44px] rounded-md px-3 text-left text-destructive hover:bg-raised-hover"
+                onClick={() => {
+                  setMenu(false);
+                  setSheet("redFlag");
+                }}
+              >
+                {t("safety.menuStop")}
+              </button>
             </div>
           ) : null}
         </div>
@@ -632,6 +773,29 @@ export function LoggingScreen({
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
             <WakeLockNotice />
+            {lines
+              .filter((l) => stoppedByPain(session, l))
+              .map((l) => (
+                <div
+                  key={l.line_ref}
+                  role="status"
+                  className="flex items-center gap-2 rounded-lg border border-hairline-strong bg-raised px-3 py-2 text-sm"
+                >
+                  <p className="min-w-0 flex-1">
+                    {t("safety.pain.stopped", { exercise: l.exercise_name })}
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="h-[44px]"
+                    aria-label={t("safety.pain.undoLabel", {
+                      exercise: l.exercise_name,
+                    })}
+                    onClick={() => undoPain(l)}
+                  >
+                    {t("safety.pain.undo")}
+                  </Button>
+                </div>
+              ))}
             {line ? (
               <LineBody
                 line={line}
@@ -699,6 +863,16 @@ export function LoggingScreen({
           </div>
         </>
       )}
+
+      {sheet === "pain" ? (
+        <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
+      ) : null}
+      {sheet === "redFlag" ? (
+        <RedFlagPanel
+          onChoose={stopForRedFlag}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
 
       {editing ? (
         <EditSet

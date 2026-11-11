@@ -104,6 +104,9 @@ class LastNumbersRead(BaseModel):
     per_side: bool
     #: The athlete-local date of the session it was logged in.
     logged_on: dt.date
+    #: Its weight may not go up: the latest session of it had sharp pain
+    #: (`app.domain.safety.blocks_increase`).
+    increase_blocked: bool
 
 
 class PacketSettingsRead(BaseModel):
