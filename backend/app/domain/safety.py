@@ -9,7 +9,8 @@ what training feels like. *Sharp, or in a joint* **stops that exercise for
 today** (:func:`sets_left_today` is zero, whatever was prescribed), **blocks
 its weight from going up** until a session of it passes without sharp pain
 (:func:`blocks_increase`), and queues a priority-1 card offering a swap
-(:func:`pain_card`).
+(:func:`pain_card`) — the swap ranking's first choice once the painful
+joint is spared (`app.domain.swaps.pain_swap`).
 
 **Sharp pain never edits a follow-exactly plan line; it only stops today's
 sets.** A follow-exactly plan is someone else's prescription — a physio's, a
@@ -195,34 +196,6 @@ def joint_of(exercise: Exercise) -> tuple[str, frozenset[Restriction]] | None:
         if exercise.restrictions & tags:
             return joint, tags
     return None
-
-
-def swap_for(exercise: Exercise, catalogue: Iterable[Exercise]) -> Exercise | None:
-    """The movement to offer instead of ``exercise`` after sharp pain.
-
-    Same movement pattern, none of the tags that load the painful joint, then
-    the most shared muscle weight; ties by slug, so the offer is stable.
-    ``None`` when nothing in the pattern spares the joint.
-    """
-    joint = joint_of(exercise)
-    avoid = joint[1] if joint is not None else frozenset()
-    candidates = [
-        other
-        for other in catalogue
-        if other.id != exercise.id
-        and other.pattern is exercise.pattern
-        and not (other.restrictions & avoid)
-    ]
-    if not candidates:
-        return None
-
-    def overlap(other: Exercise) -> float:
-        return sum(
-            min(weight, other.muscles.get(region, 0.0))
-            for region, weight in exercise.muscles.items()
-        )
-
-    return min(candidates, key=lambda other: (-overlap(other), other.id))
 
 
 def plural(phrase: str) -> str:

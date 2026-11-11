@@ -270,5 +270,24 @@
       "advice": "Hör auf zu trainieren und hol dir heute ärztlichen Rat.",
       "ended": "Die Einheit ist beendet. Was du eingetragen hast, ist gespeichert."
     }
+  },
+  "swap": {
+    "menu": "Tauschen",
+    "title": "{exercise} tauschen",
+    "scope": "Wie lange",
+    "thisSession": "Diese Einheit",
+    "restOfBlock": "Rest des Blocks",
+    "back": "Zurück",
+    "avoided": "Du meidest {exercise}",
+    "avoidedBody": "Wähle, was du heute stattdessen machst.",
+    "easeBack": "Langsam zurück: {exercise}, Stufe {step} von {total}",
+    "preferences": "Vorschläge",
+    "avoid": "Diese Übung nie vorschlagen",
+    "lessOften": "Seltener vorschlagen",
+    "startEaseBack": "Langsam zurück",
+    "step": "Stufe {n} von {total}: {exercise}",
+    "nextStep": "Nächste Stufe",
+    "stopEaseBack": "Beenden",
+    "nothingEasier": "In der Bibliothek ist nichts leichter als diese Übung."
   }
 }

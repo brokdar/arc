@@ -270,5 +270,24 @@
       "advice": "Stop training and get medical advice today.",
       "ended": "The session has ended. What you logged is saved."
     }
+  },
+  "swap": {
+    "menu": "Swap",
+    "title": "Swap {exercise}",
+    "scope": "How long",
+    "thisSession": "This session",
+    "restOfBlock": "Rest of block",
+    "back": "Back",
+    "avoided": "You avoid {exercise}",
+    "avoidedBody": "Pick what to do instead today.",
+    "easeBack": "Easing back in: {exercise}, step {step} of {total}",
+    "preferences": "Suggestions",
+    "avoid": "Never suggest this one",
+    "lessOften": "Suggest it less often",
+    "startEaseBack": "Ease back in",
+    "step": "Step {n} of {total}: {exercise}",
+    "nextStep": "Next step",
+    "stopEaseBack": "Stop",
+    "nothingEasier": "Nothing in the library is easier than this one."
   }
 }

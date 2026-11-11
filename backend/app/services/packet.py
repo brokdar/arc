@@ -27,6 +27,15 @@ prescription: reps and holds come from the prescription even where history
 says otherwise, and a kilogram load is used as written. Only a line whose
 prescription has no weight at all falls back to history for the weight.
 
+**Swaps travel with the line.** Each line carries its three ranked swaps
+(`app.domain.swaps`, through `app.services.exercise_preferences`), whether the
+athlete avoids the planned exercise (the phone then opens on the swap
+prompt), and where they stand on *Ease back in*; every movement those name is
+in ``library``, and its last numbers in ``last_numbers`` when it was ever
+logged. A swapped line's first weight therefore comes from the substitute's
+own history or the starting flow, never from the planned exercise's
+pre-fill — the phone has everything it needs to decide that with no signal.
+
 A rep range pre-fills its low end: the bottom of the range is the target
 every set must reach, and the athlete adds reps from there.
 
@@ -67,10 +76,15 @@ from app.domain.training_mode import AskFrequency, TrainingMode, TrainingSetting
 from app.domain.warmups import warmup_lines, warmup_sets
 from app.domain.workout import workout_body_from_json
 from app.persistence.activity import LoggedSetRow, SessionRepository
+from app.persistence.exercise_preferences import ExercisePreferenceRow
 from app.persistence.exercises import ExerciseRow
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.services.athlete_settings import AthleteSettingsService
-from app.services.exercises import ExerciseService
+from app.services.exercise_preferences import (
+    EaseBack,
+    ExercisePreferencesService,
+    Library,
+)
 from app.services.planned_sessions import PlannedSessionService
 from app.services.plans import PlansService
 
@@ -157,6 +171,9 @@ class PacketLine:
     prefill: Prefill
     warmups: list[PacketWarmup]
     plates_per_side: list[float] | None
+    swaps: list[ExerciseRow]
+    avoided: bool
+    ease_back: EaseBack | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,13 +234,13 @@ class PacketService:
 
     def __init__(
         self,
-        exercises: ExerciseService,
         planned: PlannedSessionService,
         plans: PlansService,
         settings: AthleteSettingsService,
         history: SessionRepository,
+        preferences: ExercisePreferencesService,
     ) -> None:
-        self._exercises = exercises
+        self._preferences = preferences
         self._planned = planned
         self._plans = plans
         self._settings = settings
@@ -233,19 +250,21 @@ class PacketService:
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and the services it composes to one session."""
         return cls(
-            ExerciseService.from_session(session),
             PlannedSessionService.from_session(session),
             PlansService.from_session(session),
             AthleteSettingsService.from_session(session),
             SessionRepository(session),
+            ExercisePreferencesService.from_session(session),
         )
 
     async def build(self, *, now: dt.datetime | None = None) -> Packet:
         """The packet as of ``now`` (default: this instant)."""
         generated_at = now or dt.datetime.now(dt.UTC)
-        # First: seeding may commit or roll back mid-transaction, which would
-        # expire rows loaded before it (`ExerciseService.ensure_seeded`).
-        catalogue = await self._exercises.catalogue()
+        # First: seeding the catalogue may commit or roll back mid-transaction,
+        # which would expire rows loaded before it (`ExerciseService.ensure_seeded`).
+        swaps = await self._preferences.library()
+        catalogue = dict(swaps.rows)
+        preference_rows = await self._preferences.rows()
         settings = await self._settings.read()
         starts_on = athlete_today(generated_at)
         ends_before = starts_on + dt.timedelta(days=WINDOW_DAYS)
@@ -262,13 +281,19 @@ class PacketService:
         last = await self._history.last_logged_sets()
         pain = await self._history.latest_session_pain()
 
-        domain = {slug: entry.to_domain() for slug, entry in catalogue.items()}
+        domain = swaps.domain
         sessions = [
             session
             for row in strength
             if (
                 session := _session(
-                    row, catalogue, domain, last, follow_exactly.get(row.plan_id, False)
+                    row,
+                    catalogue,
+                    domain,
+                    last,
+                    follow_exactly.get(row.plan_id, False),
+                    swaps,
+                    preference_rows,
                 )
             )
             is not None
@@ -288,7 +313,9 @@ class PacketService:
             )
             for slug, (logged, logged_on) in sorted(last.items())
         ]
-        named = {line.exercise_id for s in sessions for line in s.lines} | set(last)
+        named = {
+            slug for s in sessions for line in s.lines for slug in _named(line)
+        } | set(last)
         library = [catalogue[slug] for slug in sorted(named) if slug in catalogue]
         return Packet(
             schema_version=SCHEMA_VERSION,
@@ -312,6 +339,8 @@ def _session(
     domain: Mapping[str, Exercise],
     last: Mapping[str, tuple[LoggedSetRow, dt.date]],
     follow_exactly: bool,
+    swaps: Library,
+    preferences: Mapping[str, ExercisePreferenceRow],
 ) -> PacketSession | None:
     """One session's lines; ``None`` for a body that is not a lift."""
     intent = row.current_intent
@@ -352,6 +381,9 @@ def _session(
                     if ramps[position]
                     else [],
                     plates_per_side=_plates(prefill.load_kg, equipment),
+                    swaps=swaps.substitutes(item.exercise_id),
+                    avoided=item.exercise_id in swaps.context.avoided,
+                    ease_back=swaps.ease_back(preferences.get(item.exercise_id)),
                 )
             )
             position += 1
@@ -366,6 +398,14 @@ def _session(
         follow_exactly=follow_exactly,
         lines=lines,
     )
+
+
+def _named(line: PacketLine) -> set[str]:
+    """Every slug a line names: its exercise, its swaps, its ease-back steps."""
+    named = {line.exercise_id, *(row.id for row in line.swaps)}
+    if line.ease_back is not None:
+        named |= {row.id for row in line.ease_back.steps}
+    return named
 
 
 def _low(count: int | TargetRange | None) -> int | None:

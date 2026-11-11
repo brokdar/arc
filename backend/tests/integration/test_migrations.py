@@ -16,10 +16,12 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import NullPool, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from app.core.config import get_settings
@@ -567,6 +569,8 @@ def test_0031_leaves_a_profile_with_no_red_flag_unchanged(
         == [(False, None, None, "unspecified", "active")]
     )
     assert rows("SELECT red_flag_kind FROM athlete") == [(None,)]
+    # `check` compares against head, which is no longer 0031.
+    command.upgrade(alembic_config, "head")
     command.check(alembic_config)
 
 
@@ -583,6 +587,104 @@ def test_downgrading_0031_drops_both_columns_and_round_trips(
         )
         == []
     )
+
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)
+
+
+# --- 0032: the athlete's preferences per exercise (AC-78) --------------------------
+
+
+def seed_exercise(slug: str) -> None:
+    """One catalogue row as 0027 shaped it — what a preference points at."""
+    run_sql(
+        [
+            (
+                (
+                    "INSERT INTO exercises (id, name, category, unilateral, muscles, "
+                    "equipment, restrictions, created_at, updated_at) VALUES (:id, "
+                    ":name, 'squat', false, '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, "
+                    "now(), now())"
+                ),
+                {"id": slug, "name": slug.replace("_", " ").title()},
+            )
+        ]
+    )
+
+
+def test_0032_creates_exercise_preferences_over_0031(alembic_config: Config) -> None:
+    at_revision(alembic_config, "0031")
+    assert rows("SELECT to_regclass('exercise_preferences')") == [(None,)]
+
+    command.upgrade(alembic_config, "0032")
+
+    assert rows(
+        "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
+        "WHERE table_name = 'exercise_preferences' ORDER BY column_name"
+    ) == [
+        ("avoid", "NO", "boolean"),
+        ("created_at", "NO", "timestamp with time zone"),
+        ("ease_back_step", "YES", "smallint"),
+        ("exercise_id", "NO", "character varying"),
+        ("less_often", "NO", "boolean"),
+        ("remembered_swap_id", "YES", "character varying"),
+        ("updated_at", "NO", "timestamp with time zone"),
+    ]
+    # Both flags default to false in the database, so a row written by
+    # anything but the ORM still reads as "nothing stated".
+    seed_exercise("back_squat")
+    seed_exercise("leg_press")
+    run_sql(
+        [
+            (
+                (
+                    "INSERT INTO exercise_preferences (exercise_id, "
+                    "remembered_swap_id) VALUES ('back_squat', 'leg_press')"
+                ),
+                {},
+            )
+        ]
+    )
+    assert rows(
+        "SELECT avoid, less_often, remembered_swap_id, ease_back_step "
+        "FROM exercise_preferences"
+    ) == [(False, False, "leg_press", None)]
+    # The remembered pick is a real catalogue row, and losing it forgets the
+    # pick rather than the athlete's other preferences.
+    run_sql([("DELETE FROM exercises WHERE id = 'leg_press'", {})])
+    assert rows("SELECT exercise_id, remembered_swap_id FROM exercise_preferences") == [
+        ("back_squat", None)
+    ]
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)
+
+
+def test_0032_refuses_a_preference_for_an_exercise_outside_the_catalogue(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+
+    with pytest.raises(IntegrityError):
+        run_sql(
+            [
+                (
+                    (
+                        "INSERT INTO exercise_preferences (exercise_id) "
+                        "VALUES ('no_such_lift')"
+                    ),
+                    {},
+                )
+            ]
+        )
+
+
+def test_downgrading_0032_drops_the_table_and_round_trips(
+    alembic_config: Config,
+) -> None:
+    command.upgrade(alembic_config, "head")
+
+    command.downgrade(alembic_config, "0031")
+    assert rows("SELECT to_regclass('exercise_preferences')") == [(None,)]
 
     command.upgrade(alembic_config, "head")
     command.check(alembic_config)

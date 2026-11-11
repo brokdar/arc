@@ -80,6 +80,12 @@ class MutationKind(StrEnum):
     #: to the batch shape without changing any existing mutation's meaning, so
     #: the schema version stays.
     RED_FLAG = "red_flag"
+    #: ⋯ → Swap → pick: the athlete swapped a planned exercise
+    #: (`app.domain.swaps`). The pick is remembered; ``rest_of_block`` also
+    #: queues a pending card. The logged sets themselves still travel as
+    #: ``set_upsert`` with ``replaced_exercise_id``. Additive like ``red_flag``,
+    #: so the schema version stays.
+    SWAP = "swap"
 
 
 class MutationStatus(StrEnum):

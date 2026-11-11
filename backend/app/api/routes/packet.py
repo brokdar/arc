@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.api.schemas.exercise_preferences import ease_back_read, swap_read
 from app.api.schemas.exercises import ExerciseRead
 from app.api.schemas.packet import (
     EffortQuestionRead,
@@ -61,6 +62,9 @@ def _line_read(line: PacketLine) -> PacketLineRead:
         prefill=PrefillRead.model_validate(line.prefill),
         warmups=[WarmupRead.model_validate(step) for step in line.warmups],
         plates_per_side=line.plates_per_side,
+        swaps=[swap_read(row) for row in line.swaps],
+        avoided=line.avoided,
+        ease_back=ease_back_read(line.ease_back),
     )
 
 

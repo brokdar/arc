@@ -1353,3 +1353,83 @@ async def test_a_ride_nothing_was_planned_for_colours_its_day_unplanned(
     payload = (await client.get(WEEK, params={"start": MONDAY.isoformat()})).json()
 
     assert payload["days"][1]["completion_state"] == CompletionState.UNPLANNED.value
+
+
+async def test_a_swapped_exercise_credits_the_planned_line(client: AsyncClient) -> None:
+    """AC-76: four leg-press sets standing in for 4 × 5 back squat at 100 kg.
+
+    Each set carries the substitute's own id and the squat it replaced. The
+    planned line counts as done — completion 1.0 — and the leg press's 180 kg
+    is not judged against the squat's 100 kg: a different movement's weight
+    says nothing about whether the prescribed load was hit, so the load
+    criterion has nothing comparable rather than calling the session 80 %
+    heavy. The reps still answer the line's reps.
+    """
+    await plan(client, purpose="max_strength", structure=LIFT)
+    done = await record(
+        client,
+        duration_s=3_600,
+        discipline="strength",
+        sets=[
+            {
+                "exercise_id": "leg_press",
+                "replaced_exercise_id": "back_squat",
+                "planned_line_ref": "0.0",
+                "reps": 5,
+                "load_kg": 180.0,
+            }
+            for _ in range(4)
+        ],
+    )
+    assert done["match"]["status"] == MatchLinkStatus.AUTO_HIGH.value
+    stored = done["logged_sets"]
+    assert {s["exercise_id"] for s in stored} == {"leg_press"}
+    assert {s["replaced_exercise_id"] for s in stored} == {"back_squat"}
+
+    document = await score(client, done["id"])
+
+    completion = axis(document, ScoringAxis.COMPLETION)
+    assert completion["value"] == pytest.approx(1.0)
+    assert completion["explanation"]["inputs"]["sets logged"] == "4"
+    load = next(
+        one
+        for one in axis(document, ScoringAxis.SETS_LOAD)["criteria"]
+        if one["kind"] == "load_within"
+    )
+    assert load["passed"] is None
+    assert "no set was prescribed and logged in kilograms" in load["detail"]
+    assert document["suggested_verdict"] != Verdict.OVER.value
+
+
+async def test_a_partly_swapped_line_still_judges_the_planned_exercises_load(
+    client: AsyncClient,
+) -> None:
+    # Two squats at 80 kg (20 % light), then two leg presses: only the squats
+    # are compared, and both of them are outside the tolerance.
+    await plan(client, purpose="max_strength", structure=LIFT)
+    squats = [
+        {"exercise_id": "back_squat", "reps": 5, "load_kg": 80.0} for _ in range(2)
+    ]
+    presses = [
+        {
+            "exercise_id": "leg_press",
+            "replaced_exercise_id": "back_squat",
+            "reps": 5,
+            "load_kg": 180.0,
+        }
+        for _ in range(2)
+    ]
+    done = await record(
+        client, duration_s=3_600, discipline="strength", sets=squats + presses
+    )
+
+    document = await score(client, done["id"])
+
+    assert axis(document, ScoringAxis.COMPLETION)["value"] == pytest.approx(1.0)
+    load = next(
+        one
+        for one in axis(document, ScoringAxis.SETS_LOAD)["criteria"]
+        if one["kind"] == "load_within"
+    )
+    assert load["observed"] == pytest.approx(0.0)
+    assert "0 of 2 comparable" in load["detail"]
