@@ -1148,6 +1148,9 @@ group("the parse seat's exit codes are distinguished");
   ok("exit 4 is plan-not-found, not a network failure", missing.result.error === "plan-not-found", JSON.stringify(missing.result));
   const remote = await simulate({ plan: { ok: false, exitCode: 3, stderr: "gh pr list failed" }, argsIn: { plan: "p.md" } });
   ok("exit 3 stays parse-refused", remote.result.error === "parse-refused");
+  const stale = await simulate({ plan: { ok: false, exitCode: 5, stderr: "behind origin/main" }, argsIn: { plan: "p.md" } });
+  ok("exit 5 is stale-checkout", stale.result.error === "stale-checkout", JSON.stringify(stale.result));
+  ok("  …with no seat beyond the parse", stale.labels.length === 1, JSON.stringify(stale.labels));
 }
 
 group("two PRs with one title are refused");
