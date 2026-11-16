@@ -155,6 +155,7 @@
     "reasonPlan": "Aus deinem Plan",
     "reasonLast": "Wie letztes Mal",
     "reasonBlank": "Noch kein Verlauf",
+    "reasonStepDown": "Nächste Sätze {weight} leichter: Der Satz war viel schwerer",
     "plates": "pro Seite: {plates}",
     "bar": "Stange {weight}",
     "next": "als Nächstes: {summary}",
@@ -189,6 +190,21 @@
     "simpleLabel": "{answer} — Satz eintragen",
     "withoutRating": "✓ ohne Bewertung eintragen",
     "withoutRatingLabel": "Satz ohne Wertung loggen"
+  },
+  "starting": {
+    "title": "Finde dein Startgewicht",
+    "instruction": "Heb dieses Gewicht {reps}-mal, ganz locker.",
+    "total": "{weight} insgesamt",
+    "plates": "{plates} pro Seite",
+    "emptyBar": "Nur die Stange",
+    "question": "Wie hat sich das angefühlt?",
+    "easy": "Leicht",
+    "good": "Gut",
+    "hard": "Schwer",
+    "answerLabel": "{answer} — diese {reps} Wiederholungen speichern",
+    "typeHint": "Du kennst dein Gewicht schon? Tipp es ein.",
+    "typeLabel": "Dein Arbeitsgewicht",
+    "use": "Dieses Gewicht nehmen"
   },
   "rest": {
     "label": "Pause",
