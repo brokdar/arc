@@ -122,6 +122,7 @@ EXPECTED_TOOLS = {
     "get_power_curve",
     "get_cards",
     "get_exercise_history",
+    "get_next_targets",
     # writes
     "append_anchor",
     "create_workout",
@@ -135,7 +136,8 @@ EXPECTED_TOOLS = {
 }
 
 #: Every read tool, with arguments that reach an answer. `{session}`,
-#: `{workout}` and `{proposal}` are substituted with real seeded ids.
+#: `{workout}`, `{proposal}` and `{planned}` (a planned strength session) are
+#: substituted with real seeded ids.
 #: Exhaustive on purpose: "the flag is on every read" is only true if it is
 #: on every one of them, and a sample of three would let the eighth ship
 #: without it.
@@ -164,6 +166,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_power_curve", {"session_id": "{session}"}),
     ("get_cards", {}),
     ("get_exercise_history", {"exercise_id": "back_squat"}),
+    ("get_next_targets", {"planned_session_id": "{planned}"}),
 )
 
 
@@ -465,12 +468,14 @@ async def test_every_read_carries_the_red_flag(
             "expires_at": expires(),
         },
     )
+    planned = await plan_lift(client, MONDAY)
     await raise_red_flag(client)
 
     seeded = {
         "session": session_id,
         "workout": workout["workout"]["id"],
         "proposal": proposal["proposal"]["id"],
+        "planned": planned,
     }
     data = await call(
         READER,
@@ -4606,3 +4611,168 @@ async def test_get_exercise_history_of_an_unknown_slug_is_a_tool_error(
 async def test_get_exercise_history_needs_a_read_key(session_factory: Any) -> None:
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "get_exercise_history", {"exercise_id": "back_squat"})
+
+
+# --- get_next_targets (strength_tools) -------------------------------------------------
+
+#: Target 6 with 2 left on a squat — the direction's worked example (AC-68).
+SQUAT_LINE = {
+    "exercise_id": "back_squat",
+    "sets": 1,
+    "reps": 6,
+    "rir": 2,
+    "load": {"kind": "kg", "value": 100},
+}
+
+
+async def plan_lift(client: AsyncClient, date: dt.date) -> str:
+    """Plan a one-line squat session on ``date`` and return its id."""
+    response = await client.post(
+        "/api/v1/planned-sessions",
+        json={
+            "date": date.isoformat(),
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [{"items": [SQUAT_LINE]}],
+            },
+            "success_criteria": [],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def squats_easier_twice(client: AsyncClient) -> str:
+    """Two squat sessions of 100 kg × 6 with 3 left, then today's plan."""
+    await client.patch("/api/v1/settings/training", json={"mode": "standard"})
+    for days_ago in (6, 3):
+        start = dt.datetime.combine(
+            athlete_today() - dt.timedelta(days=days_ago),
+            dt.time(17, 0),
+            tzinfo=dt.UTC,
+        )
+        response = await client.post(
+            "/api/v1/manual-sessions",
+            json={
+                "start_time": start.isoformat(),
+                "timezone": "UTC",
+                "duration_s": 3600,
+                "sets": [
+                    {"exercise_id": "back_squat", "reps": 6, "load_kg": 100.0, "rir": 3}
+                ],
+            },
+        )
+        assert response.status_code == 201, response.text
+    return await plan_lift(client, athlete_today())
+
+
+async def packet_lines(client: AsyncClient, planned_id: str) -> list[dict[str, Any]]:
+    response = await client.get("/api/v1/strength/packet")
+    assert response.status_code == 200, response.text
+    (session,) = [
+        s for s in response.json()["sessions"] if s["planned_session_id"] == planned_id
+    ]
+    return session["lines"]
+
+
+def _comparable(line: dict[str, Any]) -> dict[str, Any]:
+    keys = ("line_ref", "exercise_id", "exercise_name", "prefill", "suggestion")
+    return {key: line[key] for key in keys}
+
+
+async def test_get_next_targets_is_what_the_packet_pre_fills(
+    client: AsyncClient,
+) -> None:
+    planned_id = await squats_easier_twice(client)
+
+    data = await call(READER, "get_next_targets", {"planned_session_id": planned_id})
+    lines = await packet_lines(client, planned_id)
+
+    assert data["planned_session_id"] == planned_id
+    (line,) = data["lines"]
+    assert line["prefill"]["load_kg"] == 102.5
+    assert line["suggestion"]["explanation"]["rule"] == "progression.weight_from_effort"
+    assert round(line["suggestion"]["explanation"]["computed_kg"], 1) == 102.6
+    assert [_comparable(x) for x in data["lines"]] == [_comparable(x) for x in lines]
+    assert "red_flag" in data
+
+
+async def test_get_next_targets_under_plain_logbook_is_the_prescription(
+    client: AsyncClient,
+) -> None:
+    planned_id = await squats_easier_twice(client)
+    await client.patch("/api/v1/settings/training", json={"plain_logbook": True})
+
+    data = await call(READER, "get_next_targets", {"planned_session_id": planned_id})
+    lines = await packet_lines(client, planned_id)
+
+    (line,) = data["lines"]
+    assert line["suggestion"] is None
+    assert line["prefill"]["source"] == "prescription"
+    assert (line["prefill"]["load_kg"], line["prefill"]["reps"]) == (100.0, 6)
+    assert [_comparable(x) for x in data["lines"]] == [_comparable(x) for x in lines]
+
+
+async def test_get_next_targets_under_follow_exactly_is_the_prescription(
+    client: AsyncClient,
+) -> None:
+    today = athlete_today()
+    created = await client.post(
+        "/api/v1/plans",
+        json={
+            "name": "Physio block",
+            "phase": "base",
+            "follow_exactly": True,
+            "starts_on": today.isoformat(),
+            "ends_before": (today + dt.timedelta(days=14)).isoformat(),
+        },
+    )
+    assert created.status_code == 201, created.text
+    planned_id = await squats_easier_twice(client)
+
+    data = await call(READER, "get_next_targets", {"planned_session_id": planned_id})
+    lines = await packet_lines(client, planned_id)
+
+    (line,) = data["lines"]
+    assert data["follow_exactly"] is True
+    assert line["suggestion"] is None
+    assert (line["prefill"]["load_kg"], line["prefill"]["reps"]) == (100.0, 6)
+    assert [_comparable(x) for x in data["lines"]] == [_comparable(x) for x in lines]
+
+
+async def test_get_next_targets_for_a_ride_is_a_not_found_error(
+    client: AsyncClient,
+) -> None:
+    await append_ftp(client)
+    response = await client.post(
+        "/api/v1/planned-sessions",
+        json={
+            "date": MONDAY.isoformat(),
+            "purpose": "endurance",
+            "structure": EASY_RIDE,
+            "success_criteria": [],
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    with pytest.raises(ToolError, match="not a strength session"):
+        await call(
+            READER, "get_next_targets", {"planned_session_id": response.json()["id"]}
+        )
+
+
+async def test_get_next_targets_for_an_unknown_id_is_a_not_found_error(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="not found"):
+        await call(
+            READER, "get_next_targets", {"planned_session_id": str(uuid.uuid4())}
+        )
+
+
+async def test_get_next_targets_needs_a_read_key(client: AsyncClient) -> None:
+    planned_id = await plan_lift(client, MONDAY)
+
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "get_next_targets", {"planned_session_id": planned_id})

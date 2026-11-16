@@ -63,6 +63,20 @@ export function strengthPacket(
         rir: line.line_ref === "0.0" ? plannedRir : line.prescription.rir,
         rest_s: restS,
       },
+      // Follow-exactly bypasses progression on the server: no suggestion.
+      // Otherwise the first-time suggestion names the target it would hold
+      // the effort to, so a planned reps-left target appears in it too.
+      suggestion: followExactly
+        ? null
+        : line.suggestion && line.line_ref === "0.0"
+          ? {
+              ...line.suggestion,
+              explanation: {
+                ...line.suggestion.explanation,
+                target_reps_left: plannedRir,
+              },
+            }
+          : line.suggestion,
     }),
   );
   if (barbell) lines[0] = barbellLine(lines[0], barbell);
@@ -136,6 +150,9 @@ export function startingFlowPacket(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            // Never logged, not Plain logbook: the server's first-time
+            // suggestion for 5 reps, with no reps-left target to name.
+            suggestion: firstTime(5, null),
           },
         ],
       },
@@ -160,5 +177,39 @@ function barbellLine(line: PacketLine, { kg, sets, reps }: BarbellLine) {
     prefill: { ...line.prefill, load_kg: kg, reps },
     warmups: [],
     plates_per_side: platesPerSide(kg, "barbell", DEFAULT_GYM),
+    // A squat never logged: the first-time suggestion for its own reps, or
+    // none where the line had none (follow-exactly bypasses progression).
+    suggestion: line.suggestion
+      ? firstTime(reps, lowOf(line.prescription.rir))
+      : null,
   } satisfies PacketLine;
+}
+
+/** What `app.domain.progression` returns for an exercise never logged. */
+function firstTime(
+  reps: number,
+  repsLeft: number | null,
+): NonNullable<PacketLine["suggestion"]> {
+  return {
+    outcome: "first_time",
+    load_kg: null,
+    reps,
+    change_kg: null,
+    explanation: {
+      rule: null,
+      evidence: null,
+      reason: "first_time",
+      inputs: [],
+      target_reps: reps,
+      target_reps_left: repsLeft,
+      computed_kg: null,
+      limit: null,
+    },
+  };
+}
+
+/** A count's low end, as `_low` reads a reps-left target. */
+function lowOf(count: number | number[] | null | undefined): number | null {
+  if (count === null || count === undefined) return null;
+  return Array.isArray(count) ? count[0] : count;
 }
