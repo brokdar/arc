@@ -31,11 +31,13 @@ import {
   type ActiveSession,
   advance,
   allDone,
+  answerStarting,
   applyRating,
   asksEffort,
   type Draft,
   deleteMutation,
   draftFor,
+  inStartingFlow,
   type LoggedSet,
   lineComplete,
   nextOpenLine,
@@ -48,13 +50,17 @@ import {
   ratingSnapshot,
   restFor,
   type Stamp,
+  type StartingAnswer,
   setMutation,
+  settleStarting,
+  startingKg,
   startMutation,
   stoppedByPain,
   warmupsDone,
   workingSetsOf,
 } from "@/components/strength/session-model";
 import { loadSession, saveSession } from "@/components/strength/session-store";
+import { StartingFlow } from "@/components/strength/starting-flow";
 import { nextDraft, stepDownAfter } from "@/components/strength/step-down";
 import { Stepper } from "@/components/strength/stepper";
 import { Button } from "@/components/ui/button";
@@ -102,6 +108,11 @@ import { cn } from "@/lib/utils";
  * reload offers "Resume" at the next unlogged set with the rest timer
  * intact. Opening the screen for a session not yet started starts it — the
  * tap on Today's "Start" is the whole of starting.
+ *
+ * **A line never logged** (`starting_flow` in the packet) opens with the
+ * starting-weight flow (`starting-flow.tsx`) in place of its current set and
+ * ✓; its easy sets are logged as warm-ups, and the first working set opens at
+ * the weight it settled on.
  *
  * **Undo** takes the last action's mutations back out of the outbox for 6 s;
  * one that already uploaded is compensated (a delete, or the rating it
@@ -299,15 +310,19 @@ export function LoggingScreen({
 
   // The current set's numbers open with the line's pre-fill or its last set
   // (one step lighter after a miss, `step-down.ts`), and reset whenever the
-  // set they are for changes — or the set they are read off does: ✓ logs the
+  // set they are for changes — or the set they are read off does (✓ logs the
   // planned reps, so a miss is often entered by editing that set afterwards,
-  // and keying on the count alone left the next set at the old weight.
+  // and keying on the count alone left the next set at the old weight), or
+  // the starting-weight flow settles the weight it opens with.
   const lastWorking =
     session && line ? workingSetsOf(session, line.line_ref) : [];
   const readOff = lastWorking.at(-1);
+  const settled = line
+    ? session?.starting?.[line.line_ref]?.settled === true
+    : false;
   const draftKey =
     session && line
-      ? `${line.line_ref}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}`
+      ? `${line.line_ref}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
   if (session && line && planned && gym && draftKey !== draftFor_) {
@@ -328,6 +343,7 @@ export function LoggingScreen({
   }
 
   const done = allDone(session, lines);
+  const starting = line !== undefined && inStartingFlow(session, line);
   const weightText = (kg: number | null) =>
     kg === null
       ? t("train.bodyweight")
@@ -432,6 +448,34 @@ export function LoggingScreen({
       })),
     });
     void commit({ ...session, sets: [...session.sets, ...created] }, mutations);
+  };
+
+  const answerStart = (answer: StartingAnswer) => {
+    if (!line) return;
+    const st = stamp();
+    const { next, set } = answerStarting(
+      session,
+      line,
+      gym,
+      answer,
+      uuid7(st.now),
+    );
+    const create = setMutation(session, set, session.sets.length, scale, st);
+    setUndo({
+      before: session,
+      writes: [
+        {
+          mutationId: create.mutation_id,
+          compensate: () => deleteMutation(session, set.clientId, stamp()),
+        },
+      ],
+    });
+    void commit(next, [create]);
+  };
+
+  const typeStart = (kg: number) => {
+    if (!line) return;
+    void commit(settleStarting(session, line.line_ref, kg));
   };
 
   const undoLast = () => {
@@ -803,7 +847,17 @@ export function LoggingScreen({
                   </Button>
                 </div>
               ))}
-            {line ? (
+            {line && starting && line.equipment ? (
+              <StartingFlow
+                kg={startingKg(session, line, gym)}
+                equipment={line.equipment}
+                gym={gym}
+                units={units}
+                weightText={weightText}
+                onAnswer={answerStart}
+                onType={typeStart}
+              />
+            ) : line ? (
               <LineBody
                 line={line}
                 planned={planned}
@@ -844,7 +898,7 @@ export function LoggingScreen({
                 {t("train.undo")}
               </Button>
             ) : null}
-            {done ? (
+            {starting ? null : done ? (
               <Button
                 className="h-[72px] text-xl"
                 onClick={() => setPhase("finishing")}

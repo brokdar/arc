@@ -50,6 +50,16 @@ async function logAsPlanned(n: number) {
   await screen.findByRole("heading", { name: `Set ${n + 1} of 3` });
 }
 
+/**
+ * Finish flushes the outbox right after writing it, and with the sync mock
+ * up that upload can drain the queue before a test reads it — the read then
+ * races the flush and finds nothing. With the network down the flush fails,
+ * the items stay, and the test reads what Finish wrote, every time.
+ */
+function offline() {
+  syncServer().healthy = false;
+}
+
 type SetUpsert = Extract<Mutation, { kind: "set_upsert" }>;
 
 async function setItems(): Promise<SetUpsert[]> {
@@ -289,6 +299,7 @@ describe("numbers and fixes", () => {
     // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
+    offline();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Don't learn from today" }),
@@ -318,6 +329,7 @@ describe("numbers and fixes", () => {
     // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
+    offline();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),
