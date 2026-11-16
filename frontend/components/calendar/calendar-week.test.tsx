@@ -1004,6 +1004,7 @@ describe("CalendarWeek", () => {
           red_flag_active: false,
           red_flag_note: null,
           red_flag_severity: null,
+          red_flag_kind: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
         }),
@@ -1020,6 +1021,7 @@ describe("CalendarWeek", () => {
           red_flag_active: false,
           red_flag_note: null,
           red_flag_severity: null,
+          red_flag_kind: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
         });

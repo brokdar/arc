@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import CalendarPage from "@/app/(app)/calendar/page";
+import ExercisePage from "@/app/(app)/exercises/[id]/page";
 import FitnessPage from "@/app/(app)/fitness/page";
 import InboxPage from "@/app/(app)/inbox/page";
 import AppLayout from "@/app/(app)/layout";
@@ -211,6 +212,18 @@ describe("route shells", () => {
       await screen.findByText(
         "This session is not on this phone yet. Connect once so arc can fetch it.",
       ),
+    ).toBeInTheDocument();
+  });
+
+  it("routes an exercise slug at its history", async () => {
+    render(
+      <Guarded>
+        {await ExercisePage({ params: Promise.resolve({ id: "back_squat" }) })}
+      </Guarded>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Back Squat", level: 1 }),
     ).toBeInTheDocument();
   });
 

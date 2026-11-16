@@ -588,6 +588,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/exercises/{exercise_id}/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Exercise History
+     * @description Personal bests, heaviest-for-N-reps and the estimated-max line of one exercise.
+     *
+     *     Derived from every logged set on each read. An exercise never logged
+     *     answers empty lists, not 404; a slug outside the catalogue is 404.
+     */
+    get: operations["exercises-get_exercise_history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/exercises/{exercise_id}/note": {
     parameters: {
       query?: never;
@@ -1126,6 +1149,26 @@ export interface paths {
      *     something else.
      */
     post: operations["matches-reject_match"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/personal-bests": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Bests
+     * @description New personal bests set in one session; an empty list when there were none.
+     */
+    get: operations["strength-get_session_bests"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -2772,6 +2815,7 @@ export interface components {
       plan_state: components["schemas"]["PlanState"];
       /** Red Flag Active */
       red_flag_active: boolean;
+      red_flag_kind: components["schemas"]["RedFlagKind"] | null;
       /** Red Flag Note */
       red_flag_note: string | null;
       red_flag_severity: components["schemas"]["RedFlagSeverity"] | null;
@@ -2805,6 +2849,7 @@ export interface components {
       plan_state?: components["schemas"]["PlanState"] | null;
       /** Red Flag Active */
       red_flag_active?: boolean | null;
+      red_flag_kind?: components["schemas"]["RedFlagKind"] | null;
       /** Red Flag Note */
       red_flag_note?: string | null;
       red_flag_severity?: components["schemas"]["RedFlagSeverity"] | null;
@@ -3703,6 +3748,41 @@ export interface components {
       detail: string;
     };
     /**
+     * EstimateLineRead
+     * @description The estimated-max line — a rough guide, never a personal best.
+     */
+    EstimateLineRead: {
+      /** Current Kg */
+      current_kg: number | null;
+      /** Points */
+      points: components["schemas"]["EstimatePointRead"][];
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: "ok" | "not_enough_data";
+    };
+    /**
+     * EstimatePointRead
+     * @description One session's best estimated max, and the line's value after it.
+     */
+    EstimatePointRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Estimate Kg */
+      estimate_kg: number;
+      /** Median Kg */
+      median_kg: number | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+    };
+    /**
      * ExcludedStepRead
      * @description A pair the assignment made and the confidence gate then refused.
      *
@@ -3775,6 +3855,23 @@ export interface components {
       | "ski_erg"
       | "air_bike"
       | "bodyweight";
+    /**
+     * ExerciseHistoryRead
+     * @description One exercise's personal bests, rep maxes and estimated max.
+     */
+    ExerciseHistoryRead: {
+      /** Bests */
+      bests: components["schemas"]["PersonalBestRead"][];
+      estimate: components["schemas"]["EstimateLineRead"];
+      /** Exercise Id */
+      exercise_id: string;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Exposures */
+      exposures: number;
+      /** Rep Maxes */
+      rep_maxes: components["schemas"]["RepMaxRead"][];
+    };
     /**
      * ExerciseNoteRead
      * @description The athlete's note on one exercise.
@@ -4520,6 +4617,8 @@ export interface components {
       exercise_id: string;
       /** Exercise Name */
       exercise_name: string;
+      /** Increase Blocked */
+      increase_blocked: boolean;
       /** Load Kg */
       load_kg: number | null;
       /**
@@ -5338,7 +5437,8 @@ export interface components {
       | components["schemas"]["DontLearn"]
       | components["schemas"]["NoteUpsert"]
       | components["schemas"]["SessionClaim"]
-      | components["schemas"]["SessionReopen"];
+      | components["schemas"]["SessionReopen"]
+      | components["schemas"]["RedFlag"];
     /**
      * MutationResultRead
      * @description What the server did with one mutation.
@@ -5667,6 +5767,26 @@ export interface components {
       pct_high: number;
       /** Pct Low */
       pct_low: number;
+    };
+    /**
+     * PersonalBestRead
+     * @description A set no other set of the exercise beat on both weight and reps.
+     */
+    PersonalBestRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
     };
     /**
      * PinnedAnchorRead
@@ -6722,6 +6842,52 @@ export interface components {
       start_index: number;
     };
     /**
+     * RedFlag
+     * @description *Stop — something's wrong*: one symptom, which raises the red flag.
+     *
+     *     The phone shows the symptom group's text at once, offline
+     *     (`app.domain.safety.RED_FLAG_TEXT`), and sends ``session_finish`` after
+     *     this; the server raises the athlete's flag and queues its follow-up card.
+     */
+    RedFlag: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "red_flag";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      symptom: components["schemas"]["RedFlagSymptom"];
+    };
+    /**
+     * RedFlagKind
+     * @description Which of the two red-flag answers the athlete was given.
+     *
+     *     The gym screen's *Stop — something's wrong* offers symptoms in two groups
+     *     (`app.domain.safety.RedFlagSymptom`), and each group has one text:
+     *     ``EMERGENCY`` (chest pain, fainting, …) is told to call emergency
+     *     services now; ``ADVICE`` (numbness, dizziness, …) to stop and get medical
+     *     advice today. A flag raised anywhere else — the profile form, the coach —
+     *     is ``ADVICE``: it says "I am unwell", not "call an ambulance", and every
+     *     flag that predates this field was migrated to it for the same reason
+     *     (migration 0031).
+     * @enum {string}
+     */
+    RedFlagKind: "emergency" | "advice";
+    /**
      * RedFlagSeverity
      * @description How bad the illness or injury is (WP-8.4).
      *
@@ -6738,6 +6904,40 @@ export interface components {
      * @enum {string}
      */
     RedFlagSeverity: "mild" | "moderate" | "severe";
+    /**
+     * RedFlagSymptom
+     * @description What *Stop — something's wrong* offers, in its two groups.
+     * @enum {string}
+     */
+    RedFlagSymptom:
+      | "chest_pain"
+      | "cannot_breathe"
+      | "fainted"
+      | "numbness"
+      | "dizziness"
+      | "sudden_swelling";
+    /**
+     * RepMaxRead
+     * @description The heaviest weight lifted for at least ``target_reps`` reps.
+     */
+    RepMaxRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Target Reps */
+      target_reps: number;
+    };
     /**
      * RepeatBlockSchema
      * @description Perform ``children`` ``times`` over.
@@ -7012,6 +7212,28 @@ export interface components {
       unmatched_steps: number[];
       /** Version */
       version: number;
+    };
+    /**
+     * SessionBestRead
+     * @description A new personal best in one session, named as it was logged.
+     */
+    SessionBestRead: {
+      /** Exercise Id */
+      exercise_id: string | null;
+      /** Exercise Name */
+      exercise_name: string;
+      /** Load Kg */
+      load_kg: number;
+      /** Reps */
+      reps: number;
+    };
+    /**
+     * SessionBestsRead
+     * @description The finish summary's new bests; empty when the session set none.
+     */
+    SessionBestsRead: {
+      /** Bests */
+      bests: components["schemas"]["SessionBestRead"][];
     };
     /**
      * SessionClaim
@@ -8212,6 +8434,8 @@ export interface components {
       lifted_before: components["schemas"]["LiftedBefore"] | null;
       locale: components["schemas"]["Locale"];
       mode: components["schemas"]["TrainingMode"];
+      /** No Max Efforts */
+      no_max_efforts: boolean;
       /** Plain Logbook */
       plain_logbook: boolean;
       units: components["schemas"]["Units"];
@@ -8241,6 +8465,8 @@ export interface components {
       locale?: components["schemas"]["Locale"];
       /** Mode */
       mode?: components["schemas"]["TrainingMode"];
+      /** No Max Efforts */
+      no_max_efforts?: boolean;
       /** Plain Logbook */
       plain_logbook?: boolean;
       units?: components["schemas"]["Units"];
@@ -10686,6 +10912,64 @@ export interface operations {
       };
     };
   };
+  "exercises-get_exercise_history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExerciseHistoryRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   "exercises-get_exercise_note": {
     parameters: {
       query?: never;
@@ -12192,6 +12476,65 @@ export interface operations {
         };
       };
       /** @description Already linked, or already ruled on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "strength-get_session_bests": {
+    parameters: {
+      query: {
+        /** @description The session id the phone minted at Start. */
+        session_client_id: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionBestsRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No session with that phone id */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
       409: {
         headers: {
           [name: string]: unknown;

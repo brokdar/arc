@@ -30,7 +30,8 @@
 // workflow reads the skeleton once and each PR's detail in its own small copy.
 //
 // Exit codes:  0 ok (JSON on stdout) · 2 plan defects · 3 remote state
-// unavailable · 4 usage.
+// unavailable · 4 usage · 5 the launching checkout's tooling is behind
+// origin/main (see `staleTooling`).
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -352,6 +353,22 @@ function tryRun(cmd, args) {
   }
 }
 
+// The paths whose copy in the LAUNCHING checkout is what a run executes: the
+// Workflow tool reads the script from the checkout it was given, and the seats
+// run `scripts/` and `just` from it. On 11 Nov 2026 the main checkout sat 24
+// commits behind origin/main and two full runs executed a pipeline without
+// #139's partial-DAG and no-code-change stops or #145's conflict handling,
+// which surfaced only as a stop labelled "gate red" with gate exit 0.
+// Feature code is not listed: worktrees are cut from origin/main, so an old
+// `backend/` here builds nothing.
+export const TOOLING_PATHS = [".claude/workflows", ".claude/agents", "scripts", "justfile"];
+
+/** Commits on origin/main, not in HEAD, that touch `TOOLING_PATHS`. */
+export function staleTooling() {
+  const r = tryRun("git", ["log", "--format=%h %s", "HEAD..origin/main", "--", ...TOOLING_PATHS]);
+  return r.ok ? r.out.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+}
+
 export function annotate(prs, ghPrs, mainSubjects) {
   const key = (t) => String(t == null ? "" : t).trim();
   const byTitle = new Map();
@@ -507,6 +524,19 @@ function main(argv) {
       return 3;
     }
     mainSubjects = log.out.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (fetched && !flag("pr")) {
+      const stale = staleTooling();
+      if (stale.length) {
+        process.stderr.write(
+          `The checkout this run launches from is behind origin/main in its tooling — ${stale.length} commit(s):\n` +
+            stale.map((c) => `  ${c}`).join("\n") +
+            "\nThe Workflow tool loads implement-plan.js from this checkout, and every seat runs these\n" +
+            "scripts from it, so the run would execute the old pipeline. Fast-forward it\n" +
+            "(`git merge --ff-only origin/main`) and re-launch.\n",
+        );
+        return 5;
+      }
+    }
   }
 
   // Snapshot the plan. WHY: the plan is one untracked file in the main checkout

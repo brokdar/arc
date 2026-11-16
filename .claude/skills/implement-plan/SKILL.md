@@ -202,6 +202,10 @@ logged.
   `unknown-dependency`, `dependency-cycle`, `two-migrations-in-group`.
 - **`parse-refused`** — `gh` or `origin/main` was unreachable (exit 3). The run refuses rather than
   guess at what is merged, because guessing rebuilds a shipped PR or starts a dependent too early.
+- **`stale-checkout`** — the checkout you launched from is behind `origin/main` in `.claude/workflows`,
+  `.claude/agents`, `scripts/` or the `justfile` (exit 5). The Workflow tool runs the script from that
+  checkout, so the run would execute the old pipeline. `git merge --ff-only origin/main` there, then
+  re-launch.
 - **`plan-not-found`** — the plan path does not exist (exit 4). Usually a typo, or a bare-string
   launch that was never a path.
 - **`bad-plan-path`** — what was passed is not a `<slug>.md` path inside the repository. Nothing ran.

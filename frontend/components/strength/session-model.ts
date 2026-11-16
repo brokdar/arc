@@ -1,3 +1,9 @@
+import {
+  type PainBand,
+  type PainKind,
+  type RedFlagKind,
+  setsLeftToday,
+} from "@/components/strength/safety/safety-model";
 import type { components } from "@/generated/api/schema";
 import type { Mutation, SetPatch } from "@/lib/offline/db";
 
@@ -49,6 +55,12 @@ export interface LoggedSet {
   completedAt?: number;
   /** Set only on a set entered after the fact ("Log it now"). */
   source?: "recap";
+  /**
+   * The ⋯ → Pain note on this set. Optional: a session stored by an earlier
+   * build has none, which reads as no pain.
+   */
+  painKind?: PainKind | null;
+  painBand?: PainBand | null;
 }
 
 export interface Rest {
@@ -75,6 +87,8 @@ export interface ActiveSession {
   lines?: PacketLine[];
   /** Epoch ms it ended, for the 24-hour reopen window. */
   endedAt?: number | null;
+  /** Set when *Stop — something's wrong* ended the session: which text to show. */
+  redFlag?: RedFlagKind;
 }
 
 /** The store key and `plannedSessionId` of a session with no plan. */
@@ -107,11 +121,26 @@ export function warmupsDone(session: ActiveSession, lineRef: string): number {
   return session.sets.filter((s) => s.lineRef === lineRef && s.warmup).length;
 }
 
+/**
+ * Whether a line has nothing left to log today: every prescribed set, or a
+ * set with sharp pain (`safety/safety-model.ts`), whichever comes first.
+ */
 export function lineComplete(
   session: ActiveSession,
   line: PacketLine,
 ): boolean {
-  return workingSetsOf(session, line.line_ref).length >= line.prescription.sets;
+  const pain = workingSetsOf(session, line.line_ref).map((s) => s.painKind);
+  return setsLeftToday(line.prescription.sets, pain) === 0;
+}
+
+/** Whether sharp pain stopped this line today. */
+export function stoppedByPain(
+  session: ActiveSession,
+  line: PacketLine,
+): boolean {
+  return workingSetsOf(session, line.line_ref).some(
+    (s) => s.painKind === "sharp",
+  );
 }
 
 /** The first line at or after `from` (wrapping) with sets still to log. */

@@ -15,15 +15,20 @@ export const FRESH_TRAINING_SETTINGS: Settings = {
   before_you_start_seen: false,
   first_run_seen: false,
   lifted_before: null,
+  no_max_efforts: false,
 };
 
 /**
  * The default for every component test that is not *about* the first run:
- * an athlete who answered "regularly" — produced by running the same change
- * the real service would, so the mode is the one that answer earns.
+ * an athlete who answered "regularly" and closed the before-you-start screen
+ * — produced by running the same changes the real service would, so the mode
+ * is the one that answer earns.
  */
 function answeredRegularly(): Settings {
-  return withChanges(FRESH_TRAINING_SETTINGS, { lifted_before: "regularly" });
+  return withChanges(
+    withChanges(FRESH_TRAINING_SETTINGS, { lifted_before: "regularly" }),
+    { before_you_start_seen: true },
+  );
 }
 
 let settings: Settings = answeredRegularly();

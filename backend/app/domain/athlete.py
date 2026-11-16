@@ -60,6 +60,23 @@ class RedFlagSeverity(StrEnum):
     SEVERE = "severe"
 
 
+class RedFlagKind(StrEnum):
+    """Which of the two red-flag answers the athlete was given.
+
+    The gym screen's *Stop — something's wrong* offers symptoms in two groups
+    (`app.domain.safety.RedFlagSymptom`), and each group has one text:
+    ``EMERGENCY`` (chest pain, fainting, …) is told to call emergency
+    services now; ``ADVICE`` (numbness, dizziness, …) to stop and get medical
+    advice today. A flag raised anywhere else — the profile form, the coach —
+    is ``ADVICE``: it says "I am unwell", not "call an ambulance", and every
+    flag that predates this field was migrated to it for the same reason
+    (migration 0031).
+    """
+
+    EMERGENCY = "emergency"
+    ADVICE = "advice"
+
+
 #: Longest an illness/injury note may be.
 MAX_RED_FLAG_NOTE_CHARS = 1_000
 
@@ -96,6 +113,9 @@ class AthleteProfile:
             and does not read prose.
         red_flag_severity: How bad it is. **Required while the flag is
             active** and absent otherwise (see :meth:`__post_init__`).
+        red_flag_kind: Which red-flag answer applies (:class:`RedFlagKind`).
+            Like the note and the grade, only while the flag is active; the
+            service fills ``advice`` when a flag is raised without one.
     """
 
     name: str | None = None
@@ -109,6 +129,7 @@ class AthleteProfile:
     red_flag_active: bool = False
     red_flag_note: str | None = None
     red_flag_severity: RedFlagSeverity | None = None
+    red_flag_kind: RedFlagKind | None = None
 
     def __post_init__(self) -> None:
         """Reject values that are typos rather than measurements."""
@@ -126,11 +147,13 @@ class AthleteProfile:
                 "red_flag_severity is required while red_flag_active is set"
             )
         if not self.red_flag_active and (
-            self.red_flag_severity is not None or self.red_flag_note is not None
+            self.red_flag_severity is not None
+            or self.red_flag_note is not None
+            or self.red_flag_kind is not None
         ):
             raise ValueError(
-                "red_flag_note and red_flag_severity may only be set while "
-                "red_flag_active is set"
+                "red_flag_note, red_flag_severity and red_flag_kind may only be "
+                "set while red_flag_active is set"
             )
         if self.red_flag_note is not None and not self.red_flag_note.strip():
             raise ValueError("red_flag_note must not be blank; omit it instead")

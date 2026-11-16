@@ -16,11 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ValidationError, domain_rules
 from app.domain.actor import Actor
-from app.domain.athlete import AthleteProfile, Sex
+from app.domain.athlete import AthleteProfile, RedFlagKind, Sex
 from app.domain.plan import PlanState
 from app.persistence.athlete import SINGLETON_ATHLETE_ID, Athlete, AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.db import commit
+from app.services.safety import SafetyService
 
 #: Fields `update` accepts. Anything else in the payload is a programming
 #: error in the adapter, not user input — the API schema rejects unknown
@@ -35,6 +36,7 @@ UPDATABLE_FIELDS = (
     "red_flag_active",
     "red_flag_note",
     "red_flag_severity",
+    "red_flag_kind",
 )
 
 #: Fields whose "cleared" value is an empty state rather than an absence, so
@@ -46,8 +48,8 @@ EMPTY_VALUES: Mapping[str, Any] = {
     "red_flag_active": False,
 }
 
-#: The two fields that only mean anything while the red flag is up.
-RED_FLAG_DETAILS = ("red_flag_note", "red_flag_severity")
+#: The fields that only mean anything while the red flag is up.
+RED_FLAG_DETAILS = ("red_flag_note", "red_flag_severity", "red_flag_kind")
 
 #: `entity_type` written on this use-case's audit rows.
 ENTITY_TYPE = "athlete"
@@ -138,6 +140,13 @@ class AthleteService:
                     candidate[field] = None
                     touched.add(field)
 
+        # A flag raised without saying which red-flag text applies is the
+        # "I am unwell" of the profile form or the coach, not the gym's
+        # emergency answer — `RedFlagKind` says why that is `advice`.
+        if candidate["red_flag_active"] and candidate["red_flag_kind"] is None:
+            candidate["red_flag_kind"] = RedFlagKind.ADVICE
+            touched.add("red_flag_kind")
+
         # Validate through the domain value object rather than field by field:
         # the rules live there, so the API and a future MCP tool cannot drift
         # apart on what a legal profile is.
@@ -158,6 +167,12 @@ class AthleteService:
                 entity_type=ENTITY_TYPE,
                 entity_id=athlete.id,
                 payload={"bootstrap": True},
+            )
+
+        if before["red_flag_active"] and not athlete.red_flag_active:
+            # The follow-up card asks about a flag that is now down.
+            await SafetyService.from_session(self._session).close_follow_ups(
+                actor=actor
             )
 
         after = _values(athlete)
@@ -193,6 +208,7 @@ def _empty_profile() -> dict[str, Any]:
         "red_flag_active": False,
         "red_flag_note": None,
         "red_flag_severity": None,
+        "red_flag_kind": None,
     }
 
 
@@ -208,6 +224,7 @@ def _values(athlete: Athlete) -> dict[str, Any]:
         "red_flag_active": athlete.red_flag_active,
         "red_flag_note": athlete.red_flag_note,
         "red_flag_severity": athlete.red_flag_severity,
+        "red_flag_kind": athlete.red_flag_kind,
     }
 
 
