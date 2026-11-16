@@ -5,7 +5,7 @@ import {
   type LoggedSet,
   type PacketLine,
   type PacketSession,
-  workingSetsOf,
+  setsOfExercise,
 } from "@/components/strength/session-model";
 import { type Gym, stepDown } from "@/lib/strength";
 
@@ -86,7 +86,7 @@ export function stepDownAfter(
   gym: Gym,
 ): StepDown | null {
   if (planned.follow_exactly || !line.equipment) return null;
-  const done = workingSetsOf(session, line.line_ref);
+  const done = setsOfExercise(session, line);
   const last = done[done.length - 1];
   if (!last || last.loadKg === null || !missed(last, line)) return null;
   const toKg = stepDown(last.loadKg, line.equipment, gym);

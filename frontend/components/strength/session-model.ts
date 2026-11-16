@@ -120,6 +120,21 @@ export function workingSetsOf(
   return session.sets.filter((s) => s.lineRef === lineRef && !s.warmup);
 }
 
+/**
+ * The working sets of the exercise now on `line` — what its numbers are read
+ * off. A swap keeps the line's ref, so its sets still count toward the line
+ * (`workingSetsOf`: numbering, completion), but a set of the planned row says
+ * nothing about a barbell row's weight, its starting flow or a miss.
+ */
+export function setsOfExercise(
+  session: ActiveSession,
+  line: PacketLine,
+): LoggedSet[] {
+  return workingSetsOf(session, line.line_ref).filter(
+    (s) => s.exerciseId === line.exercise_id,
+  );
+}
+
 export function warmupsDone(session: ActiveSession, lineRef: string): number {
   return session.sets.filter((s) => s.lineRef === lineRef && s.warmup).length;
 }
@@ -170,7 +185,7 @@ export interface Draft {
  * weight its starting-weight flow settled on, else the packet's pre-fill.
  */
 export function draftFor(session: ActiveSession, line: PacketLine): Draft {
-  const done = workingSetsOf(session, line.line_ref);
+  const done = setsOfExercise(session, line);
   const last = done[done.length - 1];
   if (last) {
     return { loadKg: last.loadKg, reps: last.reps, durationS: last.durationS };
@@ -377,7 +392,7 @@ export function inStartingFlow(
     line.equipment !== null &&
     (line.prescription.duration_s ?? null) === null &&
     session.starting?.[line.line_ref]?.settled !== true &&
-    workingSetsOf(session, line.line_ref).length === 0
+    setsOfExercise(session, line).length === 0
   );
 }
 

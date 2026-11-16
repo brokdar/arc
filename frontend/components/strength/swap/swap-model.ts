@@ -131,10 +131,14 @@ export function applySwap(
   scope: SwapScope,
   stamp: Stamp,
 ): { session: ActiveSession; mutation: Mutation } {
+  // The starting flow is per line, and what it found was the planned
+  // exercise's weight: the substitute finds its own (or reads its history).
+  const { [planned.line_ref]: _found, ...starting } = session.starting ?? {};
   return {
     session: {
       ...session,
       swaps: { ...(session.swaps ?? {}), [planned.line_ref]: exerciseId },
+      starting,
     },
     mutation: {
       kind: "swap",

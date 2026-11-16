@@ -10,7 +10,10 @@ import {
 } from "@/components/strength/logging-screen";
 import { type Mutation, putPacket, queued } from "@/lib/offline/db";
 import { athleteToday } from "@/tests/mocks/fixtures";
-import { strengthPacket } from "@/tests/mocks/handlers-strength";
+import {
+  startingFlowPacket,
+  strengthPacket,
+} from "@/tests/mocks/handlers-strength";
 import { syncServer } from "@/tests/mocks/sync-state";
 
 /**
@@ -225,5 +228,75 @@ describe("an avoided exercise", () => {
     expect(
       screen.queryByRole("region", { name: /You avoid/ }),
     ).not.toBeInTheDocument();
+  });
+
+  // The line keeps its ref through a swap, but its numbers are read off the
+  // exercise now on it: a set of the planned row says nothing about a
+  // barbell row's weight, and a miss on the row is no reason to lower it.
+  it("a swap after a logged set opens the substitute on its own history", async () => {
+    await open({ barbellRowHistory: { loadKg: 40, reps: 8 } });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Log set 1: 20 kg × 10/ }),
+    );
+    await screen.findByRole("heading", { name: "Set 2 of 3" });
+
+    swapTo("Barbell Row");
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 2: 40 kg × 10" }),
+    ).toBeVisible();
+  });
+
+  it("a missed set of the planned exercise does not lower the substitute", async () => {
+    await open({ barbellRowHistory: { loadKg: 40, reps: 8 } });
+    for (let r = 10; r > 6; r--) {
+      fireEvent.click(screen.getByRole("button", { name: "Reps: less" }));
+    }
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Log set 1: 20 kg × 6/ }),
+    );
+    await screen.findByRole("heading", { name: "Set 2 of 3" });
+
+    swapTo("Barbell Row");
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 2: 40 kg × 10" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+  });
+
+  it("a swap after the starting flow settled starts the substitute's own flow", async () => {
+    await putPacket({
+      packet: startingFlowPacket(today, new Date()),
+      storedAt: Date.now(),
+    });
+    render(<LoggingScreen plannedSessionId={SESSION_ID} />);
+    const flow = await screen.findByRole("region", {
+      name: "Find your starting weight",
+    });
+    for (const word of ["Easy", "Good", "Hard"]) {
+      fireEvent.click(
+        within(flow).getByRole("button", {
+          name: `${word} — log these 5 reps`,
+        }),
+      );
+      await writesSettled();
+    }
+    await screen.findByRole("button", { name: "Log set 1: 25 kg × 5" });
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Swap" }));
+    const panel = screen.getByRole("dialog", { name: "Swap Back Squat" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Box Squat" }));
+
+    // A box squat never logged finds its own weight, from the bar again —
+    // not the 25 kg the back squat's flow settled on.
+    const own = await screen.findByRole("region", {
+      name: "Find your starting weight",
+    });
+    expect(within(own).getByText("20 kg in total")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Log set 1: 25 kg/ }),
+    ).toBeNull();
   });
 });
