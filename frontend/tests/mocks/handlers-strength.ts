@@ -1,6 +1,7 @@
 import type { components } from "@/generated/api/schema";
+import { addDays } from "@/lib/dates";
 import { DEFAULT_GYM, platesPerSide } from "@/lib/strength";
-import { EXERCISES } from "@/tests/mocks/fixtures";
+import { EXERCISES, SWAP_EXERCISES } from "@/tests/mocks/fixtures";
 import { packetFixture } from "@/tests/mocks/handlers-packet";
 
 type Packet = components["schemas"]["PacketRead"];
@@ -27,6 +28,13 @@ export interface BarbellLine {
  *   not read it. It is there so a test can prove the target is never stored
  *   as the athlete's answer.
  * - **A short rest** (`rest_s`) is likewise copied verbatim from the plan.
+ * - **An avoided row** is the same plan after the athlete set `avoid` on the
+ *   one-arm row: the line keeps its exercise and its swaps (avoiding a
+ *   movement changes what *other* lines may be offered, not its own swaps)
+ *   and says `avoided: true` (`test_exercise_preferences_api.py`).
+ * - **History for a swap** is a `last_numbers` row for the barbell row — the
+ *   last set the athlete logged of it, which the server copies as logged.
+ *   It is already in the library, as one of the row's swaps.
  * - **Follow-exactly** is the plan's flag, copied onto the session. A line
  *   with a kilogram load pre-fills it as written either way (`_prefill`), so
  *   nothing else changes.
@@ -45,12 +53,16 @@ export function strengthPacket(
     restS = null,
     followExactly = false,
     barbell = null,
+    avoided = false,
+    barbellRowHistory = null,
   }: {
     mode?: "simple" | "standard";
     plannedRir?: number | null;
     restS?: number | null;
     followExactly?: boolean;
     barbell?: BarbellLine | null;
+    avoided?: boolean;
+    barbellRowHistory?: { loadKg: number; reps: number } | null;
   } = {},
 ): Packet {
   const packet = packetFixture(today, generatedAt);
@@ -58,6 +70,7 @@ export function strengthPacket(
   const lines = session.lines.map(
     (line): PacketLine => ({
       ...line,
+      avoided: avoided && line.line_ref === "0.0",
       prescription: {
         ...line.prescription,
         rir: line.line_ref === "0.0" ? plannedRir : line.prescription.rir,
@@ -87,11 +100,31 @@ export function strengthPacket(
       ...packet.effort,
       scale: mode === "simple" ? "easy_good_hard" : "reps_left",
     },
+    last_numbers: barbellRowHistory
+      ? [
+          {
+            exercise_id: "barbell_row",
+            exercise_name: "Barbell Row",
+            load_kg: barbellRowHistory.loadKg,
+            reps: barbellRowHistory.reps,
+            duration_s: null,
+            per_side: false,
+            logged_on: addDays(today, -3),
+            increase_blocked: false,
+          },
+        ]
+      : packet.last_numbers,
     sessions: [{ ...session, follow_exactly: followExactly, lines }],
+    // The library names every planned exercise and every swap offered.
     library: barbell
-      ? EXERCISES.filter((exercise) =>
-          ["back_squat", "front_plank"].includes(exercise.id),
-        )
+      ? libraryOf([
+          "back_squat",
+          ...SQUAT_SWAPS.map((swap) => swap.exercise_id),
+          "front_plank",
+          "dead_bug",
+          "hollow_body_hold",
+          "ab_wheel_rollout",
+        ])
       : packet.library,
   };
 }
@@ -111,7 +144,10 @@ export function startingFlowPacket(today: string, generatedAt: Date): Packet {
   const [session] = packet.sessions;
   return {
     ...packet,
-    library: EXERCISES.filter((exercise) => exercise.id === "back_squat"),
+    library: libraryOf([
+      "back_squat",
+      ...SQUAT_SWAPS.map((swap) => swap.exercise_id),
+    ]),
     sessions: [
       {
         ...session,
@@ -150,6 +186,9 @@ export function startingFlowPacket(today: string, generatedAt: Date): Packet {
             },
             warmups: [],
             plates_per_side: null,
+            swaps: SQUAT_SWAPS,
+            avoided: false,
+            ease_back: null,
             // Never logged, not Plain logbook: the server's first-time
             // suggestion for 5 reps, with no reps-left target to name.
             suggestion: firstTime(5, null),
@@ -177,12 +216,35 @@ function barbellLine(line: PacketLine, { kg, sets, reps }: BarbellLine) {
     prefill: { ...line.prefill, load_kg: kg, reps },
     warmups: [],
     plates_per_side: platesPerSide(kg, "barbell", DEFAULT_GYM),
+    swaps: SQUAT_SWAPS,
+    ease_back: null,
     // A squat never logged: the first-time suggestion for its own reps, or
     // none where the line had none (follow-exactly bypasses progression).
     suggestion: line.suggestion
       ? firstTime(reps, lowOf(line.prescription.rir))
       : null,
   } satisfies PacketLine;
+}
+
+/**
+ * A back squat's swaps as the server ranks them with no avoids and no
+ * remembered pick — pinned by
+ * `test_the_frontend_back_squat_fixtures_swaps_are_the_servers`.
+ */
+const SQUAT_SWAPS: PacketLine["swaps"] = [
+  { exercise_id: "box_squat", exercise_name: "Box Squat" },
+  { exercise_id: "safety_bar_squat", exercise_name: "Safety Bar Squat" },
+  {
+    exercise_id: "bulgarian_split_squat",
+    exercise_name: "Bulgarian Split Squat",
+  },
+];
+
+/** The catalogue entries for ``ids``, in the server's order (by id). */
+function libraryOf(ids: readonly string[]): Packet["library"] {
+  return [...EXERCISES, ...SWAP_EXERCISES]
+    .filter((exercise) => ids.includes(exercise.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** What `app.domain.progression` returns for an exercise never logged. */

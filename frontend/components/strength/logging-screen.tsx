@@ -63,6 +63,14 @@ import { loadSession, saveSession } from "@/components/strength/session-store";
 import { StartingFlow } from "@/components/strength/starting-flow";
 import { nextDraft, stepDownAfter } from "@/components/strength/step-down";
 import { Stepper } from "@/components/strength/stepper";
+import {
+  applySwap,
+  linesWithSwaps,
+  needsSwapPrompt,
+  replacedBy,
+  type SwapScope,
+} from "@/components/strength/swap/swap-model";
+import { SwapPanel, SwapPrompt } from "@/components/strength/swap/swap-panel";
 import { WhySheet } from "@/components/strength/why-sheet";
 import { Button } from "@/components/ui/button";
 import {
@@ -205,7 +213,7 @@ export function LoggingScreen({
   // The finish summary asks the server for the session's new bests, so it
   // waits until the outbox has drained: before that the server cannot know.
   const [uploaded, setUploaded] = useState(false);
-  const [sheet, setSheet] = useState<"pain" | "redFlag" | null>(null);
+  const [sheet, setSheet] = useState<"pain" | "redFlag" | "swap" | null>(null);
   const opened = useRef(false);
   // Outbox writes and state saves run one after another, in action order.
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -301,9 +309,15 @@ export function LoggingScreen({
     return () => window.clearTimeout(timer);
   }, [undo]);
 
-  const lines = planned?.lines ?? [];
+  // The plan's lines, and the lines as the screen shows them: a swapped line
+  // keeps its `line_ref` but shows, pre-fills and logs the substitute.
+  const plannedLines = planned?.lines ?? [];
+  const lines = linesWithSwaps(session, plannedLines, packet);
   const line: PacketLine | undefined = session
     ? lines[session.lineIndex]
+    : undefined;
+  const plannedLine: PacketLine | undefined = session
+    ? plannedLines[session.lineIndex]
     : undefined;
   const gym = useMemo(() => (packet ? gymOf(packet) : null), [packet]);
   const scale = packet?.effort.scale ?? "reps_left";
@@ -323,7 +337,7 @@ export function LoggingScreen({
     : false;
   const draftKey =
     session && line
-      ? `${line.line_ref}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
+      ? `${line.line_ref}:${line.exercise_id}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
   if (session && line && planned && gym && draftKey !== draftFor_) {
@@ -369,6 +383,7 @@ export function LoggingScreen({
       clientId: uuid7(st.now),
       lineRef: line.line_ref,
       exerciseId: line.exercise_id,
+      replacedExerciseId: plannedLine ? replacedBy(session, plannedLine) : null,
       warmup: false,
       loadKg: draft.loadKg,
       reps: draft.durationS !== null ? null : draft.reps,
@@ -667,6 +682,15 @@ export function LoggingScreen({
     ).then(() => flush());
   };
 
+  /** Swap the current planned line for `exerciseId`: the pick tap. */
+  const swapLine = (exerciseId: string, scope: SwapScope) => {
+    setSheet(null);
+    if (!plannedLine) return;
+    const swapped = applySwap(session, plannedLine, exerciseId, scope, stamp());
+    setUndo(null);
+    void commit(swapped.session, [swapped.mutation]);
+  };
+
   const moveLine = (direction: 1 | -1) => {
     setMenu(false);
     const count = lines.length;
@@ -792,6 +816,18 @@ export function LoggingScreen({
               <button
                 type="button"
                 role="menuitem"
+                disabled={!plannedLine || plannedLine.swaps.length === 0}
+                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
+                onClick={() => {
+                  setMenu(false);
+                  setSheet("swap");
+                }}
+              >
+                {t("swap.menu")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
                 disabled={painTarget === null}
                 className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
                 onClick={() => {
@@ -848,6 +884,21 @@ export function LoggingScreen({
                   </Button>
                 </div>
               ))}
+            {plannedLine && needsSwapPrompt(session, plannedLine) ? (
+              <SwapPrompt
+                line={plannedLine}
+                onPick={(id) => swapLine(id, "session")}
+              />
+            ) : null}
+            {line?.ease_back ? (
+              <p role="note" className="text-ink-secondary text-sm">
+                {t("swap.easeBack", {
+                  exercise: line.ease_back.current.exercise_name,
+                  step: String(line.ease_back.step + 1),
+                  total: String(line.ease_back.steps.length),
+                })}
+              </p>
+            ) : null}
             {line && starting && line.equipment ? (
               <StartingFlow
                 kg={startingKg(session, line, gym)}
@@ -929,6 +980,13 @@ export function LoggingScreen({
 
       {sheet === "pain" ? (
         <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
+      ) : null}
+      {sheet === "swap" && plannedLine ? (
+        <SwapPanel
+          line={plannedLine}
+          onPick={swapLine}
+          onClose={() => setSheet(null)}
+        />
       ) : null}
       {sheet === "redFlag" ? (
         <RedFlagPanel

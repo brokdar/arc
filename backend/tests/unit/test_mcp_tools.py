@@ -123,6 +123,7 @@ EXPECTED_TOOLS = {
     "get_cards",
     "get_exercise_history",
     "get_next_targets",
+    "suggest_substitutes",
     # writes
     "append_anchor",
     "create_workout",
@@ -167,6 +168,7 @@ READ_TOOLS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("get_cards", {}),
     ("get_exercise_history", {"exercise_id": "back_squat"}),
     ("get_next_targets", {"planned_session_id": "{planned}"}),
+    ("suggest_substitutes", {"exercise_id": "back_squat"}),
 )
 
 
@@ -4776,3 +4778,76 @@ async def test_get_next_targets_needs_a_read_key(client: AsyncClient) -> None:
 
     with pytest.raises(ToolError, match="'read' is required"):
         await call(COACH, "get_next_targets", {"planned_session_id": planned_id})
+
+
+# --- suggest_substitutes (strength_tools) ------------------------------------------
+
+
+async def test_suggest_substitutes_is_the_packets_ranking(client: AsyncClient) -> None:
+    """AC-78: the coach is offered exactly the swaps the gym screen carries.
+
+    With an avoided movement and a remembered pick in place, so the
+    comparison covers what the athlete stated and not only the catalogue.
+    """
+    for slug, body in (
+        ("box_squat", {"avoid": True}),
+        ("back_squat", {"remembered_swap_id": "goblet_squat"}),
+    ):
+        response = await client.patch(
+            f"/api/v1/exercises/{slug}/preferences", json=body
+        )
+        assert response.status_code == 200, response.text
+    planned = await client.post(
+        "/api/v1/planned-sessions",
+        json={
+            "date": athlete_today().isoformat(),
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "back_squat",
+                                "sets": 3,
+                                "reps": 5,
+                                "load": {"kind": "kg", "value": 60},
+                            }
+                        ]
+                    }
+                ],
+            },
+            "success_criteria": [],
+        },
+    )
+    assert planned.status_code == 201, planned.text
+    packet = (await client.get("/api/v1/strength/packet")).json()
+    (line,) = [
+        line
+        for session in packet["sessions"]
+        if session["planned_session_id"] == planned.json()["id"]
+        for line in session["lines"]
+    ]
+
+    data = await call(READER, "suggest_substitutes", {"exercise_id": "back_squat"})
+
+    assert data["substitutes"] == line["swaps"]
+    assert [s["exercise_id"] for s in data["substitutes"]] == [
+        "goblet_squat",
+        "safety_bar_squat",
+        "bulgarian_split_squat",
+    ]
+    assert data["exercise_id"] == "back_squat"
+    assert "red_flag" in data
+
+
+async def test_suggest_substitutes_of_an_unknown_slug_is_a_tool_error(
+    session_factory: Any,
+) -> None:
+    with pytest.raises(ToolError, match="not in the catalogue"):
+        await call(READER, "suggest_substitutes", {"exercise_id": "no_such_lift"})
+
+
+async def test_suggest_substitutes_needs_a_read_key(session_factory: Any) -> None:
+    with pytest.raises(ToolError, match="'read' is required"):
+        await call(COACH, "suggest_substitutes", {"exercise_id": "back_squat"})

@@ -51,6 +51,7 @@ from app.domain.cards import (
     visible,
 )
 from app.domain.safety import RED_FLAG_FOLLOW_UP, SWAP_OFFER, card_allowed
+from app.domain.swaps import SWAP_REST_OF_BLOCK
 from app.persistence.athlete import AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.cards import CardRepository, CardRow
@@ -102,10 +103,33 @@ async def _resolve_red_flag(session: AsyncSession, row: CardRow, actor: Actor) -
     await SafetyService.from_session(session).resolve_red_flag(actor=actor)
 
 
-#: The safety kinds (`app.domain.safety`). A swap offer's answer is only
-#: recorded until swaps can act on it; the red flag's follow-up lowers the flag.
-register_card_kind(SWAP_OFFER)
+async def _remember_swap(session: AsyncSession, row: CardRow, actor: Actor) -> None:
+    """Accepting a swap card makes its swap the pick offered first next time.
+
+    That is all it does: neither card edits the plan. The pain card's offer is
+    for "next time", and a rest-of-block swap is a request the coach turns
+    into a plan change through a proposal (`app.domain.swaps.SwapScope`).
+    """
+    # Imported here: `app.services.exercise_preferences` sits above cards in
+    # the services this module is imported by.
+    from app.services.exercise_preferences import (  # noqa: PLC0415
+        ExercisePreferencesService,
+    )
+
+    original = row.payload.get("exercise_id")
+    pick = row.payload.get("swap_exercise_id")
+    if isinstance(original, str) and isinstance(pick, str):
+        await ExercisePreferencesService.from_session(session).remember(
+            original, pick, actor=actor
+        )
+
+
+#: The safety kinds (`app.domain.safety`): accepting a swap offer remembers
+#: its swap; the red flag's follow-up lowers the flag.
+register_card_kind(SWAP_OFFER, on_accept=_remember_swap)
 register_card_kind(RED_FLAG_FOLLOW_UP, on_accept=_resolve_red_flag)
+#: The gym's "rest of block" swap (`app.domain.swaps`), pending until answered.
+register_card_kind(SWAP_REST_OF_BLOCK, on_accept=_remember_swap)
 
 
 def as_card(row: CardRow) -> Card:

@@ -39,8 +39,8 @@ from app.domain.safety import (
     plural,
     precedence,
     sets_left_today,
-    swap_for,
 )
+from app.domain.swaps import pain_swap
 from app.persistence.activity import SessionRow
 from app.persistence.audit import AuditLogEntry
 from app.persistence.cards import CardRow
@@ -221,7 +221,7 @@ def test_sharp_pain_after_set_two_of_four_leaves_no_sets_today() -> None:
 
 def test_the_swap_for_lunges_spares_the_knee_and_the_card_says_so() -> None:
     catalogue = {exercise.id: exercise for exercise in load_exercise_catalogue()}
-    swap = swap_for(catalogue[LUNGE], catalogue.values())
+    swap = pain_swap(catalogue[LUNGE], catalogue.values())
 
     assert swap is not None
     assert swap.id == "step_up"

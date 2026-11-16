@@ -5428,3 +5428,132 @@ export function setDropboxAppKey(appKey: string):
   state.storedAppKey = key;
   return { setup: dropboxSetup() };
 }
+
+/**
+ * The catalogue entries a back squat's and a front plank's packet swaps add to
+ * the packet's library (pinned by `test_the_frontend_back_squat_fixtures_swaps_are_the_servers`
+ * and `test_the_frontend_packet_fixtures_swaps_are_the_servers`), copied from
+ * `backend/app/resources/exercise_catalogue.json` like `EXERCISES`. Kept apart
+ * so the slice the pickers count stays as it is.
+ */
+export const SWAP_EXERCISES: Schemas["ExerciseRead"][] = [
+  {
+    id: "box_squat",
+    name: "Box Squat",
+    category: "squat",
+    unilateral: false,
+    muscles: {
+      adductors: 0.5,
+      erector_spinae: 0.5,
+      glute_max: 1.0,
+      hamstrings: 0.5,
+      quads_vasti: 1.0,
+    },
+    mechanic: "multi_joint",
+    pattern: "squat",
+    equipment: ["barbell", "rack", "box"],
+    load_type: "barbell",
+    restrictions: ["long_breath_hold"],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "safety_bar_squat",
+    name: "Safety Bar Squat",
+    category: "squat",
+    unilateral: false,
+    muscles: {
+      adductors: 0.5,
+      erector_spinae: 0.5,
+      glute_max: 1.0,
+      quads_vasti: 1.0,
+      traps_upper: 0.5,
+    },
+    mechanic: "multi_joint",
+    pattern: "squat",
+    equipment: ["safety_bar", "rack"],
+    load_type: "barbell",
+    restrictions: ["deep_hip_flexion", "deep_knee_flexion", "long_breath_hold"],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "bulgarian_split_squat",
+    name: "Bulgarian Split Squat",
+    category: "lunge",
+    unilateral: true,
+    muscles: {
+      adductors: 0.5,
+      glute_max: 1.0,
+      glute_med_min: 0.5,
+      hip_flexors: 0.5,
+      quads_vasti: 1.0,
+    },
+    mechanic: "multi_joint",
+    pattern: "lunge",
+    equipment: ["dumbbell", "bench"],
+    load_type: "dumbbell",
+    restrictions: ["deep_hip_flexion", "deep_knee_flexion"],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "dead_bug",
+    name: "Dead Bug",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      hip_flexors: 0.5,
+      obliques: 0.5,
+      rectus_abdominis: 1.0,
+      transversus_abdominis: 1.0,
+    },
+    mechanic: "single_joint",
+    pattern: "anti_extension",
+    equipment: ["bodyweight"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "hollow_body_hold",
+    name: "Hollow Body Hold",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      hip_flexors: 0.5,
+      obliques: 0.5,
+      rectus_abdominis: 1.0,
+      transversus_abdominis: 1.0,
+    },
+    mechanic: "single_joint",
+    pattern: "anti_extension",
+    equipment: ["bodyweight"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "ab_wheel_rollout",
+    name: "Ab Wheel Rollout",
+    category: "core",
+    unilateral: false,
+    muscles: {
+      delt_anterior: 0.5,
+      lats: 0.5,
+      obliques: 0.5,
+      rectus_abdominis: 1.0,
+      serratus_anterior: 0.5,
+      transversus_abdominis: 1.0,
+    },
+    mechanic: "multi_joint",
+    pattern: "anti_extension",
+    equipment: ["ab_wheel"],
+    load_type: "bodyweight",
+    restrictions: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+];

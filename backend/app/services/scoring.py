@@ -1163,10 +1163,20 @@ def _performed_loads(logged: Sequence[LoggedSetRow]) -> tuple[float | None, ...]
     The other half of `_prescribed_loads`' unit: a left or a right row is one
     entry, and a legacy ``per_side`` row holding the pair in one line is two
     carrying the same load (`app.persistence.activity.logged_sides`).
+
+    **A swapped set has no comparable load.** A set carrying
+    ``replaced_exercise_id`` stood in for the planned movement, so it counts
+    toward completion like any other — the planned line is done — but its
+    weight belongs to a different movement: 180 kg on a leg press says
+    nothing about whether 100 kg was squatted, and comparing the two would
+    call a sensible swap 80 % heavy. Its entry is ``None``, which the load
+    agreement skips (`app.domain.scoring._load_agreement`). Pinned by
+    `test_scoring_api.py::test_a_swapped_exercise_credits_the_planned_line`.
     """
     loads: list[float | None] = []
     for row in logged:
-        loads.extend([row.load_kg] * logged_sides(row))
+        load = None if row.replaced_exercise_id is not None else row.load_kg
+        loads.extend([load] * logged_sides(row))
     return tuple(loads)
 
 

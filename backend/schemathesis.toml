@@ -399,6 +399,15 @@ include-name = "PUT /api/v1/plans/{plan_id}/weeks/{week_start}"
 [operations.checks.positive_data_acceptance]
 expected-statuses = ["2xx", 401, 403, 404, 409, 422]
 
+# Swaps add one write whose rule a JSON schema cannot express, pinned by
+# `test_exercise_preferences_api.py::test_an_exercise_is_never_remembered_as_its_own_swap`:
+# an exercise named as its own remembered swap is a 422.
+
+[[operations]]
+include-name = "PATCH /api/v1/exercises/{exercise_id}/preferences"
+[operations.checks.positive_data_acceptance]
+expected-statuses = ["2xx", 401, 403, 404, 409, 422]
+
 # `allow_header_conformance` (schemathesis 4.30) wants `Allow` to list every
 # method the contract documents at a path. An anchor version documents PUT,
 # PATCH and DELETE only to refuse them, and those handlers answer with
