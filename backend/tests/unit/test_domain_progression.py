@@ -28,6 +28,7 @@ from app.domain.progression import (
 from app.domain.rules import (
     BACKOFF_DROP,
     BIG_STEP,
+    EFFORT_GAP_TWICE,
     PLATEAU_RESET,
     PROGRESSION_HOLD,
     PROGRESSION_MAX_DECREASE,
@@ -150,6 +151,8 @@ def test_one_rep_easier_twice_in_a_row_rises_by_the_arithmetic() -> None:
     assert result.load_kg == 102.5
     assert round(result.explanation.computed_kg or 0, 1) == 102.6
     assert result.explanation.reason is SuggestionReason.EASIER_TWICE
+    # 102.6 rounds to the next step by itself: no hold to name.
+    assert result.explanation.limit is None
     assert result.change_kg == 2.5
     # Both sessions are the inputs the Why sheet reads.
     assert [(i.load_kg, i.reps, i.reps_left) for i in result.explanation.inputs] == [
@@ -176,6 +179,7 @@ def test_one_rep_harder_twice_at_a_heavy_weight_drops_one_step_only() -> None:
     assert result.explanation.computed_kg == pytest.approx(146.25)
     assert result.load_kg == 147.5
     assert result.explanation.reason is SuggestionReason.HARDER_TWICE
+    assert result.explanation.limit == EFFORT_GAP_TWICE.id
 
 
 def test_one_rep_easier_twice_at_a_heavy_weight_rises_one_step_only() -> None:

@@ -43,7 +43,7 @@ export const EASIER_TWICE: Suggestion = {
         trimmed: false,
       },
     ],
-    limit: "progression.weight_from_effort.gap_twice",
+    limit: null,
     reason: "easier_twice",
     rule: "progression.weight_from_effort",
     target_reps: 6,

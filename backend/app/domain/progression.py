@@ -524,13 +524,16 @@ def _by_effort(
     ) -> _Decision:
         target, cap = computed, None
         # One rep's verdict, given twice, moves one loadable step (module doc).
+        # Judged on the rounded weight, so the hold is named only when it
+        # changes the result: 102.6 kg rounds to the next step by itself.
+        rounded = nearest_loadable(computed, equipment, gym)
         if reason is SuggestionReason.EASIER_TWICE:
             step = _step_above(load, equipment, gym)
-            if _g(computed) > _g(step):
+            if _g(rounded) > _g(step):
                 target, cap = step, EFFORT_GAP_TWICE.id
         elif reason is SuggestionReason.HARDER_TWICE:
             step = _step_below(load, equipment, gym)
-            if _g(computed) < _g(step):
+            if _g(rounded) < _g(step):
                 target, cap = step, EFFORT_GAP_TWICE.id
         return _Decision(
             WEIGHT_FROM_EFFORT.id,
