@@ -71,6 +71,7 @@ import {
   type SwapScope,
 } from "@/components/strength/swap/swap-model";
 import { SwapPanel, SwapPrompt } from "@/components/strength/swap/swap-panel";
+import { WhySheet } from "@/components/strength/why-sheet";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -1107,14 +1108,17 @@ function LineBody({
   };
 
   const planned = draftFor({ ...session, sets: [] }, line);
+  // A step-down after a missed set names itself; without a suggestion
+  // (Plain logbook, follow-exactly, a line with no loadable weight) the chip
+  // says where the pre-fill came from.
   const step = stepDownAfter(session, plannedSession, line, gym);
   const reason = step
     ? t("train.reasonStepDown", { weight: weightText(step.fromKg - step.toKg) })
     : line.prefill.source === "prescription"
       ? t("train.reasonPlan")
-      : line.prefill.source === "last_logged"
-        ? t("train.reasonLast")
-        : t("train.reasonBlank");
+      : line.prefill.source === "blank"
+        ? t("train.reasonBlank")
+        : t("train.reasonLast");
   const plates =
     equipment === "barbell" && draft?.loadKg
       ? platesPerSide(draft.loadKg, "barbell", gym)
@@ -1301,11 +1305,13 @@ function LineBody({
                 })}
               </p>
             ) : null}
-            <p>
-              <span className="inline-flex rounded-md border border-accent-border bg-accent-surface px-2 py-0.5 text-accent-quiet text-xs">
-                {reason}
-              </span>
-            </p>
+            <WhySheet
+              // The suggestion is for the session as planned; a step-down
+              // after a missed set today is newer, so it speaks instead.
+              suggestion={step ? null : line.suggestion}
+              fallback={reason}
+              weightText={weightText}
+            />
             {plates ? (
               <p className="font-mono text-ink-muted">
                 {t("train.plates", {

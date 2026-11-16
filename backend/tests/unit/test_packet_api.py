@@ -461,3 +461,184 @@ async def test_the_packet_is_read_only(client: AsyncClient, method: str) -> None
     response = await getattr(client, method)(PACKET)
 
     assert response.status_code == 405
+
+
+# --- AC-72: suggested weights in the packet ------------------------------------------
+
+
+async def log_on(client: AsyncClient, days_ago: int, *sets: dict[str, Any]) -> None:
+    """A finished gym session ``days_ago`` holding ``sets``."""
+    start = dt.datetime.combine(
+        athlete_today() - dt.timedelta(days=days_ago), dt.time(17, 30), tzinfo=dt.UTC
+    )
+    response = await client.post(
+        MANUAL,
+        json={
+            "start_time": start.isoformat(),
+            "timezone": "UTC",
+            "duration_s": 3_600,
+            "sets": list(sets),
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+#: Target 6 with 2 left on a squat, logged twice at 100 kg × 6 with 3 left —
+#: the direction's worked example (AC-68's edge case).
+SQUAT_6_AT_2 = item(
+    "back_squat", sets=1, reps=6, rir=2, load={"kind": "kg", "value": 100}
+)
+EASIER = {"exercise_id": "back_squat", "reps": 6, "load_kg": 100.0, "rir": 3}
+
+
+async def easier_twice(client: AsyncClient) -> str:
+    await client.patch(SETTINGS, json={"mode": "standard"})
+    await log_on(client, 6, EASIER)
+    await log_on(client, 3, EASIER)
+    return await plan(client, lift(SQUAT_6_AT_2))
+
+
+async def test_a_line_with_history_prefills_the_suggested_weight_and_says_why(
+    client: AsyncClient,
+) -> None:
+    session_id = await easier_twice(client)
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"] == {
+        "source": "progression",
+        "load_kg": 102.5,
+        "reps": 6,
+        "duration_s": None,
+        "starting_flow": False,
+    }
+    suggestion = squat["suggestion"]
+    assert suggestion["outcome"] == "up"
+    assert suggestion["change_kg"] == 2.5
+    explanation = suggestion["explanation"]
+    assert explanation["rule"] == "progression.weight_from_effort"
+    assert explanation["reason"] == "easier_twice"
+    assert explanation["evidence"] == "practice"
+    assert round(explanation["computed_kg"], 1) == 102.6
+    assert explanation["limit"] is None
+    assert explanation["target_reps"] == 6
+    assert explanation["target_reps_left"] == 2
+    assert [
+        (i["load_kg"], i["reps"], i["reps_left"]) for i in explanation["inputs"]
+    ] == [(100.0, 6, 3.0), (100.0, 6, 3.0)]
+    # Plates follow the suggested weight, not the prescription.
+    assert squat["plates_per_side"] == plates_per_side(102.5)
+
+
+async def test_plain_logbook_keeps_the_prescription_and_suggests_nothing(
+    client: AsyncClient,
+) -> None:
+    session_id = await easier_twice(client)
+    await client.patch(SETTINGS, json={"plain_logbook": True})
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["source"] == "prescription"
+    assert (squat["prefill"]["load_kg"], squat["prefill"]["reps"]) == (100.0, 6)
+    assert squat["suggestion"] is None
+
+
+async def test_follow_exactly_keeps_the_prescription_and_suggests_nothing(
+    client: AsyncClient,
+) -> None:
+    created = await client.post(
+        PLANS,
+        json={
+            "name": "Physio block",
+            "phase": "base",
+            "follow_exactly": True,
+            "starts_on": day(0),
+            "ends_before": day(14),
+        },
+    )
+    assert created.status_code == 201, created.text
+    session_id = await easier_twice(client)
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["source"] == "prescription"
+    assert (squat["prefill"]["load_kg"], squat["prefill"]["reps"]) == (100.0, 6)
+    assert squat["suggestion"] is None
+
+
+async def test_a_first_time_exercise_keeps_its_prefill_and_says_no_history(
+    client: AsyncClient,
+) -> None:
+    session_id = await plan(client, lift(SQUAT_6_AT_2))
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["source"] == "prescription"
+    assert squat["suggestion"]["outcome"] == "first_time"
+    assert squat["suggestion"]["load_kg"] is None
+    assert squat["suggestion"]["explanation"]["rule"] is None
+    assert squat["suggestion"]["explanation"]["reason"] == "first_time"
+
+
+async def test_simple_mode_reads_easy_good_hard(client: AsyncClient) -> None:
+    await log_on(
+        client,
+        3,
+        {
+            "exercise_id": "back_squat",
+            "reps": 6,
+            "load_kg": 100.0,
+            "effort_simple": "easy",
+        },
+    )
+    session_id = await plan(client, lift(SQUAT_6_AT_2))
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["load_kg"] == 102.5
+    assert squat["suggestion"]["explanation"]["rule"] == "progression.simple"
+    assert squat["suggestion"]["explanation"]["reason"] == "simple_easy"
+
+
+async def test_a_session_with_fewer_sets_than_prescribed_never_raises(
+    client: AsyncClient,
+) -> None:
+    await client.patch(SETTINGS, json={"mode": "standard"})
+    capped = {**EASIER, "rir": 4, "rir_capped": True}
+    await log_on(client, 3, capped)
+    three_sets = {**SQUAT_6_AT_2, "sets": 3}
+    session_id = await plan(client, lift(three_sets))
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["load_kg"] == 100.0
+    assert squat["suggestion"]["explanation"]["reason"] == "trimmed"
+
+
+async def test_a_bodyweight_line_gets_no_suggestion(client: AsyncClient) -> None:
+    await log_on(client, 3, {"exercise_id": "front_plank", "duration_s": 45})
+    session_id = await plan(
+        client,
+        lift(
+            item("front_plank", reps=None, duration_s=45, load={"kind": "bodyweight"})
+        ),
+    )
+
+    (plank,) = lines_of(await packet(client), session_id)
+
+    assert plank["suggestion"] is None
+
+
+async def test_sharp_pain_last_time_keeps_the_suggestion_from_rising(
+    client: AsyncClient,
+) -> None:
+    await client.patch(SETTINGS, json={"mode": "standard"})
+    await log_on(
+        client, 3, {**EASIER, "rir": 4, "rir_capped": True, "pain_kind": "sharp"}
+    )
+    session_id = await plan(client, lift(SQUAT_6_AT_2))
+
+    (squat,) = lines_of(await packet(client), session_id)
+
+    assert squat["prefill"]["load_kg"] == 100.0
+    assert squat["suggestion"]["explanation"]["reason"] == "increase_blocked"

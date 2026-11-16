@@ -85,6 +85,9 @@ export function swappedLine(
     prefill,
     warmups: [],
     plates_per_side: null,
+    // The packet's suggestion was worked out for the planned exercise; the
+    // substitute has none, so its chip names where its pre-fill came from.
+    suggestion: null,
   };
 }
 

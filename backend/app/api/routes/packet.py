@@ -21,6 +21,7 @@ from app.api.schemas.packet import (
     PacketSettingsRead,
     PlatePairRead,
     PrefillRead,
+    SuggestionRead,
     WarmupRead,
 )
 from app.api.schemas.workouts import StrengthSetSchema
@@ -65,6 +66,11 @@ def _line_read(line: PacketLine) -> PacketLineRead:
         swaps=[swap_read(row) for row in line.swaps],
         avoided=line.avoided,
         ease_back=ease_back_read(line.ease_back),
+        suggestion=(
+            None
+            if line.suggestion is None
+            else SuggestionRead.model_validate(line.suggestion)
+        ),
     )
 
 

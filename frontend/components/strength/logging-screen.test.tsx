@@ -81,6 +81,17 @@ async function mergedSets(): Promise<Map<string, Record<string, unknown>>> {
   return sets;
 }
 
+describe("the reason chip (AC-73)", () => {
+  it("says No history yet for an exercise never logged", async () => {
+    await open({ mode: "standard" });
+
+    expect(screen.getByText("No history yet")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Why this weight?" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("Standard: rating the last set rates the exercise", () => {
   it("4+ writes rir 4, capped, for all three sets", async () => {
     await open({ mode: "standard", plannedRir: 2 });
@@ -402,7 +413,9 @@ describe("AC-74: a missed set steps the rest down, on the screen", () => {
       screen.getByRole("button", { name: "Log set 3: 100 kg × 7" }),
     ).toBeVisible();
     expect(screen.queryByText(/lighter/)).toBeNull();
-    expect(screen.getByText("From your plan")).toBeVisible();
+    // A squat never logged carries the server's first-time suggestion, so
+    // with no step-down the chip is the suggestion's own (AC-73).
+    expect(screen.getByText("No history yet")).toBeVisible();
   });
 
   it("on a follow-exactly plan nothing changes", async () => {
