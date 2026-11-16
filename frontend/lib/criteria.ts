@@ -1,6 +1,8 @@
 import type { components } from "@/generated/api/schema";
 
 import { formatDurationClock, formatPercent } from "@/lib/format";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { type Translate, translatorFor } from "@/lib/i18n/provider";
 import { anchorLabel } from "@/lib/targets";
 
 type Schemas = components["schemas"];
@@ -12,12 +14,6 @@ export type SuccessCriterion =
   | Schemas["CeilingSchema"]
   | Schemas["SetsCompletedSchema"]
   | Schemas["LoadWithinSchema"];
-
-const CHANNEL_LABELS: Record<Schemas["Channel"], string> = {
-  power: "power",
-  hr: "heart rate",
-  cadence: "cadence",
-};
 
 const STEP_ROLE_LABELS: Record<Schemas["StepRole"], string> = {
   warmup: "warm-up",
@@ -47,40 +43,67 @@ export function stepRoleLabel(role: Schemas["StepRole"]): string {
  * criteria editor (slice 2) and any later verdict screen all phrase a
  * criterion the same way.
  */
-export function describeCriterion(criterion: SuccessCriterion): string {
+export function describeCriterion(
+  criterion: SuccessCriterion,
+  t: Translate = translatorFor("en"),
+): string {
   switch (criterion.kind) {
-    case "time_in_band": {
-      const channel = CHANNEL_LABELS[criterion.band.channel];
-      const low = formatPercent(criterion.band.low);
-      const high = formatPercent(criterion.band.high);
-      return `${formatPercent(criterion.min_fraction)} of ${describeSelector(
-        criterion.selector,
-      )} within ${low}–${high} of the prescribed ${channel}${describeSmoothing(
-        criterion.band.smoothing_s,
-      )}`;
-    }
+    case "time_in_band":
+      return t("criteria.timeInBand", {
+        fraction: formatPercent(criterion.min_fraction),
+        selector: describeSelector(criterion.selector, t),
+        low: formatPercent(criterion.band.low),
+        high: formatPercent(criterion.band.high),
+        channel: channelWord(criterion.band.channel, t),
+        smoothing: describeSmoothing(criterion.band.smoothing_s, t),
+      });
     case "duration_floor":
-      return `Lasts at least ${formatDurationClock(criterion.min_seconds)}`;
+      return t("criteria.durationFloor", {
+        duration: formatDurationClock(criterion.min_seconds),
+      });
     case "ceiling": {
-      const channel = CHANNEL_LABELS[criterion.channel];
       const limit =
         criterion.limit.kind === "percent_of_anchor"
-          ? `${formatPercent(criterion.limit.pct)} of ${anchorLabel(
-              criterion.limit.anchor_type,
-            )}`
+          ? t("criteria.ceilingPct", {
+              pct: formatPercent(criterion.limit.pct),
+              anchor: anchorLabel(criterion.limit.anchor_type),
+            })
           : `${criterion.limit.value} ${criterion.limit.unit}`;
-      return `No more than ${formatDurationClock(
-        criterion.max_seconds_above,
-      )} with ${channel} above ${limit}${describeSmoothing(
-        criterion.smoothing_s,
-      )}`;
+      return t("criteria.ceiling", {
+        duration: formatDurationClock(criterion.max_seconds_above),
+        channel: channelWord(criterion.channel, t),
+        limit,
+        smoothing: describeSmoothing(criterion.smoothing_s, t),
+      });
     }
     case "sets_completed":
-      return `${formatPercent(criterion.min_fraction)} of the prescribed sets completed`;
+      return t("criteria.setsCompleted", {
+        fraction: formatPercent(criterion.min_fraction),
+      });
     case "load_within":
-      return `Loads within ${formatPercent(criterion.pct_tolerance)} of what was prescribed`;
+      return t("criteria.loadWithin", {
+        pct: formatPercent(criterion.pct_tolerance),
+      });
   }
 }
+
+const CHANNEL_KEYS: Record<Schemas["Channel"], MessageKey> = {
+  power: "criteria.channelPower",
+  hr: "criteria.channelHr",
+  cadence: "criteria.channelCadence",
+};
+
+function channelWord(channel: Schemas["Channel"], t: Translate): string {
+  return t(CHANNEL_KEYS[channel]);
+}
+
+const ROLE_KEYS: Record<Schemas["StepRole"], MessageKey> = {
+  warmup: "criteria.roleWarmup",
+  work: "criteria.roleWork",
+  recovery: "criteria.roleRecovery",
+  rest: "criteria.roleRest",
+  cooldown: "criteria.roleCooldown",
+};
 
 /**
  * The trailing clause naming a band's or a ceiling's smoothing window.
@@ -90,8 +113,8 @@ export function describeCriterion(criterion: SuccessCriterion): string {
  * ride scores differently at 0 s and at 30 s — so a criterion that hides its
  * window is not a criterion the athlete can hold anyone to.
  */
-function describeSmoothing(seconds: number): string {
-  return seconds > 0 ? `, ${seconds} s average` : ", raw samples";
+function describeSmoothing(seconds: number, t: Translate): string {
+  return seconds > 0 ? t("criteria.smoothed", { seconds }) : t("criteria.raw");
 }
 
 /** The tag of each criterion in the union. */
@@ -161,17 +184,18 @@ export function blankCriterion(kind: CriterionKind): SuccessCriterion {
 /** Which steps a criterion applies to, in words. */
 export function describeSelector(
   selector: Schemas["StepSelectorSchema"],
+  t: Translate = translatorFor("en"),
 ): string {
   switch (selector.kind) {
     case "all":
-      return "the session's time";
+      return t("criteria.selectorAll");
     case "role":
       return selector.role
-        ? `the ${STEP_ROLE_LABELS[selector.role]} steps' time`
-        : "the selected steps' time";
+        ? t("criteria.selectorRole", { role: t(ROLE_KEYS[selector.role]) })
+        : t("criteria.selectorRoleAny");
     case "index":
       return selector.index === null || selector.index === undefined
-        ? "the selected step's time"
-        : `step ${selector.index + 1}'s time`;
+        ? t("criteria.selectorIndexAny")
+        : t("criteria.selectorIndex", { n: selector.index + 1 });
   }
 }

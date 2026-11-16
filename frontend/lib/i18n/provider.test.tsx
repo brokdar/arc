@@ -95,7 +95,7 @@ describe("I18nProvider (AC-20)", () => {
 
     // The Settings panel's own language control: the real PATCH, answered by
     // the stateful handler, is what the provider has to follow.
-    await user.selectOptions(await screen.findByLabelText("Language"), "en");
+    await user.selectOptions(await screen.findByLabelText("Sprache"), "en");
 
     expect(await screen.findByText("102.5 kg")).toBeInTheDocument();
     expect(screen.queryByText("102,5 kg")).not.toBeInTheDocument();

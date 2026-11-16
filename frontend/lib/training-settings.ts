@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
+import type { MessageKey } from "@/lib/i18n/catalogue";
 import { lastHighContrast, rememberHighContrast } from "@/lib/last-contact";
 
 type Schemas = components["schemas"];
@@ -59,36 +60,56 @@ export function useDocumentContrast(): void {
 }
 
 /** The first-run answers, in the order the question offers them. */
-export const LIFTED_BEFORE_LABELS: Readonly<Record<LiftedBefore, string>> = {
-  never: "Never",
-  a_little: "A little",
-  regularly: "Regularly",
+export const LIFTED_BEFORE_KEYS: Readonly<Record<LiftedBefore, MessageKey>> = {
+  never: "onboarding.firstRun.never",
+  a_little: "onboarding.firstRun.aLittle",
+  regularly: "onboarding.firstRun.regularly",
 };
 
-export const MODE_LABELS: Readonly<Record<TrainingMode, string>> = {
-  simple: "Simple",
-  standard: "Standard",
-  full: "Full control",
+export const MODE_KEYS: Readonly<Record<TrainingMode, MessageKey>> = {
+  simple: "settings.training.modeSimple",
+  standard: "settings.training.modeStandard",
+  full: "settings.training.modeFull",
 };
 
 /** One line each on what a mode changes in the gym, shown under the choice. */
-export const MODE_HINTS: Readonly<Record<TrainingMode, string>> = {
-  simple: "Rate each set Easy, Good or Hard; arc picks the next weight.",
-  standard: "Say how many reps you had left; arc suggests, you adjust.",
-  full: "Every control shown, nothing decided for you.",
+export const MODE_HINT_KEYS: Readonly<Record<TrainingMode, MessageKey>> = {
+  simple: "settings.training.hintSimple",
+  standard: "settings.training.hintStandard",
+  full: "settings.training.hintFull",
 };
 
-export const ASK_FREQUENCY_LABELS: Readonly<Record<AskFrequency, string>> = {
-  always: "After every set",
-  last_set: "After the last set of each exercise",
-  never: "Never",
+/**
+ * What the effort question offers: two choices, not the three the API stores.
+ *
+ * `always` and `last_set` both ask once per exercise, after its last working
+ * set (`components/strength/effort-row.tsx` — a prompt after every set was
+ * displaced by design), so offering "After every set" promised something the
+ * gym never did (strength UAT W2). The stored value stays as the API has it:
+ * `always` is shown as the option it behaves as, and choosing it writes
+ * `last_set`.
+ */
+export type AskChoice = "each" | "never";
+
+export const ASK_CHOICES: Readonly<Record<AskChoice, MessageKey>> = {
+  each: "settings.training.askEach",
+  never: "settings.training.askNever",
 };
 
-export const UNITS_LABELS: Readonly<Record<Units, string>> = {
-  kg: "Kilograms (kg)",
-  lb: "Pounds (lb)",
+export function askChoiceOf(stored: AskFrequency): AskChoice {
+  return stored === "never" ? "never" : "each";
+}
+
+export function askFrequencyOf(choice: AskChoice): AskFrequency {
+  return choice === "never" ? "never" : "last_set";
+}
+
+export const UNITS_KEYS: Readonly<Record<Units, MessageKey>> = {
+  kg: "settings.training.unitsKg",
+  lb: "settings.training.unitsLb",
 };
 
+/** A language is named in itself, whatever language the page is in. */
 export const LOCALE_LABELS: Readonly<Record<Locale, string>> = {
   en: "English",
   de: "Deutsch",

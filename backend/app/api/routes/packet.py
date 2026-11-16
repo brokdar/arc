@@ -89,6 +89,7 @@ def _session_read(session: PacketSession) -> PacketSessionRead:
         plan_id=session.plan_id,
         follow_exactly=session.follow_exactly,
         lines=[_line_read(line) for line in session.lines],
+        title=session.title,
     )
 
 

@@ -20,20 +20,22 @@ import { Textarea } from "@/components/ui/textarea";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { useT } from "@/lib/i18n/provider";
 
 type Severity = components["schemas"]["RedFlagSeverity"];
 
-const SEVERITY_LABELS: Readonly<Record<Severity, string>> = {
-  mild: "Mild — training around it",
-  moderate: "Moderate — training is compromised",
-  severe: "Severe — not training",
+const SEVERITY_LABELS: Readonly<Record<Severity, MessageKey>> = {
+  mild: "illness.mildLong",
+  moderate: "illness.moderateLong",
+  severe: "illness.severeLong",
 };
 
 /** The word on the banner, without the explanation the form's option carries. */
-const SEVERITY_WORDS: Readonly<Record<Severity, string>> = {
-  mild: "Mild",
-  moderate: "Moderate",
-  severe: "Severe",
+const SEVERITY_WORDS: Readonly<Record<Severity, MessageKey>> = {
+  mild: "illness.mild",
+  moderate: "illness.moderate",
+  severe: "illness.severe",
 };
 
 const athleteQueryKey = $api.queryOptions("get", "/api/v1/athlete").queryKey;
@@ -70,6 +72,7 @@ function useRedFlag() {
  */
 export function RedFlagBanner() {
   const { athlete, update } = useRedFlag();
+  const t = useT();
   const [editing, setEditing] = useState(false);
 
   if (!athlete?.red_flag_active) {
@@ -96,14 +99,17 @@ export function RedFlagBanner() {
           className="size-1.5 shrink-0 rounded-full bg-status-missed"
         />
         <span className="font-medium text-destructive text-sm">
-          Red flag{severity ? ` · ${SEVERITY_WORDS[severity]}` : ""}
+          {severity
+            ? t("illness.bannerSeverity", {
+                severity: t(SEVERITY_WORDS[severity]),
+              })
+            : t("illness.banner")}
         </span>
         <span className="text-ink-secondary text-xs">
-          {athlete.red_flag_note ??
-            "No note — say what is wrong so the coach has something to work with."}
+          {athlete.red_flag_note ?? t("illness.noNote")}
         </span>
         <span className="text-ink-muted text-xs">
-          The coach cannot add or intensify sessions while this stands.
+          {t("illness.coachCannot")}
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           <Button
@@ -111,7 +117,7 @@ export function RedFlagBanner() {
             variant="secondary"
             onClick={() => setEditing(true)}
           >
-            Change
+            {t("illness.change")}
           </Button>
           <Button
             size="xs"
@@ -121,7 +127,7 @@ export function RedFlagBanner() {
             // form asserting a rule the service already owns.
             onClick={() => update.mutate({ body: { red_flag_active: false } })}
           >
-            {update.isPending ? "Clearing…" : "All better"}
+            {update.isPending ? t("illness.clearing") : t("illness.allBetter")}
           </Button>
         </span>
         {problems.length > 0 ? (
@@ -150,6 +156,7 @@ export function RedFlagBanner() {
  */
 export function RedFlagControl() {
   const { athlete } = useRedFlag();
+  const t = useT();
   const [editing, setEditing] = useState(false);
 
   if (athlete === undefined) {
@@ -166,7 +173,7 @@ export function RedFlagControl() {
         }
         onClick={() => setEditing(true)}
       >
-        {athlete.red_flag_active ? "Red flag up" : "Report illness or injury"}
+        {athlete.red_flag_active ? t("illness.up") : t("illness.report")}
       </Button>
       {editing ? <RedFlagDialog onClose={() => setEditing(false)} /> : null}
     </>
@@ -187,6 +194,7 @@ export function RedFlagControl() {
 function RedFlagDialog({ onClose }: { onClose: () => void }) {
   const base = useId();
   const { athlete, update } = useRedFlag();
+  const t = useT();
   const [active, setActive] = useState(athlete?.red_flag_active ?? false);
   const [severity, setSeverity] = useState<Severity | "">(
     athlete?.red_flag_severity ?? "",
@@ -205,9 +213,7 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
     // show it beside the fresh complaint.
     update.reset();
     if (active && severity === "") {
-      setProblem(
-        "Say how bad it is. The guardrail refuses proposals by severity, so a flag with none is a flag it cannot act on.",
-      );
+      setProblem(t("illness.sayHowBad"));
       return;
     }
     setProblem(null);
@@ -229,16 +235,14 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent
         className="w-[min(34rem,calc(100vw-2rem))] max-w-none gap-0 rounded-shell border border-hairline-card bg-panel p-0 ring-0"
-        aria-label="Illness or injury"
+        aria-label={t("illness.dialogTitle")}
       >
         <DialogHeader className="gap-1 border-hairline border-b px-6 py-4">
           <DialogTitle className="font-semibold text-ink text-xl tracking-[-0.02em]">
-            Illness or injury
+            {t("illness.dialogTitle")}
           </DialogTitle>
           <DialogDescription className="text-ink-muted text-sm">
-            While this is up, the coaching agent is refused any change that adds
-            a session or makes one harder. Nothing else stops: rides still
-            ingest, match and score.
+            {t("illness.dialogBody")}
           </DialogDescription>
         </DialogHeader>
 
@@ -261,16 +265,20 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
               }}
             />
             <span>
-              Something is wrong right now
+              {t("illness.active")}
               <span className="block text-ink-muted text-xs">
-                Untick it when it clears; the note and the severity go with it.
+                {t("illness.activeHelp")}
               </span>
             </span>
           </label>
 
           <Field
-            label="Severity"
-            hint={active ? "required" : "set when the flag is up"}
+            label={t("illness.severityLabel")}
+            hint={
+              active
+                ? t("illness.severityRequired")
+                : t("illness.severityWhenUp")
+            }
             htmlFor={`${base}-severity`}
           >
             <NativeSelect
@@ -283,18 +291,20 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
                 setProblem(null);
               }}
             >
-              <NativeSelectOption value="">Choose one</NativeSelectOption>
+              <NativeSelectOption value="">
+                {t("illness.chooseOne")}
+              </NativeSelectOption>
               {(Object.keys(SEVERITY_LABELS) as Severity[]).map((value) => (
                 <NativeSelectOption key={value} value={value}>
-                  {SEVERITY_LABELS[value]}
+                  {t(SEVERITY_LABELS[value])}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
           </Field>
 
           <Field
-            label="What is wrong"
-            hint="the coach reads this"
+            label={t("illness.noteLabel")}
+            hint={t("illness.noteHint")}
             htmlFor={`${base}-note`}
           >
             <Textarea
@@ -302,7 +312,7 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
               rows={3}
               disabled={!active}
               value={note}
-              placeholder="Chest cold since Tuesday. Easy spinning is fine, nothing above threshold."
+              placeholder={t("illness.notePlaceholder")}
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
@@ -326,7 +336,7 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
             className="text-ink-muted"
             onClick={onClose}
           >
-            Cancel
+            {t("illness.cancel")}
           </Button>
           <Button
             size="sm"
@@ -334,7 +344,11 @@ function RedFlagDialog({ onClose }: { onClose: () => void }) {
             disabled={update.isPending}
             onClick={save}
           >
-            {update.isPending ? "Saving…" : active ? "Raise the flag" : "Save"}
+            {update.isPending
+              ? t("illness.saving")
+              : active
+                ? t("illness.raise")
+                : t("illness.save")}
           </Button>
         </div>
       </DialogContent>

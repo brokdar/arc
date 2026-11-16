@@ -145,7 +145,9 @@ describe("Today offline", () => {
     renderToday();
 
     const section = await screen.findByTestId("offline-sessions");
-    const start = within(section).getByRole("link", { name: /^Start / });
+    const start = await within(section).findByRole("link", {
+      name: /^Start /,
+    });
     expect(start).toHaveTextContent("Start");
     expect(start).toHaveAttribute(
       "href",

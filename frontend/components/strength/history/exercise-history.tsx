@@ -48,7 +48,12 @@ export function ExerciseHistory({ exerciseId }: { exerciseId: string }) {
       <header className="flex flex-col gap-1">
         <h1 className="font-semibold text-2xl">{data.exercise_name}</h1>
         <p className="font-mono text-ink-muted text-sm">
-          {t("records.sessions", { count: data.exposures })}
+          {t(
+            data.exposures === 1 ? "records.sessionsOne" : "records.sessions",
+            {
+              count: data.exposures,
+            },
+          )}
         </p>
       </header>
 
@@ -61,7 +66,9 @@ export function ExerciseHistory({ exerciseId }: { exerciseId: string }) {
             <>
               <p className="font-mono text-2xl">
                 {t("records.estimateValue", {
-                  weight: weight(estimate.current_kg),
+                  // Whole units: the estimate is a guide from rated sets, and
+                  // "133.3 kg" claimed a precision it does not have.
+                  weight: weight(Math.round(estimate.current_kg)),
                 })}
               </p>
               <p className="text-ink-muted text-xs">

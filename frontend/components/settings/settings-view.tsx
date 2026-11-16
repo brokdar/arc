@@ -17,12 +17,14 @@ import { TrainingSettingsPanel } from "@/components/settings/training-settings";
 import { ZonesPreview } from "@/components/settings/zones-preview";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
 import type { WritableAnchorType } from "@/lib/anchors";
+import { useT } from "@/lib/i18n/provider";
 
 /**
  * Settings: the numbers the rest of the application resolves against.
  *
- * Anchors lead, and everything else on the page is arranged around them,
- * because they are why this page exists — an athlete with no FTP has a
+ * Training leads (how arc behaves in the gym, which an athlete changes
+ * between sessions on a phone), then the anchors, and everything else on the
+ * page is arranged around them, because they are why this page exists — an athlete with no FTP has a
  * calendar full of percentages that resolve to nothing, and until now there
  * was no screen in the application that could enter one. The order is the
  * order of the question being answered: what is in force, how to change it,
@@ -39,6 +41,7 @@ import type { WritableAnchorType } from "@/lib/anchors";
  * looking for it when it is down).
  */
 export function SettingsView() {
+  const t = useT();
   const [anchorType, setAnchorType] = useState<WritableAnchorType>("ftp");
   const valueRef = useRef<HTMLInputElement>(null);
 
@@ -61,13 +64,19 @@ export function SettingsView() {
   return (
     <>
       <Toolbar>
-        <h1 className="font-semibold text-lg tracking-[-0.01em]">Settings</h1>
-        <span className="text-ink-muted text-sm">
-          Anchors, profile, and what the coach is allowed to propose
-        </span>
+        <h1 className="font-semibold text-lg tracking-[-0.01em]">
+          {t("settings.title")}
+        </h1>
+        <span className="text-ink-muted text-sm">{t("settings.subtitle")}</span>
       </Toolbar>
 
       <PageBody className="flex flex-col gap-5">
+        {/* First, so it is one scroll away on a phone. It sat below the
+            anchors, zones, history and profile, and the settings an athlete
+            changes between sessions (units, mode, asking) were the ones
+            hardest to reach (strength UAT U2). */}
+        <TrainingSettingsPanel />
+
         <CurrentAnchors onAppend={startAppend} />
 
         <div className="flex flex-wrap items-start gap-[18px]">
@@ -89,10 +98,6 @@ export function SettingsView() {
           <ProfileForm className="min-w-0 flex-[1_1_480px]" />
           <HealthPanel className="min-w-0 flex-[1_1_340px]" />
         </div>
-
-        {/* How arc behaves in the gym, beside who the athlete is: set once,
-            usually by the first-run question on Today, and revisited rarely. */}
-        <TrainingSettingsPanel />
 
         {/* Last, and deliberately: this is the panel an athlete visits twice
             — once at setup and once when a ride stops arriving — while
@@ -117,16 +122,13 @@ export function SettingsView() {
  * second place for that rule to be wrong.
  */
 function HealthPanel({ className }: { readonly className?: string }) {
+  const t = useT();
   return (
     <Panel className={className}>
       <div className="flex flex-col items-start gap-2.5 px-5 py-4">
-        <SectionLabel level={2}>Illness and injury</SectionLabel>
+        <SectionLabel level={2}>{t("settings.health.title")}</SectionLabel>
         <p className="max-w-[62ch] text-ink-muted text-sm">
-          Raising the red flag stops the coaching agent proposing anything that
-          adds a session or makes one harder, and every agent read carries the
-          flag so it cannot claim not to have known. Nothing else stops: rides
-          still ingest, match and score, and the plan is still enforced —
-          pausing that is a separate switch, on the calendar.
+          {t("settings.health.body")}
         </p>
         <RedFlagControl />
       </div>

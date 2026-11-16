@@ -15,16 +15,13 @@ import { StatusDot } from "@/components/design/status-dot";
 import { WorkoutProfileBars } from "@/components/design/workout-profile-bars";
 import { SessionForm } from "@/components/plan/session-form";
 import { PageBody, Toolbar } from "@/components/shell/app-shell";
-import { InstallHint } from "@/components/shell/install-hint";
 import { OfflineReady } from "@/components/shell/offline-ready";
-import { BeforeYouStart } from "@/components/strength/safety/before-you-start";
-import {
-  RecapLink,
-  UnplannedLink,
-} from "@/components/strength/session-edits/today-links";
-import { StartLink } from "@/components/strength/start-link";
-import { FirstRunQuestion } from "@/components/today/first-run";
+import { UnplannedLink } from "@/components/strength/session-edits/today-links";
+import { FirstRunStack } from "@/components/today/first-run-stack";
 import { OfflineSessions } from "@/components/today/offline-sessions";
+import { PendingToday } from "@/components/today/pending-today";
+import { RedFlagGate, TodayRedFlag } from "@/components/today/red-flag-gate";
+import { SessionActions } from "@/components/today/session-actions";
 import { WellnessCard } from "@/components/today/wellness-card";
 import { Button } from "@/components/ui/button";
 import { useExercises } from "@/components/workouts/exercise-catalogue";
@@ -35,7 +32,7 @@ import { mondayOf, todayIsoDate } from "@/lib/dates";
 import { formatDayMonthYear, formatDurationHm } from "@/lib/format";
 import { type I18n, useI18n } from "@/lib/i18n/provider";
 import { isUnreachable } from "@/lib/last-contact";
-import { purposeLabel } from "@/lib/purpose";
+import { purposeName } from "@/lib/purpose";
 import { sessionHeadline } from "@/lib/session-headline";
 import {
   channelBands,
@@ -105,7 +102,9 @@ export function TodayView() {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <RedFlagControl />
-          <UnplannedLink />
+          <RedFlagGate>
+            <UnplannedLink />
+          </RedFlagGate>
           <Button size="sm" onClick={() => setPlanning(true)}>
             {t("today.plan")}
           </Button>
@@ -118,18 +117,20 @@ export function TodayView() {
             both columns; each renders nothing when it has nothing to say. */}
         <div className="flex w-full flex-col gap-2 empty:hidden">
           <OfflineReady />
-          <InstallHint />
         </div>
         <div className="flex min-w-0 flex-[1_1_620px] flex-col gap-3.5">
+          {/* A standing emergency or severe red flag leads the page: it is
+              the one thing that outranks the session below it. */}
+          <TodayRedFlag />
+          {/* One first-run panel at a time, safety guidance first
+              (`first-run-stack.tsx`); on a phone three stacked panels pushed
+              the session's Start below the fold. */}
+          <FirstRunStack />
           {/* Above the session, and empty — not even a frame — when there is
               no card or a session is under way (`components/cards/card.tsx`). */}
-          {/* Before the card: on a fresh install it is the first thing arc
-              needs to know, and it is asked once (`first-run.tsx`). */}
-          <BeforeYouStart />
-          <FirstRunQuestion />
           <TodayCard />
           {week.isPending ? (
-            <p className="text-ink-muted text-sm">{t("today.loading")}</p>
+            <PendingToday today={today} />
           ) : week.error ? (
             // No server answered: train from the packet the last sync stored
             // (`lib/offline/packet-store.ts`). A server that answered with an
@@ -215,12 +216,15 @@ function SessionPanel({
   // frozen against these versions and must keep reading that way.
   const pinned = detail.data?.pinned_anchors ?? [];
   const resolvedSteps = detail.data?.resolved_steps ?? [];
-  const headline = sessionHeadline({
-    purpose: session.purpose,
-    structure,
-    plannedDurationS: session.planned_duration_s,
-    totalSets: session.total_sets,
-  });
+  const headline = sessionHeadline(
+    {
+      purpose: session.purpose,
+      structure,
+      plannedDurationS: session.planned_duration_s,
+      totalSets: session.total_sets,
+    },
+    t,
+  );
   const bands = channelBands(structure);
   const legend = profileLegend(structure);
   const strength = structure?.discipline === "strength" ? structure : null;
@@ -231,6 +235,13 @@ function SessionPanel({
         <header className="flex flex-col gap-2.5 border-hairline border-b px-[22px] py-5">
           <div className="flex flex-wrap items-center gap-2.5">
             <PurposeBadge purpose={session.purpose} size="md" />
+            {/* The workout's own name: two sessions of one purpose read
+                the same by headline alone (strength UAT W9). */}
+            {session.title ? (
+              <span className="font-medium text-ink-secondary text-sm">
+                {session.title}
+              </span>
+            ) : null}
             <span className="font-mono text-ink-faint text-xs">
               {t("today.date", {
                 weekday: weekday(today),
@@ -262,14 +273,17 @@ function SessionPanel({
             {headline}
           </h2>
           {/* The one way into the gym screen: a strength session still to
-              do gets Start, and the tap on it is the whole of starting
-              (`components/strength/logging-screen.tsx`). The prescription
-              below stays read-only; logging happens there, not here. */}
-          {session.discipline === "strength" && session.status === "planned" ? (
-            <div className="flex flex-wrap gap-2">
-              <StartLink id={session.id} name={headline} />
-              <RecapLink id={session.id} name={headline} />
-            </div>
+              do gets Start, one under way gets Resume, a done one its done
+              state and Reopen (`session-actions.tsx`). The tap on Start is the
+              whole of starting (`components/strength/logging-screen.tsx`).
+              The prescription below stays read-only; logging happens there. */}
+          {session.discipline === "strength" ? (
+            <SessionActions
+              id={session.id}
+              name={headline}
+              status={session.status}
+              matchedSessionId={session.matched_session_id}
+            />
           ) : null}
           {intent?.intent_text ? (
             <p className="max-w-[640px] text-ink-muted text-lg leading-relaxed">
@@ -301,7 +315,9 @@ function SessionPanel({
                           style={{ backgroundColor: ZONE_COLORS[entry.zone] }}
                         />
                         {entry.zoneLabel}{" "}
-                        {span ? describeSpan(span) : describePrescribed(entry)}
+                        {span
+                          ? describeSpan(span)
+                          : describePrescribed(entry, t)}
                       </li>
                     );
                   })}
@@ -342,7 +358,7 @@ function SessionPanel({
                       {nameOf(item.exercise_id)}
                     </span>
                     <span className="font-mono text-ink text-xs">
-                      {describeSets(item)}
+                      {describeSets(item, t)}
                     </span>
                   </div>
                 ))}
@@ -363,7 +379,7 @@ function SessionPanel({
             <ul className="flex flex-col">
               {bands.map((band, index) => {
                 const span = resolveBand(band, pinned, resolvedSteps);
-                const prescribed = describePrescribed(band);
+                const prescribed = describePrescribed(band, t);
                 return (
                   <li
                     // One channel can hold several bands — `85 % LTHR` and
@@ -374,7 +390,7 @@ function SessionPanel({
                     className="flex items-center justify-between gap-3 border-hairline border-b py-2 last:border-b-0"
                   >
                     <span className="text-ink-secondary text-sm">
-                      {channelLabel(band.channel)}
+                      {channelLabel(band.channel, t)}
                     </span>
                     <span className="flex flex-col items-end">
                       <span className="font-mono font-medium text-base">
@@ -411,7 +427,7 @@ function SessionPanel({
                       aria-hidden
                       className="mt-1.5 size-1 shrink-0 rounded-full bg-accent"
                     />
-                    {describeCriterion(criterion)}
+                    {describeCriterion(criterion, t)}
                   </li>
                 ))}
               </ul>
@@ -562,7 +578,7 @@ function ThisWeek({
                         isToday ? "font-medium text-ink" : "text-ink-secondary"
                       }`}
                     >
-                      {session.title ?? purposeLabel(session.purpose)}
+                      {session.title ?? purposeName(session.purpose, t)}
                     </span>
                     <span className="font-mono text-ink-muted text-xs">
                       {session.discipline === "strength" &&

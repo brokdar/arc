@@ -63,9 +63,40 @@ async function question() {
   return screen.findByRole("region", { name: QUESTION });
 }
 
+/**
+ * A fresh install that has closed *Before you start*: the question is the
+ * next panel. The panels arrive one at a time, safety guidance first
+ * (`first-run-stack.tsx`), so the tests of the question itself begin here.
+ */
+function seedSafetySeen(): void {
+  seedFreshTrainingSettings();
+  patchTrainingSettings({ before_you_start_seen: true });
+}
+
+describe("the first-run panels arrive one at a time", () => {
+  it("shows Before you start alone on a fresh install, then the question", async () => {
+    seedFreshTrainingSettings();
+    const user = userEvent.setup();
+    renderToday();
+
+    await screen.findByRole("region", { name: "Before you start" });
+    // Three panels at once pushed the session's Start below the fold.
+    expect(
+      screen.queryByRole("region", { name: QUESTION }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Got it" }));
+
+    expect(await question()).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Before you start" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("the first-run question on Today", () => {
   it("asks a fresh install, with three answers and a skip", async () => {
-    seedFreshTrainingSettings();
+    seedSafetySeen();
     renderToday();
 
     const region = await question();
@@ -75,7 +106,7 @@ describe("the first-run question on Today", () => {
   });
 
   it("stores “Never”, keeps Simple, and never asks again", async () => {
-    seedFreshTrainingSettings();
+    seedSafetySeen();
     const sent = recordPatches();
     const user = userEvent.setup();
     const { unmount } = renderToday();
@@ -109,7 +140,7 @@ describe("the first-run question on Today", () => {
   });
 
   it("“Regularly” earns Standard", async () => {
-    seedFreshTrainingSettings();
+    seedSafetySeen();
     const sent = recordPatches();
     const user = userEvent.setup();
     renderToday();
@@ -123,7 +154,7 @@ describe("the first-run question on Today", () => {
   });
 
   it("Skip leaves no answer and Simple, and does not ask again", async () => {
-    seedFreshTrainingSettings();
+    seedSafetySeen();
     const sent = recordPatches();
     const user = userEvent.setup();
     const { unmount } = renderToday();
@@ -174,7 +205,7 @@ describe("the first-run question on Today", () => {
   });
 
   it("keeps the question, with an error, when the answer cannot be saved", async () => {
-    seedFreshTrainingSettings();
+    seedSafetySeen();
     server.use(
       http.untyped.patch("http://localhost:8000/api/v1/settings/training", () =>
         Response.error(),

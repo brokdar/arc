@@ -5,6 +5,7 @@ import type { components, paths } from "@/generated/api/schema";
 import { addDays } from "@/lib/dates";
 import { EXERCISES } from "@/tests/mocks/fixtures";
 import { syncServer } from "@/tests/mocks/sync-state";
+import { trainingSettings } from "@/tests/mocks/training-settings-state";
 
 /** Its own typed `http`, like `handlers-sync.ts`, to avoid an import cycle. */
 const http = createOpenApiHttp<paths>({ baseUrl: "http://localhost:8000" });
@@ -172,8 +173,20 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
     generated_at: generatedAt.toISOString(),
     starts_on: today,
     ends_before: addDays(today, 7),
-    settings: { mode: "simple", plain_logbook: false, units: "kg" },
-    effort: { scale: "easy_good_hard", ask: "always" },
+    // What the packet was prepared under is whatever the athlete's settings
+    // are at the moment it is served, as on the real endpoint — a fixed value
+    // here could not fail when a settings change never reaches the phone.
+    settings: {
+      mode: trainingSettings().mode,
+      plain_logbook: trainingSettings().plain_logbook,
+      units: trainingSettings().units,
+    },
+    // `_SCALE` in `backend/app/services/packet.py`: Simple asks Easy/Good/Hard.
+    effort: {
+      scale:
+        trainingSettings().mode === "simple" ? "easy_good_hard" : "reps_left",
+      ask: trainingSettings().ask_frequency,
+    },
     gym: {
       bar_kg: 20,
       plate_pairs: [
@@ -199,6 +212,7 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
         key: false,
         plan_id: "0199c000-0000-7000-8000-00000000b001",
         follow_exactly: false,
+        title: null,
         lines: [
           {
             line_ref: "0.0",

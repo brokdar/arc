@@ -255,3 +255,10 @@ export function getTraining<T>(key: string): Promise<T | null> {
     return value ?? null;
   });
 }
+
+/** Every record of the `training` store: Today reads what is under way here. */
+export function allTraining<T>(): Promise<T[]> {
+  return inTransaction([TRAINING], "readonly", (tx) =>
+    request(tx.objectStore(TRAINING).getAll() as IDBRequest<T[]>),
+  );
+}

@@ -123,7 +123,7 @@ describe("channelBands", () => {
     });
 
     expect(bands.map((band) => band.anchorType)).toEqual(["lthr", "max_hr"]);
-    expect(bands.map(describePrescribed)).toEqual([
+    expect(bands.map((band) => describePrescribed(band))).toEqual([
       "85% of LTHR",
       "75% of max HR",
     ]);
@@ -161,7 +161,7 @@ describe("channelBands", () => {
       ],
     });
 
-    expect(bands.map(describePrescribed)).toEqual([
+    expect(bands.map((band) => describePrescribed(band))).toEqual([
       "90–100% of FTP",
       "300–320 W",
     ]);

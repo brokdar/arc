@@ -5763,6 +5763,8 @@ export interface components {
       purpose: components["schemas"]["Purpose"];
       /** Time Of Day */
       time_of_day: string | null;
+      /** Title */
+      title: string | null;
     };
     /**
      * PacketSettingsRead

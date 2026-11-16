@@ -27,7 +27,8 @@
     "packetStale": "Connect to refresh",
     "packetSynced": "Prepared {date}",
     "noWeight": "find a weight",
-    "bodyweight": "bodyweight"
+    "bodyweight": "bodyweight",
+    "readyPlan": "Ready offline · plan from {time}"
   },
   "outbox": {
     "waiting": "{count} waiting to upload",
@@ -52,7 +53,8 @@
   },
   "units": {
     "setsOne": "{count} set",
-    "setsOther": "{count} sets"
+    "setsOther": "{count} sets",
+    "perSide": " per side"
   },
   "today": {
     "title": "Today",
@@ -79,7 +81,16 @@
     "openWeek": "Open the week",
     "thisWeek": "This week",
     "calendar": "Calendar",
-    "rest": "Rest"
+    "rest": "Rest",
+    "resume": "Resume",
+    "resumeLabel": "Resume {session}",
+    "inProgress": "In progress",
+    "done": "Done",
+    "doneUploading": "Done. Waiting to upload.",
+    "openRecorded": "Open the session",
+    "openRecordedLabel": "Open the recorded session {session}",
+    "reopen": "Reopen",
+    "reopenLabel": "Reopen {session}"
   },
   "wellness": {
     "title": "Wellness",
@@ -309,6 +320,7 @@
     "bestsListTitle": "Personal bests",
     "bestLine": "{weight} × {reps}",
     "sessions": "{count} sessions logged",
+    "sessionsOne": "{count} session logged",
     "repMaxMissing": "No set of {reps} or more reps yet"
   },
   "safety": {
@@ -400,8 +412,8 @@
       "plateau_reps": "holding steady, try one more rep",
       "plateau_reset": "holding steady, step back and rebuild",
       "no_rule": "same as last time",
-      "nearest_loadable": "the nearest weight you can load",
-      "first_time": "no history yet"
+      "first_time": "no history yet",
+      "nearest_loadable": "the nearest weight you can load"
     },
     "lastTwo": "Your last two sessions: {set}{effort} each time.",
     "lastTwoDiffer": "Your last two sessions: {first}{firstEffort}, then {second}{secondEffort}.",
@@ -447,5 +459,176 @@
       "hard": "Hard"
     },
     "withLeftOne": ", with 1 rep left"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Training, anchors, profile, and what the coach may propose",
+    "training": {
+      "title": "Training",
+      "loading": "Loading training settings…",
+      "loadFailed": "Could not load the training settings. Is the API reachable?",
+      "mode": "Mode",
+      "modeSimple": "Simple",
+      "modeStandard": "Standard",
+      "modeFull": "Full control",
+      "hintSimple": "Rate each set Easy, Good or Hard; arc picks the next weight.",
+      "hintStandard": "Say how many reps you had left; arc suggests, you adjust.",
+      "hintFull": "Every control shown, nothing decided for you.",
+      "ask": "Ask how hard an exercise felt",
+      "askEach": "After each exercise",
+      "askNever": "Never",
+      "askHelp": "Asked once, after the last set of the exercise.",
+      "units": "Units",
+      "unitsKg": "Kilograms (kg)",
+      "unitsLb": "Pounds (lb)",
+      "language": "Language",
+      "plain": "Plain logbook",
+      "plainHelp": "Log what you lifted and nothing more: no suggested weights. For following a plan someone else wrote, like a physio's.",
+      "contrast": "High contrast",
+      "contrastHelp": "For bright or dim gyms.",
+      "under18": "I'm under 18",
+      "under18Help": "arc never asks for a max effort.",
+      "liftedBefore": "Lifted before: {answer}",
+      "notAnswered": "not answered"
+    },
+    "health": {
+      "title": "Illness and injury",
+      "body": "Raising the red flag stops the coaching agent from proposing anything that adds a session or makes one harder. Every agent read carries the flag. Nothing else stops: rides still ingest, match and score, and the plan is still enforced. Pausing the plan is a separate switch, on the calendar."
+    },
+    "export": {
+      "title": "Your data",
+      "body": "Download everything you have logged. One workout at a time is on its session page, under Export.",
+      "json": "Everything (JSON)",
+      "csv": "Every set (CSV)",
+      "csvSemicolon": "Every set (CSV, German Excel)",
+      "strong": "Strong format (CSV)",
+      "note": "The Strong format is for apps that import Strong files, such as Hevy. It drops sides and most set kinds; the JSON keeps everything."
+    }
+  },
+  "purposes": {
+    "recovery": "Recovery",
+    "endurance": "Endurance",
+    "tempo": "Tempo",
+    "sweet_spot": "Sweet spot",
+    "threshold": "Threshold",
+    "vo2max": "VO₂max",
+    "anaerobic": "Anaerobic",
+    "neuromuscular": "Neuromuscular",
+    "unstructured": "Unstructured",
+    "technique": "Technique",
+    "test": "Test",
+    "max_strength": "Max strength",
+    "strength_endurance": "Strength endurance",
+    "hypertrophy": "Hypertrophy",
+    "power": "Power",
+    "core": "Core",
+    "mobility": "Mobility",
+    "conditioning": "Conditioning"
+  },
+  "purposeSentence": {
+    "recovery": "recovery",
+    "endurance": "endurance",
+    "tempo": "tempo",
+    "sweet_spot": "sweet spot",
+    "threshold": "threshold",
+    "vo2max": "VO₂max",
+    "anaerobic": "anaerobic",
+    "neuromuscular": "neuromuscular",
+    "unstructured": "unstructured",
+    "technique": "technique",
+    "test": "test",
+    "max_strength": "max strength",
+    "strength_endurance": "strength endurance",
+    "hypertrophy": "hypertrophy",
+    "power": "power",
+    "core": "core",
+    "mobility": "mobility",
+    "conditioning": "conditioning"
+  },
+  "headline": {
+    "ride": "{duration} {purpose} ride",
+    "rideNoDuration": "{purpose} ride",
+    "setsOne": "1 set of {purpose}",
+    "setsOther": "{sets} sets of {purpose}",
+    "session": "{purpose} session",
+    "movementsOne": "1 movement",
+    "movementsOther": "{count} movements",
+    "supersetOne": "one superset",
+    "supersetsOther": "{count} supersets",
+    "interval": "{times}×{length}",
+    "intervalAt": "{times}×{length} at {zone}",
+    "steady": "steady {zone}",
+    "mixed": "mixed {low}–{high}"
+  },
+  "channels": {
+    "power": "Power",
+    "hr": "Heart rate",
+    "cadence": "Cadence",
+    "of": "{range} of {anchor}"
+  },
+  "criteria": {
+    "timeInBand": "{fraction} of {selector} within {low}–{high} of the prescribed {channel}{smoothing}",
+    "durationFloor": "Lasts at least {duration}",
+    "ceiling": "No more than {duration} with {channel} above {limit}{smoothing}",
+    "ceilingPct": "{pct} of {anchor}",
+    "setsCompleted": "{fraction} of the prescribed sets completed",
+    "loadWithin": "Loads within {pct} of what was prescribed",
+    "channelPower": "power",
+    "channelHr": "heart rate",
+    "channelCadence": "cadence",
+    "smoothed": ", {seconds} s average",
+    "raw": ", raw samples",
+    "selectorAll": "the session's time",
+    "selectorRole": "the {role} steps' time",
+    "selectorRoleAny": "the selected steps' time",
+    "selectorIndex": "step {n}'s time",
+    "selectorIndexAny": "the selected step's time",
+    "roleWarmup": "warm-up",
+    "roleWork": "work",
+    "roleRecovery": "recovery",
+    "roleRest": "rest",
+    "roleCooldown": "cool-down"
+  },
+  "illness": {
+    "report": "Report an illness or injury",
+    "up": "Red flag up",
+    "banner": "Red flag",
+    "bannerSeverity": "Red flag · {severity}",
+    "noNote": "No note. Say what is wrong so the coach has something to work with.",
+    "coachCannot": "The coach cannot add or intensify sessions while this stands.",
+    "change": "Change",
+    "allBetter": "All better",
+    "clearing": "Clearing…",
+    "mild": "Mild",
+    "moderate": "Moderate",
+    "severe": "Severe",
+    "mildLong": "Mild: training around it",
+    "moderateLong": "Moderate: harder to train",
+    "severeLong": "Severe: not training",
+    "dialogTitle": "Illness or injury",
+    "dialogBody": "While this is up, the coaching agent is refused any change that adds a session or makes one harder. Nothing else stops: rides still ingest, match and score.",
+    "active": "Something is wrong right now",
+    "activeHelp": "Untick it when it clears; the note and the severity go with it.",
+    "severityLabel": "Severity",
+    "severityRequired": "required",
+    "severityWhenUp": "set when the flag is up",
+    "chooseOne": "Choose one",
+    "noteLabel": "What is wrong",
+    "noteHint": "the coach reads this",
+    "notePlaceholder": "Chest cold since Tuesday. Easy spinning is fine, nothing above threshold.",
+    "sayHowBad": "Say how bad it is. The guardrail refuses proposals by severity, so a flag with none is a flag it cannot act on.",
+    "cancel": "Cancel",
+    "saving": "Saving…",
+    "raise": "Raise the flag",
+    "save": "Save"
+  },
+  "redFlagGate": {
+    "title": "You stopped for a red flag",
+    "emergency": "Stop. Call emergency services now.",
+    "body": "Only train if a doctor has cleared you or the symptom is gone. If you are not sure, rest and get medical advice.",
+    "notToday": "Not today",
+    "cleared": "I'm cleared, continue",
+    "clearing": "Clearing the flag…",
+    "panelNote": "Tap All better once it has passed."
   }
 }

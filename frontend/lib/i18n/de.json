@@ -27,7 +27,8 @@
     "packetStale": "Verbinde dich neu",
     "packetSynced": "Vorbereitet {date}",
     "noWeight": "Gewicht finden",
-    "bodyweight": "Körpergewicht"
+    "bodyweight": "Körpergewicht",
+    "readyPlan": "Offline bereit · Plan von {time}"
   },
   "outbox": {
     "waiting": "{count} warten auf Upload",
@@ -52,7 +53,8 @@
   },
   "units": {
     "setsOne": "{count} Satz",
-    "setsOther": "{count} Sätze"
+    "setsOther": "{count} Sätze",
+    "perSide": " pro Seite"
   },
   "today": {
     "title": "Heute",
@@ -79,7 +81,16 @@
     "openWeek": "Woche öffnen",
     "thisWeek": "Diese Woche",
     "calendar": "Kalender",
-    "rest": "Ruhe"
+    "rest": "Ruhe",
+    "resume": "Fortsetzen",
+    "resumeLabel": "{session} fortsetzen",
+    "inProgress": "Läuft",
+    "done": "Erledigt",
+    "doneUploading": "Erledigt. Wartet auf den Upload.",
+    "openRecorded": "Einheit öffnen",
+    "openRecordedLabel": "Aufgezeichnete Einheit {session} öffnen",
+    "reopen": "Wieder öffnen",
+    "reopenLabel": "{session} wieder öffnen"
   },
   "wellness": {
     "title": "Befinden",
@@ -309,6 +320,7 @@
     "bestsListTitle": "Deine Rekorde",
     "bestLine": "{weight} × {reps}",
     "sessions": "{count} Einheiten eingetragen",
+    "sessionsOne": "{count} Einheit eingetragen",
     "repMaxMissing": "Noch kein Satz mit {reps} oder mehr Wiederholungen"
   },
   "safety": {
@@ -400,8 +412,8 @@
       "plateau_reps": "stabil, eine Wiederholung mehr",
       "plateau_reset": "stabil, kurz zurück und neu aufbauen",
       "no_rule": "wie beim letzten Mal",
-      "nearest_loadable": "das nächste Gewicht, das sich laden lässt",
-      "first_time": "noch kein Verlauf"
+      "first_time": "noch kein Verlauf",
+      "nearest_loadable": "das nächste Gewicht, das sich laden lässt"
     },
     "lastTwo": "Deine zwei letzten Male: je {set}{effort}.",
     "lastTwoDiffer": "Deine letzten zwei Einheiten: {first}{firstEffort}, dann {second}{secondEffort}.",
@@ -447,5 +459,176 @@
       "hard": "Schwer"
     },
     "withLeftOne": ", mit 1 Wiederholung übrig"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "subtitle": "Training, Ankerwerte, Profil und was der Coach vorschlagen darf",
+    "training": {
+      "title": "Training",
+      "loading": "Trainingseinstellungen werden geladen …",
+      "loadFailed": "Die Trainingseinstellungen laden nicht. Ist die API da?",
+      "mode": "Modus",
+      "modeSimple": "Einfach",
+      "modeStandard": "Standard",
+      "modeFull": "Volle Kontrolle",
+      "hintSimple": "Bewerte jeden Satz mit Leicht, Gut oder Schwer. arc wählt das nächste Gewicht.",
+      "hintStandard": "Sag, wie viele Wiederholungen übrig waren. arc schlägt vor, du passt an.",
+      "hintFull": "Alle Regler sichtbar, nichts wird für dich entschieden.",
+      "ask": "Fragen, wie schwer eine Übung war",
+      "askEach": "Nach jeder Übung",
+      "askNever": "Nie",
+      "askHelp": "Einmal gefragt, nach dem letzten Satz der Übung.",
+      "units": "Einheiten",
+      "unitsKg": "Kilogramm (kg)",
+      "unitsLb": "Pfund (lb)",
+      "language": "Sprache",
+      "plain": "Einfaches Logbuch",
+      "plainHelp": "Trag ein, was du gehoben hast, und nichts weiter: keine Gewichtsvorschläge. Für einen Plan von jemand anderem, etwa von der Physio.",
+      "contrast": "Hoher Kontrast",
+      "contrastHelp": "Für helle oder dunkle Studios.",
+      "under18": "Ich bin unter 18",
+      "under18Help": "arc fragt nie nach einem Maximalversuch.",
+      "liftedBefore": "Schon gehoben: {answer}",
+      "notAnswered": "nicht beantwortet"
+    },
+    "health": {
+      "title": "Krankheit und Verletzung",
+      "body": "Die rote Flagge hindert den Coaching-Agenten daran, Einheiten hinzuzufügen oder schwerer zu machen. Sonst stoppt nichts: Fahrten werden weiter eingelesen und bewertet, und der Plan gilt weiter. Den Plan pausierst du im Kalender."
+    },
+    "export": {
+      "title": "Deine Daten",
+      "body": "Lade alles herunter, was du eingetragen hast. Ein einzelnes Training findest du auf seiner Seite unter Export.",
+      "json": "Alles (JSON)",
+      "csv": "Jeder Satz (CSV)",
+      "csvSemicolon": "Jeder Satz (CSV, deutsches Excel)",
+      "strong": "Strong-Format (CSV)",
+      "note": "Das Strong-Format ist für Apps, die Strong-Dateien lesen, etwa Hevy. Es lässt Seiten und die meisten Satzarten weg; das JSON behält alles."
+    }
+  },
+  "purposes": {
+    "recovery": "Erholung",
+    "endurance": "Ausdauer",
+    "tempo": "Tempo",
+    "sweet_spot": "Sweet Spot",
+    "threshold": "Schwelle",
+    "vo2max": "VO₂max",
+    "anaerobic": "Anaerob",
+    "neuromuscular": "Neuromuskulär",
+    "unstructured": "Unstrukturiert",
+    "technique": "Technik",
+    "test": "Test",
+    "max_strength": "Maximalkraft",
+    "strength_endurance": "Kraftausdauer",
+    "hypertrophy": "Muskelaufbau",
+    "power": "Schnellkraft",
+    "core": "Rumpf",
+    "mobility": "Beweglichkeit",
+    "conditioning": "Kondition"
+  },
+  "purposeSentence": {
+    "recovery": "Erholung",
+    "endurance": "Ausdauer",
+    "tempo": "Tempo",
+    "sweet_spot": "Sweet Spot",
+    "threshold": "Schwelle",
+    "vo2max": "VO₂max",
+    "anaerobic": "Anaerob",
+    "neuromuscular": "Neuromuskulär",
+    "unstructured": "Unstrukturiert",
+    "technique": "Technik",
+    "test": "Test",
+    "max_strength": "Maximalkraft",
+    "strength_endurance": "Kraftausdauer",
+    "hypertrophy": "Muskelaufbau",
+    "power": "Schnellkraft",
+    "core": "Rumpf",
+    "mobility": "Beweglichkeit",
+    "conditioning": "Kondition"
+  },
+  "headline": {
+    "ride": "{purpose}, {duration}",
+    "rideNoDuration": "Fahrt: {purpose}",
+    "setsOne": "1 Satz {purpose}",
+    "setsOther": "{sets} Sätze {purpose}",
+    "session": "Einheit: {purpose}",
+    "movementsOne": "1 Übung",
+    "movementsOther": "{count} Übungen",
+    "supersetOne": "ein Supersatz",
+    "supersetsOther": "{count} Supersätze",
+    "interval": "{times}×{length}",
+    "intervalAt": "{times}×{length} bei {zone}",
+    "steady": "gleichmäßig {zone}",
+    "mixed": "gemischt {low}–{high}"
+  },
+  "channels": {
+    "power": "Leistung",
+    "hr": "Herzfrequenz",
+    "cadence": "Trittfrequenz",
+    "of": "{range} von {anchor}"
+  },
+  "criteria": {
+    "timeInBand": "{channel}: {fraction} {selector} bei {low}–{high} der Vorgabe{smoothing}",
+    "durationFloor": "Dauert mindestens {duration}",
+    "ceiling": "Höchstens {duration} mit {channel} über {limit}{smoothing}",
+    "ceilingPct": "{pct} von {anchor}",
+    "setsCompleted": "{fraction} der Sätze erledigt",
+    "loadWithin": "Gewicht höchstens {pct} neben dem Plan",
+    "channelPower": "Leistung",
+    "channelHr": "Herzfrequenz",
+    "channelCadence": "Trittfrequenz",
+    "smoothed": ", {seconds} s Mittel",
+    "raw": ", Rohdaten",
+    "selectorAll": "der Zeit der ganzen Einheit",
+    "selectorRole": "der Zeit der Abschnitte „{role}“",
+    "selectorRoleAny": "der Zeit der gewählten Teile",
+    "selectorIndex": "der Zeit von Abschnitt {n}",
+    "selectorIndexAny": "der Zeit des gewählten Abschnitts",
+    "roleWarmup": "Aufwärmen",
+    "roleWork": "Belastung",
+    "roleRecovery": "Erholung",
+    "roleRest": "Pause",
+    "roleCooldown": "Auslaufen"
+  },
+  "illness": {
+    "report": "Ich bin krank oder verletzt",
+    "up": "Rote Flagge oben",
+    "banner": "Rote Flagge",
+    "bannerSeverity": "Rote Flagge · {severity}",
+    "noNote": "Keine Notiz. Schreib, was los ist, damit der Coach etwas hat.",
+    "coachCannot": "Solange sie steht, darf der Coach nichts Neues oder Härteres planen.",
+    "change": "Ändern",
+    "allBetter": "Alles wieder gut",
+    "clearing": "Wird gelöscht …",
+    "mild": "Leicht",
+    "moderate": "Mittel",
+    "severe": "Schwer",
+    "mildLong": "Leicht: Training mit Rücksicht",
+    "moderateLong": "Mittel: Training ist schwerer",
+    "severeLong": "Schwer: kein Training",
+    "dialogTitle": "Krankheit oder Verletzung",
+    "dialogBody": "Solange sie oben ist, darf der Coach keine Einheit hinzufügen oder schwerer machen. Sonst stoppt nichts: Fahrten werden weiter eingelesen und bewertet.",
+    "active": "Gerade stimmt etwas nicht",
+    "activeHelp": "Nimm den Haken weg, wenn es vorbei ist. Notiz und Schweregrad gehen mit.",
+    "severityLabel": "Schweregrad",
+    "severityRequired": "Pflicht",
+    "severityWhenUp": "wird gesetzt, wenn die Flagge oben ist",
+    "chooseOne": "Wähle einen",
+    "noteLabel": "Was ist los",
+    "noteHint": "der Coach liest das",
+    "notePlaceholder": "Erkältung seit Dienstag. Locker radeln geht, nichts Hartes.",
+    "sayHowBad": "Sag, wie schlimm es ist. Die Leitplanke lehnt Vorschläge nach Schweregrad ab, ohne Angabe kann sie nicht handeln.",
+    "cancel": "Abbrechen",
+    "saving": "Wird gespeichert …",
+    "raise": "Flagge setzen",
+    "save": "Speichern"
+  },
+  "redFlagGate": {
+    "title": "Du hast wegen einer roten Flagge abgebrochen",
+    "emergency": "Stopp. Ruf jetzt den Notruf.",
+    "body": "Trainiere nur, wenn ein Arzt dich freigegeben hat oder das Symptom weg ist. Bist du unsicher, ruh dich aus und hol dir ärztlichen Rat.",
+    "notToday": "Heute nicht",
+    "cleared": "Ich bin freigegeben, weiter",
+    "clearing": "Flagge wird gelöscht …",
+    "panelNote": "Tippe auf Alles wieder gut, sobald es vorbei ist."
   }
 }

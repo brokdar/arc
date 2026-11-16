@@ -12,19 +12,23 @@ import {
 } from "@/components/ui/native-select";
 import type { components } from "@/generated/api/schema";
 import { $api } from "@/lib/api/client";
-import { apiErrorMessages, loadFailureMessage } from "@/lib/api-errors";
+import { apiErrorMessages } from "@/lib/api-errors";
+import { useT } from "@/lib/i18n/provider";
+import { refreshPacketAfterSettingsChange } from "@/lib/offline/packet-store";
 import {
-  ASK_FREQUENCY_LABELS,
-  type AskFrequency,
-  LIFTED_BEFORE_LABELS,
+  ASK_CHOICES,
+  type AskChoice,
+  askChoiceOf,
+  askFrequencyOf,
+  LIFTED_BEFORE_KEYS,
   LOCALE_LABELS,
   type Locale,
-  MODE_HINTS,
-  MODE_LABELS,
+  MODE_HINT_KEYS,
+  MODE_KEYS,
   type TrainingMode,
   type TrainingSettings,
   trainingSettingsQueryKey,
-  UNITS_LABELS,
+  UNITS_KEYS,
   type Units,
 } from "@/lib/training-settings";
 
@@ -46,19 +50,22 @@ export function TrainingSettingsPanel({
   readonly className?: string;
 }) {
   const headingId = useId();
+  const t = useT();
   const settings = $api.useQuery("get", "/api/v1/settings/training");
 
   return (
     <Panel className={className} role="region" aria-labelledby={headingId}>
       <div className="flex flex-col gap-3.5 px-5 py-4">
         <SectionLabel level={2} id={headingId}>
-          Training
+          {t("settings.training.title")}
         </SectionLabel>
         {settings.isPending ? (
-          <p className="text-ink-muted text-sm">Loading training settings…</p>
+          <p className="text-ink-muted text-sm">
+            {t("settings.training.loading")}
+          </p>
         ) : !settings.data ? (
           <p role="alert" className="text-destructive text-sm">
-            {loadFailureMessage(settings.error, "the training settings")}
+            {t("settings.training.loadFailed")}
           </p>
         ) : (
           <TrainingFields settings={settings.data} />
@@ -70,10 +77,12 @@ export function TrainingSettingsPanel({
 
 function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
   const base = useId();
+  const t = useT();
   const queryClient = useQueryClient();
   const save = $api.useMutation("patch", "/api/v1/settings/training", {
     onSuccess: (updated) => {
       queryClient.setQueryData(trainingSettingsQueryKey, updated);
+      void refreshPacketAfterSettingsChange();
     },
   });
   const problems = apiErrorMessages(save.error);
@@ -83,7 +92,7 @@ function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
     <div className="flex flex-col gap-3.5">
       <FieldRow>
         <Field
-          label="Mode"
+          label={t("settings.training.mode")}
           htmlFor={`${base}-mode`}
           className="flex-[1_1_220px]"
         >
@@ -95,41 +104,44 @@ function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
               send({ mode: event.target.value as TrainingMode })
             }
           >
-            {(Object.keys(MODE_LABELS) as TrainingMode[]).map((mode) => (
+            {(Object.keys(MODE_KEYS) as TrainingMode[]).map((mode) => (
               <NativeSelectOption key={mode} value={mode}>
-                {MODE_LABELS[mode]}
+                {t(MODE_KEYS[mode])}
               </NativeSelectOption>
             ))}
           </NativeSelect>
         </Field>
         <Field
-          label="Ask how hard a set felt"
+          label={t("settings.training.ask")}
           htmlFor={`${base}-ask`}
           className="flex-[1_1_220px]"
         >
           <NativeSelect
             id={`${base}-ask`}
             className="w-full"
-            value={settings.ask_frequency}
+            value={askChoiceOf(settings.ask_frequency)}
             onChange={(event) =>
-              send({ ask_frequency: event.target.value as AskFrequency })
+              send({
+                ask_frequency: askFrequencyOf(event.target.value as AskChoice),
+              })
             }
           >
-            {(Object.keys(ASK_FREQUENCY_LABELS) as AskFrequency[]).map(
-              (option) => (
-                <NativeSelectOption key={option} value={option}>
-                  {ASK_FREQUENCY_LABELS[option]}
-                </NativeSelectOption>
-              ),
-            )}
+            {(Object.keys(ASK_CHOICES) as AskChoice[]).map((choice) => (
+              <NativeSelectOption key={choice} value={choice}>
+                {t(ASK_CHOICES[choice])}
+              </NativeSelectOption>
+            ))}
           </NativeSelect>
         </Field>
       </FieldRow>
-      <p className="text-ink-muted text-sm">{MODE_HINTS[settings.mode]}</p>
+      <p className="text-ink-muted text-sm">
+        {t(MODE_HINT_KEYS[settings.mode])}
+      </p>
+      <p className="text-ink-muted text-sm">{t("settings.training.askHelp")}</p>
 
       <FieldRow>
         <Field
-          label="Units"
+          label={t("settings.training.units")}
           htmlFor={`${base}-units`}
           className="flex-[1_1_160px]"
         >
@@ -139,15 +151,15 @@ function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
             value={settings.units}
             onChange={(event) => send({ units: event.target.value as Units })}
           >
-            {(Object.keys(UNITS_LABELS) as Units[]).map((units) => (
+            {(Object.keys(UNITS_KEYS) as Units[]).map((units) => (
               <NativeSelectOption key={units} value={units}>
-                {UNITS_LABELS[units]}
+                {t(UNITS_KEYS[units])}
               </NativeSelectOption>
             ))}
           </NativeSelect>
         </Field>
         <Field
-          label="Language"
+          label={t("settings.training.language")}
           htmlFor={`${base}-locale`}
           className="flex-[1_1_160px]"
         >
@@ -166,39 +178,34 @@ function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
         </Field>
       </FieldRow>
 
-      <label className="flex items-start gap-2.5 text-ink-secondary text-sm">
-        <input
-          type="checkbox"
-          className="mt-1 size-3.5 shrink-0 accent-accent"
-          checked={settings.plain_logbook}
-          onChange={(event) => send({ plain_logbook: event.target.checked })}
-        />
-        <span>
-          Plain logbook
-          <span className="block text-ink-muted">
-            Log what you lifted and nothing more — no suggested weights. For
-            following a plan someone else wrote, like a physio&apos;s.
-          </span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2.5 text-ink-secondary text-sm">
-        <input
-          type="checkbox"
-          className="mt-1 size-3.5 shrink-0 accent-accent"
-          checked={settings.high_contrast}
-          onChange={(event) => send({ high_contrast: event.target.checked })}
-        />
-        <span>
-          High contrast
-          <span className="block text-ink-muted">For bright or dim gyms.</span>
-        </span>
-      </label>
+      <Toggle
+        checked={settings.plain_logbook}
+        onChange={(checked) => send({ plain_logbook: checked })}
+        label={t("settings.training.plain")}
+        help={t("settings.training.plainHelp")}
+      />
+      <Toggle
+        checked={settings.high_contrast}
+        onChange={(checked) => send({ high_contrast: checked })}
+        label={t("settings.training.contrast")}
+        help={t("settings.training.contrastHelp")}
+      />
+      {/* The only way back from the first-run box: once ticked, max efforts
+          stayed off for good because nothing in Settings could undo it. */}
+      <Toggle
+        checked={settings.no_max_efforts}
+        onChange={(checked) => send({ no_max_efforts: checked })}
+        label={t("settings.training.under18")}
+        help={t("settings.training.under18Help")}
+      />
 
       <p className="text-ink-faint text-xs">
-        Lifted before:{" "}
-        {settings.lifted_before === null
-          ? "not answered"
-          : LIFTED_BEFORE_LABELS[settings.lifted_before]}
+        {t("settings.training.liftedBefore", {
+          answer:
+            settings.lifted_before === null
+              ? t("settings.training.notAnswered")
+              : t(LIFTED_BEFORE_KEYS[settings.lifted_before]),
+        })}
       </p>
       {problems.length > 0 ? (
         <p role="alert" className="text-destructive text-sm">
@@ -206,5 +213,32 @@ function TrainingFields({ settings }: { readonly settings: TrainingSettings }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+  label,
+  help,
+}: {
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+  readonly label: string;
+  readonly help: string;
+}) {
+  return (
+    <label className="flex items-start gap-2.5 text-ink-secondary text-sm">
+      <input
+        type="checkbox"
+        className="mt-1 size-3.5 shrink-0 accent-accent"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>
+        {label}
+        <span className="block text-ink-muted">{help}</span>
+      </span>
+    </label>
   );
 }

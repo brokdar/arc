@@ -456,3 +456,21 @@ async def test_exports_need_a_session(anon_client: AsyncClient, path: str) -> No
     response = await anon_client.get(path)
 
     assert response.status_code == 401, response.text
+
+
+async def test_semicolon_and_comma_exports_download_under_different_names(
+    client: AsyncClient,
+) -> None:
+    """Both variants saved as `arc-sets.csv` overwrote each other (UAT U16)."""
+    await post_session(client, fixture_session())
+
+    def name(response):
+        return response.headers["content-disposition"]
+
+    comma = await client.get(SETS_CSV)
+    semicolon = await client.get(f"{SETS_CSV}?variant=semicolon")
+    strong_semicolon = await client.get(f"{STRONG_CSV}?variant=semicolon")
+
+    assert 'filename="arc-sets.csv"' in name(comma)
+    assert 'filename="arc-sets-semicolon.csv"' in name(semicolon)
+    assert 'filename="arc-strong-semicolon.csv"' in name(strong_semicolon)
