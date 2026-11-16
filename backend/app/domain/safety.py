@@ -220,22 +220,21 @@ def movement_word(name: str) -> str:
 def pain_card(exercise: Exercise, swap: Exercise | None) -> tuple[str, str]:
     """The swap-offer card's headline and "because" sentence after sharp pain.
 
-    The headline names the joint and offers the swap; the sentence says what
+    The headline names the movement and offers the swap; the sentence says what
     happened to today and next time, and always ends with :data:`PHYSIO_LINE`.
+
+    **It never names a joint.** The pain dialog asks the kind and the band and
+    nothing about where, so "Knee pain on squats" put a location in the
+    athlete's mouth (UAT B9). The joint a movement loads most plainly still
+    steers which swap is offered (:func:`~app.domain.swaps.restrictions_from_pain`);
+    it is just not said as if the athlete had reported it.
     """
-    joint = joint_of(exercise)
-    return pain_card_text(
-        exercise.name,
-        joint=None if joint is None else joint[0],
-        swap_name=None if swap is None else swap.name,
-    )
+    return pain_card_text(exercise.name, swap_name=None if swap is None else swap.name)
 
 
-def pain_card_text(
-    name: str, *, joint: str | None = None, swap_name: str | None = None
-) -> tuple[str, str]:
+def pain_card_text(name: str, *, swap_name: str | None = None) -> tuple[str, str]:
     """:func:`pain_card` from names alone — also for a free-text exercise."""
-    where = f"{joint.capitalize()} pain" if joint is not None else "Pain"
+    where = "Pain"
     family = movement_word(name)
     offer = (
         f"try {plural(swap_name)} next time?"

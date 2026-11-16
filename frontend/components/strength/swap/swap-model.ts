@@ -114,7 +114,13 @@ export function replacedBy(
   return pick && pick !== planned.exercise_id ? planned.exercise_id : null;
 }
 
-/** Whether the planned exercise is avoided and today's session has not swapped it. */
+/**
+ * Whether the planned exercise is avoided and today the athlete has neither
+ * swapped it nor chosen to do it anyway. While true the screen shows only
+ * the swap prompt: the avoided exercise's own logging controls stay hidden
+ * (UAT U9: they stayed live underneath, one tap from logging the movement
+ * the athlete said never to offer).
+ */
 export function needsSwapPrompt(
   session: ActiveSession,
   planned: PacketLine,
@@ -122,8 +128,20 @@ export function needsSwapPrompt(
   return (
     planned.avoided &&
     planned.swaps.length > 0 &&
-    session.swaps?.[planned.line_ref] === undefined
+    session.swaps?.[planned.line_ref] === undefined &&
+    !session.keptAvoided?.includes(planned.line_ref)
   );
+}
+
+/** "Do it anyway": this avoided line is done as planned today. */
+export function keepAvoided(
+  session: ActiveSession,
+  planned: PacketLine,
+): ActiveSession {
+  return {
+    ...session,
+    keptAvoided: [...(session.keptAvoided ?? []), planned.line_ref],
+  };
 }
 
 /** The session after swapping `planned` for `exerciseId`, and its outbox item. */

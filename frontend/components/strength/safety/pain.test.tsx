@@ -50,7 +50,7 @@ async function reportPain(kind: string, band: string) {
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Pain" }));
   const panel = await screen.findByRole("dialog", {
-    name: "Where is the pain?",
+    name: "Report pain",
   });
   fireEvent.click(within(panel).getByRole("button", { name: kind }));
   fireEvent.click(within(panel).getByRole("button", { name: band }));
@@ -74,6 +74,26 @@ async function mergedSets(): Promise<Record<string, unknown>[]> {
     (a, b) => Number(a.set_index) - Number(b.set_index),
   );
 }
+
+describe("the pain dialog's first step", () => {
+  // UAT W4: titled "Where is the pain?" while asking the kind, and "Back" on
+  // step 1 closed the dialog.
+  it("is titled for reporting, offers Cancel, and Back only on step 2", async () => {
+    await twoSetsLogged();
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pain" }));
+    const panel = await screen.findByRole("dialog", { name: "Report pain" });
+
+    expect(within(panel).queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Muscle ache or burn" }),
+    );
+    fireEvent.click(within(panel).getByRole("button", { name: "Back" }));
+    expect(within(panel).getByRole("button", { name: "Cancel" })).toBeVisible();
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
 
 describe("pain on the gym screen", () => {
   it("sharp, 4–5 after set 2 stores the note on set 2 and drops the rest of the exercise today", async () => {

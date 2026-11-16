@@ -367,6 +367,86 @@ async def test_dont_learn_lands_with_its_reason(
     assert row.dont_learn_reason == "slept badly"
 
 
+def discard(n: int) -> dict[str, Any]:
+    return {
+        "kind": "session_discard",
+        "mutation_id": mid(n),
+        "client_edit_time": edit(2),
+        "session_client_id": SESSION_ID,
+    }
+
+
+async def test_a_session_ended_with_nothing_logged_is_discarded(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # UAT U14: End with 0 sets used to finish the session and store it empty.
+    await sync(client, [start(1)])
+    assert len((await db_session.execute(select(SessionRow))).scalars().all()) == 1
+
+    answer = await sync(client, [discard(2)])
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(SessionRow))).scalars().all() == []
+    assert answer["active_sessions"] == []
+    # A replay is answered from the receipt and recreates nothing.
+    await sync(client, [start(1), discard(2)])
+    assert (await db_session.execute(select(SessionRow))).scalars().all() == []
+
+
+async def test_discarding_a_session_the_server_never_heard_of_is_a_no_op(
+    client: AsyncClient,
+) -> None:
+    answer = await sync(client, [discard(1)])
+    assert [r["status"] for r in answer["results"]] == ["applied"]
+
+
+async def test_found_by_schemathesis_discard_for_an_unknown_session_is_200(
+    client: AsyncClient,
+) -> None:
+    # Schemathesis sent this and CI saw a 500: the receipt row's `kind` is a
+    # VARCHAR sized by the longest enum member, and "session_discard" (15) did
+    # not fit the 14 the column was created at on Postgres. SQLite ignores
+    # length, so the ORM-level check below is what pins the column.
+    response = await client.post(
+        SYNC,
+        json={
+            "schema_version": 1,
+            "mutations": [
+                {
+                    "kind": "session_discard",
+                    "mutation_id": "e3e70682-c209-1cac-a29f-6fbed82c07cd",
+                    "client_edit_time": "2000-01-01T00:00:00Z",
+                    "session_client_id": "0199a1b2-0000-7000-8000-00000000f001",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["status"] == "applied"
+
+
+def test_the_mutation_kind_column_fits_every_kind_in_the_migrations() -> None:
+    from app.domain.sync import MutationKind
+    from app.persistence.sync import SyncMutationRow
+
+    # The migrated column (0033) must hold the longest kind; the model is
+    # sized from the same enum, so a new longer kind needs a new migration.
+    kind_type: Any = SyncMutationRow.__table__.c.kind.type
+    assert kind_type.length == max(len(kind.value) for kind in MutationKind)
+
+
+async def test_a_session_with_a_logged_set_cannot_be_discarded(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(
+        SYNC,
+        json=batch([start(1), upsert(2, SET_IDS[0], 1, **squat(0)), discard(3)]),
+    )
+    assert response.status_code == 422
+    assert response.json()["mutation_id"] == mid(3)
+    assert (await db_session.execute(select(LoggedSetRow))).scalars().all() == []
+
+
 # --- the contract ------------------------------------------------------------
 
 
@@ -858,3 +938,108 @@ async def test_every_answer_names_the_active_sessions_and_who_holds_them(
 
     finished = await sync(client, [phone.finish(30)])
     assert finished["active_sessions"] == []
+
+
+# --- warm-ups and the plan the phone started from (UAT B1, B6) ---------------------
+
+
+async def _warmup_session(
+    client: AsyncClient, *, planned_id: str | None, series: str
+) -> dict[str, Any]:
+    """Two working squat sets and four warm-ups against a 2 x 5 squat plan."""
+    phone = Phone(SESSION_ID, START, 700, series=series)
+    extra = {} if planned_id is None else {"planned_session_id": planned_id}
+    mutations = [phone.start(**extra)]
+    mutations.extend(
+        phone.upsert(
+            set_id("1.0", n, series),
+            1 + n,
+            exercise_id="back_squat",
+            reps=5,
+            load_kg=20.0 + 20 * n,
+            set_index=n,
+            set_kind="warmup",
+            completed_at=phone.at(1 + n),
+        )
+        for n in range(4)
+    )
+    mutations += [phone.log("0.0", 1, 4, 10), phone.log("0.0", 2, 5, 13)]
+    mutations.append(phone.finish(20))
+    await sync(client, mutations)
+    sessions = (await client.get(SESSIONS)).json()["items"]
+    return (await client.get(f"{SESSIONS}/{sessions[0]['id']}")).json()
+
+
+async def _plan_squats(client: AsyncClient) -> str:
+    response = await client.post(
+        PLANNED,
+        json={
+            "date": "2026-11-09",
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "back_squat",
+                                "sets": 2,
+                                "reps": 5,
+                                "load": {"kind": "kg", "value": 100.0},
+                            }
+                        ]
+                    }
+                ],
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def test_warm_ups_do_not_count_toward_the_plan_match(
+    client: AsyncClient,
+) -> None:
+    """UAT B1: 4 warm-ups + 2 working sets is 2 sets against a 2-set plan."""
+    await _plan_squats(client)
+
+    stored = await _warmup_session(client, planned_id=None, series="d")
+
+    assert stored["match"]["similarity"] == 1.0
+    assert stored["match"]["status"] == "auto_high"
+
+
+async def test_warm_ups_do_not_count_in_sets_completed(
+    client: AsyncClient,
+) -> None:
+    """UAT B6: the metric's set count and volume are the working sets'."""
+    stored = await _warmup_session(client, planned_id=None, series="e")
+
+    strength = stored["metrics"]["strength"]
+    assert strength["sets_completed"] == 2
+    assert strength["volume_load_kg"] == 2 * 5 * 100.0
+
+
+async def test_a_session_started_from_a_plan_is_linked_to_it(
+    client: AsyncClient,
+) -> None:
+    """UAT B1: the phone's `planned_session_id` is the athlete's own answer."""
+    planned_id = await _plan_squats(client)
+    other = await _plan_squats(client)
+    assert other != planned_id
+
+    # Far from the plan: similarity alone would only propose it.
+    phone = Phone(SESSION_ID, START, 800, series="f")
+    await sync(
+        client,
+        [
+            phone.start(planned_session_id=planned_id),
+            phone.log("0.0", 1, 0, 5),
+            phone.finish(20),
+        ],
+    )
+    sessions = (await client.get(SESSIONS)).json()["items"]
+    stored = (await client.get(f"{SESSIONS}/{sessions[0]['id']}")).json()
+
+    assert stored["match"]["planned_session_id"] == planned_id
+    assert stored["match"]["status"] == "confirmed"

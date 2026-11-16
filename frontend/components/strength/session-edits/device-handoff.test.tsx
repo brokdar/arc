@@ -7,8 +7,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { writesSettled } from "@/components/strength/logging-screen";
 import { deviceId } from "@/components/strength/session-edits/device";
 import {
+  foldedSets,
   logNext,
   MONDAY_ID,
+  menu,
   openScreen,
   outbox,
   storePacket,
@@ -113,6 +115,74 @@ describe("a second phone opening an active session (AC-56)", () => {
     expect(held?.deviceId).not.toBe(OTHER_DEVICE);
   });
 
+  // UAT B3: the taking-over phone rebuilt the plan, not the session as the
+  // other phone had edited it — Back Squat instead of the swapped Box Squat,
+  // and its next set uploaded as the wrong exercise.
+  it("takes over the session as the other phone shaped it: swap and order", async () => {
+    await storePacket({ curl: true });
+    from([
+      {
+        kind: "session_start",
+        client_edit_time: START,
+        session_client_id: SESSION,
+        start_time: START,
+        device_id: OTHER_DEVICE,
+        planned_session_id: MONDAY_ID,
+      },
+      // The curl moved to the front, then the row swapped for a barbell row.
+      {
+        kind: "set_upsert",
+        client_edit_time: START,
+        session_client_id: SESSION,
+        set_client_id: "0199c000-0000-7000-8000-0000000ff011",
+        set: {
+          exercise_id: "dumbbell_curl",
+          planned_line_ref: "2.0",
+          set_index: 0,
+          reps: 12,
+          load_kg: 10,
+          completed_at: START,
+        },
+      },
+      {
+        kind: "set_upsert",
+        client_edit_time: START,
+        session_client_id: SESSION,
+        set_client_id: "0199c000-0000-7000-8000-0000000ff012",
+        set: {
+          exercise_id: "barbell_row",
+          replaced_exercise_id: "single_arm_dumbbell_row",
+          planned_line_ref: "0.0",
+          set_index: 1,
+          reps: 10,
+          load_kg: 40,
+          completed_at: START,
+        },
+      },
+    ]);
+    await openScreenExpectingPrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Continue here" }));
+
+    // On the open exercise: the curl is not done (1 of 3), and it is first.
+    expect(
+      await screen.findByRole("note", { name: "Exercise 1 of 3" }),
+    ).toBeVisible();
+    await screen.findByRole("heading", { name: "Dumbbell Curl", level: 1 });
+    await logNext();
+    await menu("Next exercise");
+    // The swap survived: the row's line is the barbell row, set 2 next.
+    expect(
+      await screen.findByRole("heading", { name: "Barbell Row", level: 1 }),
+    ).toBeVisible();
+    await screen.findByRole("heading", { name: "Set 2 of 3" });
+    await logNext();
+    const mine = [...(await foldedSets()).values()].filter(
+      (s) => s.reps !== undefined && s.exercise_id === "barbell_row",
+    );
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.every((s) => s.replaced_exercise_id !== undefined)).toBe(true);
+  });
+
   it("offline overlap keeps both phones' sets", async () => {
     otherPhoneStarted();
     await storePacket();
@@ -206,6 +276,49 @@ describe("the first phone, once the session moved (AC-56)", () => {
     expect(await outbox()).toHaveLength(before);
   });
 });
+
+describe("the first phone after a reload (UAT B3)", () => {
+  it("opens on the read-only screen, not on Resume", async () => {
+    await storePacket();
+    const first = await openScreenKeep();
+    await logNext();
+    await sync();
+    const mine = syncServer().synced.values().next().value;
+    from([
+      {
+        kind: "session_claim",
+        client_edit_time: new Date().toISOString(),
+        session_client_id: mine?.clientId ?? "",
+        device_id: OTHER_DEVICE,
+      },
+    ]);
+    first.unmount();
+    await writesSettled();
+
+    const { render } = await import("@testing-library/react");
+    const { LoggingScreen } = await import(
+      "@/components/strength/logging-screen"
+    );
+    render(<LoggingScreen plannedSessionId={MONDAY_ID} />);
+
+    expect(
+      await screen.findByText(
+        "You went on with this session on another phone.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/^Resume/)).toBeNull();
+  });
+});
+
+async function openScreenKeep() {
+  const { render } = await import("@testing-library/react");
+  const { LoggingScreen } = await import(
+    "@/components/strength/logging-screen"
+  );
+  const view = render(<LoggingScreen plannedSessionId={MONDAY_ID} />);
+  await screen.findByRole("button", { name: "More" });
+  return view;
+}
 
 async function openScreenExpectingPrompt() {
   const { render } = await import("@testing-library/react");

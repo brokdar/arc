@@ -97,6 +97,10 @@ class MutationKind(StrEnum):
     #: ``set_upsert`` with ``replaced_exercise_id``. Additive like ``red_flag``,
     #: so the schema version stays.
     SWAP = "swap"
+    #: "End" with nothing logged: the athlete threw the session away. Applied
+    #: only to a session with no logged set — the server never forgets a set
+    #: the athlete did. Additive like ``swap``, so the schema version stays.
+    SESSION_DISCARD = "session_discard"
 
 
 class MutationStatus(StrEnum):

@@ -100,14 +100,20 @@ export function SwapChoices({
 /**
  * The prompt an avoided exercise opens on: the athlete said never to offer
  * it, so the session asks for a swap before the first set rather than
- * pre-filling a movement they avoid.
+ * pre-filling a movement they avoid. It is the *whole* line while it shows:
+ * the exercise's own steppers and ✓ stay hidden until a swap is picked or the
+ * athlete taps "Do it anyway" (`needsSwapPrompt`), because the choice is the
+ * athlete's, and a one-tap ✓ beside the prompt made it no choice at all.
  */
 export function SwapPrompt({
   line,
   onPick,
+  onKeep,
 }: {
   line: PacketLine;
   onPick: (exerciseId: string) => void;
+  /** Do the avoided exercise anyway, as planned. */
+  onKeep: () => void;
 }) {
   const { t } = useI18n();
   const heading = t("swap.avoided", { exercise: line.exercise_name });
@@ -119,6 +125,9 @@ export function SwapPrompt({
       <h2 className="font-semibold">{heading}</h2>
       <p className="text-ink-secondary text-sm">{t("swap.avoidedBody")}</p>
       <SwapChoices line={line} onPick={onPick} />
+      <Button variant="ghost" className="h-[44px]" onClick={onKeep}>
+        {t("swap.doAnyway")}
+      </Button>
     </section>
   );
 }

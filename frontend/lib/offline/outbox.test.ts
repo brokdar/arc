@@ -13,6 +13,7 @@ import {
   flush,
   outboxStatus,
   startOutbox,
+  withdrawSession,
 } from "@/lib/offline/outbox";
 import { uuid7 } from "@/lib/offline/uuid7";
 import { http } from "@/tests/mocks/handlers";
@@ -229,5 +230,75 @@ describe("startOutbox", () => {
     vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
     window.dispatchEvent(new Event("online"));
     expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  // UAT U6: the browser's `online` event fires before the network answers, so
+  // the `/health` probe in that first flush failed and the queue then waited
+  // for the 30 s tick (about 20 s after the reconnect).
+  it("retries a flush the online event started until the network answers", async () => {
+    vi.useFakeTimers();
+    const outcomes = ["offline", "offline", "drained"] as const;
+    let call = 0;
+    const run = vi.fn(async () =>
+      call++ === 0 ? ("drained" as const) : outcomes[call - 2],
+    );
+    const stop = startOutbox(run);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(run).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(run).toHaveBeenCalledTimes(4);
+
+    // Drained: no further retries before the regular tick.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(run).toHaveBeenCalledTimes(4);
+    stop();
+  });
+
+  it("stops retrying when it is stopped", async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => "offline" as const);
+    const stop = startOutbox(run);
+    await vi.advanceTimersByTimeAsync(0);
+    window.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    const before = run.mock.calls.length;
+    stop();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(run).toHaveBeenCalledTimes(before);
+  });
+});
+
+describe("withdrawSession", () => {
+  it("takes a session's queued items back, and says whether the server knew it", async () => {
+    syncServer().healthy = false;
+    const other = uuid7();
+    const first = start();
+    await enqueue(first);
+    await enqueue(logSet(0, other));
+
+    const out = await withdrawSession(SESSION);
+
+    expect(out).toEqual({ serverKnows: false });
+    expect(
+      (await queued()).map((i) =>
+        "session_client_id" in i.mutation ? i.mutation.session_client_id : null,
+      ),
+    ).toEqual([other]);
+  });
+
+  it("knows the server has it when the start already uploaded", async () => {
+    await enqueue(start());
+    await flush();
+    await enqueue(logSet(0));
+
+    expect(await withdrawSession(SESSION)).toEqual({ serverKnows: true });
+    expect(await queued()).toEqual([]);
   });
 });

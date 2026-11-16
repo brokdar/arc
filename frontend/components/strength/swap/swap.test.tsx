@@ -42,7 +42,11 @@ async function open(options: Parameters<typeof strengthPacket>[2] = {}) {
     storedAt: Date.now(),
   });
   render(<LoggingScreen plannedSessionId={SESSION_ID} />);
-  await screen.findByRole("heading", { name: "Set 1 of 3" });
+  // An avoided row opens on its swap prompt, with no "Set 1 of 3" yet.
+  await screen.findByRole("heading", {
+    name: "Single-Arm Dumbbell Row",
+    level: 1,
+  });
 }
 
 async function mutations(): Promise<Mutation[]> {
@@ -208,7 +212,7 @@ describe("an avoided exercise", () => {
       within(prompt)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Barbell Row", "Pendlay Row", "Inverted Row"]);
+    ).toEqual(["Barbell Row", "Pendlay Row", "Inverted Row", "Do it anyway"]);
 
     fireEvent.click(
       within(prompt).getByRole("button", { name: "Barbell Row" }),
@@ -220,6 +224,41 @@ describe("an avoided exercise", () => {
     expect(
       screen.queryByRole("region", { name: /You avoid/ }),
     ).not.toBeInTheDocument();
+  });
+
+  // UAT U9: the prompt showed, but the avoided exercise's steppers and ✓ stayed
+  // live underneath it.
+  it("hides the exercise's own logging controls until the athlete chooses", async () => {
+    await open({ avoided: true });
+
+    expect(screen.queryByRole("button", { name: /^Log set/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Weight: more" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Set 1 of 3" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Do it anyway" }));
+
+    expect(
+      await screen.findByRole("button", { name: /^Log set 1:/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: /You avoid/ })).toBeNull();
+    // Still the avoided exercise, not a swap.
+    expect(
+      screen.getByRole("heading", {
+        name: "Single-Arm Dumbbell Row",
+        level: 1,
+      }),
+    ).toBeVisible();
+  });
+
+  it("picking a swap shows the substitute's controls", async () => {
+    await open({ avoided: true });
+    fireEvent.click(screen.getByRole("button", { name: "Barbell Row" }));
+
+    // No history for it: it opens on its own starting-weight flow.
+    expect(
+      await screen.findByRole("region", { name: "Find your starting weight" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: /You avoid/ })).toBeNull();
   });
 
   it("shows no prompt for an exercise the athlete does not avoid", async () => {

@@ -57,6 +57,12 @@ NOT_TRAINING: dict[tuple[str, str], str] = {
     ("loading", "MAX_PAIRS_PER_KIND"): "input bound on the plate search",
     ("loading", "MAX_PERCENT_OF_SET"): "typo guard on a fraction argument",
     ("loading", "DEFAULT_GYM"): "equipment inventory, not a prescription",
+    ("loading", "_LB_BAR"): "pound gym inventory, not a prescription",
+    ("loading", "_LB_PLATE_PAIRS"): "pound gym inventory, not a prescription",
+    ("loading", "_LB_DUMBBELL_STEP"): "pound gym inventory, not a prescription",
+    ("loading", "_LB_DUMBBELL_MAX"): "pound gym inventory, not a prescription",
+    ("loading", "_LB_STACK_STEP"): "pound gym inventory, not a prescription",
+    ("loading", "_LB_STACK_MAX"): "pound gym inventory, not a prescription",
 }
 
 DOI_PATTERN = re.compile(r"10\.\d{4,}/")

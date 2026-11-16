@@ -86,7 +86,14 @@ from app.core.clock import athlete_today
 from app.core.exceptions import NotFoundError
 from app.domain.activity import PainKind
 from app.domain.athlete import Discipline
-from app.domain.loading import DEFAULT_GYM, Equipment, Gym, plates_per_side
+from app.domain.loading import (
+    DEFAULT_GYM,
+    LB_GYM,
+    Equipment,
+    Gym,
+    nearest_loadable,
+    plates_per_side,
+)
 from app.domain.plans import PlanPhase
 from app.domain.progression import (
     LineGoal,
@@ -110,7 +117,12 @@ from app.domain.strength import (
     resolve_main_lines,
 )
 from app.domain.strength_records import Exposure
-from app.domain.training_mode import AskFrequency, TrainingMode, TrainingSettings
+from app.domain.training_mode import (
+    AskFrequency,
+    TrainingMode,
+    TrainingSettings,
+    Units,
+)
 from app.domain.warmups import warmup_lines, warmup_sets
 from app.domain.workout import workout_body_from_json
 from app.persistence.activity import LoggedSetRow, SessionRepository
@@ -364,7 +376,7 @@ class PacketService:
             effort=EffortQuestion(
                 scale=_SCALE[settings.mode], ask=settings.ask_frequency
             ),
-            gym=DEFAULT_GYM,
+            gym=gym_for(settings),
             sessions=sessions,
             last_numbers=last_numbers,
             library=library,
@@ -460,6 +472,7 @@ class PacketService:
                 swaps,
                 preferences,
                 learning,
+                gym_for(settings),
             )
             if session is not None:
                 workout_id = row.current_intent.workout_id
@@ -482,6 +495,17 @@ class _Learning:
     blocked: frozenset[str] = frozenset()
 
 
+def gym_for(settings: TrainingSettings) -> Gym:
+    """The gym every number in the packet is made loadable for.
+
+    The pound gym for an athlete who counts in pounds, the kilogram one
+    otherwise. The phone reads it back from the packet, so its offline
+    arithmetic (starting flow, step-downs, quick steps) agrees with the
+    server's.
+    """
+    return LB_GYM if settings.units is Units.LB else DEFAULT_GYM
+
+
 def _suggestion(
     item: StrengthSet,
     *,
@@ -490,6 +514,7 @@ def _suggestion(
     equipment: Equipment | None,
     prescribed_sets: int,
     learning: _Learning,
+    gym: Gym,
 ) -> Suggestion | None:
     """The line's suggested weight, or ``None`` when nothing can be loaded."""
     if equipment is None or item.reps is None:
@@ -509,7 +534,7 @@ def _suggestion(
         replace(e, trimmed=trimmed(e.sets, prescribed_sets=prescribed_sets))
         for e in learning.histories.get(item.exercise_id, ())
     ]
-    return suggest(goal, history, phase=learning.phase)
+    return suggest(goal, history, phase=learning.phase, gym=gym)
 
 
 def _session(
@@ -521,6 +546,7 @@ def _session(
     swaps: Library,
     preferences: Mapping[str, ExercisePreferenceRow],
     learning: _Learning | None,
+    gym: Gym,
 ) -> PacketSession | None:
     """One session's lines; ``None`` for a body that is not a lift.
 
@@ -560,6 +586,7 @@ def _session(
                     equipment=equipment,
                     prescribed_sets=prescribed[item.exercise_id],
                     learning=learning,
+                    gym=gym,
                 )
             )
             if suggestion is not None and suggestion.load_kg is not None:
@@ -569,6 +596,17 @@ def _session(
                     suggestion.reps,
                     None,
                     False,
+                )
+            if (
+                gym is not DEFAULT_GYM
+                and equipment is not None
+                and prefill.load_kg is not None
+            ):
+                # A prescription is written in kilograms; in pounds the
+                # pre-fill is the nearest weight this gym can make, so the
+                # phone shows 225 lb and not 220.5 (UAT B5).
+                prefill = replace(
+                    prefill, load_kg=nearest_loadable(prefill.load_kg, equipment, gym)
                 )
             lines.append(
                 PacketLine(
@@ -584,10 +622,10 @@ def _session(
                     main=mains[position],
                     equipment=equipment,
                     prefill=prefill,
-                    warmups=_warmups(prefill.load_kg, equipment)
+                    warmups=_warmups(prefill.load_kg, equipment, gym)
                     if ramps[position]
                     else [],
-                    plates_per_side=_plates(prefill.load_kg, equipment),
+                    plates_per_side=_plates(prefill.load_kg, equipment, gym),
                     swaps=swaps.substitutes(item.exercise_id),
                     avoided=item.exercise_id in swaps.context.avoided,
                     ease_back=swaps.ease_back(preferences.get(item.exercise_id)),
@@ -636,18 +674,22 @@ def _prefill(
     )
 
 
-def _plates(kg: float | None, equipment: Equipment | None) -> list[float] | None:
+def _plates(
+    kg: float | None, equipment: Equipment | None, gym: Gym
+) -> list[float] | None:
     if kg is None or equipment is not Equipment.BARBELL:
         return None
-    return plates_per_side(kg)
+    return plates_per_side(kg, gym=gym)
 
 
-def _warmups(kg: float | None, equipment: Equipment | None) -> list[PacketWarmup]:
+def _warmups(
+    kg: float | None, equipment: Equipment | None, gym: Gym
+) -> list[PacketWarmup]:
     if kg is None or equipment is None:
         return []
     return [
         PacketWarmup(
-            kg=step.kg, reps=step.reps, plates_per_side=_plates(step.kg, equipment)
+            kg=step.kg, reps=step.reps, plates_per_side=_plates(step.kg, equipment, gym)
         )
-        for step in warmup_sets(kg, equipment)
+        for step in warmup_sets(kg, equipment, gym)
     ]

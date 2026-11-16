@@ -10,6 +10,7 @@ import {
   type Stamp,
   UNPLANNED,
 } from "@/components/strength/session-model";
+import { linesWithSwaps } from "@/components/strength/swap/swap-model";
 import type { components } from "@/generated/api/schema";
 import type { Mutation } from "@/lib/offline/db";
 
@@ -65,9 +66,34 @@ export function handedOver(
 }
 
 /**
- * The screen's state for a session read from the server: its sets filed
- * under the lines they answered, an exercise the other phone added becoming
- * an added line here.
+ * The screen's state for a session read from the server, **as the other phone
+ * left it**: the server keeps no copy of the screen, only the sets, so the
+ * edits are read back off what the sets say.
+ *
+ * - **A swap**: a set filed under a planned line but lifted as another
+ *   exercise (it carries `replaced_exercise_id`) means the line was swapped,
+ *   so the line shows and logs that exercise (`session.swaps`). Before, the
+ *   taking-over phone rebuilt the plan: Back Squat instead of the swapped Box
+ *   Squat, and its next set uploaded as Back Squat beside the other phone's
+ *   Box Squat (UAT B3).
+ * - **An added exercise** is a line the planned session does not have: one
+ *   per exercise of a set the server holds with no planned line.
+ * - **The order** is the sets' own: the server stores them grouped by
+ *   exercise in the session's exercise order (`edits.ts`), so the exercises
+ *   with sets keep that order and an exercise with no set yet keeps its place
+ *   after the one that preceded it in the plan.
+ * - **Extra sets**: a line with more working sets than prescribed had sets
+ *   added; its set count is raised to match.
+ * - **Moved sets** need nothing: a moved set is stored under its new
+ *   exercise and planned line.
+ *
+ * What cannot be read back is an edit that left no set: a swap, an extra set
+ * or an added exercise not yet lifted. Those are the other phone's to redo;
+ * the server never hears of them (`swap` is applied as a preference only),
+ * and a layout mutation to carry them was displaced as a schema change for
+ * the edge of an edge — the hand-over happens mid-exercise, sets in hand.
+ * Notes need nothing here: they live on the server per exercise and arrive in
+ * the packet.
  */
 export function takeOver(
   read: SessionRead,
@@ -76,39 +102,59 @@ export function takeOver(
   packet: Packet,
 ): ActiveSession {
   const lines: PacketLine[] = [...planned.lines];
-  const sets: LoggedSet[] = [...read.logged_sets]
-    .sort((a, b) => a.set_index - b.set_index)
-    .map((set) => {
-      let line =
-        lines.find((one) => one.line_ref === set.planned_line_ref) ??
-        lines.find(
-          (one) =>
-            !isPlannedLine(one.line_ref) && one.exercise_id === set.exercise_id,
-        );
-      if (!line) {
-        const exercise = packet.library.find((e) => e.id === set.exercise_id);
-        line = exercise
-          ? addedLine(packet, exercise, set.client_id)
-          : undefined;
-        if (line) lines.push(line);
-      }
-      return {
-        clientId: set.client_id,
-        lineRef: line?.line_ref ?? set.planned_line_ref ?? "",
-        exerciseId: set.exercise_id ?? "",
-        warmup: set.set_kind === "warmup",
-        loadKg: set.load_kg,
-        reps: set.reps,
-        durationS: set.duration_s,
-        perSide: set.per_side,
-        rir: set.rir,
-        rirCapped: set.rir_capped,
-        effortSimple: set.effort_simple,
-        ...(set.completed_at
-          ? { completedAt: Date.parse(set.completed_at) }
-          : {}),
-      };
-    });
+  const swaps: Record<string, string> = {};
+  const ordered = [...read.logged_sets].sort(
+    (a, b) => a.set_index - b.set_index,
+  );
+  const sets: LoggedSet[] = ordered.map((set) => {
+    let line =
+      lines.find((one) => one.line_ref === set.planned_line_ref) ??
+      lines.find(
+        (one) =>
+          !isPlannedLine(one.line_ref) && one.exercise_id === set.exercise_id,
+      );
+    if (!line) {
+      const exercise = packet.library.find((e) => e.id === set.exercise_id);
+      line = exercise ? addedLine(packet, exercise, set.client_id) : undefined;
+      if (line) lines.push(line);
+    }
+    if (
+      line &&
+      isPlannedLine(line.line_ref) &&
+      set.replaced_exercise_id &&
+      set.exercise_id &&
+      set.exercise_id !== line.exercise_id
+    ) {
+      swaps[line.line_ref] = set.exercise_id;
+    }
+    return {
+      clientId: set.client_id,
+      lineRef: line?.line_ref ?? set.planned_line_ref ?? "",
+      exerciseId: set.exercise_id ?? "",
+      warmup: set.set_kind === "warmup",
+      loadKg: set.load_kg,
+      reps: set.reps,
+      durationS: set.duration_s,
+      perSide: set.per_side,
+      rir: set.rir,
+      rirCapped: set.rir_capped,
+      effortSimple: set.effort_simple,
+      ...(set.replaced_exercise_id
+        ? { replacedExerciseId: set.replaced_exercise_id }
+        : {}),
+      ...(set.completed_at
+        ? { completedAt: Date.parse(set.completed_at) }
+        : {}),
+    };
+  });
+  const shaped = inSetOrder(lines, sets).map((line) => {
+    const worked = sets.filter(
+      (set) => set.lineRef === line.line_ref && !set.warmup,
+    ).length;
+    return worked > line.prescription.sets
+      ? { ...line, prescription: { ...line.prescription, sets: worked } }
+      : line;
+  });
   const session: ActiveSession = {
     plannedSessionId: planned.planned_session_id,
     sessionClientId: active.session_client_id,
@@ -117,9 +163,41 @@ export function takeOver(
     lineIndex: 0,
     rest: null,
     finished: false,
-    lines,
+    lines: shaped,
+    ...(Object.keys(swaps).length > 0 ? { swaps } : {}),
   };
-  return { ...session, lineIndex: nextOpenLine(session, lines, 0) ?? 0 };
+  const open = nextOpenLine(
+    session,
+    linesWithSwaps(session, shaped, packet),
+    0,
+  );
+  return { ...session, lineIndex: open ?? 0 };
+}
+
+/**
+ * `lines` in the order `sets` (stored order) stand in: lines with sets first
+ * come by their first set; a line with none stays right after the line that
+ * preceded it in `lines` (or first, if none did).
+ */
+function inSetOrder(
+  lines: readonly PacketLine[],
+  sets: readonly LoggedSet[],
+): PacketLine[] {
+  const withSets: PacketLine[] = [];
+  for (const set of sets) {
+    const line = lines.find((one) => one.line_ref === set.lineRef);
+    if (line && !withSets.includes(line)) withSets.push(line);
+  }
+  const result = [...withSets];
+  lines.forEach((line, i) => {
+    if (withSets.includes(line)) return;
+    const before = lines
+      .slice(0, i)
+      .reverse()
+      .find((one) => result.includes(one));
+    result.splice(before ? result.indexOf(before) + 1 : 0, 0, line);
+  });
+  return result;
 }
 
 export function claimMutation(

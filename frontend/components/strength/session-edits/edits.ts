@@ -3,6 +3,7 @@ import {
   ADDED_PREFIX,
   isPlannedLine,
   type LoggedSet,
+  lineComplete,
   type Packet,
   type PacketLine,
   type PacketSession,
@@ -250,7 +251,13 @@ export function addedLine(
   };
 }
 
-/** Add `line` after the exercise the screen shows, and show it. */
+/**
+ * Add `line` right after the exercise the screen shows. The screen **stays**
+ * on the exercise being done while it has sets left: "Add an exercise" used
+ * to jump straight to the new one and leave the half-done exercise behind
+ * (UAT U15). It shows the new exercise only when there is nothing to stay on
+ * — an empty session, or the current exercise already complete.
+ */
 export function addExercise(
   session: ActiveSession,
   lines: readonly PacketLine[],
@@ -258,7 +265,14 @@ export function addExercise(
 ): ActiveSession {
   const at = lines.length === 0 ? 0 : session.lineIndex + 1;
   const next = [...lines.slice(0, at), line, ...lines.slice(at)];
-  return { ...session, lines: next, lineIndex: at, rest: null };
+  const current = lines[session.lineIndex];
+  const staying = current !== undefined && !lineComplete(session, current);
+  return {
+    ...session,
+    lines: next,
+    lineIndex: staying ? session.lineIndex : at,
+    rest: staying ? session.rest : null,
+  };
 }
 
 /**
@@ -282,6 +296,8 @@ export function moveSets(
       ...set,
       lineRef: line.line_ref,
       exerciseId: line.exercise_id,
+      // Counts toward the target's sets, but never sets its next numbers.
+      moved: true,
     }));
   const sets = storedOrder([...kept, ...moved], lines);
   const patches = moved.map((set) =>

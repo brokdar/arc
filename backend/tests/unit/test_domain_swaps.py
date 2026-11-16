@@ -238,3 +238,39 @@ def test_ease_back_in_never_names_an_avoided_exercise() -> None:
 @pytest.mark.parametrize("exercise_id", ["air_squat", "copenhagen_plank"])
 def test_ease_back_in_for_the_easiest_movement_is_empty(exercise_id: str) -> None:
     assert ease_back_ladder(CATALOGUE[exercise_id], LIBRARY) == ()
+
+
+def test_less_often_outranks_the_remembered_pick() -> None:
+    # UAT B12: the last pick is also the one the athlete asked to see less of.
+    context = SwapContext(
+        equipment=NO_RACK,
+        remembered={"back_squat": "leg_press"},
+        less_often=frozenset({"leg_press"}),
+    )
+
+    offered = substitutes(SQUAT, LIBRARY, context, limit=None)
+
+    assert offered[-1].id == "leg_press"
+
+
+def test_ease_back_in_for_a_bench_press_does_not_start_with_a_dip() -> None:
+    # UAT U10: a dip loads the whole body on the shoulders; it is no first step.
+    ladder = ease_back_ladder(CATALOGUE["incline_bench_press"], LIBRARY)
+
+    assert ids(ladder) == ["landmine_press", "dip", "dumbbell_bench_press"]
+
+
+def test_every_ease_back_ladder_runs_from_least_to_most_demanding() -> None:
+    from app.domain.swaps import _climb_key
+
+    for exercise in LIBRARY:
+        keys = [_climb_key(step)[:2] for step in ease_back_ladder(exercise, LIBRARY)]
+        assert keys == sorted(keys), exercise.id
+
+
+def test_the_rest_of_block_card_promises_nothing_the_server_does_not_do() -> None:
+    from app.domain.swaps import rest_of_block_card
+
+    _, because = rest_of_block_card("Back Squat", "Leg Press")
+
+    assert "coach" not in because

@@ -132,3 +132,30 @@ export function FinishPanel({
     </section>
   );
 }
+
+/**
+ * "End" with no set logged: nothing to rate and nothing worth saving, so the
+ * session is discarded, not stored empty (UAT U14). Words say so, and
+ * "Keep training" is the way back.
+ */
+export function DiscardPanel({
+  onDiscard,
+  onBack,
+}: {
+  onDiscard: () => void;
+  onBack: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="flex flex-col gap-4 px-4 py-4">
+      <h2 className="font-semibold text-xl">{t("finish.discardTitle")}</h2>
+      <p className="text-ink-secondary">{t("finish.discardBody")}</p>
+      <Button variant="destructive" className="h-[56px]" onClick={onDiscard}>
+        {t("finish.discard")}
+      </Button>
+      <Button className="h-[44px]" variant="ghost" onClick={onBack}>
+        {t("finish.back")}
+      </Button>
+    </section>
+  );
+}

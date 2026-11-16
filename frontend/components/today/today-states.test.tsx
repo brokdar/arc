@@ -273,6 +273,8 @@ describe("a standing red flag on Today (B10)", () => {
     raiseServerFlag("emergency", "severe");
     const user = userEvent.setup();
     renderToday();
+    // Start only gates once the athlete record (and its flag) has loaded.
+    await screen.findByRole("button", { name: "Red flag up" });
 
     await user.click(await screen.findByRole("link", { name: /^Start / }));
 
@@ -297,6 +299,7 @@ describe("a standing red flag on Today (B10)", () => {
     );
     const user = userEvent.setup();
     renderToday();
+    await screen.findByRole("button", { name: "Red flag up" });
 
     await user.click(await screen.findByRole("link", { name: /^Start / }));
     const dialog = await screen.findByRole("dialog");

@@ -181,11 +181,24 @@
     "resume": "Weiter — Satz {n} von {exercise}",
     "resumeFinish": "Weiter — Einheit abschließen",
     "done": "Einheit gespeichert",
-    "doneBody": "{count} Sätze eingetragen. Sie werden hochgeladen, sobald Netz da ist.",
+    "doneBody": "{count} Sätze eingetragen.",
     "edit": "Satz {n} ändern",
     "save": "Speichern",
     "deleteSet": "Satz löschen",
-    "cancel": "Abbrechen"
+    "cancel": "Abbrechen",
+    "doneBodyOne": "1 Satz eingetragen.",
+    "doneWaiting": "Noch nicht hochgeladen. Es geht hoch, sobald Netz da ist.",
+    "doneUploaded": "Alles ist hochgeladen.",
+    "repsValueOne": "1 Wdh.",
+    "repsPerSide": "{reps} Wdh. pro Seite",
+    "repsPerSideOne": "1 Wdh. pro Seite",
+    "perSide": "pro Seite",
+    "platesBarOnly": "nur die Stange · {weight}",
+    "platesBelowBar": "leichter als die Stange ({weight})",
+    "reasonToday": "Wie dein letzter Satz heute",
+    "lastTimeRef": "letztes Mal: {summary} · Basis: {reference}",
+    "discarded": "Einheit verworfen",
+    "discardedBody": "Es war nichts eingetragen, also wurde nichts gespeichert."
   },
   "effort": {
     "questionReps": "Wie viele Wdh. wären noch drin gewesen?",
@@ -200,7 +213,8 @@
     "hard": "Schwer",
     "simpleLabel": "{answer} — Satz eintragen",
     "withoutRating": "✓ ohne Bewertung eintragen",
-    "withoutRatingLabel": "Satz ohne Wertung loggen"
+    "withoutRatingLabel": "Satz ohne Wertung loggen",
+    "repsLeftLabelOne": "1 Wdh. übrig — Satz eintragen"
   },
   "starting": {
     "title": "Finde dein Startgewicht",
@@ -215,7 +229,8 @@
     "answerLabel": "{answer} — diese {reps} Wiederholungen speichern",
     "typeHint": "Du kennst dein Gewicht schon? Tipp es ein.",
     "typeLabel": "Dein Arbeitsgewicht",
-    "use": "Dieses Gewicht nehmen"
+    "use": "Dieses Gewicht nehmen",
+    "perDumbbell": "{weight} pro Hantel"
   },
   "rest": {
     "label": "Pause",
@@ -246,7 +261,10 @@
     "reasonPeriod": "Periode",
     "reasonGym": "Volles Studio",
     "reasonOther": "Anderes",
-    "back": "Weiter trainieren"
+    "back": "Weiter trainieren",
+    "discardTitle": "Noch nichts eingetragen",
+    "discardBody": "Wenn du jetzt beendest, wird diese Einheit verworfen. Es ist nichts eingetragen, also wird nichts gespeichert.",
+    "discard": "Einheit verwerfen"
   },
   "edits": {
     "reorder": "Übungen umstellen",
@@ -281,7 +299,9 @@
     "unplanned": "Ohne Plan trainieren",
     "unplannedTitle": "Einheit ohne Plan",
     "unplannedEmpty": "Füg die erste Übung hinzu, um loszulegen.",
-    "reopen": "Einheit wieder öffnen"
+    "reopen": "Einheit wieder öffnen",
+    "recapStarted": "Wann hast du angefangen?",
+    "recapMinutes": "Wie lange, in Minuten?"
   },
   "records": {
     "bestsTitle": "Neue Rekorde",
@@ -307,7 +327,7 @@
     "menuPain": "Schmerz",
     "menuStop": "Stopp — etwas stimmt nicht",
     "pain": {
-      "title": "Wo tut es weh?",
+      "title": "Schmerz melden",
       "which": "Wie fühlt es sich an?",
       "ache": "Muskelkater oder Brennen",
       "sharp": "Stechend oder im Gelenk",
@@ -318,7 +338,9 @@
       "back": "Zurück",
       "stopped": "{exercise}: für heute vorbei. Grund: stechender Schmerz.",
       "undo": "Rückgängig",
-      "undoLabel": "Schmerznotiz bei {exercise} zurücknehmen"
+      "undoLabel": "Schmerznotiz bei {exercise} zurücknehmen",
+      "cancel": "Abbrechen",
+      "noted": "Notiert: Muskelschmerz bei {exercise}. Die Sätze bleiben wie geplant."
     },
     "redFlag": {
       "title": "Was ist los?",
@@ -331,7 +353,8 @@
       "back": "Zurück",
       "emergency": "Stopp. Ruf jetzt den Notruf.",
       "advice": "Hör auf zu trainieren und hol dir heute ärztlichen Rat.",
-      "ended": "Die Einheit ist beendet. Was du eingetragen hast, ist gespeichert."
+      "ended": "Die Einheit ist beendet. Was du eingetragen hast, ist gespeichert.",
+      "call": "{number} anrufen"
     }
   },
   "swap": {
@@ -351,7 +374,8 @@
     "step": "Stufe {n} von {total}: {exercise}",
     "nextStep": "Nächste Stufe",
     "stopEaseBack": "Beenden",
-    "nothingEasier": "In der Bibliothek ist nichts leichter als diese Übung."
+    "nothingEasier": "In der Bibliothek ist nichts leichter als diese Übung.",
+    "doAnyway": "Trotzdem machen"
   },
   "why": {
     "chipUp": "{change} mehr: {because}",
@@ -388,7 +412,8 @@
       "plateau_reps": "stabil, eine Wiederholung mehr",
       "plateau_reset": "stabil, kurz zurück und neu aufbauen",
       "no_rule": "wie beim letzten Mal",
-      "first_time": "noch kein Verlauf"
+      "first_time": "noch kein Verlauf",
+      "nearest_loadable": "das nächste Gewicht, das sich laden lässt"
     },
     "lastTwo": "Deine zwei letzten Male: je {set}{effort}.",
     "lastTwoDiffer": "Deine letzten zwei Einheiten: {first}{firstEffort}, dann {second}{secondEffort}.",
@@ -432,7 +457,8 @@
       "easy": "Leicht",
       "good": "Gut",
       "hard": "Schwer"
-    }
+    },
+    "withLeftOne": ", mit 1 Wiederholung übrig"
   },
   "settings": {
     "title": "Einstellungen",

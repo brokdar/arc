@@ -50,7 +50,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
 from app.core.config import get_settings
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.logging import get_logger
 from app.domain.activity import (
     SessionDiscipline,
@@ -433,6 +438,44 @@ class MatchingService:
         await commit(self._session)
         await self._score_settled(link, actor=actor)
         return link
+
+    async def adopt_intent(
+        self, session_id: uuid.UUID, planned_session_id: uuid.UUID, *, actor: Actor
+    ) -> SessionMatchRow | None:
+        """Link a session to the plan its phone started it from.
+
+        The gym screen sends ``planned_session_id`` with ``session_start``: the
+        athlete tapped Start on *that* planned session, which is a stronger
+        statement than any similarity (UAT: a finished session sat "Proposed"
+        and Today kept offering Start on it). So the link is `confirmed`, the
+        athlete's own, whatever the score came to — it displaced "propose and
+        wait for a tap" for this one origin only; recordings and typed-in
+        sessions still go through :func:`~app.domain.matching.classify`.
+
+        Runs **after** :meth:`match_session`, so an automatic link or proposal
+        already exists and is promoted or retargeted rather than refused.
+        Nothing sticky is touched, and a plan that is already taken, missing or
+        of another discipline leaves matching's verdict standing: returns
+        ``None`` instead of raising, because the session is already committed.
+        """
+        existing = await self._links.for_session(session_id)
+        try:
+            if existing is None:
+                return await self.link(
+                    session_id=session_id,
+                    planned_session_id=planned_session_id,
+                    actor=actor,
+                )
+            if existing.status in STICKY_STATUSES:
+                return existing
+            if existing.planned_session_id == planned_session_id:
+                return await self.confirm(existing.id, actor=actor)
+            return await self.swap(
+                existing.id, planned_session_id=planned_session_id, actor=actor
+            )
+        except AppError:
+            await self._session.rollback()
+            return None
 
     async def confirm(self, link_id: uuid.UUID, *, actor: Actor) -> SessionMatchRow:
         """Accept a proposal (or an automatic link) as the athlete's own.

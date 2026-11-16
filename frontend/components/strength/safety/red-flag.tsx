@@ -56,6 +56,17 @@ export function RedFlagPanel({
   );
 }
 
+/**
+ * The number the emergency text's tap-to-call dials. **112**: the European
+ * emergency number, answered in every EU country and, on a GSM phone, on any
+ * network worldwide (it is routed to the local service, 911 in the US). arc
+ * has one athlete and no stored country, so one number that works almost
+ * everywhere beats a per-country table the phone would have to trust. Not
+ * configurable on purpose: a setting someone must have changed beforehand is
+ * the wrong thing to depend on in an emergency (UAT U8).
+ */
+export const EMERGENCY_NUMBER = "112";
+
 /** What the screen says after a red flag, until the athlete leaves it. */
 export function RedFlagStop({ kind }: { kind: RedFlagKind }) {
   const { t } = useI18n();
@@ -64,6 +75,14 @@ export function RedFlagStop({ kind }: { kind: RedFlagKind }) {
       <p role="alert" className="font-semibold text-2xl text-destructive">
         {t(RED_FLAG_TEXT[kind])}
       </p>
+      {kind === "emergency" ? (
+        <a
+          href={`tel:${EMERGENCY_NUMBER}`}
+          className="inline-flex min-h-[56px] items-center rounded-lg bg-destructive px-6 font-semibold text-lg text-white"
+        >
+          {t("safety.redFlag.call", { number: EMERGENCY_NUMBER })}
+        </a>
+      ) : null}
       <p className="text-ink-muted">{t("safety.redFlag.ended")}</p>
     </>
   );
