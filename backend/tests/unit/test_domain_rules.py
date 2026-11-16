@@ -220,6 +220,14 @@ def test_the_plan_constants_carry_their_values() -> None:
     assert rules.STARTING_STEP_EASY.value == 0.20
     assert rules.STARTING_STEP_GOOD.value == 0.10
     assert rules.MID_SESSION_MISS_REPS.value == 2
+    assert rules.PLATEAU_RESET.value == 0.075
+    assert rules.PLATEAU_OFF_PHASES.value == ("peak", "taper", "maintenance")
+    assert rules.WEIGHT_FROM_EFFORT.value == 2
+    assert rules.EFFORT_GAP_TWICE.value == 1
+    assert rules.STREAK_SESSIONS.value == 2
+    assert rules.REPS_THEN_WEIGHT.value == 1
+    assert rules.SIMPLE_PROGRESSION.value == 1
+    assert rules.BIG_STEP.value == 0.05
 
 
 def test_a_duplicate_rule_id_fails() -> None:

@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.activity import LoggedSetKind, SessionLifecycle, SetSide
+from app.domain.activity import EffortSimple, LoggedSetKind, SessionLifecycle, SetSide
 from app.domain.metrics import PerformedSet
 from app.domain.strength_records import Exposure
 from app.persistence.activity import LoggedSetRow, SessionRow
@@ -49,6 +49,7 @@ _SET_COLUMNS = (
     LoggedSetRow.rir,
     LoggedSetRow.rir_capped,
     LoggedSetRow.rpe,
+    LoggedSetRow.effort_simple,
 )
 
 
@@ -58,7 +59,8 @@ _SET_COLUMNS = (
 _RAW_SET_COLUMNS = (
     type_coerce(LoggedSetRow.set_kind, String).label("set_kind"),
     type_coerce(LoggedSetRow.side, String).label("side"),
-    *_SET_COLUMNS[2:],
+    *_SET_COLUMNS[2:-1],
+    type_coerce(LoggedSetRow.effort_simple, String).label("effort_simple"),
 )
 
 
@@ -84,6 +86,7 @@ def _performed(row: Row[*tuple[Any, ...]]) -> PerformedSet:
         rir=row.rir,
         rir_capped=row.rir_capped,
         rpe=row.rpe,
+        effort_simple=row.effort_simple,
     )
 
 
@@ -99,6 +102,9 @@ def _performed_raw(row: Row[*tuple[Any, ...]]) -> PerformedSet:
         rir=row.rir,
         rir_capped=row.rir_capped,
         rpe=row.rpe,
+        effort_simple=(
+            None if row.effort_simple is None else EffortSimple(row.effort_simple)
+        ),
     )
 
 

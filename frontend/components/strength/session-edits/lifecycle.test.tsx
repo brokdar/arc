@@ -195,6 +195,18 @@ describe("a session with no plan", () => {
       within(dialog).getByRole("button", { name: "Add Back Squat" }),
     );
     await screen.findByRole("heading", { name: "Back Squat", level: 1 });
+    // Never logged: it opens on the starting-weight flow, which typing a
+    // known working weight skips (no flow sets are stored).
+    const flow = await screen.findByRole("region", {
+      name: "Find your starting weight",
+    });
+    fireEvent.change(
+      within(flow).getByRole("textbox", { name: "Your working weight" }),
+      { target: { value: "60" } },
+    );
+    fireEvent.click(
+      within(flow).getByRole("button", { name: "Use this weight" }),
+    );
     await logNext();
 
     const items = await outbox();
@@ -204,6 +216,7 @@ describe("a session with no plan", () => {
     expect(set?.kind === "set_upsert" && set.set).toMatchObject({
       exercise_id: "back_squat",
       set_index: 0,
+      load_kg: 60,
     });
     expect(set?.kind === "set_upsert" && set.set).not.toHaveProperty(
       "planned_line_ref",

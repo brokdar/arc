@@ -37,13 +37,13 @@ from app.domain.safety import (
     joint_of,
     pain_card_text,
     stops_exercise,
-    swap_for,
 )
+from app.domain.swaps import pain_swap
 from app.persistence.athlete import SINGLETON_ATHLETE_ID, Athlete, AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.cards import CardRepository
 from app.services.cards import CardService
-from app.services.exercises import ExerciseService
+from app.services.exercise_preferences import ExercisePreferencesService
 
 ATHLETE_ENTITY = "athlete"
 CARD_ENTITY = "card"
@@ -58,14 +58,14 @@ class SafetyService:
         cards: CardService,
         card_rows: CardRepository,
         athletes: AthleteRepository,
-        exercises: ExerciseService,
+        preferences: ExercisePreferencesService,
         audit: AuditRepository,
     ) -> None:
         self._session = session
         self._cards = cards
         self._card_rows = card_rows
         self._athletes = athletes
-        self._exercises = exercises
+        self._preferences = preferences
         self._audit = audit
 
     @classmethod
@@ -76,7 +76,7 @@ class SafetyService:
             CardService.from_session(session),
             CardRepository(session),
             AthleteRepository(session),
-            ExerciseService.from_session(session),
+            ExercisePreferencesService.from_session(session),
             AuditRepository(session),
         )
 
@@ -128,25 +128,21 @@ class SafetyService:
         band: PainBand | None,
         actor: Actor,
     ) -> None:
-        catalogue = await self._exercises.catalogue()
-        row = None if exercise_id is None else catalogue.get(exercise_id)
+        library = await self._preferences.library()
+        exercise = None if exercise_id is None else library.domain.get(exercise_id)
         joint: str | None = None
         swap_id: str | None = None
         swap_name: str | None = None
         name = exercise_name or exercise_id or "this exercise"
-        if row is not None:
-            name = row.name
-            try:
-                exercise = row.to_domain()
-                library = [entry.to_domain() for entry in catalogue.values()]
-            except ValueError:  # pragma: no cover — seeded before every batch
-                exercise, library = None, []
-            if exercise is not None:
-                found = joint_of(exercise)
-                joint = None if found is None else found[0]
-                swap = swap_for(exercise, library)
-                if swap is not None:
-                    swap_id, swap_name = swap.id, swap.name
+        if exercise is not None:
+            name = exercise.name
+            found = joint_of(exercise)
+            joint = None if found is None else found[0]
+            # The same ranking the packet and the coach's tool use, so the
+            # card never offers what the athlete avoids or cannot do today.
+            swap = pain_swap(exercise, library.domain.values(), library.context)
+            if swap is not None:
+                swap_id, swap_name = swap.id, swap.name
         headline, because = pain_card_text(name, joint=joint, swap_name=swap_name)
         await self._cards.queue(
             actor=actor,

@@ -18,14 +18,38 @@ together, because "what you did last time" is the number the athlete would
 type anyway. An exercise never logged pre-fills nothing and is flagged
 ``starting_flow``, which sends the phone into the guided starting-weight
 flow. A bodyweight line has no weight to find and pre-fills its prescribed
-reps. **Plain logbook uses the same order**: it displaces progression, and
-until progression exists that is a statement about what a later rule may not
-do here, pinned by AC-46 now and AC-72 when that rule lands.
+reps. **Plain logbook uses the same order**: it displaces progression
+(AC-46, AC-72).
+
+**Suggested weights come first wherever they apply.** For a line whose weight
+can be rounded (barbell, dumbbell, stack) and whose exercise has history,
+`app.domain.progression.suggest` decides the weight and reps from what was
+lifted, and that suggestion — not the prescribed load, not the last numbers —
+is the pre-fill (source ``progression``), with its explanation beside it.
+"Computed from what was lifted" is the point of the rule: a prescribed 100 kg
+the athlete lifted with four reps to spare is not the number to open with
+next time, and the coach, who reads the same lines through
+``get_next_targets`` (:meth:`PacketService.session`), sees exactly what the
+phone will pre-fill. A first-time exercise carries a ``first_time``
+suggestion and keeps the precedence above. **Plain logbook and follow-exactly
+bypass progression completely**: no suggestion, and the pre-fill is the
+precedence above, unchanged. History is marked trimmed against this line's
+prescription — a session that logged fewer working sets of the exercise than
+the session now prescribes lost sets, and never raises the weight.
 
 **Follow-exactly** (`app.domain.plans`) pins every number to the
 prescription: reps and holds come from the prescription even where history
 says otherwise, and a kilogram load is used as written. Only a line whose
 prescription has no weight at all falls back to history for the weight.
+
+**Swaps travel with the line.** Each line carries its three ranked swaps
+(`app.domain.swaps`, through `app.services.exercise_preferences`), whether the
+athlete avoids the planned exercise (the phone then opens on the swap
+prompt), and where they stand on *Ease back in*; every movement those name is
+in ``library``, and its last numbers in ``last_numbers`` when it was ever
+logged. A swapped line's first weight therefore comes from the substitute's
+own history or the starting flow, never from the planned exercise's
+pre-fill — the phone has everything it needs to decide that with no signal.
 
 A rep range pre-fills its low end: the bottom of the range is the target
 every set must reach, and the athlete adds reps from there.
@@ -51,16 +75,27 @@ that exercise in Thursday's session in a gym with no signal.
 
 import datetime as dt
 import uuid
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import athlete_today
+from app.core.exceptions import NotFoundError
+from app.domain.activity import PainKind
 from app.domain.athlete import Discipline
 from app.domain.loading import DEFAULT_GYM, Equipment, Gym, plates_per_side
+from app.domain.plans import PlanPhase
+from app.domain.progression import (
+    LineGoal,
+    Suggestion,
+    is_small_muscle,
+    resolve_rule,
+    suggest,
+    trimmed,
+)
 from app.domain.purpose import Purpose
 from app.domain.safety import blocks_increase
 from app.domain.sessions import SessionStatus
@@ -71,15 +106,24 @@ from app.domain.strength import (
     StrengthSet,
     StrengthWorkout,
     TargetRange,
+    exercise_ids,
     resolve_main_lines,
 )
+from app.domain.strength_records import Exposure
 from app.domain.training_mode import AskFrequency, TrainingMode, TrainingSettings
 from app.domain.warmups import warmup_lines, warmup_sets
 from app.domain.workout import workout_body_from_json
 from app.persistence.activity import LoggedSetRow, SessionRepository
+from app.persistence.exercise_preferences import ExercisePreferenceRow
 from app.persistence.exercises import ExerciseRow
 from app.persistence.planned_sessions import PlannedSessionRow
+from app.persistence.strength_history import StrengthHistoryRepository, exercise_match
 from app.services.athlete_settings import AthleteSettingsService
+from app.services.exercise_preferences import (
+    EaseBack,
+    ExercisePreferencesService,
+    Library,
+)
 from app.services.exercises import ExerciseNote, ExerciseService
 from app.services.planned_sessions import PlannedSessionService
 from app.services.plans import PlansService
@@ -110,6 +154,8 @@ class PrefillSource(StrEnum):
     PRESCRIPTION = "prescription"
     LAST_LOGGED = "last_logged"
     BLANK = "blank"
+    #: The suggested weight (`app.domain.progression`).
+    PROGRESSION = "progression"
 
 
 class EffortScale(StrEnum):
@@ -167,6 +213,12 @@ class PacketLine:
     prefill: Prefill
     warmups: list[PacketWarmup]
     plates_per_side: list[float] | None
+    swaps: list[ExerciseRow]
+    avoided: bool
+    ease_back: EaseBack | None
+    #: Next weight from what was lifted, and why; ``None`` under Plain
+    #: logbook or follow-exactly, and for a line with no loadable weight.
+    suggestion: Suggestion | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,35 +280,43 @@ class PacketService:
 
     def __init__(
         self,
-        exercises: ExerciseService,
         planned: PlannedSessionService,
         plans: PlansService,
         settings: AthleteSettingsService,
         history: SessionRepository,
+        preferences: ExercisePreferencesService,
+        records: StrengthHistoryRepository,
+        exercises: ExerciseService,
     ) -> None:
+        self._preferences = preferences
         self._exercises = exercises
         self._planned = planned
         self._plans = plans
         self._settings = settings
         self._history = history
+        self._records = records
 
     @classmethod
     def from_session(cls, session: AsyncSession) -> Self:
         """Wire the service and the services it composes to one session."""
         return cls(
-            ExerciseService.from_session(session),
             PlannedSessionService.from_session(session),
             PlansService.from_session(session),
             AthleteSettingsService.from_session(session),
             SessionRepository(session),
+            ExercisePreferencesService.from_session(session),
+            StrengthHistoryRepository(session),
+            ExerciseService.from_session(session),
         )
 
     async def build(self, *, now: dt.datetime | None = None) -> Packet:
         """The packet as of ``now`` (default: this instant)."""
         generated_at = now or dt.datetime.now(dt.UTC)
-        # First: seeding may commit or roll back mid-transaction, which would
-        # expire rows loaded before it (`ExerciseService.ensure_seeded`).
-        catalogue = await self._exercises.catalogue()
+        # First: seeding the catalogue may commit or roll back mid-transaction,
+        # which would expire rows loaded before it (`ExerciseService.ensure_seeded`).
+        swaps = await self._preferences.library()
+        catalogue = dict(swaps.rows)
+        preference_rows = await self._preferences.rows()
         settings = await self._settings.read()
         starts_on = athlete_today(generated_at)
         ends_before = starts_on + dt.timedelta(days=WINDOW_DAYS)
@@ -267,23 +327,11 @@ class PacketService:
             limit=_MAX_SESSIONS,
         )
         strength = [row for row in rows if row.discipline is Discipline.STRENGTH]
-        follow_exactly = {
-            plan.id: plan.follow_exactly for plan in await self._plans.list()
-        }
         last = await self._history.last_logged_sets()
         pain = await self._history.latest_session_pain()
-
-        domain = {slug: entry.to_domain() for slug, entry in catalogue.items()}
-        sessions = [
-            session
-            for row in strength
-            if (
-                session := _session(
-                    row, catalogue, domain, last, follow_exactly.get(row.plan_id, False)
-                )
-            )
-            is not None
-        ]
+        sessions = await self._sessions(
+            strength, catalogue, settings, last, pain, swaps, preference_rows
+        )
         last_numbers = [
             LastNumbers(
                 exercise_id=slug,
@@ -317,6 +365,131 @@ class PacketService:
             notes=notes,
         )
 
+    async def session(self, planned_session_id: uuid.UUID) -> PacketSession:
+        """One planned strength session exactly as the packet carries it.
+
+        The coach's ``get_next_targets``: the same lines, pre-fills and
+        suggestions the phone stores, for any planned strength session, not
+        only the next seven days'.
+
+        Raises:
+            NotFoundError: When no planned session has that id, or it is not a
+                strength session.
+        """
+        # The same inputs as `build`, the swap library first (it may seed).
+        swaps = await self._preferences.library()
+        catalogue = dict(swaps.rows)
+        preference_rows = await self._preferences.rows()
+        settings = await self._settings.read()
+        row = await self._planned.get(planned_session_id)
+        found = None
+        if row.discipline is Discipline.STRENGTH:
+            last = await self._history.last_logged_sets()
+            pain = await self._history.latest_session_pain()
+            found = next(
+                iter(
+                    await self._sessions(
+                        [row], catalogue, settings, last, pain, swaps, preference_rows
+                    )
+                ),
+                None,
+            )
+        if found is None:
+            raise NotFoundError(
+                f"Planned session {planned_session_id} is not a strength session"
+            )
+        return found
+
+    async def _sessions(
+        self,
+        rows: Sequence[PlannedSessionRow],
+        catalogue: Mapping[str, ExerciseRow],
+        settings: TrainingSettings,
+        last: Mapping[str, tuple[LoggedSetRow, dt.date]],
+        pain: Mapping[str, Sequence[PainKind | None]],
+        swaps: Library,
+        preferences: Mapping[str, ExercisePreferenceRow],
+    ) -> list[PacketSession]:
+        """Each row's packet session; non-lift bodies are dropped."""
+        plans = {plan.id: plan for plan in await self._plans.list()}
+        domain = {slug: entry.to_domain() for slug, entry in catalogue.items()}
+        out: list[PacketSession] = []
+        histories: dict[str, list[Exposure]] = {}
+        for row in rows:
+            plan = plans.get(row.plan_id)
+            follow_exactly = plan is not None and plan.follow_exactly
+            learning = None
+            if not (settings.plain_logbook or follow_exactly):
+                body = workout_body_from_json(row.current_intent.structure)
+                if isinstance(body, StrengthWorkout):
+                    for slug in sorted(exercise_ids(body)):
+                        if slug not in histories:
+                            histories[slug] = await self._records.exposures(
+                                exercise_match(slug, slug)
+                            )
+                learning = _Learning(
+                    mode=settings.mode,
+                    phase=None if plan is None else plan.phase,
+                    histories=histories,
+                    blocked=frozenset(
+                        slug for slug, kinds in pain.items() if blocks_increase(kinds)
+                    ),
+                )
+            session = _session(
+                row,
+                catalogue,
+                domain,
+                last,
+                follow_exactly,
+                swaps,
+                preferences,
+                learning,
+            )
+            if session is not None:
+                out.append(session)
+        return out
+
+
+@dataclass(frozen=True, slots=True)
+class _Learning:
+    """What progression needs to suggest a line's next weight."""
+
+    mode: TrainingMode
+    phase: PlanPhase | None
+    histories: Mapping[str, Sequence[Exposure]]
+    #: Exercises whose latest session had sharp pain: nothing may rise.
+    blocked: frozenset[str] = frozenset()
+
+
+def _suggestion(
+    item: StrengthSet,
+    *,
+    main: bool,
+    exercise: Exercise | None,
+    equipment: Equipment | None,
+    prescribed_sets: int,
+    learning: _Learning,
+) -> Suggestion | None:
+    """The line's suggested weight, or ``None`` when nothing can be loaded."""
+    if equipment is None or item.reps is None:
+        return None
+    goal = LineGoal(
+        rule=resolve_rule(item, learning.mode),
+        reps=item.reps,
+        reps_left=item.rir,
+        main=main,
+        small_muscle=is_small_muscle(exercise),
+        equipment=equipment,
+        sets=item.sets,
+        set_kind=item.set_kind,
+        increase_blocked=item.exercise_id in learning.blocked,
+    )
+    history = [
+        replace(e, trimmed=trimmed(e.sets, prescribed_sets=prescribed_sets))
+        for e in learning.histories.get(item.exercise_id, ())
+    ]
+    return suggest(goal, history, phase=learning.phase)
+
 
 def _session(
     row: PlannedSessionRow,
@@ -324,14 +497,24 @@ def _session(
     domain: Mapping[str, Exercise],
     last: Mapping[str, tuple[LoggedSetRow, dt.date]],
     follow_exactly: bool,
+    swaps: Library,
+    preferences: Mapping[str, ExercisePreferenceRow],
+    learning: _Learning | None,
 ) -> PacketSession | None:
-    """One session's lines; ``None`` for a body that is not a lift."""
+    """One session's lines; ``None`` for a body that is not a lift.
+
+    ``learning`` is ``None`` when progression is bypassed (Plain logbook,
+    follow-exactly).
+    """
     intent = row.current_intent
     body = workout_body_from_json(intent.structure)
     if not isinstance(body, StrengthWorkout):
         return None
     mains = resolve_main_lines(body, domain)
     ramps = warmup_lines(body, domain)
+    prescribed: dict[str, int] = {}
+    for line in body.prescriptions:
+        prescribed[line.exercise_id] = prescribed.get(line.exercise_id, 0) + line.sets
     lines: list[PacketLine] = []
     position = 0
     for group_index, group in enumerate(body.groups):
@@ -346,6 +529,26 @@ def _session(
             prefill = _prefill(
                 item, None if logged is None else logged[0], follow_exactly
             )
+            suggestion = (
+                None
+                if learning is None
+                else _suggestion(
+                    item,
+                    main=mains[position],
+                    exercise=domain.get(item.exercise_id),
+                    equipment=equipment,
+                    prescribed_sets=prescribed[item.exercise_id],
+                    learning=learning,
+                )
+            )
+            if suggestion is not None and suggestion.load_kg is not None:
+                prefill = Prefill(
+                    PrefillSource.PROGRESSION,
+                    suggestion.load_kg,
+                    suggestion.reps,
+                    None,
+                    False,
+                )
             lines.append(
                 PacketLine(
                     line_ref=f"{group_index}.{item_index}",
@@ -364,6 +567,10 @@ def _session(
                     if ramps[position]
                     else [],
                     plates_per_side=_plates(prefill.load_kg, equipment),
+                    swaps=swaps.substitutes(item.exercise_id),
+                    avoided=item.exercise_id in swaps.context.avoided,
+                    ease_back=swaps.ease_back(preferences.get(item.exercise_id)),
+                    suggestion=suggestion,
                 )
             )
             position += 1

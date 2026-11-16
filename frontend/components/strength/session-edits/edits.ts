@@ -241,6 +241,12 @@ export function addedLine(
         },
     warmups: [],
     plates_per_side: null,
+    // Picked in the gym: the phone has no server ranking to offer swaps
+    // from, and no history worked into a suggestion for it.
+    swaps: [],
+    avoided: false,
+    ease_back: null,
+    suggestion: null,
   };
 }
 

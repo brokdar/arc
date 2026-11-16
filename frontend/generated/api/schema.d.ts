@@ -548,6 +548,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/exercise-preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Preferences
+     * @description Every exercise the athlete has stated a preference on, by slug.
+     */
+    get: operations["exercises-list_preferences"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/exercises": {
     parameters: {
       query?: never;
@@ -628,6 +648,74 @@ export interface paths {
      * @description Replace the note on an exercise; an empty text deletes it.
      */
     put: operations["exercises-put_exercise_note"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exercises/{exercise_id}/preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Preferences
+     * @description The athlete's preferences on one exercise; defaults when none were stated.
+     */
+    get: operations["exercises-get_preferences"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update Preferences
+     * @description Change some of one exercise's preferences; omitted fields are left alone.
+     */
+    patch: operations["exercises-update_preferences"];
+    trace?: never;
+  };
+  "/api/v1/exercises/{exercise_id}/preferences/ease-back/advance": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Advance Ease Back
+     * @description The athlete's tap: one step up *Ease back in*; past the last, it ends.
+     */
+    post: operations["exercises-advance_ease_back"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/exercises/{exercise_id}/substitutes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Substitutes
+     * @description Up to three swaps for an exercise, best first — the packet's three.
+     *
+     *     Never an avoided movement, one needing equipment the gym lacks, or one
+     *     making a demand recent sharp pain rules out; fewer than three when fewer
+     *     qualify. The athlete's remembered pick comes first.
+     */
+    get: operations["exercises-get_substitutes"];
+    put?: never;
     post?: never;
     delete?: never;
     options?: never;
@@ -3668,6 +3756,21 @@ export interface components {
       min_seconds: number;
     };
     /**
+     * EaseBackRead
+     * @description Where the athlete stands on *Ease back in* for one exercise.
+     *
+     *     ``steps`` runs easiest first; ``step`` is the 0-based index of
+     *     ``current``, the variation to train now. It moves only when the athlete
+     *     taps *advance*.
+     */
+    EaseBackRead: {
+      current: components["schemas"]["SwapRead"];
+      /** Step */
+      step: number;
+      /** Steps */
+      steps: components["schemas"]["SwapRead"][];
+    };
+    /**
      * EffortQuestionRead
      * @description Which effort question follows a set, and how often it is asked.
      */
@@ -3783,6 +3886,12 @@ export interface components {
       session_id: string;
     };
     /**
+     * Evidence
+     * @description What supports a rule's value; see the module docstring.
+     * @enum {string}
+     */
+    Evidence: "backed" | "practice" | "default";
+    /**
      * ExcludedStepRead
      * @description A pair the assignment made and the confidence gate then refused.
      *
@@ -3894,6 +4003,39 @@ export interface components {
     ExerciseNoteWrite: {
       /** Text */
       text: string;
+    };
+    /**
+     * ExercisePreferenceRead
+     * @description What the athlete prefers about one exercise; defaults when nothing was said.
+     */
+    ExercisePreferenceRead: {
+      /** Avoid */
+      avoid: boolean;
+      ease_back: components["schemas"]["EaseBackRead"] | null;
+      /** Exercise Id */
+      exercise_id: string;
+      /** Less Often */
+      less_often: boolean;
+      /** Remembered Swap Id */
+      remembered_swap_id: string | null;
+    };
+    /**
+     * ExercisePreferenceUpdate
+     * @description Change some of one exercise's preferences; an omitted field is left alone.
+     *
+     *     ``remembered_swap_id: null`` forgets the pick (the computed order comes
+     *     back); ``ease_back: true`` starts *Ease back in* at its easiest step and
+     *     ``false`` stops it.
+     */
+    ExercisePreferenceUpdate: {
+      /** Avoid */
+      avoid?: boolean;
+      /** Ease Back */
+      ease_back?: boolean;
+      /** Less Often */
+      less_often?: boolean;
+      /** Remembered Swap Id */
+      remembered_swap_id?: string | null;
     };
     /**
      * ExerciseRead
@@ -5438,7 +5580,8 @@ export interface components {
       | components["schemas"]["NoteUpsert"]
       | components["schemas"]["SessionClaim"]
       | components["schemas"]["SessionReopen"]
-      | components["schemas"]["RedFlag"];
+      | components["schemas"]["RedFlag"]
+      | components["schemas"]["Swap"];
     /**
      * MutationResultRead
      * @description What the server did with one mutation.
@@ -5526,6 +5669,9 @@ export interface components {
      * @description One prescription line with everything the gym screen needs.
      */
     PacketLineRead: {
+      /** Avoided */
+      avoided: boolean;
+      ease_back: components["schemas"]["EaseBackRead"] | null;
       equipment: components["schemas"]["Equipment"] | null;
       /** Exercise Id */
       exercise_id: string;
@@ -5545,6 +5691,9 @@ export interface components {
       plates_per_side: number[] | null;
       prefill: components["schemas"]["PrefillRead"];
       prescription: components["schemas"]["StrengthSetSchema"];
+      suggestion: components["schemas"]["SuggestionRead"] | null;
+      /** Swaps */
+      swaps: components["schemas"]["SwapRead"][];
       /** Warmups */
       warmups: components["schemas"]["WarmupRead"][];
     };
@@ -6386,7 +6535,7 @@ export interface components {
      * @description Where a line's pre-filled numbers came from.
      * @enum {string}
      */
-    PrefillSource: "prescription" | "last_logged" | "blank";
+    PrefillSource: "prescription" | "last_logged" | "blank" | "progression";
     /**
      * Progression
      * @description How the next session's weight is decided from this line.
@@ -8252,6 +8401,177 @@ export interface components {
       /** Prompt */
       prompt: string;
     };
+    /**
+     * SubstitutesRead
+     * @description The ranked swaps for one exercise, best first; at most three, maybe none.
+     */
+    SubstitutesRead: {
+      /** Exercise Id */
+      exercise_id: string;
+      /** Substitutes */
+      substitutes: components["schemas"]["SwapRead"][];
+    };
+    /**
+     * SuggestionExplanationRead
+     * @description Why a suggestion says what it says: the Why sheet and its Details.
+     */
+    SuggestionExplanationRead: {
+      /** Computed Kg */
+      computed_kg: number | null;
+      evidence: components["schemas"]["Evidence"] | null;
+      /** Inputs */
+      inputs: components["schemas"]["SuggestionInputRead"][];
+      /** Limit */
+      limit: string | null;
+      reason: components["schemas"]["SuggestionReason"];
+      /** Rule */
+      rule: string | null;
+      /** Target Reps */
+      target_reps: number | null;
+      /** Target Reps Left */
+      target_reps_left: number | null;
+    };
+    /**
+     * SuggestionInputRead
+     * @description One session a suggestion read, as the set it was judged by.
+     */
+    SuggestionInputRead: {
+      /**
+       * Date
+       * Format: date
+       */
+      date: string;
+      effort_simple: components["schemas"]["EffortSimple"] | null;
+      /** Load Kg */
+      load_kg: number | null;
+      /** Reps */
+      reps: number | null;
+      /** Reps Left */
+      reps_left: number | null;
+      /** Reps Left Capped */
+      reps_left_capped: boolean;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Trimmed */
+      trimmed: boolean;
+    };
+    /**
+     * SuggestionOutcome
+     * @description What the suggestion does to the last weight.
+     * @enum {string}
+     */
+    SuggestionOutcome: "up" | "down" | "same" | "reps" | "first_time";
+    /**
+     * SuggestionRead
+     * @description Next session's numbers for one line, from what was lifted.
+     */
+    SuggestionRead: {
+      /** Change Kg */
+      change_kg: number | null;
+      explanation: components["schemas"]["SuggestionExplanationRead"];
+      /** Load Kg */
+      load_kg: number | null;
+      outcome: components["schemas"]["SuggestionOutcome"];
+      /** Reps */
+      reps: number | null;
+    };
+    /**
+     * SuggestionReason
+     * @description Why, as a code the phone turns into the chip and the Why sheet.
+     * @enum {string}
+     */
+    SuggestionReason:
+      | "harder_once"
+      | "harder_twice"
+      | "easier_once"
+      | "easier_twice"
+      | "easier_capped"
+      | "on_target"
+      | "unrated"
+      | "top_of_range"
+      | "top_of_range_twice"
+      | "top_at_limit"
+      | "range_building"
+      | "range_missed"
+      | "simple_easy"
+      | "simple_good"
+      | "simple_good_twice"
+      | "simple_hard"
+      | "simple_hard_twice"
+      | "backoff"
+      | "big_step"
+      | "trimmed"
+      | "increase_blocked"
+      | "plateau_step"
+      | "plateau_reps"
+      | "plateau_reset"
+      | "no_rule"
+      | "first_time";
+    /**
+     * Swap
+     * @description ⋯ → Swap → pick: a planned exercise swapped in the gym.
+     *
+     *     The pick is remembered (it is offered first next time); ``rest_of_block``
+     *     also queues a pending card asking to keep it (`app.domain.swaps.SwapScope`).
+     *     The sets logged after it carry the substitute's ``exercise_id`` and this
+     *     exercise as ``replaced_exercise_id``.
+     */
+    Swap: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /** Exercise Id */
+      exercise_id: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "swap";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /** @default session */
+      scope: components["schemas"]["SwapScope"];
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+      /** Swap Exercise Id */
+      swap_exercise_id: string;
+    };
+    /**
+     * SwapRead
+     * @description One movement offered in place of another.
+     */
+    SwapRead: {
+      /** Exercise Id */
+      exercise_id: string;
+      /** Exercise Name */
+      exercise_name: string;
+    };
+    /**
+     * SwapScope
+     * @description How long a swap made in the gym is meant to hold.
+     *
+     *     ``session`` is the default — the rack is taken *today* — and changes
+     *     nothing beyond remembering the pick. ``rest_of_block`` is a wish to
+     *     change the plan, which the gym floor does not do on its own: it is
+     *     stored as a pending card (:data:`SWAP_REST_OF_BLOCK`) for the athlete to
+     *     confirm off the gym floor and the coach to read, never applied to the
+     *     planned sessions directly. Editing every remaining session from a tap
+     *     between two sets was the alternative; a plan change has its own reviewed
+     *     path (proposals), and a swap picked in a hurry should not take it.
+     * @enum {string}
+     */
+    SwapScope: "session" | "rest_of_block";
     /**
      * SyncBatch
      * @description One upload from the outbox, applied in order, all or nothing.
@@ -10792,6 +11112,44 @@ export interface operations {
       };
     };
   };
+  "exercises-list_preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExercisePreferenceRead"][];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+    };
+  };
   "exercises-list_exercises": {
     parameters: {
       query?: {
@@ -11059,6 +11417,251 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-get_preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExercisePreferenceRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description The write lost a race against a concurrent one */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-update_preferences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ExercisePreferenceUpdate"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExercisePreferenceRead"];
+        };
+      };
+      /** @description Malformed body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Not easing back in, or nothing easier to ease back in on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description An exercise named as its own swap */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidationErrorDetail"];
+        };
+      };
+    };
+  };
+  "exercises-advance_ease_back": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExercisePreferenceRead"];
+        };
+      };
+      /** @description No valid session */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description No such exercise */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Not easing back in, or nothing easier to ease back in on */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  "exercises-get_substitutes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        exercise_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SubstitutesRead"];
         };
       };
       /** @description No valid session */

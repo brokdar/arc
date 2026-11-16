@@ -72,7 +72,9 @@ from app.domain.activity import (
     session_date,
 )
 from app.domain.actor import Actor, ActorKind
+from app.domain.cards import CardPriority
 from app.domain.safety import RedFlagSymptom
+from app.domain.swaps import SWAP_REST_OF_BLOCK, SwapScope, rest_of_block_card
 from app.domain.sync import (
     EXISTS,
     MAX_BATCH_MUTATIONS,
@@ -103,6 +105,8 @@ from app.services.activity import (
     check_logged_set,
     check_session_context,
 )
+from app.services.cards import CardService
+from app.services.exercise_preferences import ExercisePreferencesService
 from app.services.exercises import ExerciseService
 from app.services.guardrails import check_write_cap
 from app.services.safety import SafetyService
@@ -133,6 +137,7 @@ AUDIT_ENTITY = {
     MutationKind.SESSION_CLAIM: "session",
     MutationKind.SESSION_REOPEN: "session",
     MutationKind.RED_FLAG: "session",
+    MutationKind.SWAP: "exercise_preference",
 }
 
 #: LoggedSetRow columns a synced edit may change on an existing row. Not
@@ -276,9 +281,13 @@ class SyncService:
         exercises: ExerciseService,
         notes: ExerciseNoteRepository,
         safety: SafetyService,
+        preferences: ExercisePreferencesService,
+        cards: CardService,
         now: Callable[[], dt.datetime] | None = None,
     ) -> None:
         self._safety = safety
+        self._preferences = preferences
+        self._cards = cards
         self._now = now or (lambda: dt.datetime.now(dt.UTC))
         self._session = session
         self._repository = repository
@@ -306,6 +315,8 @@ class SyncService:
             ExerciseService.from_session(session),
             ExerciseNoteRepository(session),
             SafetyService.from_session(session),
+            ExercisePreferencesService.from_session(session),
+            CardService.from_session(session),
             now=now,
         )
 
@@ -534,6 +545,12 @@ class SyncService:
             await self._safety.raise_red_flag(symptom, session_id=row.id, actor=actor)
             return row, ("red_flag",)
 
+        if mutation.kind is MutationKind.SWAP:
+            # Not a session field either: the pick is the athlete's preference,
+            # applied once as received; the sets carry the swap themselves.
+            await self._swap(mutation, session_id=row.id, actor=actor)
+            return row, ("swap",)
+
         if mutation.kind is MutationKind.SESSION_REOPEN:
             ended = entity.values.get("end_time")
             if ended is None:
@@ -552,6 +569,34 @@ class SyncService:
         await self._repository.save(entity)
         await self._sessions.add(row)
         return row, merged.changed
+
+    async def _swap(
+        self, mutation: MutationInput, *, session_id: uuid.UUID, actor: Actor
+    ) -> None:
+        """Remember the pick; for ``rest_of_block``, queue the pending card."""
+        original = mutation.exercise_id or ""
+        pick = str(mutation.fields.get("swap_exercise_id") or "")
+        with domain_rules():
+            scope = SwapScope(mutation.fields.get("scope", SwapScope.SESSION))
+        await self._preferences.remember(original, pick, actor=actor)
+        if scope is not SwapScope.REST_OF_BLOCK:
+            return
+        catalogue = await self._exercises.catalogue()
+        headline, because = rest_of_block_card(
+            catalogue[original].name, catalogue[pick].name
+        )
+        await self._cards.queue(
+            actor=actor,
+            kind=SWAP_REST_OF_BLOCK,
+            priority=CardPriority.SUNDAY,
+            headline=headline,
+            because=because,
+            payload={
+                "session_id": str(session_id),
+                "exercise_id": original,
+                "swap_exercise_id": pick,
+            },
+        )
 
     async def _new_session(self, fields: Mapping[str, Any]) -> SessionRow:
         """The row a first `session_start` creates: active, not yet finished."""

@@ -67,11 +67,13 @@ import {
   type ActiveSession,
   advance,
   allDone,
+  answerStarting,
   applyRating,
   asksEffort,
   type Draft,
   deleteMutation,
   draftFor,
+  inStartingFlow,
   type LoggedSet,
   lineComplete,
   nextOpenLine,
@@ -84,7 +86,10 @@ import {
   ratingSnapshot,
   restFor,
   type Stamp,
+  type StartingAnswer,
   setMutation,
+  settleStarting,
+  startingKg,
   startMutation,
   stoppedByPain,
   UNPLANNED,
@@ -92,7 +97,18 @@ import {
   workingSetsOf,
 } from "@/components/strength/session-model";
 import { loadSession, saveSession } from "@/components/strength/session-store";
+import { StartingFlow } from "@/components/strength/starting-flow";
+import { nextDraft, stepDownAfter } from "@/components/strength/step-down";
 import { Stepper } from "@/components/strength/stepper";
+import {
+  applySwap,
+  linesWithSwaps,
+  needsSwapPrompt,
+  replacedBy,
+  type SwapScope,
+} from "@/components/strength/swap/swap-model";
+import { SwapPanel, SwapPrompt } from "@/components/strength/swap/swap-panel";
+import { WhySheet } from "@/components/strength/why-sheet";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -146,6 +162,11 @@ import { cn } from "@/lib/utils";
  * reload offers "Resume" at the next unlogged set with the rest timer
  * intact. Opening the screen for a session not yet started starts it — the
  * tap on Today's "Start" is the whole of starting.
+ *
+ * **A line never logged** (`starting_flow` in the packet) opens with the
+ * starting-weight flow (`starting-flow.tsx`) in place of its current set and
+ * ✓; its easy sets are logged as warm-ups, and the first working set opens at
+ * the weight it settled on.
  *
  * **Undo** takes the last action's mutations back out of the outbox for 6 s;
  * one that already uploaded is compensated (a delete, or the rating it
@@ -260,7 +281,7 @@ export function LoggingScreen({
   // The finish summary asks the server for the session's new bests, so it
   // waits until the outbox has drained: before that the server cannot know.
   const [uploaded, setUploaded] = useState(false);
-  const [sheet, setSheet] = useState<"pain" | "redFlag" | null>(null);
+  const [sheet, setSheet] = useState<"pain" | "redFlag" | "swap" | null>(null);
   const opened = useRef(false);
   // Outbox writes and state saves run one after another, in action order.
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -412,24 +433,42 @@ export function LoggingScreen({
     return () => window.clearTimeout(timer);
   }, [undo]);
 
-  const lines = session ? linesOf(session, planned) : [];
+  // The session's lines as the athlete shaped them (reordered, sets or
+  // exercises added: `session-edits/edits.ts`), and as the screen shows them:
+  // a swapped line keeps its `line_ref` but shows, pre-fills and logs the
+  // substitute.
+  const plannedLines = session ? linesOf(session, planned) : [];
+  const lines = linesWithSwaps(session, plannedLines, packet);
   const line: PacketLine | undefined = session
     ? lines[session.lineIndex]
+    : undefined;
+  const plannedLine: PacketLine | undefined = session
+    ? plannedLines[session.lineIndex]
     : undefined;
   const gym = useMemo(() => (packet ? gymOf(packet) : null), [packet]);
   const scale = packet?.effort.scale ?? "reps_left";
   const units = packet?.settings.units ?? "kg";
 
-  // The current set's numbers open with the line's pre-fill or its last set,
-  // and reset whenever the set they are for changes.
+  // The current set's numbers open with the line's pre-fill or its last set
+  // (one step lighter after a miss, `step-down.ts`), and reset whenever the
+  // set they are for changes — or the set they are read off does (✓ logs the
+  // planned reps, so a miss is often entered by editing that set afterwards,
+  // and keying on the count alone left the next set at the old weight), or
+  // the starting-weight flow settles the weight it opens with.
+  const lastWorking =
+    session && line ? workingSetsOf(session, line.line_ref) : [];
+  const readOff = lastWorking.at(-1);
+  const settled = line
+    ? session?.starting?.[line.line_ref]?.settled === true
+    : false;
   const draftKey =
     session && line
-      ? `${line.line_ref}:${workingSetsOf(session, line.line_ref).length}`
+      ? `${line.line_ref}:${line.exercise_id}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
-  if (session && line && draftKey !== draftFor_) {
+  if (session && line && gym && draftKey !== draftFor_) {
     setDraftFor(draftKey);
-    setDraft(draftFor(session, line));
+    setDraft(nextDraft(session, planned, line, gym));
   }
 
   if (phase === "loading") {
@@ -487,6 +526,7 @@ export function LoggingScreen({
   const done = lines.length > 0 && allDone(session, lines);
   const readOnly = handedOver(active, session.sessionClientId, me);
   const note = line ? noteFor(line.exercise_id, packet, notes) : null;
+  const starting = line !== undefined && inStartingFlow(session, line);
   const weightText = (kg: number | null) =>
     kg === null
       ? t("train.bodyweight")
@@ -511,6 +551,7 @@ export function LoggingScreen({
       clientId: uuid7(st.now),
       lineRef: line.line_ref,
       exerciseId: line.exercise_id,
+      replacedExerciseId: plannedLine ? replacedBy(session, plannedLine) : null,
       warmup: false,
       loadKg: draft.loadKg,
       reps: draft.durationS !== null ? null : draft.reps,
@@ -602,6 +643,34 @@ export function LoggingScreen({
       })),
     });
     void commit({ ...session, sets: placed.sets }, mutations);
+  };
+
+  const answerStart = (answer: StartingAnswer) => {
+    if (!line) return;
+    const st = stamp();
+    const { next, set } = answerStarting(
+      session,
+      line,
+      gym,
+      answer,
+      uuid7(st.now),
+    );
+    const create = setMutation(session, set, session.sets.length, scale, st);
+    setUndo({
+      before: session,
+      writes: [
+        {
+          mutationId: create.mutation_id,
+          compensate: () => deleteMutation(session, set.clientId, stamp()),
+        },
+      ],
+    });
+    void commit(next, [create]);
+  };
+
+  const typeStart = (kg: number) => {
+    if (!line) return;
+    void commit(settleStarting(session, line.line_ref, kg));
   };
 
   const undoLast = () => {
@@ -848,6 +917,15 @@ export function LoggingScreen({
     ).then(() => flush());
   };
 
+  /** Swap the current planned line for `exerciseId`: the pick tap. */
+  const swapLine = (exerciseId: string, scope: SwapScope) => {
+    setSheet(null);
+    if (!plannedLine) return;
+    const swapped = applySwap(session, plannedLine, exerciseId, scope, stamp());
+    setUndo(null);
+    void commit(swapped.session, [swapped.mutation]);
+  };
+
   const moveLine = (direction: 1 | -1) => {
     setMenu(false);
     const count = lines.length;
@@ -1049,6 +1127,18 @@ export function LoggingScreen({
                 <button
                   type="button"
                   role="menuitem"
+                  disabled={!plannedLine || plannedLine.swaps.length === 0}
+                  className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
+                  onClick={() => {
+                    setMenu(false);
+                    setSheet("swap");
+                  }}
+                >
+                  {t("swap.menu")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
                   disabled={painTarget === null}
                   className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
                   onClick={() => {
@@ -1135,9 +1225,37 @@ export function LoggingScreen({
                   )}
                 </div>
               ))}
-            {line ? (
+            {!readOnly &&
+            plannedLine &&
+            needsSwapPrompt(session, plannedLine) ? (
+              <SwapPrompt
+                line={plannedLine}
+                onPick={(id) => swapLine(id, "session")}
+              />
+            ) : null}
+            {line?.ease_back ? (
+              <p role="note" className="text-ink-secondary text-sm">
+                {t("swap.easeBack", {
+                  exercise: line.ease_back.current.exercise_name,
+                  step: String(line.ease_back.step + 1),
+                  total: String(line.ease_back.steps.length),
+                })}
+              </p>
+            ) : null}
+            {!readOnly && line && starting && line.equipment ? (
+              <StartingFlow
+                kg={startingKg(session, line, gym)}
+                equipment={line.equipment}
+                gym={gym}
+                units={units}
+                weightText={weightText}
+                onAnswer={answerStart}
+                onType={typeStart}
+              />
+            ) : line ? (
               <LineBody
                 line={line}
+                planned={planned}
                 session={session}
                 packet={packet}
                 gym={gym}
@@ -1176,7 +1294,7 @@ export function LoggingScreen({
                 {t("train.undo")}
               </Button>
             ) : null}
-            {readOnly ? null : done ? (
+            {readOnly || starting ? null : done ? (
               <Button
                 className="h-[72px] text-xl"
                 onClick={() => setPhase("finishing")}
@@ -1255,6 +1373,13 @@ export function LoggingScreen({
               onClose={() => setDialog(null)}
             />
           ) : null}
+          {sheet === "swap" && plannedLine ? (
+            <SwapPanel
+              line={plannedLine}
+              onPick={swapLine}
+              onClose={() => setSheet(null)}
+            />
+          ) : null}
           {sheet === "pain" ? (
             <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
           ) : null}
@@ -1306,6 +1431,7 @@ function BackToToday() {
 
 function LineBody({
   line,
+  planned: plannedSession,
   session,
   packet,
   gym,
@@ -1322,6 +1448,7 @@ function LineBody({
 }: {
   lines: readonly PacketLine[];
   line: PacketLine;
+  planned: PacketSession | null;
   session: ActiveSession;
   packet: Packet;
   gym: Gym;
@@ -1381,12 +1508,17 @@ function LineBody({
   };
 
   const planned = draftFor({ ...session, sets: [] }, line);
-  const reason =
-    line.prefill.source === "prescription"
+  // A step-down after a missed set names itself; without a suggestion
+  // (Plain logbook, follow-exactly, a line with no loadable weight) the chip
+  // says where the pre-fill came from.
+  const step = stepDownAfter(session, plannedSession, line, gym);
+  const reason = step
+    ? t("train.reasonStepDown", { weight: weightText(step.fromKg - step.toKg) })
+    : line.prefill.source === "prescription"
       ? t("train.reasonPlan")
-      : line.prefill.source === "last_logged"
-        ? t("train.reasonLast")
-        : t("train.reasonBlank");
+      : line.prefill.source === "blank"
+        ? t("train.reasonBlank")
+        : t("train.reasonLast");
   const plates =
     equipment === "barbell" && draft?.loadKg
       ? platesPerSide(draft.loadKg, "barbell", gym)
@@ -1574,11 +1706,13 @@ function LineBody({
                 })}
               </p>
             ) : null}
-            <p>
-              <span className="inline-flex rounded-md border border-accent-border bg-accent-surface px-2 py-0.5 text-accent-quiet text-xs">
-                {reason}
-              </span>
-            </p>
+            <WhySheet
+              // The suggestion is for the session as planned; a step-down
+              // after a missed set today is newer, so it speaks instead.
+              suggestion={step ? null : line.suggestion}
+              fallback={reason}
+              weightText={weightText}
+            />
             {plates ? (
               <p className="font-mono text-ink-muted">
                 {t("train.plates", {
