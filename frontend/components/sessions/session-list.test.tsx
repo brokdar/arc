@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -238,8 +238,13 @@ describe("a log longer than one page", () => {
     expect(await screen.findByText("26–50 of 57")).toBeInTheDocument();
 
     // Every step asked the server for its page: a pager that paged the rows
-    // it already had would show the same twenty-five three times.
-    expect(offsets).toEqual(["0", "25", "50", "25"]);
+    // it already had would show the same twenty-five three times. Waited
+    // for, not read at once: page two is already in the query cache, so its
+    // rows render before the background refetch reaches the server, and a
+    // bare read raced that request and lost under full-suite load (it
+    // blocked the strength-swaps push on 11 Nov 2026). A pager that never
+    // refetches still fails here: the fourth offset never arrives.
+    await waitFor(() => expect(offsets).toEqual(["0", "25", "50", "25"]));
   });
 
   it("returns to the first page when the filter changes under it", async () => {
