@@ -344,7 +344,7 @@
     "limitDown": "→ begrenzt auf die größte Senkung auf einmal",
     "limitStep": "→ begrenzt auf einen Schritt, wie bei kleinen Muskeln",
     "limitBigStep": "→ der nächste Schritt ist zu groß, also erst eine Wiederholung mehr",
-    "limitOneStep": "→ begrenzt auf einen Schritt: eine Wiederholung Unterschied bewegt höchstens einen Schritt",
+    "limitOneStep": "→ nur ein Schritt: eine Wiederholung mehr oder weniger zählt nur einen Schritt",
     "rounded": "→ mit deinen Scheiben machbar = {weight}.",
     "ruleLine": "Regel: {rule} · {basis}",
     "rule": {
