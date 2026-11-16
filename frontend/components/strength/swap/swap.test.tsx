@@ -101,7 +101,7 @@ describe("swapping in the gym", () => {
 
     expect(swapTo("Barbell Row")).toBe(3);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Log set 1: 40 kg × 8" }),
+      await screen.findByRole("button", { name: "Log set 1: 40 kg × 10" }),
     );
     await screen.findByRole("heading", { name: "Set 2 of 3" });
 
@@ -111,7 +111,8 @@ describe("swapping in the gym", () => {
       replaced_exercise_id: "single_arm_dumbbell_row",
       planned_line_ref: "0.0",
       load_kg: 40,
-      reps: 8,
+      // The weight is the substitute's own; the reps are the plan's 3 × 10.
+      reps: 10,
     });
     // A barbell row is two-handed: the one-arm line's per-side flag stays behind.
     expect(logged.set).not.toHaveProperty("per_side");
@@ -132,7 +133,7 @@ describe("swapping in the gym", () => {
     swapTo("Barbell Row");
 
     expect(
-      await screen.findByRole("button", { name: "Log set 1: 40 kg × 8" }),
+      await screen.findByRole("button", { name: "Log set 1: 40 kg × 10" }),
     ).toBeVisible();
     expect(screen.getByText("Same as last time")).toBeVisible();
   });
@@ -143,7 +144,8 @@ describe("swapping in the gym", () => {
     swapTo("Pendlay Row");
 
     await screen.findByRole("heading", { name: "Pendlay Row", level: 1 });
-    expect(screen.getByText("No history yet")).toBeVisible();
+    // Never logged: the starting-weight flow finds its first weight.
+    expect(screen.getByText("Find your starting weight")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /Log set 1: 20 kg/ }),
     ).not.toBeInTheDocument();
@@ -155,7 +157,7 @@ describe("swapping in the gym", () => {
 
     for (const n of [1, 2]) {
       fireEvent.click(
-        await screen.findByRole("button", { name: `Log set ${n}: 40 kg × 8` }),
+        await screen.findByRole("button", { name: `Log set ${n}: 40 kg × 10` }),
       );
       await screen.findByRole("heading", { name: `Set ${n + 1} of 3` });
     }

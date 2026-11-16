@@ -155,6 +155,7 @@
     "reasonPlan": "From your plan",
     "reasonLast": "Same as last time",
     "reasonBlank": "No history yet",
+    "reasonStepDown": "Next sets {weight} lighter: that set was a lot harder",
     "plates": "per side: {plates}",
     "bar": "bar {weight}",
     "next": "next: {summary}",
@@ -189,6 +190,21 @@
     "simpleLabel": "{answer} — log the set",
     "withoutRating": "✓ log without rating",
     "withoutRatingLabel": "Log the set without rating"
+  },
+  "starting": {
+    "title": "Find your starting weight",
+    "instruction": "Do {reps} easy reps with this weight.",
+    "total": "{weight} in total",
+    "plates": "{plates} on each side",
+    "emptyBar": "Just the bar",
+    "question": "How did that feel?",
+    "easy": "Easy",
+    "good": "Good",
+    "hard": "Hard",
+    "answerLabel": "{answer} — log these {reps} reps",
+    "typeHint": "Know your weight already? Type it in.",
+    "typeLabel": "Your working weight",
+    "use": "Use this weight"
   },
   "rest": {
     "label": "Rest",

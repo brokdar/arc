@@ -17,8 +17,13 @@ import type { Mutation } from "@/lib/offline/db";
  * **A swapped line keeps its `line_ref`**, so the substitute's sets answer
  * the planned line — logged with the substitute's own `exercise_id` and the
  * planned one as `replaced_exercise_id` — and completing them completes the
- * line. **Its first weight is the substitute's own**: the last numbers logged
- * for it, else the starting flow (a blank pre-fill). The planned exercise's
+ * line. **Its first weight is the substitute's own**: the weight last logged
+ * for it, else the starting flow (a blank pre-fill). **Its reps are the
+ * plan's** where the plan names reps, as the server pre-fills a weight from
+ * history under a plan's reps (`_prefill`, follow-exactly): the substitute
+ * answers the planned 3 × 10, and pre-filling the 8 it was last done for
+ * would have the step-down (`step-down.ts`) call the very set it suggested a
+ * miss. The planned exercise's
  * pre-fill, warm-ups and plates are dropped, because 20 kg on a one-arm row
  * says nothing about a barbell row. Pinned by `swap.test.tsx`.
  */
@@ -56,7 +61,7 @@ export function swappedLine(
     ? {
         source: "last_logged",
         load_kg: last.load_kg,
-        reps: last.reps,
+        reps: lowOf(line.prescription.reps) ?? last.reps,
         duration_s: last.duration_s,
         starting_flow: false,
       }
@@ -141,4 +146,10 @@ export function applySwap(
       scope,
     },
   };
+}
+
+/** A count's low end — the reps every set must reach. */
+function lowOf(count: number | number[] | null | undefined): number | null {
+  if (count === null || count === undefined) return null;
+  return Array.isArray(count) ? (count[0] ?? null) : count;
 }

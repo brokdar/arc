@@ -511,3 +511,57 @@ async def test_the_frontend_packet_fixtures_swaps_are_the_servers(
         "pendlay_row",
         "single_arm_dumbbell_row",
     ]
+
+
+async def test_the_frontend_back_squat_fixtures_swaps_are_the_servers(
+    client: AsyncClient,
+) -> None:
+    """`frontend/tests/mocks/handlers-strength.ts` types a back squat's swaps
+    and library into `startingFlowPacket` and the barbell-line variant; this
+    is where they come from — a back squat planned here and read back from
+    the packet. A ranking change that moves them fails here first.
+    """
+    response = await client.post(
+        PLANNED,
+        json={
+            "date": athlete_today().isoformat(),
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "back_squat",
+                                "sets": 3,
+                                "reps": 5,
+                                "load": {"kind": "rpe", "value": 8},
+                            }
+                        ]
+                    }
+                ],
+            },
+            "success_criteria": [],
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = (await client.get(PACKET)).json()
+    (session,) = body["sessions"]
+    (squat,) = session["lines"]
+
+    assert squat["swaps"] == [
+        {"exercise_id": "box_squat", "exercise_name": "Box Squat"},
+        {"exercise_id": "safety_bar_squat", "exercise_name": "Safety Bar Squat"},
+        {
+            "exercise_id": "bulgarian_split_squat",
+            "exercise_name": "Bulgarian Split Squat",
+        },
+    ]
+    assert squat["avoided"] is False
+    assert squat["ease_back"] is None
+    assert [e["id"] for e in body["library"]] == [
+        "back_squat",
+        "box_squat",
+        "bulgarian_split_squat",
+        "safety_bar_squat",
+    ]
