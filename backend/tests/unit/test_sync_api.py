@@ -400,6 +400,41 @@ async def test_discarding_a_session_the_server_never_heard_of_is_a_no_op(
     assert [r["status"] for r in answer["results"]] == ["applied"]
 
 
+async def test_found_by_schemathesis_discard_for_an_unknown_session_is_200(
+    client: AsyncClient,
+) -> None:
+    # Schemathesis sent this and CI saw a 500: the receipt row's `kind` is a
+    # VARCHAR sized by the longest enum member, and "session_discard" (15) did
+    # not fit the 14 the column was created at on Postgres. SQLite ignores
+    # length, so the ORM-level check below is what pins the column.
+    response = await client.post(
+        SYNC,
+        json={
+            "schema_version": 1,
+            "mutations": [
+                {
+                    "kind": "session_discard",
+                    "mutation_id": "e3e70682-c209-1cac-a29f-6fbed82c07cd",
+                    "client_edit_time": "2000-01-01T00:00:00Z",
+                    "session_client_id": "0199a1b2-0000-7000-8000-00000000f001",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["status"] == "applied"
+
+
+def test_the_mutation_kind_column_fits_every_kind_in_the_migrations() -> None:
+    from app.domain.sync import MutationKind
+    from app.persistence.sync import SyncMutationRow
+
+    # The migrated column (0033) must hold the longest kind; the model is
+    # sized from the same enum, so a new longer kind needs a new migration.
+    kind_type: Any = SyncMutationRow.__table__.c.kind.type
+    assert kind_type.length == max(len(kind.value) for kind in MutationKind)
+
+
 async def test_a_session_with_a_logged_set_cannot_be_discarded(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
