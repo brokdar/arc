@@ -62,7 +62,7 @@ SET_IDS = [f"0199a1b2-0000-7000-8000-00000000b00{n}" for n in range(1, 5)]
 LUNGE = "forward_lunge"
 PRESCRIBED_SETS = 4
 
-HEADLINE = "Knee pain on lunges: try step-ups next time?"
+HEADLINE = "Pain on lunges: try step-ups next time?"
 
 
 def mid(n: int) -> str:
@@ -235,7 +235,7 @@ def test_a_movement_with_nothing_to_swap_still_gets_a_card() -> None:
     catalogue = {exercise.id: exercise for exercise in load_exercise_catalogue()}
     headline, because = pain_card(catalogue[LUNGE], None)
 
-    assert headline == "Knee pain on lunges: pick a different exercise next time?"
+    assert headline == "Pain on lunges: pick a different exercise next time?"
     assert because.endswith(PHYSIO_LINE)
 
 
@@ -545,3 +545,35 @@ async def test_the_catalogue_is_seeded_for_these_tests(
 ) -> None:
     catalogue = await ExerciseService.from_session(db_session).catalogue()
     assert {LUNGE, "step_up"} <= set(catalogue)
+
+
+async def test_a_second_sharp_set_on_the_same_exercise_queues_no_twin_card(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """UAT B9: two reports, one open card — and it outlives the first's undo."""
+    await two_lunge_sets(client)
+    await report_pain(client, "sharp", "4-5")
+    await sync(
+        client,
+        upsert(7, SET_IDS[0], 20, pain_kind="sharp", pain_band="6+"),
+    )
+
+    (card,) = await card_rows(db_session)
+    assert card.payload["set_client_ids"] == [SET_IDS[1], SET_IDS[0]]
+
+    # Taking back one set's note leaves the card: the other still stands.
+    await report_pain(client, None, None, n=8)
+    assert len(await card_rows(db_session)) == 1
+    await sync(client, upsert(9, SET_IDS[0], 30, pain_kind=None, pain_band=None))
+    assert await card_rows(db_session) == []
+
+
+async def test_the_pain_card_never_names_a_joint_the_athlete_did_not_report(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await two_lunge_sets(client)
+    await report_pain(client, "sharp", "4-5")
+
+    (card,) = await card_rows(db_session)
+    assert "knee" not in (card.headline + card.because).lower()
+    assert "joint" not in card.payload

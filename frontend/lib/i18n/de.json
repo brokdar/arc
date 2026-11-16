@@ -376,6 +376,7 @@
       "plateau_reps": "stabil, eine Wiederholung mehr",
       "plateau_reset": "stabil, kurz zurück und neu aufbauen",
       "no_rule": "wie beim letzten Mal",
+      "nearest_loadable": "das nächste Gewicht, das sich laden lässt",
       "first_time": "noch kein Verlauf"
     },
     "lastTwo": "Deine zwei letzten Male: je {set}{effort}.",

@@ -248,3 +248,22 @@ def test_gym_holds_equipment_only():
         "stack_step_kg",
         "stack_max_kg",
     ]
+
+
+def test_the_pound_gym_loads_round_numbers_of_pounds() -> None:
+    from app.domain.loading import KG_PER_LB, LB_GYM
+
+    def lb(kg: float) -> float:
+        return round(kg / KG_PER_LB, 1)
+
+    bar = [lb(w) for w in loadable_weights(Equipment.BARBELL, LB_GYM)]
+    assert bar[:4] == [45.0, 50.0, 55.0, 60.0]
+    assert 135.0 in bar
+    assert 225.0 in bar
+    assert all(w % 5 == 0 for w in bar)
+    bells = [lb(w) for w in loadable_weights(Equipment.DUMBBELL, LB_GYM)]
+    assert bells[:3] == [5.0, 10.0, 15.0]
+    assert bells[-1] == 100.0
+    # 100 kg is 220.5 lb: the gym loads 220, as 45 + 35 + 5 + 2.5 a side.
+    plates = plates_per_side(nearest_loadable(100.0, gym=LB_GYM), gym=LB_GYM)
+    assert [lb(p) for p in plates] == [45.0, 35.0, 5.0, 2.5]

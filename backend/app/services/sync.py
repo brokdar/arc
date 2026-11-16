@@ -109,6 +109,7 @@ from app.services.cards import CardService
 from app.services.exercise_preferences import ExercisePreferencesService
 from app.services.exercises import ExerciseService
 from app.services.guardrails import check_write_cap
+from app.services.matching import MatchingService
 from app.services.safety import SafetyService
 
 #: The `reason` on a metric version a sync recomputed.
@@ -266,6 +267,8 @@ class _Touched:
 
     row: SessionRow
     finished: bool = False
+    #: The plan the phone started it from, read at the finish.
+    planned_session_id: uuid.UUID | None = None
 
 
 class SyncService:
@@ -460,6 +463,8 @@ class SyncService:
             )
             entry = touched.setdefault(row.id, _Touched(row))
             entry.finished = True
+            planned = merged.values.get("planned_session_id")
+            entry.planned_session_id = None if planned is None else uuid.UUID(planned)
             closed += 1
         return closed
 
@@ -499,6 +504,10 @@ class SyncService:
             if changed:
                 entry = touched.setdefault(row.id, _Touched(row))
                 entry.finished |= "end_time" in changed
+                if "end_time" in changed:
+                    entry.planned_session_id = await self._intended_plan(
+                        mutation.session_client_id
+                    )
         payload["changed"] = sorted(changed)
         await self._audit.record(
             actor=actor,
@@ -569,6 +578,14 @@ class SyncService:
         await self._repository.save(entity)
         await self._sessions.add(row)
         return row, merged.changed
+
+    async def _intended_plan(self, client_id: uuid.UUID | None) -> uuid.UUID | None:
+        """The planned session a synced session was started from, if any."""
+        if client_id is None:
+            return None
+        entity = await self._repository.entity(SESSION, str(client_id))
+        planned = None if entity is None else entity.values.get("planned_session_id")
+        return None if planned is None else uuid.UUID(planned)
 
     async def _swap(
         self, mutation: MutationInput, *, session_id: uuid.UUID, actor: Actor
@@ -735,6 +752,10 @@ class SyncService:
             await self._session_service.refresh_derived(
                 row, actor=actor, reason=reason, match=entry.finished
             )
+            if entry.finished and entry.planned_session_id is not None:
+                await MatchingService.from_session(self._session).adopt_intent(
+                    session_id, entry.planned_session_id, actor=actor
+                )
 
 
 async def run_abandoned_sessions_sweep() -> None:
