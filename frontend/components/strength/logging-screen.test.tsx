@@ -289,9 +289,6 @@ describe("numbers and fixes", () => {
     // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
-    // Finishing flushes the outbox; with signal the upload can empty it
-    // before the read below, so these read it as a basement with none.
-    syncServer().healthy = false;
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Don't learn from today" }),
@@ -321,9 +318,6 @@ describe("numbers and fixes", () => {
     // No signal: Finish's upload must not empty the outbox before it is read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
-    // Finishing flushes the outbox; with signal the upload can empty it
-    // before the read below, so these read it as a basement with none.
-    syncServer().healthy = false;
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),
@@ -424,6 +418,46 @@ describe("AC-74: a missed set steps the rest down, on the screen", () => {
     expect(
       screen.getByRole("button", { name: "Edit set 1: 100 kg × 6" }),
     ).toBeVisible();
+  });
+
+  async function editReps(n: number, summary: string, reps: number) {
+    fireEvent.click(
+      screen.getByRole("button", { name: `Edit set ${n}: ${summary}` }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Reps" }), {
+      target: { value: String(reps) },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  }
+
+  // ✓ always logs the planned reps, so a miss is often entered by editing the
+  // set after the tap: the next set's numbers must follow the edit, not only
+  // the reason line.
+  it("set 2 ticked at 8, then edited to 6: set 3 offers 97.5 kg", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 8");
+    await editReps(2, "100 kg × 8", 6);
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 3: 97.5 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+  });
+
+  it("a missed set edited back up to 8 takes the step-down back", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+    await editReps(2, "100 kg × 6", 8);
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 3: 100 kg × 8" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
   });
 });
 

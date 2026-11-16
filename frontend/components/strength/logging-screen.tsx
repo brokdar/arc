@@ -299,10 +299,15 @@ export function LoggingScreen({
 
   // The current set's numbers open with the line's pre-fill or its last set
   // (one step lighter after a miss, `step-down.ts`), and reset whenever the
-  // set they are for changes.
+  // set they are for changes — or the set they are read off does: ✓ logs the
+  // planned reps, so a miss is often entered by editing that set afterwards,
+  // and keying on the count alone left the next set at the old weight.
+  const lastWorking =
+    session && line ? workingSetsOf(session, line.line_ref) : [];
+  const readOff = lastWorking.at(-1);
   const draftKey =
     session && line
-      ? `${line.line_ref}:${workingSetsOf(session, line.line_ref).length}`
+      ? `${line.line_ref}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
   if (session && line && planned && gym && draftKey !== draftFor_) {

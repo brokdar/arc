@@ -27,7 +27,9 @@ import { type Gym, stepDown } from "@/lib/strength";
  *
  * **Derived, not stored.** The step-down is read off the logged sets every
  * time, so undoing the missed set, or editing its reps up before the next
- * set is logged, takes the step-down back with it. Once a lighter set is
+ * set is logged, takes the step-down back with it — and editing a ticked set
+ * down to a miss brings it in (the screen re-reads the next set's numbers
+ * when the last set's load or reps change, `logging-screen.tsx` `draftKey`). Once a lighter set is
  * logged, the next one opens at that set's weight as every set does
  * (`draftFor`), which is what keeps "the remaining sets" lighter without a
  * flag: the step is taken from the last set's weight, so a second miss
