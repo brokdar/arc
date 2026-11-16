@@ -449,7 +449,12 @@ async def test_unlinking_withdraws_the_standing_judgement(
     assert dropped.status_code == 200, dropped.text
     withdrawn = await client.get(f"{SESSIONS}/{done['id']}/score")
     assert withdrawn.status_code == 404
-    assert "score/history" in withdrawn.json()["detail"]
+    # The detail is rendered to the athlete as the empty state, so it names no
+    # API path (found in the strength UAT: "/api/v1/sessions/<id>/score/history").
+    detail = withdrawn.json()["detail"]
+    assert "/api/" not in detail
+    assert "score/history" not in detail
+    assert "no longer answers to a prescription" in detail
     # The alignment goes with it: a table of which effort answered which step
     # is meaningless for a session with no steps to answer.
     assert (await client.get(f"{SESSIONS}/{done['id']}/alignment")).status_code == 404

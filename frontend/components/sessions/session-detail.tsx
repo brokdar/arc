@@ -124,6 +124,10 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
   const elapsedS =
     (Date.parse(session.end_time) - Date.parse(session.start_time)) / 1000;
 
+  const showSets =
+    session.recording_kind === "manual" || session.logged_sets.length > 0;
+  const setsFirst = session.discipline === "strength";
+
   return (
     <>
       <Toolbar>
@@ -159,7 +163,14 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           // that. Crashing on a missing key would be a worse answer.
           metrics={session.metrics ?? null}
           hasRecording={session.recordings.length > 0}
+          discipline={session.discipline}
         />
+
+        {/* A lift leads with what was lifted; the match, judgement and file
+            accounting that follow are about the record, not the workout. */}
+        {showSets && setsFirst ? (
+          <LoggedSets sets={session.logged_sets} />
+        ) : null}
 
         {session.recordings.length > 0 ? (
           <PowerCurveCard sessionId={session.id} />
@@ -250,8 +261,7 @@ export function SessionDetail({ sessionId }: SessionDetailProps) {
           )}
         </section>
 
-        {session.recording_kind === "manual" ||
-        session.logged_sets.length > 0 ? (
+        {showSets && !setsFirst ? (
           <LoggedSets sets={session.logged_sets} />
         ) : null}
 

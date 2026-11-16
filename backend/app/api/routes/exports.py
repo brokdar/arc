@@ -81,6 +81,17 @@ def attachment(filename: str) -> dict[str, str]:
     return {"Content-Disposition": f'attachment; filename="{filename}"'}
 
 
+def csv_name(stem: str, variant: CsvVariant) -> str:
+    """`arc-sets.csv`, or `arc-sets-semicolon.csv` for the other dialect.
+
+    The two variants are different files (a delimiter and a decimal mark), and
+    one name for both made the second download overwrite or renumber the first
+    in a downloads folder. The default keeps its historic name.
+    """
+    suffix = "" if variant is CsvVariant.COMMA else f"-{variant.value}"
+    return f"{stem}{suffix}.csv"
+
+
 @router.get("/workouts.json", response_model_exclude_none=True)
 async def export_workouts(service: ServiceDep, response: Response) -> WorkoutsExport:
     """Every session with logged sets, as openweight `WorkoutLog` documents.
@@ -99,7 +110,8 @@ async def export_sets(
 ) -> CsvResponse:
     """Every logged set, one row each, with formula-looking text escaped."""
     return CsvResponse(
-        await service.sets_csv(variant), headers=attachment("arc-sets.csv")
+        await service.sets_csv(variant),
+        headers=attachment(csv_name("arc-sets", variant)),
     )
 
 
@@ -109,7 +121,8 @@ async def export_strong(
 ) -> CsvResponse:
     """Every logged set in Strong's column layout (lossy: no side, W/D/F only)."""
     return CsvResponse(
-        await service.strong_csv(variant), headers=attachment("arc-strong.csv")
+        await service.strong_csv(variant),
+        headers=attachment(csv_name("arc-strong", variant)),
     )
 
 
@@ -138,5 +151,6 @@ async def export_session(
         )
     table = await service.session_csv(session_id, variant)
     return CsvResponse(
-        table.body, headers=attachment(f"arc-session-{table.local_date}.csv")
+        table.body,
+        headers=attachment(csv_name(f"arc-session-{table.local_date}", variant)),
     )

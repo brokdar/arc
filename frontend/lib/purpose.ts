@@ -1,4 +1,6 @@
 import type { components } from "@/generated/api/schema";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { type Translate, translatorFor } from "@/lib/i18n/provider";
 
 export type Purpose = components["schemas"]["Purpose"];
 export type Discipline = components["schemas"]["Discipline"];
@@ -171,6 +173,27 @@ export function purposeTone(purpose: Purpose): PurposeTone {
 /** The purpose's human label — also a card's title when it has none. */
 export function purposeLabel(purpose: Purpose): string {
   return PURPOSE_TONES[purpose].label;
+}
+
+/**
+ * The purpose's label in the athlete's language (`purposes.*` in the
+ * catalogues). `PURPOSE_TONES[p].label` stays the English reference — it is
+ * what every surface not yet translated still prints; this is what Today
+ * (and anything translated after it) uses.
+ */
+export function purposeName(
+  purpose: Purpose,
+  t: Translate = translatorFor("en"),
+): string {
+  return t(`purposes.${purpose}` as MessageKey);
+}
+
+/** `purposeInSentence` in the athlete's language (`purposeSentence.*`). */
+export function purposeSentence(
+  purpose: Purpose,
+  t: Translate = translatorFor("en"),
+): string {
+  return t(`purposeSentence.${purpose}` as MessageKey);
 }
 
 /**

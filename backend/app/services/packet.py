@@ -118,6 +118,7 @@ from app.persistence.exercise_preferences import ExercisePreferenceRow
 from app.persistence.exercises import ExerciseRow
 from app.persistence.planned_sessions import PlannedSessionRow
 from app.persistence.strength_history import StrengthHistoryRepository, exercise_match
+from app.persistence.workouts import WorkoutRepository
 from app.services.athlete_settings import AthleteSettingsService
 from app.services.exercise_preferences import (
     EaseBack,
@@ -234,6 +235,8 @@ class PacketSession:
     plan_id: uuid.UUID
     follow_exactly: bool
     lines: list[PacketLine]
+    #: The library workout's name; ``None`` for a free-hand session.
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +290,9 @@ class PacketService:
         preferences: ExercisePreferencesService,
         records: StrengthHistoryRepository,
         exercises: ExerciseService,
+        workouts: WorkoutRepository,
     ) -> None:
+        self._workouts = workouts
         self._preferences = preferences
         self._exercises = exercises
         self._planned = planned
@@ -307,6 +312,7 @@ class PacketService:
             ExercisePreferencesService.from_session(session),
             StrengthHistoryRepository(session),
             ExerciseService.from_session(session),
+            WorkoutRepository(session),
         )
 
     async def build(self, *, now: dt.datetime | None = None) -> Packet:
@@ -412,6 +418,16 @@ class PacketService:
     ) -> list[PacketSession]:
         """Each row's packet session; non-lift bodies are dropped."""
         plans = {plan.id: plan for plan in await self._plans.list()}
+        # The library workout's name, for the offline Today card: without it a
+        # packet card read only its purpose, and two sessions of one purpose
+        # were indistinguishable. A session planned free-hand has none.
+        titles = await self._workouts.names(
+            [
+                workout_id
+                for row in rows
+                if (workout_id := row.current_intent.workout_id) is not None
+            ]
+        )
         domain = {slug: entry.to_domain() for slug, entry in catalogue.items()}
         out: list[PacketSession] = []
         histories: dict[str, list[Exposure]] = {}
@@ -446,6 +462,11 @@ class PacketService:
                 learning,
             )
             if session is not None:
+                workout_id = row.current_intent.workout_id
+                session = replace(
+                    session,
+                    title=titles.get(workout_id) if workout_id else None,
+                )
                 out.append(session)
         return out
 

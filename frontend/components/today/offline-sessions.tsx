@@ -5,11 +5,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
 import { SectionLabel } from "@/components/design/section-label";
-import {
-  RecapLink,
-  UnplannedLink,
-} from "@/components/strength/session-edits/today-links";
-import { StartLink } from "@/components/strength/start-link";
+import { SessionActions } from "@/components/today/session-actions";
 import type { components } from "@/generated/api/schema";
 import { formatDayMonthYear } from "@/lib/format";
 import { useI18n } from "@/lib/i18n/provider";
@@ -19,7 +15,7 @@ import {
   sessionsForToday,
   storedPacket,
 } from "@/lib/offline/packet-store";
-import { purposeLabel } from "@/lib/purpose";
+import { purposeName } from "@/lib/purpose";
 import { describeSets } from "@/lib/workout-profile";
 
 type PacketLine = components["schemas"]["PacketLineRead"];
@@ -85,9 +81,9 @@ export function OfflineSessions({
             date: formatDayMonthYear(packet.generated_at.slice(0, 10)),
           })}
         </span>
-        <span className="ml-auto">
-          <UnplannedLink />
-        </span>
+        {/* No "Train without a plan" here: the toolbar above carries it on
+            every state of the page, and a second one sat inside the plan's
+            card (strength UAT W9). */}
         {stale ? (
           <span
             role="status"
@@ -105,6 +101,12 @@ export function OfflineSessions({
         >
           <header className="flex flex-wrap items-center gap-2.5">
             <PurposeBadge purpose={session.purpose} size="md" />
+            {/* The workout's name, so sessions of one purpose differ. */}
+            {session.title ? (
+              <span className="font-medium text-ink-secondary text-sm">
+                {session.title}
+              </span>
+            ) : null}
             <span className="font-mono text-ink-faint text-xs">
               {formatDayMonthYear(session.date)}
             </span>
@@ -120,21 +122,15 @@ export function OfflineSessions({
               >
                 <span className="text-ink-secondary">{line.exercise_name}</span>
                 <span className="font-mono text-ink text-xs">
-                  {describeSets(line.prescription)} · {weightOf(line, t)}
+                  {describeSets(line.prescription, t)} · {weightOf(line, t)}
                 </span>
               </li>
             ))}
           </ul>
-          <div className="flex flex-wrap gap-2">
-            <StartLink
-              id={session.planned_session_id}
-              name={purposeLabel(session.purpose)}
-            />
-            <RecapLink
-              id={session.planned_session_id}
-              name={purposeLabel(session.purpose)}
-            />
-          </div>
+          <SessionActions
+            id={session.planned_session_id}
+            name={session.title ?? purposeName(session.purpose, t)}
+          />
         </Panel>
       ))}
     </section>

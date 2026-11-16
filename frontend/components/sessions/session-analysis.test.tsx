@@ -463,6 +463,22 @@ describe("the analysis section", () => {
     expect(screen.queryByText("Intervals")).not.toBeInTheDocument();
   });
 
+  it("leaves the cycling grid out of a strength session and leads with its sets", () => {
+    renderWithClient(
+      <SessionAnalysis
+        sessionId={ACTIVITY_IDS.gym}
+        metrics={RIDE_METRICS}
+        hasRecording={false}
+        discipline="strength"
+      />,
+    );
+
+    // NP, IF, heart rate, distance, cadence, climbing and temperature are
+    // channels a lift cannot have: a grid of dashes above the sets buried them.
+    expect(screen.queryByLabelText("Session metrics")).not.toBeInTheDocument();
+    expect(screen.getByText("Strength")).toBeInTheDocument();
+  });
+
   it("names the anchor versions the numbers were computed against", () => {
     renderWithClient(
       <SessionAnalysis

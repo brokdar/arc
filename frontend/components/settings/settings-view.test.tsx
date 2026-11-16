@@ -89,6 +89,21 @@ async function submitAppend(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Append version" }));
 }
 
+describe("the page order", () => {
+  it("puts the Training section before the anchors, so a phone reaches it first", async () => {
+    renderSettings();
+
+    const training = await screen.findByRole("region", { name: "Training" });
+    const anchors = await screen.findByRole("heading", {
+      name: "In force now",
+    });
+    expect(
+      training.compareDocumentPosition(anchors) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});
+
 describe("the anchors in force", () => {
   it("shows each value with the provenance and the date it applies from", async () => {
     renderSettings();
@@ -613,10 +628,14 @@ describe("the illness flag", () => {
     renderSettings();
 
     expect(
-      await screen.findByRole("button", { name: "Report illness or injury" }),
+      await screen.findByRole("button", {
+        name: "Report an illness or injury",
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/stops the coaching agent proposing anything that adds/),
+      screen.getByText(
+        /stops the coaching agent from proposing anything that adds/,
+      ),
     ).toBeInTheDocument();
   });
 });

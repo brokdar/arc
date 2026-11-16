@@ -679,3 +679,30 @@ async def test_sharp_pain_last_time_keeps_the_suggestion_from_rising(
 
     assert squat["prefill"]["load_kg"] == 100.0
     assert squat["suggestion"]["explanation"]["reason"] == "increase_blocked"
+
+
+async def test_a_session_planned_from_the_library_carries_the_workout_name(
+    client: AsyncClient,
+) -> None:
+    """The offline Today card names the workout, as the online one does (UAT W9)."""
+    workout = await client.post(
+        "/api/v1/workouts",
+        json={"name": "Lower + Pull", "structure": lift(item("back_squat"))},
+    )
+    assert workout.status_code == 201, workout.text
+    named = await client.post(
+        PLANNED,
+        json={
+            "date": day(0),
+            "purpose": "hypertrophy",
+            "workout_id": workout.json()["id"],
+            "success_criteria": [],
+        },
+    )
+    assert named.status_code == 201, named.text
+    free = await plan(client, lift(item("back_squat")), offset=1)
+
+    sessions = {s["planned_session_id"]: s for s in (await packet(client))["sessions"]}
+
+    assert sessions[named.json()["id"]]["title"] == "Lower + Pull"
+    assert sessions[free]["title"] is None

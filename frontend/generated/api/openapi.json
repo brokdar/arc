@@ -6301,6 +6301,17 @@
               }
             ],
             "title": "Time Of Day"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "required": [
@@ -6312,7 +6323,8 @@
           "key",
           "plan_id",
           "follow_exactly",
-          "lines"
+          "lines",
+          "title"
         ],
         "title": "PacketSessionRead",
         "type": "object"

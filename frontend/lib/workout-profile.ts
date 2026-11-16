@@ -1,4 +1,5 @@
 import type { components } from "@/generated/api/schema";
+import { type Translate, translatorFor } from "@/lib/i18n/provider";
 
 type Schemas = components["schemas"];
 
@@ -244,14 +245,17 @@ export function totalSets(
  * than the lines, so it is not a caller — `totalSets` above is its half of the
  * same rule.
  */
-export function describeSets(item: StrengthItem): string {
+export function describeSets(
+  item: StrengthItem,
+  t: Translate = translatorFor("en"),
+): string {
   const each =
     item.duration_s === null || item.duration_s === undefined
       ? item.reps === null || item.reps === undefined
         ? "?"
         : formatCount(item.reps)
       : `${item.duration_s} s`;
-  return `${item.sets}×${each}${item.per_side ? " per side" : ""}`;
+  return `${item.sets}×${each}${item.per_side ? t("units.perSide") : ""}`;
 }
 
 /**

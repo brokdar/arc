@@ -32,7 +32,7 @@ function renderRedFlag() {
 /** Open the dialog from the Today-page control. */
 async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   const control = await screen.findByRole("button", {
-    name: /Report illness or injury|Red flag up/,
+    name: /Report an illness or injury|Red flag up/,
   });
   await user.click(control);
   return await screen.findByRole("dialog");
@@ -43,7 +43,9 @@ describe("the control", () => {
     renderRedFlag();
 
     expect(
-      await screen.findByRole("button", { name: "Report illness or injury" }),
+      await screen.findByRole("button", {
+        name: "Report an illness or injury",
+      }),
     ).toBeInTheDocument();
     // Nothing else: a banner while the flag is down would cry wolf on every
     // page of the app.

@@ -64,6 +64,25 @@ function fetchPacket() {
 }
 
 /**
+ * Re-fetch the packet because a training setting just changed.
+ *
+ * The packet is prepared under the athlete's settings — mode, units, plain
+ * logbook, how often the effort question is asked — and the phone renders it
+ * as served. Waiting out `REFRESH_EVERY_MS` left the offline gym screen in kg
+ * and Simple-mode wording for up to five minutes after Settings said
+ * otherwise (strength UAT B4), so a settings change skips the throttle. A
+ * failure is swallowed: the change itself was saved, and the next sync
+ * catches the packet up.
+ */
+export async function refreshPacketAfterSettingsChange(): Promise<void> {
+  try {
+    await refreshPacket();
+  } catch {
+    // No IndexedDB (a private window): there is nowhere to keep a packet.
+  }
+}
+
+/**
  * One sync: upload the outbox, then refresh the packet when the stored one
  * is missing or older than `REFRESH_EVERY_MS`. Returns the outbox's outcome,
  * so it can stand in for `flush` in `startOutbox`.

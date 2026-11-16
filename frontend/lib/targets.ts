@@ -18,6 +18,8 @@
  */
 
 import type { components } from "@/generated/api/schema";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { type Translate, translatorFor } from "@/lib/i18n/provider";
 
 import {
   flattenSteps,
@@ -54,12 +56,6 @@ export interface LegendEntry extends ChannelBand {
   readonly zone: ZoneTone;
   readonly zoneLabel: string;
 }
-
-const CHANNEL_LABELS: Readonly<Record<Channel, string>> = {
-  power: "Power",
-  hr: "Heart rate",
-  cadence: "Cadence",
-};
 
 const CHANNEL_UNITS: Readonly<Record<Channel, string>> = {
   power: "W",
@@ -184,8 +180,11 @@ export function profileLegend(
 }
 
 /** `Power`, `Heart rate`, `Cadence` — the Targets panel's left column. */
-export function channelLabel(channel: Channel): string {
-  return CHANNEL_LABELS[channel];
+export function channelLabel(
+  channel: Channel,
+  t: Translate = translatorFor("en"),
+): string {
+  return t(`channels.${channel}` as MessageKey);
 }
 
 /**
@@ -195,12 +194,18 @@ export function channelLabel(channel: Channel): string {
  * The form that survives an FTP change, and therefore the one that belongs
  * beside every resolved figure rather than instead of it (F2).
  */
-export function describePrescribed(band: ChannelBand): string {
+export function describePrescribed(
+  band: ChannelBand,
+  t: Translate = translatorFor("en"),
+): string {
   if (band.mode === "absolute") {
     return range(band.low, band.high, CHANNEL_UNITS[band.channel]);
   }
   const label = band.anchorType ? ANCHOR_LABELS[band.anchorType] : "the anchor";
-  return `${range(band.low * 100, band.high * 100, "%")} of ${label}`;
+  return t("channels.of", {
+    range: range(band.low * 100, band.high * 100, "%"),
+    anchor: label,
+  });
 }
 
 /** One band's absolute span, as the API already resolved it. */

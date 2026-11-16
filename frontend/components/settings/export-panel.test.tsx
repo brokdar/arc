@@ -14,7 +14,7 @@ describe("export panel", () => {
       ["Everything (JSON)", `${API}/exports/workouts.json`],
       ["Every set (CSV)", `${API}/exports/sets.csv?variant=comma`],
       [
-        "Every set (CSV, semicolon and decimal comma)",
+        "Every set (CSV, German Excel)",
         `${API}/exports/sets.csv?variant=semicolon`,
       ],
       ["Strong format (CSV)", `${API}/exports/strong.csv`],

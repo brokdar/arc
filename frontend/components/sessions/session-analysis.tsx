@@ -43,6 +43,14 @@ export interface SessionAnalysisProps {
   /** Whether the session came from a device file at all. */
   readonly hasRecording: boolean;
   /**
+   * The session's discipline. A strength session skips the cycling metric
+   * header: NP, IF, distance, cadence, climbing and temperature are channels
+   * a lift cannot have, and a grid of dashes (each honestly "not assessed")
+   * pushed the sets below the fold. UI convention 4 governs grids that
+   * apply; this one does not apply to a lift, so it is not drawn.
+   */
+  readonly discipline?: string;
+  /**
    * Resolved planned step bands for the power chart.
    *
    * A component capability rather than an API field until WP-6: an
@@ -76,6 +84,7 @@ export function SessionAnalysis({
   sessionId,
   metrics,
   hasRecording,
+  discipline,
   plannedBands,
 }: SessionAnalysisProps) {
   // Unconditional, and gated by `enabled`: the early return below would
@@ -95,7 +104,7 @@ export function SessionAnalysis({
 
   return (
     <div className="flex flex-col gap-5">
-      <MetricHeader metrics={metrics} />
+      {discipline === "strength" ? null : <MetricHeader metrics={metrics} />}
 
       {hasRecording && streams ? (
         <StreamCharts

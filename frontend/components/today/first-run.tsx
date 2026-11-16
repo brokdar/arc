@@ -10,6 +10,7 @@ import { $api } from "@/lib/api/client";
 import { apiErrorMessages } from "@/lib/api-errors";
 import type { MessageKey } from "@/lib/i18n/catalogue";
 import { useT } from "@/lib/i18n/provider";
+import { refreshPacketAfterSettingsChange } from "@/lib/offline/packet-store";
 import {
   type LiftedBefore,
   trainingSettingsQueryKey,
@@ -53,6 +54,8 @@ function Question() {
   const save = $api.useMutation("patch", "/api/v1/settings/training", {
     onSuccess: (updated) => {
       queryClient.setQueryData(trainingSettingsQueryKey, updated);
+      // The answer sets the mode, which the packet is prepared under.
+      void refreshPacketAfterSettingsChange();
     },
   });
   const problems = apiErrorMessages(save.error);

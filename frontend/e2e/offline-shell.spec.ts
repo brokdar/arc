@@ -107,7 +107,7 @@ test("Today opens offline after one online visit", async ({
 }) => {
   await visitTodayOnline(page, context);
   await expect(page.getByTestId("offline-ready")).toHaveText(
-    /^Ready offline · synced \d\d:\d\d$/,
+    /^Ready offline(?: · plan from \d\d:\d\d)?$/,
   );
 
   await context.unrouteAll({ behavior: "ignoreErrors" });
@@ -118,7 +118,7 @@ test("Today opens offline after one online visit", async ({
     page.getByRole("heading", { name: "Today", level: 1 }),
   ).toBeVisible();
   await expect(page.getByTestId("offline-ready")).toHaveText(
-    /^Ready offline · synced \d\d:\d\d$/,
+    /^Ready offline(?: · plan from \d\d:\d\d)?$/,
   );
 });
 

@@ -98,6 +98,15 @@ const BUILT: Readonly<Record<Locale, I18n>> = {
 };
 
 /**
+ * The translator of one language, outside React: for the pure helpers that
+ * phrase a prescription (`sessionHeadline`, `describeCriterion`) and default
+ * to English when a caller has no `useI18n` to pass.
+ */
+export function translatorFor(locale: Locale): Translate {
+  return BUILT[locale].t;
+}
+
+/**
  * English, outside any provider: the login page sits outside the signed-in
  * tree and cannot read a setting that needs a session, and a component test
  * that does not care about language renders exactly as it did before

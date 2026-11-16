@@ -1,4 +1,5 @@
-import { type Purpose, purposeTone } from "@/lib/purpose";
+import { useT } from "@/lib/i18n/provider";
+import { type Purpose, purposeName, purposeTone } from "@/lib/purpose";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +21,7 @@ export function PurposeBadge({
   size = "sm",
 }: PurposeBadgeProps) {
   const tone = purposeTone(purpose);
+  const t = useT();
   return (
     <span
       data-slot="purpose-badge"
@@ -30,7 +32,7 @@ export function PurposeBadge({
       )}
       style={{ color: tone.fg, backgroundColor: tone.tint }}
     >
-      {tone.label}
+      {purposeName(purpose, t)}
     </span>
   );
 }

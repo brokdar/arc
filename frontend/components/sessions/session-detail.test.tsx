@@ -47,6 +47,22 @@ function metric(label: string): HTMLElement {
   return value as HTMLElement;
 }
 
+describe("a strength session", () => {
+  it("leads with its sets and draws no cycling metric grid", async () => {
+    renderDetail(ACTIVITY_IDS.gym);
+    await ready();
+
+    expect(screen.queryByLabelText("Session metrics")).not.toBeInTheDocument();
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(headings.indexOf("Logged sets")).toBeGreaterThanOrEqual(0);
+    expect(headings.indexOf("Logged sets")).toBeLessThan(
+      headings.indexOf("Judgement"),
+    );
+  });
+});
+
 describe("a device session", () => {
   it("states the session in its own timezone", async () => {
     renderDetail(ACTIVITY_IDS.outdoorRide);

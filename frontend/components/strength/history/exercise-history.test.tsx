@@ -3,7 +3,10 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { ExerciseHistory } from "@/components/strength/history/exercise-history";
-import { SQUAT_HISTORY_EMPTY } from "@/tests/mocks/generated-strength-records";
+import {
+  SQUAT_HISTORY,
+  SQUAT_HISTORY_EMPTY,
+} from "@/tests/mocks/generated-strength-records";
 import { http } from "@/tests/mocks/handlers";
 import { server } from "@/tests/mocks/server";
 
@@ -31,11 +34,23 @@ describe("ExerciseHistory", () => {
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeInTheDocument();
     const estimate = screen.getByRole("region", { name: "Estimated max" });
-    expect(estimate).toHaveTextContent("About 126.4 kg");
+    expect(estimate).toHaveTextContent("About 126 kg");
+    expect(estimate).not.toHaveTextContent("126.4");
     expect(estimate).toHaveTextContent(
       "A rough guide from rated sets, never a personal best.",
     );
     expect(screen.getByText("5 sessions logged")).toBeInTheDocument();
+  });
+
+  it("says '1 session', not '1 sessions'", async () => {
+    server.use(
+      http.get("/api/v1/exercises/{exercise_id}/history", ({ response }) =>
+        response(200).json({ ...SQUAT_HISTORY, exposures: 1 }),
+      ),
+    );
+    renderHistory("back_squat");
+
+    expect(await screen.findByText("1 session logged")).toBeInTheDocument();
   });
 
   it("holds a slot for every rep count, reached or not", async () => {

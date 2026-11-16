@@ -197,8 +197,7 @@ async def get_session_score(
             f"Session {session_id} has no score. A session is scored once it "
             "is linked to a planned session and that link is settled; a "
             "pending proposal is a question, not a link. A session that was "
-            "scored and then unlinked keeps its versions on "
-            f"/api/v1/sessions/{session_id}/score/history, but no longer "
+            "scored and then unlinked keeps its earlier scores, but no longer "
             "answers to a prescription."
         )
     return to_score(row)

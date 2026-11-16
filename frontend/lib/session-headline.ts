@@ -13,10 +13,11 @@
  */
 
 import { formatDurationWords, formatMinutesPrime } from "@/lib/format";
+import { type Translate, translatorFor } from "@/lib/i18n/provider";
 import {
   disciplineOfPurpose,
   type Purpose,
-  purposeInSentence,
+  purposeSentence,
 } from "@/lib/purpose";
 import {
   type ProfileBar,
@@ -49,30 +50,42 @@ const STEADY_SHARE = 0.6;
  * Degrades a clause at a time: a session with no structure yet still gets its
  * purpose and its duration, and one with neither gets its purpose alone. It
  * never returns an empty string, because it is rendered as an `<h1>`.
+ *
+ * Phrased through the catalogue (`headline.*`, `purposeSentence.*`) so Today's
+ * headline is in the athlete's language; with no translator it is English.
+ * German word order differs ("16 Sätze Maximalkraft"), which is why each
+ * clause is a whole message rather than pieces joined here.
  */
-export function sessionHeadline(input: HeadlineInput): string {
+export function sessionHeadline(
+  input: HeadlineInput,
+  t: Translate = translatorFor("en"),
+): string {
   const discipline = disciplineOfPurpose(input.purpose);
   const head =
-    discipline === "cycling" ? cyclingHead(input) : strengthHead(input);
+    discipline === "cycling" ? cyclingHead(input, t) : strengthHead(input, t);
   const effort =
     discipline === "cycling"
-      ? cyclingEffort(input.structure)
-      : strengthEffort(input.structure);
+      ? cyclingEffort(input.structure, t)
+      : strengthEffort(input.structure, t);
   return effort ? `${head} — ${effort}` : head;
 }
 
-function cyclingHead(input: HeadlineInput): string {
+function cyclingHead(input: HeadlineInput, t: Translate): string {
   const seconds = input.plannedDurationS ?? totalDurationS(input.structure);
-  const purpose = purposeInSentence(input.purpose);
+  const purpose = purposeSentence(input.purpose, t);
   return seconds
-    ? `${formatDurationWords(seconds)} ${purpose} ride`
-    : `${purpose} ride`;
+    ? t("headline.ride", { duration: formatDurationWords(seconds), purpose })
+    : t("headline.rideNoDuration", { purpose });
 }
 
-function strengthHead(input: HeadlineInput): string {
+function strengthHead(input: HeadlineInput, t: Translate): string {
   const sets = input.totalSets ?? totalSets(input.structure);
-  const purpose = purposeInSentence(input.purpose);
-  return sets ? `${sets} sets of ${purpose}` : `${purpose} session`;
+  const purpose = purposeSentence(input.purpose, t);
+  if (!sets) return t("headline.session", { purpose });
+  return t(sets === 1 ? "headline.setsOne" : "headline.setsOther", {
+    sets,
+    purpose,
+  });
 }
 
 /**
@@ -86,6 +99,7 @@ function strengthHead(input: HeadlineInput): string {
  */
 function cyclingEffort(
   structure: WorkoutStructure | null | undefined,
+  t: Translate,
 ): string | null {
   if (structure?.discipline !== "cycling") {
     return null;
@@ -99,7 +113,9 @@ function cyclingEffort(
   if (interval) {
     const zone = zoneOfWorkBars(bars);
     const length = formatMinutesPrime(interval.durationS);
-    return `${interval.times}×${length}${zone ? ` at ${zone}` : ""}`;
+    return zone
+      ? t("headline.intervalAt", { times: interval.times, length, zone })
+      : t("headline.interval", { times: interval.times, length });
   }
 
   const shares = weightByZone(bars);
@@ -109,7 +125,7 @@ function cyclingEffort(
     return null;
   }
   if (top[1] / total >= STEADY_SHARE) {
-    return `steady ${ZONE_LABELS[top[0]]}`;
+    return t("headline.steady", { zone: ZONE_LABELS[top[0]] });
   }
   const order = Object.keys(ZONE_LABELS) as ZoneTone[];
   const present = [...shares.keys()].sort(
@@ -118,9 +134,12 @@ function cyclingEffort(
   const low = present[0];
   const high = present[present.length - 1];
   if (!low || !high || low === high) {
-    return `steady ${ZONE_LABELS[top[0]]}`;
+    return t("headline.steady", { zone: ZONE_LABELS[top[0]] });
   }
-  return `mixed ${ZONE_LABELS[low]}–${ZONE_LABELS[high]}`;
+  return t("headline.mixed", {
+    low: ZONE_LABELS[low],
+    high: ZONE_LABELS[high],
+  });
 }
 
 /** Total flex weight per band. The profile's histogram, one entry per zone. */
@@ -177,6 +196,7 @@ function zoneOfWorkBars(bars: readonly ProfileBar[]): string | null {
 /** What a lifting session is made of: movements, and whether any are paired. */
 function strengthEffort(
   structure: WorkoutStructure | null | undefined,
+  t: Translate,
 ): string | null {
   if (structure?.discipline !== "strength") {
     return null;
@@ -191,11 +211,16 @@ function strengthEffort(
   const supersets = structure.groups.filter(
     (group) => group.items.length > 1,
   ).length;
-  const movementClause = `${movements} ${movements === 1 ? "movement" : "movements"}`;
+  const movementClause =
+    movements === 1
+      ? t("headline.movementsOne")
+      : t("headline.movementsOther", { count: movements });
   if (supersets === 0) {
     return movementClause;
   }
-  return `${movementClause}, ${
-    supersets === 1 ? "one superset" : `${supersets} supersets`
-  }`;
+  const supersetClause =
+    supersets === 1
+      ? t("headline.supersetOne")
+      : t("headline.supersetsOther", { count: supersets });
+  return `${movementClause}, ${supersetClause}`;
 }

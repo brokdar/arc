@@ -159,6 +159,8 @@ class PacketSessionRead(BaseModel):
     #: The plan must be followed exactly: every pre-fill is the prescription.
     follow_exactly: bool
     lines: list[PacketLineRead]
+    #: The library workout's name; ``None`` for a free-hand session.
+    title: str | None
 
 
 class LastNumbersRead(BaseModel):
