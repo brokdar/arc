@@ -1307,14 +1307,21 @@ if (!parsed) {
   return { error: "parse-agent-died" };
 }
 if (!parsed.ok) {
-  // Exit 2 is a plan defect, 3 an unreachable remote, 4 usage — all of them the
+  // Exit 2 is a plan defect, 3 an unreachable remote, 4 usage, 5 a launching
+  // checkout whose tooling is behind origin/main — all of them the
   // operator's to fix, all of them reported in the script's own words.
   log(
     `HARD STOP: scripts/parse-plan.mjs refused (exit ${parsed.exitCode}).\n` +
       (parsed.stderr || "(no stderr reported)"),
   );
   const why =
-    parsed.exitCode === 2 ? "plan-defects" : parsed.exitCode === 4 ? "plan-not-found" : "parse-refused";
+    parsed.exitCode === 2
+      ? "plan-defects"
+      : parsed.exitCode === 4
+        ? "plan-not-found"
+        : parsed.exitCode === 5
+          ? "stale-checkout"
+          : "parse-refused";
   return { error: why, exitCode: parsed.exitCode, stderr: parsed.stderr };
 }
 

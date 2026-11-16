@@ -530,7 +530,9 @@ def register_tools(mcp: FastMCP) -> None:  # noqa: C901 — one function per too
         * `red_flag` — illness or injury. While `active`, any proposal that
           **adds or intensifies** training is refused (see
           `propose_plan_change`). It is on every read from this server, so
-          there is never a call where you did not know.
+          there is never a call where you did not know. `kind` is
+          `emergency` when the athlete stopped a gym session with a symptom
+          that calls for emergency services, `advice` otherwise.
         * `anchors` — the version of each anchor **currently in force**,
           keyed by type; null where none has been appended yet, which is an
           answer (there is no FTP), not a gap. The append-only histories are

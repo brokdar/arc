@@ -11,6 +11,7 @@ from app.domain.athlete import (
     MAX_HEIGHT_CM,
     MAX_RED_FLAG_NOTE_CHARS,
     MIN_HEIGHT_CM,
+    RedFlagKind,
     RedFlagSeverity,
     Sex,
 )
@@ -51,6 +52,10 @@ class AthleteRead(BaseModel):
     red_flag_note: str | None
     #: Non-null exactly while `red_flag_active` is set.
     red_flag_severity: RedFlagSeverity | None
+    #: Which red-flag text applies — `emergency` (call emergency services) or
+    #: `advice` (get medical advice today). Non-null exactly while
+    #: `red_flag_active` is set.
+    red_flag_kind: RedFlagKind | None
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -81,6 +86,8 @@ class AthleteUpdate(BaseModel):
     red_flag_active: bool | None = None
     red_flag_note: RedFlagNote | None = None
     red_flag_severity: RedFlagSeverity | None = None
+    #: Omitted while raising the flag, it is `advice`. Cleared with the flag.
+    red_flag_kind: RedFlagKind | None = None
 
     @field_validator("date_of_birth")
     @classmethod

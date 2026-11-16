@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domain.athlete import (
     MAX_RED_FLAG_NOTE_CHARS,
     AthleteProfile,
+    RedFlagKind,
     RedFlagSeverity,
     Sex,
 )
@@ -73,6 +74,9 @@ class Athlete(Base):
     red_flag_severity: Mapped[RedFlagSeverity | None] = mapped_column(
         enum_column(RedFlagSeverity)
     )
+    #: Which red-flag text applies (`RedFlagKind`); null while the flag is
+    #: down. Migration 0031 set every flag already up to ``advice``.
+    red_flag_kind: Mapped[RedFlagKind | None] = mapped_column(enum_column(RedFlagKind))
     created_at: Mapped[dt.datetime] = mapped_column(
         UtcDateTime, server_default=func.now()
     )
@@ -92,6 +96,7 @@ class Athlete(Base):
             red_flag_active=self.red_flag_active,
             red_flag_note=self.red_flag_note,
             red_flag_severity=self.red_flag_severity,
+            red_flag_kind=self.red_flag_kind,
         )
 
 

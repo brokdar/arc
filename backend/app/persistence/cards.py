@@ -132,3 +132,17 @@ class CardRepository:
             .limit(1)
         )
         return found is not None
+
+    async def open_of_kind(self, kind: str) -> Sequence[CardRow]:
+        """Every still-answerable card of one kind, in queue order."""
+        result = await self._session.execute(
+            select(CardRow)
+            .where(CardRow.kind == kind, CardRow.state.in_(OPEN_STATES))
+            .order_by(CardRow.id)
+        )
+        return result.scalars().all()
+
+    async def delete(self, row: CardRow) -> None:
+        """Remove a card outright; the service commits."""
+        await self._session.delete(row)
+        await flush(self._session)

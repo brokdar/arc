@@ -20,6 +20,7 @@ FRESH = {
     "before_you_start_seen": False,
     "first_run_seen": False,
     "lifted_before": None,
+    "no_max_efforts": False,
 }
 
 
