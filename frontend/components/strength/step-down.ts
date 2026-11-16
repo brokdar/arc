@@ -81,11 +81,12 @@ function missed(set: LoggedSet, line: PacketLine): boolean {
 /** The step-down the line's last working set calls for, if any. */
 export function stepDownAfter(
   session: ActiveSession,
-  planned: PacketSession,
+  planned: PacketSession | null,
   line: PacketLine,
   gym: Gym,
 ): StepDown | null {
-  if (planned.follow_exactly || !line.equipment) return null;
+  // No plan (a session started from Today) means nothing to follow exactly.
+  if (planned?.follow_exactly || !line.equipment) return null;
   const done = setsOfExercise(session, line);
   const last = done[done.length - 1];
   if (!last || last.loadKg === null || !missed(last, line)) return null;
@@ -101,7 +102,7 @@ export function stepDownAfter(
  */
 export function nextDraft(
   session: ActiveSession,
-  planned: PacketSession,
+  planned: PacketSession | null,
   line: PacketLine,
   gym: Gym,
 ): Draft {

@@ -17,9 +17,11 @@ import { type Gym, loadableWeights, startingStep } from "@/lib/strength";
  * packet the server prepared (`lib/offline/packet-store.ts`) or from what the
  * athlete entered; nothing here invents a training number.
  *
- * `set_index` is the order sets were logged in, as the server keeps it. A set
- * is identified by the uuid7 minted when it was logged (`set_client_id`), so
- * an edit or a rating patches that set and an undo deletes it.
+ * `set_index` is the order the session's sets stand in, as the server keeps
+ * it: grouped by exercise in the session's own exercise order, logged order
+ * within an exercise (`session-edits/edits.ts` explains why). A set is
+ * identified by the uuid7 minted when it was logged (`set_client_id`), so an
+ * edit, a rating or a move patches that set and an undo deletes it.
  */
 
 export type PacketSession = components["schemas"]["PacketSessionRead"];
@@ -50,6 +52,10 @@ export interface LoggedSet {
   rir: number | null;
   rirCapped: boolean;
   effortSimple: EffortSimple | null;
+  /** Epoch ms it was logged; absent on a recap set, whose time is unknown. */
+  completedAt?: number;
+  /** Set only on a set entered after the fact ("Log it now"). */
+  source?: "recap";
   /**
    * The ⋯ → Pain note on this set. Optional: a session stored by an earlier
    * build has none, which reads as no pain.
@@ -70,15 +76,30 @@ export interface Rest {
 }
 
 export interface ActiveSession {
+  /** The planned session's id, or `UNPLANNED` for one started from Today. */
   plannedSessionId: string;
   sessionClientId: string;
   startedAt: number;
-  /** In the order they were logged: index = `set_index`. */
+  /** In stored order: index = `set_index`. */
   sets: LoggedSet[];
-  /** The exercise the screen shows, an index into the packet's lines. */
+  /** The exercise the screen shows, an index into the session's lines. */
   lineIndex: number;
   rest: Rest | null;
   finished: boolean;
+  /**
+   * The session's own exercises, once the athlete changed them — reordered,
+   * a set or an exercise added. Absent, the planned lines as the packet has
+   * them (`session-edits/edits.ts` `linesOf`).
+   */
+  lines?: PacketLine[];
+  /** Epoch ms it ended, for the 24-hour reopen window. */
+  endedAt?: number | null;
+  /**
+   * Epoch ms of the session's own latest edit — a reopen, or this phone
+   * claiming it — which counts as a sign of life for the three-hour close
+   * (`session-edits/lifecycle.ts` `abandonedEnd`), as it does on the server.
+   */
+  touchedAt?: number;
   /**
    * The starting-weight flow per line ref (`starting-flow.tsx`). Optional so
    * a session stored before the flow existed still resumes.
@@ -92,6 +113,17 @@ export interface ActiveSession {
    */
   swaps?: Record<string, string>;
 }
+
+/** The store key and `plannedSessionId` of a session with no plan. */
+export const UNPLANNED = "unplanned";
+
+/** Whether a line is one the plan prescribed (not one added in the gym). */
+export function isPlannedLine(lineRef: string): boolean {
+  return !lineRef.startsWith(ADDED_PREFIX);
+}
+
+/** `line_ref` prefix of an exercise added in the gym. */
+export const ADDED_PREFIX = "added:";
 
 /** Where a line's starting-weight flow stands. */
 export interface StartingState {
@@ -250,11 +282,19 @@ function base(session: ActiveSession, stamp: Stamp) {
   };
 }
 
-export function startMutation(session: ActiveSession, stamp: Stamp): Mutation {
+export function startMutation(
+  session: ActiveSession,
+  stamp: Stamp,
+  deviceId?: string,
+): Mutation {
   return {
     kind: "session_start",
     ...base(session, stamp),
     start_time: new Date(session.startedAt).toISOString(),
+    ...(deviceId ? { device_id: deviceId } : {}),
+    ...(session.plannedSessionId !== UNPLANNED
+      ? { planned_session_id: session.plannedSessionId }
+      : {}),
   };
 }
 
@@ -285,12 +325,17 @@ export function setMutation(
 ): Mutation {
   const fields: SetPatch = {
     exercise_id: set.exerciseId,
-    planned_line_ref: set.lineRef,
     set_index: setIndex,
-    completed_at: new Date(stamp.now).toISOString(),
-    utc_offset_min: stamp.utcOffsetMin,
     ...ratingOf(set, scale),
   };
+  // An added exercise answers no planned line; the server pairs it with none.
+  if (isPlannedLine(set.lineRef)) fields.planned_line_ref = set.lineRef;
+  if (set.source === "recap") {
+    fields.source = "recap";
+  } else {
+    fields.completed_at = new Date(set.completedAt ?? stamp.now).toISOString();
+    fields.utc_offset_min = stamp.utcOffsetMin;
+  }
   if (set.reps !== null) fields.reps = set.reps;
   if (set.durationS !== null) fields.duration_s = set.durationS;
   if (set.loadKg !== null) fields.load_kg = set.loadKg;

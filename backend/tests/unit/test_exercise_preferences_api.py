@@ -501,7 +501,10 @@ async def test_the_frontend_packet_fixtures_swaps_are_the_servers(
     ]
     assert row["avoided"] is plank["avoided"] is False
     assert row["ease_back"] is None
-    assert [e["id"] for e in body["library"]] == [
+    # The packet's library is the whole catalogue (an unplanned session picks
+    # from it offline); the fixture carries the slice these lines name, and
+    # every entry of that slice must be one the server sends.
+    assert {
         "ab_wheel_rollout",
         "barbell_row",
         "dead_bug",
@@ -510,7 +513,7 @@ async def test_the_frontend_packet_fixtures_swaps_are_the_servers(
         "inverted_row",
         "pendlay_row",
         "single_arm_dumbbell_row",
-    ]
+    } <= {e["id"] for e in body["library"]}
 
 
 async def test_the_frontend_back_squat_fixtures_swaps_are_the_servers(
@@ -559,9 +562,54 @@ async def test_the_frontend_back_squat_fixtures_swaps_are_the_servers(
     ]
     assert squat["avoided"] is False
     assert squat["ease_back"] is None
-    assert [e["id"] for e in body["library"]] == [
+    # A slice of the whole-catalogue library, as above.
+    assert {
         "back_squat",
         "box_squat",
         "bulgarian_split_squat",
         "safety_bar_squat",
+    } <= {e["id"] for e in body["library"]}
+
+
+async def test_the_frontend_curl_fixtures_swaps_are_the_servers(
+    client: AsyncClient,
+) -> None:
+    """`frontend/tests/mocks/handlers-strength.ts` types the captured curl
+    line's swaps into `CURL_LINE`; this is where they come from."""
+    response = await client.post(
+        PLANNED,
+        json={
+            "date": athlete_today().isoformat(),
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "dumbbell_curl",
+                                "sets": 3,
+                                "reps": 12,
+                                "load": {"kind": "kg", "value": 10},
+                                "warmup": "none",
+                            }
+                        ]
+                    }
+                ],
+            },
+            "success_criteria": [],
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = (await client.get(PACKET)).json()
+    (session,) = body["sessions"]
+    (curl,) = session["lines"]
+
+    assert curl["swaps"] == [
+        {"exercise_id": "barbell_curl", "exercise_name": "Barbell Curl"},
+        {"exercise_id": "hammer_curl", "exercise_name": "Hammer Curl"},
     ]
+    assert curl["avoided"] is False
+    assert curl["ease_back"] is None
+    assert curl["suggestion"]["outcome"] == "first_time"
+    assert curl["suggestion"]["explanation"]["target_reps"] == 12

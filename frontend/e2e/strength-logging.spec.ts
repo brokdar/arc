@@ -190,6 +190,7 @@ function packet(today: string) {
         restrictions: ["prone"],
       },
     ],
+    notes: [],
   };
 }
 

@@ -27,6 +27,42 @@ import {
   RED_FLAG_GROUP,
   type RedFlagSymptom,
 } from "@/components/strength/safety/safety-model";
+import { deviceId } from "@/components/strength/session-edits/device";
+import {
+  AddExerciseDialog,
+  ContinueHereDialog,
+  MoveSetsDialog,
+  NoteDialog,
+  ReorderDialog,
+} from "@/components/strength/session-edits/dialogs";
+import {
+  addExercise,
+  addedLine,
+  addSet,
+  linesOf,
+  moveSets,
+  placeNew,
+  reorder,
+} from "@/components/strength/session-edits/edits";
+import {
+  claimMutation,
+  handedOver,
+  heldElsewhere,
+  takeOver,
+} from "@/components/strength/session-edits/handoff";
+import {
+  abandonedEnd,
+  finishMutation,
+  mayReopen,
+  recapSets,
+  reopenMutation,
+} from "@/components/strength/session-edits/lifecycle";
+import {
+  type LocalNotes,
+  loadNotes,
+  noteFor,
+  saveNote,
+} from "@/components/strength/session-edits/notes-store";
 import {
   type ActiveSession,
   advance,
@@ -56,6 +92,7 @@ import {
   startingKg,
   startMutation,
   stoppedByPain,
+  UNPLANNED,
   warmupsDone,
   workingSetsOf,
 } from "@/components/strength/session-model";
@@ -80,9 +117,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { apiClient } from "@/lib/api/client";
 import { useI18n } from "@/lib/i18n/provider";
 import type { Mutation } from "@/lib/offline/db";
-import { enqueue, flush, withdraw } from "@/lib/offline/outbox";
+import {
+  activeSessions,
+  enqueue,
+  flush,
+  subscribe,
+  watchActiveSessions,
+  withdraw,
+} from "@/lib/offline/outbox";
 import { refreshPacket, storedPacket } from "@/lib/offline/packet-store";
 import { uuid7 } from "@/lib/offline/uuid7";
 import {
@@ -126,6 +171,13 @@ import { cn } from "@/lib/utils";
  * **Undo** takes the last action's mutations back out of the outbox for 6 s;
  * one that already uploaded is compensated (a delete, or the rating it
  * replaced) rather than left behind.
+ *
+ * **Changing the session on the fly** (`session-edits/`): the ⋯ menu
+ * reorders exercises, adds a set or an exercise, moves mis-logged sets and
+ * keeps a note per exercise; `/train/unplanned` is a session with no plan,
+ * built from added exercises; `?recap=1` is "Log it now"; a finished session
+ * reopens for 24 h, an abandoned one closes at its last set, and a second
+ * phone opening an active session is asked "Continue here?".
  */
 
 export const UNDO_MS = 6_000;
@@ -145,10 +197,14 @@ export function writesSettled(): Promise<unknown> {
 type Phase =
   | "loading"
   | "missing"
+  | "handoff"
+  | "recap"
   | "resume"
   | "logging"
   | "finishing"
   | "done";
+
+type EditDialog = "reorder" | "addExercise" | "move" | "note" | null;
 
 interface UndoEntry {
   before: ActiveSession;
@@ -193,6 +249,11 @@ function sessionIdFrom(fallback: string): string {
     : fallback;
 }
 
+/** Whether the address asks for "Log it now" (`?recap=1`). */
+function recapAsked(): boolean {
+  return new URLSearchParams(window.location.search).get("recap") === "1";
+}
+
 export function LoggingScreen({
   plannedSessionId: givenId,
   clock = SYSTEM_CLOCK,
@@ -210,6 +271,13 @@ export function LoggingScreen({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<LoggedSet | null>(null);
   const [menu, setMenu] = useState(false);
+  const [dialog, setDialog] = useState<EditDialog>(null);
+  const [me, setMe] = useState<string | null>(null);
+  const [active, setActive] = useState(activeSessions);
+  const [notes, setNotes] = useState<LocalNotes>({});
+  const [candidate, setCandidate] = useState<NonNullable<
+    ReturnType<typeof heldElsewhere>
+  > | null>(null);
   // The finish summary asks the server for the session's new bests, so it
   // waits until the outbox has drained: before that the server cannot know.
   const [uploaded, setUploaded] = useState(false);
@@ -245,10 +313,22 @@ export function LoggingScreen({
     [later],
   );
 
+  // While the screen is open every sync reads who holds which session, so a
+  // phone that handed this one over turns read-only within one sync.
+  useEffect(() => {
+    const stop = watchActiveSessions();
+    const unsubscribe = subscribe(() => setActive(activeSessions()));
+    return () => {
+      stop();
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
     const plannedSessionId = sessionIdFrom(givenId);
+    const unplanned = plannedSessionId === UNPLANNED;
     const find = async () => {
       const stored = await storedPacket().catch(() => null);
       return stored
@@ -261,19 +341,48 @@ export function LoggingScreen({
         : null;
     };
     void (async () => {
+      const [device, localNotes] = await Promise.all([
+        deviceId(clock.wall()),
+        loadNotes(),
+      ]);
+      setMe(device);
+      setNotes(localNotes);
       let found = await find();
-      if (!found?.planned) {
+      if (!found || (!found.planned && !unplanned)) {
         await refreshPacket().catch(() => undefined);
         found = await find();
       }
-      if (!found?.planned) {
+      if (!found || (!found.planned && !unplanned)) {
         setPhase("missing");
         return;
       }
       setPacket(found.packet);
-      setPlanned(found.planned);
+      setPlanned(found.planned ?? null);
+      const now = clock.wall();
       const existing = await loadSession(plannedSessionId);
-      if (existing) {
+      if (existing && !(unplanned && existing.finished)) {
+        // A session this phone handed over is the other phone's to close:
+        // its sets are not all here, so the end read off them would be wrong.
+        const end = handedOver(
+          activeSessions(),
+          existing.sessionClientId,
+          device,
+        )
+          ? null
+          : abandonedEnd(existing, now);
+        if (end !== null) {
+          // Closed at its last set, as the server closes it.
+          const closed = {
+            ...existing,
+            finished: true,
+            endedAt: end,
+            rest: null,
+          };
+          setSession(closed);
+          setPhase("done");
+          void commit(closed, [finishMutation(existing, end, stamp())]);
+          return;
+        }
         setSession(existing);
         if (existing.finished) {
           void flush().then((outcome) => setUploaded(outcome === "drained"));
@@ -287,7 +396,16 @@ export function LoggingScreen({
         );
         return;
       }
-      const now = clock.wall();
+      // Another phone may hold this session: ask the server, if it answers.
+      if (!unplanned) {
+        await flush().catch(() => undefined);
+        const held = heldElsewhere(activeSessions(), plannedSessionId, device);
+        if (held) {
+          setCandidate(held);
+          setPhase("handoff");
+          return;
+        }
+      }
       const fresh: ActiveSession = {
         plannedSessionId,
         sessionClientId: uuid7(now),
@@ -296,9 +414,15 @@ export function LoggingScreen({
         lineIndex: 0,
         rest: null,
         finished: false,
+        ...(unplanned ? { lines: [] } : {}),
       };
+      if (!unplanned && recapAsked()) {
+        setSession(fresh);
+        setPhase("recap");
+        return;
+      }
       setPhase("logging");
-      void commit(fresh, [startMutation(fresh, stamp())]);
+      void commit(fresh, [startMutation(fresh, stamp(), device)]);
     })();
   }, [givenId, clock, commit, stamp]);
 
@@ -309,9 +433,11 @@ export function LoggingScreen({
     return () => window.clearTimeout(timer);
   }, [undo]);
 
-  // The plan's lines, and the lines as the screen shows them: a swapped line
-  // keeps its `line_ref` but shows, pre-fills and logs the substitute.
-  const plannedLines = planned?.lines ?? [];
+  // The session's lines as the athlete shaped them (reordered, sets or
+  // exercises added: `session-edits/edits.ts`), and as the screen shows them:
+  // a swapped line keeps its `line_ref` but shows, pre-fills and logs the
+  // substitute.
+  const plannedLines = session ? linesOf(session, planned) : [];
   const lines = linesWithSwaps(session, plannedLines, packet);
   const line: PacketLine | undefined = session
     ? lines[session.lineIndex]
@@ -340,7 +466,7 @@ export function LoggingScreen({
       ? `${line.line_ref}:${line.exercise_id}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
-  if (session && line && planned && gym && draftKey !== draftFor_) {
+  if (session && line && gym && draftKey !== draftFor_) {
     setDraftFor(draftKey);
     setDraft(nextDraft(session, planned, line, gym));
   }
@@ -348,7 +474,47 @@ export function LoggingScreen({
   if (phase === "loading") {
     return <Centered>{t("train.loading")}</Centered>;
   }
-  if (phase === "missing" || !packet || !planned || !session || !gym) {
+  if (phase === "handoff" && candidate && packet && planned) {
+    const accept = () => {
+      void (async () => {
+        const { data } = await apiClient
+          .GET("/api/v1/sessions/{session_id}", {
+            params: { path: { session_id: candidate.session_id } },
+          })
+          .catch(() => ({ data: undefined }));
+        if (!data || !me) {
+          setPhase("missing");
+          return;
+        }
+        const st = stamp();
+        const taken = {
+          ...takeOver(data, candidate, planned, packet),
+          touchedAt: st.now,
+        };
+        setCandidate(null);
+        setPhase(taken.sets.length > 0 ? "logging" : "logging");
+        await commit(taken, [claimMutation(taken, me, st)]);
+        void flush();
+      })();
+    };
+    return (
+      <Centered>
+        <ContinueHereDialog
+          onContinue={accept}
+          onDecline={() => {
+            window.location.assign("/today");
+          }}
+        />
+      </Centered>
+    );
+  }
+  if (
+    phase === "missing" ||
+    !packet ||
+    (!planned && session?.plannedSessionId !== UNPLANNED) ||
+    !session ||
+    !gym
+  ) {
     return (
       <Centered>
         <p>{t("train.missing")}</p>
@@ -357,7 +523,9 @@ export function LoggingScreen({
     );
   }
 
-  const done = allDone(session, lines);
+  const done = lines.length > 0 && allDone(session, lines);
+  const readOnly = handedOver(active, session.sessionClientId, me);
+  const note = line ? noteFor(line.exercise_id, packet, notes) : null;
   const starting = line !== undefined && inStartingFlow(session, line);
   const weightText = (kg: number | null) =>
     kg === null
@@ -392,6 +560,7 @@ export function LoggingScreen({
       rir: null,
       rirCapped: false,
       effortSimple: null,
+      completedAt: st.now,
     };
     let sets = session.sets;
     const patches: Mutation[] = [];
@@ -415,13 +584,20 @@ export function LoggingScreen({
       });
       created = applyRating(created, rating, scale);
     }
-    const create = setMutation(session, created, sets.length, scale, st);
-    mutations.push(create, ...patches);
+    const placed = placeNew({ ...session, sets }, lines, [created], st);
+    const create = setMutation(
+      session,
+      created,
+      placed.indexOf(created.clientId),
+      scale,
+      st,
+    );
+    mutations.push(create, ...placed.shifts, ...patches);
     writes.unshift({
       mutationId: create.mutation_id,
       compensate: () => deleteMutation(session, created.clientId, stamp()),
     });
-    let next = advance({ ...session, sets: [...sets, created] }, lines);
+    let next = advance({ ...session, sets: placed.sets }, lines);
     next = {
       ...next,
       rest: allDone(next, lines)
@@ -450,20 +626,23 @@ export function LoggingScreen({
         rir: null,
         rirCapped: false,
         effortSimple: null,
+        completedAt: st.now,
       }),
     );
     if (created.length === 0) return;
-    const mutations = created.map((set, i) =>
-      setMutation(session, set, session.sets.length + i, scale, st),
+    const placed = placeNew(session, lines, created, st);
+    const creates = created.map((set) =>
+      setMutation(session, set, placed.indexOf(set.clientId), scale, st),
     );
+    const mutations = [...creates, ...placed.shifts];
     setUndo({
       before: session,
-      writes: mutations.map((mutation, i) => ({
+      writes: creates.map((mutation, i) => ({
         mutationId: mutation.mutation_id,
         compensate: () => deleteMutation(session, created[i].clientId, stamp()),
       })),
     });
-    void commit({ ...session, sets: [...session.sets, ...created] }, mutations);
+    void commit({ ...session, sets: placed.sets }, mutations);
   };
 
   const answerStart = (answer: StartingAnswer) => {
@@ -574,16 +753,71 @@ export function LoggingScreen({
         ...(choice.reason ? { reason: choice.reason } : {}),
       });
     }
-    mutations.push({
-      kind: "session_finish",
-      ...base(st.id()),
-      end_time: new Date(st.now).toISOString(),
-    });
+    mutations.push(finishMutation(session, st.now, st));
     setUndo(null);
     setPhase("done");
-    void commit({ ...session, finished: true, rest: null }, mutations)
+    void commit(
+      { ...session, finished: true, rest: null, endedAt: st.now },
+      mutations,
+    )
       .then(() => flush())
       .then((outcome) => setUploaded(outcome === "drained"));
+  };
+
+  const reopen = () => {
+    const st = stamp();
+    setPhase(session.sets.length > 0 ? "resume" : "logging");
+    void commit(
+      { ...session, finished: false, endedAt: null, touchedAt: st.now },
+      [reopenMutation(session, st)],
+    );
+  };
+
+  const logRecap = () => {
+    const st = stamp();
+    const created = recapSets(session, lines, () => uuid7(st.now));
+    const started = {
+      ...session,
+      sets: created,
+      finished: true,
+      endedAt: st.now,
+    };
+    const mutations: Mutation[] = [
+      startMutation(session, st, me ?? undefined),
+      ...created.map((set, i) => setMutation(session, set, i, scale, st)),
+      finishMutation(session, st.now, st),
+    ];
+    setPhase("done");
+    void commit(started, mutations).then(() => flush());
+  };
+
+  const logSetBySet = () => {
+    setPhase("logging");
+    void commit(session, [startMutation(session, stamp(), me ?? undefined)]);
+  };
+
+  const edit = (next: ActiveSession, mutations: Mutation[] = []) => {
+    setMenu(false);
+    setUndo(null);
+    void commit(next, mutations);
+  };
+
+  const saveNoteText = (text: string) => {
+    if (!line) return;
+    setDialog(null);
+    const st = stamp();
+    const exerciseId = line.exercise_id;
+    setNotes((now) => ({ ...now, [exerciseId]: { text, savedAt: st.now } }));
+    void later(async () => {
+      await enqueue({
+        kind: "note_upsert",
+        mutation_id: st.id(),
+        client_edit_time: new Date(st.now).toISOString(),
+        exercise_id: exerciseId,
+        text,
+      });
+      await saveNote(exerciseId, text, st.now);
+    });
   };
 
   /** The set a pain note is about: the current exercise's last, else the last. */
@@ -676,6 +910,7 @@ export function LoggingScreen({
         ...session,
         finished: true,
         rest: null,
+        endedAt: st.now,
         redFlag: RED_FLAG_GROUP[symptom],
       },
       mutations,
@@ -694,6 +929,7 @@ export function LoggingScreen({
   const moveLine = (direction: 1 | -1) => {
     setMenu(false);
     const count = lines.length;
+    if (count === 0) return;
     const target = (session.lineIndex + direction + count) % count;
     void commit({ ...session, lineIndex: target });
   };
@@ -724,7 +960,45 @@ export function LoggingScreen({
             units={units}
           />
         ) : null}
+        {mayReopen(session, clock.wall()) ? (
+          <Button variant="outline" className="h-[48px]" onClick={reopen}>
+            {t("edits.reopen")}
+          </Button>
+        ) : null}
         <BackToToday />
+      </Centered>
+    );
+  }
+
+  if (phase === "recap") {
+    return (
+      <Centered>
+        <h1 className="font-semibold text-2xl">{t("edits.recapTitle")}</h1>
+        <p className="text-ink-muted">{t("edits.recapBody")}</p>
+        <ul className="flex w-full max-w-sm flex-col gap-1 text-left">
+          {lines.map((one) => (
+            <li
+              key={one.line_ref}
+              className="flex items-baseline justify-between gap-3 text-sm"
+            >
+              <span className="text-ink-secondary">{one.exercise_name}</span>
+              <span className="font-mono text-ink text-xs">
+                {summary(draftFor({ ...session, sets: [] }, one))} ×{" "}
+                {one.prescription.sets}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <Button
+          className="h-[64px] w-full max-w-sm text-base"
+          aria-label={t("edits.recapAllLabel")}
+          onClick={logRecap}
+        >
+          {t("edits.recapAll")}
+        </Button>
+        <Button variant="ghost" className="h-[44px]" onClick={logSetBySet}>
+          {t("edits.recapSetBySet")}
+        </Button>
       </Centered>
     );
   }
@@ -763,16 +1037,18 @@ export function LoggingScreen({
     // bottom of the glass, not at the bottom of a page the thumb scrolls.
     <div className="flex h-dvh min-h-0 shrink-0 flex-col bg-canvas">
       <header className="flex shrink-0 items-center gap-2 border-hairline border-b bg-chrome px-2 py-1.5">
-        <Button
-          variant="ghost"
-          className="h-[44px] min-w-[44px] px-2"
-          aria-label={t("train.endLabel")}
-          onClick={() => setPhase("finishing")}
-        >
-          ⏸ {t("train.end")}
-        </Button>
+        {readOnly ? null : (
+          <Button
+            variant="ghost"
+            className="h-[44px] min-w-[44px] px-2"
+            aria-label={t("train.endLabel")}
+            onClick={() => setPhase("finishing")}
+          >
+            ⏸ {t("train.end")}
+          </Button>
+        )}
         <h1 className="min-w-0 flex-1 truncate font-semibold text-lg">
-          {line?.exercise_name}
+          {line?.exercise_name ?? t("edits.unplannedTitle")}
         </h1>
         <span
           className="font-mono text-ink-muted text-sm"
@@ -781,79 +1057,115 @@ export function LoggingScreen({
         >
           {t("train.counter", counter)}
         </span>
-        <div className="relative">
-          <Button
-            variant="ghost"
-            className="h-[44px] min-w-[44px] text-xl"
-            aria-label={t("train.more")}
-            aria-expanded={menu}
-            aria-haspopup="menu"
-            onClick={() => setMenu((open) => !open)}
-          >
-            ⋯
-          </Button>
-          {menu ? (
-            <div
-              role="menu"
-              className="absolute top-12 right-0 z-30 flex w-56 flex-col rounded-lg border border-hairline-strong bg-raised p-1"
+        {readOnly ? null : (
+          <div className="relative">
+            <Button
+              variant="ghost"
+              className="h-[44px] min-w-[44px] text-xl"
+              aria-label={t("train.more")}
+              aria-expanded={menu}
+              aria-haspopup="menu"
+              onClick={() => setMenu((open) => !open)}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover"
-                onClick={() => moveLine(1)}
+              ⋯
+            </Button>
+            {menu ? (
+              <div
+                role="menu"
+                className="absolute top-12 right-0 z-30 flex w-56 flex-col rounded-lg border border-hairline-strong bg-raised p-1"
               >
-                {t("train.nextExercise")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover"
-                onClick={() => moveLine(-1)}
-              >
-                {t("train.previousExercise")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!plannedLine || plannedLine.swaps.length === 0}
-                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
-                onClick={() => {
-                  setMenu(false);
-                  setSheet("swap");
-                }}
-              >
-                {t("swap.menu")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={painTarget === null}
-                className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
-                onClick={() => {
-                  setMenu(false);
-                  setSheet("pain");
-                }}
-              >
-                {t("safety.menuPain")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="min-h-[44px] rounded-md px-3 text-left text-destructive hover:bg-raised-hover"
-                onClick={() => {
-                  setMenu(false);
-                  setSheet("redFlag");
-                }}
-              >
-                {t("safety.menuStop")}
-              </button>
-            </div>
-          ) : null}
-        </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover"
+                  onClick={() => moveLine(1)}
+                >
+                  {t("train.nextExercise")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover"
+                  onClick={() => moveLine(-1)}
+                >
+                  {t("train.previousExercise")}
+                </button>
+                {(
+                  [
+                    ["reorder", "edits.reorder", lines.length > 1],
+                    ["addSet", "edits.addSet", Boolean(line)],
+                    ["addExercise", "edits.addExercise", true],
+                    [
+                      "move",
+                      "edits.moveSets",
+                      Boolean(line) &&
+                        lines.length > 1 &&
+                        session.sets.some((s) => s.lineRef === line?.line_ref),
+                    ],
+                    ["note", "edits.note", Boolean(line)],
+                  ] as const
+                )
+                  .filter(([, , shown]) => shown)
+                  .map(([action, label]) => (
+                    <button
+                      key={action}
+                      type="button"
+                      role="menuitem"
+                      className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover"
+                      onClick={() => {
+                        setMenu(false);
+                        if (action === "addSet") {
+                          edit(addSet(session, lines, session.lineIndex));
+                        } else {
+                          setDialog(action);
+                        }
+                      }}
+                    >
+                      {t(label)}
+                    </button>
+                  ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!plannedLine || plannedLine.swaps.length === 0}
+                  className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
+                  onClick={() => {
+                    setMenu(false);
+                    setSheet("swap");
+                  }}
+                >
+                  {t("swap.menu")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={painTarget === null}
+                  className="min-h-[44px] rounded-md px-3 text-left hover:bg-raised-hover disabled:opacity-50"
+                  onClick={() => {
+                    setMenu(false);
+                    setSheet("pain");
+                  }}
+                >
+                  {t("safety.menuPain")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="min-h-[44px] rounded-md px-3 text-left text-destructive hover:bg-raised-hover"
+                  onClick={() => {
+                    setMenu(false);
+                    setSheet("redFlag");
+                  }}
+                >
+                  {t("safety.menuStop")}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
       </header>
 
-      {phase === "finishing" ? (
+      {phase === "finishing" && !readOnly ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <FinishPanel onFinish={finish} onBack={() => setPhase("logging")} />
         </div>
@@ -861,6 +1173,33 @@ export function LoggingScreen({
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
             <WakeLockNotice />
+            {readOnly ? (
+              <p
+                role="status"
+                className="rounded-lg border border-hairline-strong bg-raised px-3 py-2 text-ink-secondary"
+              >
+                {t("edits.readOnly")}
+              </p>
+            ) : null}
+            {note ? (
+              <section
+                aria-label={t("edits.noteShown")}
+                className="rounded-lg border border-hairline bg-raised px-3 py-2 text-ink-secondary text-sm"
+              >
+                {note}
+              </section>
+            ) : null}
+            {!line ? (
+              <div className="flex flex-col items-start gap-3">
+                <p className="text-ink-muted">{t("edits.unplannedEmpty")}</p>
+                <Button
+                  className="h-[56px]"
+                  onClick={() => setDialog("addExercise")}
+                >
+                  {t("edits.addExercise")}
+                </Button>
+              </div>
+            ) : null}
             {lines
               .filter((l) => stoppedByPain(session, l))
               .map((l) => (
@@ -872,19 +1211,23 @@ export function LoggingScreen({
                   <p className="min-w-0 flex-1">
                     {t("safety.pain.stopped", { exercise: l.exercise_name })}
                   </p>
-                  <Button
-                    variant="outline"
-                    className="h-[44px]"
-                    aria-label={t("safety.pain.undoLabel", {
-                      exercise: l.exercise_name,
-                    })}
-                    onClick={() => undoPain(l)}
-                  >
-                    {t("safety.pain.undo")}
-                  </Button>
+                  {readOnly ? null : (
+                    <Button
+                      variant="outline"
+                      className="h-[44px]"
+                      aria-label={t("safety.pain.undoLabel", {
+                        exercise: l.exercise_name,
+                      })}
+                      onClick={() => undoPain(l)}
+                    >
+                      {t("safety.pain.undo")}
+                    </Button>
+                  )}
                 </div>
               ))}
-            {plannedLine && needsSwapPrompt(session, plannedLine) ? (
+            {!readOnly &&
+            plannedLine &&
+            needsSwapPrompt(session, plannedLine) ? (
               <SwapPrompt
                 line={plannedLine}
                 onPick={(id) => swapLine(id, "session")}
@@ -899,7 +1242,7 @@ export function LoggingScreen({
                 })}
               </p>
             ) : null}
-            {line && starting && line.equipment ? (
+            {!readOnly && line && starting && line.equipment ? (
               <StartingFlow
                 kg={startingKg(session, line, gym)}
                 equipment={line.equipment}
@@ -923,6 +1266,7 @@ export function LoggingScreen({
                 summary={summary}
                 onWarmups={logWarmups}
                 onEdit={setEditing}
+                readOnly={readOnly}
                 units={units}
                 lines={lines}
               />
@@ -940,7 +1284,7 @@ export function LoggingScreen({
                 onSkip={() => void commit({ ...session, rest: null })}
               />
             ) : null}
-            {undo ? (
+            {undo && !readOnly ? (
               <Button
                 variant="outline"
                 className="h-[44px]"
@@ -950,7 +1294,7 @@ export function LoggingScreen({
                 {t("train.undo")}
               </Button>
             ) : null}
-            {starting ? null : done ? (
+            {readOnly || starting ? null : done ? (
               <Button
                 className="h-[72px] text-xl"
                 onClick={() => setPhase("finishing")}
@@ -978,36 +1322,89 @@ export function LoggingScreen({
         </>
       )}
 
-      {sheet === "pain" ? (
-        <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
-      ) : null}
-      {sheet === "swap" && plannedLine ? (
-        <SwapPanel
-          line={plannedLine}
-          onPick={swapLine}
-          onClose={() => setSheet(null)}
-        />
-      ) : null}
-      {sheet === "redFlag" ? (
-        <RedFlagPanel
-          onChoose={stopForRedFlag}
-          onClose={() => setSheet(null)}
-        />
-      ) : null}
+      {readOnly ? null : (
+        <>
+          {dialog === "reorder" ? (
+            <ReorderDialog
+              lines={lines}
+              onMove={(from, to) => {
+                const result = reorder(session, lines, from, to, stamp());
+                edit(result.session, result.mutations);
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "addExercise" ? (
+            <AddExerciseDialog
+              packet={packet}
+              onPick={(exercise) => {
+                setDialog(null);
+                const now = clock.wall();
+                edit(
+                  addExercise(
+                    session,
+                    lines,
+                    addedLine(packet, exercise, uuid7(now)),
+                  ),
+                );
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "move" && line ? (
+            <MoveSetsDialog
+              sets={session.sets.filter((s) => s.lineRef === line.line_ref)}
+              lines={lines}
+              current={session.lineIndex}
+              summary={summary}
+              onMove={(ids, target) => {
+                setDialog(null);
+                const result = moveSets(session, lines, ids, target, stamp());
+                edit(result.session, result.mutations);
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "note" && line ? (
+            <NoteDialog
+              exercise={line.exercise_name}
+              text={note ?? ""}
+              onSave={saveNoteText}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {sheet === "swap" && plannedLine ? (
+            <SwapPanel
+              line={plannedLine}
+              onPick={swapLine}
+              onClose={() => setSheet(null)}
+            />
+          ) : null}
+          {sheet === "pain" ? (
+            <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
+          ) : null}
+          {sheet === "redFlag" ? (
+            <RedFlagPanel
+              onChoose={stopForRedFlag}
+              onClose={() => setSheet(null)}
+            />
+          ) : null}
 
-      {editing ? (
-        <EditSet
-          set={editing}
-          n={
-            workingSetsOf(session, editing.lineRef).findIndex(
-              (s) => s.clientId === editing.clientId,
-            ) + 1
-          }
-          units={units}
-          onSave={(changes) => saveEdit(editing, changes)}
-          onClose={() => setEditing(null)}
-        />
-      ) : null}
+          {editing ? (
+            <EditSet
+              set={editing}
+              n={
+                workingSetsOf(session, editing.lineRef).findIndex(
+                  (s) => s.clientId === editing.clientId,
+                ) + 1
+              }
+              units={units}
+              onSave={(changes) => saveEdit(editing, changes)}
+              onClose={() => setEditing(null)}
+            />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -1045,12 +1442,13 @@ function LineBody({
   summary,
   onWarmups,
   onEdit,
+  readOnly,
   units,
   lines,
 }: {
   lines: readonly PacketLine[];
   line: PacketLine;
-  planned: PacketSession;
+  planned: PacketSession | null;
   session: ActiveSession;
   packet: Packet;
   gym: Gym;
@@ -1061,6 +1459,8 @@ function LineBody({
   summary: (set: Pick<Draft, "loadKg" | "reps" | "durationS">) => string;
   onWarmups: () => void;
   onEdit: (set: LoggedSet) => void;
+  /** Handed over to another phone: the logged rows show, nothing writes. */
+  readOnly: boolean;
   units: "kg" | "lb";
 }) {
   const { t } = useI18n();
@@ -1156,7 +1556,7 @@ function LineBody({
           </span>
           {warmed >= line.warmups.length ? (
             <span className="text-ink-muted">{t("train.warmupDone")}</span>
-          ) : (
+          ) : readOnly ? null : (
             <Button
               variant="outline"
               className="ml-auto h-[44px] min-w-[44px]"
@@ -1180,6 +1580,7 @@ function LineBody({
                   n: String(i + 1),
                   summary: summary(set),
                 })}
+                disabled={readOnly}
                 onClick={() => onEdit(set)}
               >
                 <span className="w-5 text-ink-muted">{i + 1}</span>
@@ -1191,7 +1592,7 @@ function LineBody({
         </ol>
       ) : null}
 
-      {!done && draft && working.length < total ? (
+      {!done && !readOnly && draft && working.length < total ? (
         <section
           ref={current}
           className="flex flex-col gap-2 border-hairline border-t pt-3"

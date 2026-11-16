@@ -6,6 +6,76 @@ import { packetFixture } from "@/tests/mocks/handlers-packet";
 
 type Packet = components["schemas"]["PacketRead"];
 type PacketLine = components["schemas"]["PacketLineRead"];
+type Exercise = components["schemas"]["ExerciseRead"];
+
+/**
+ * A third line, captured from `GET /strength/packet` for the same plan with
+ * `dumbbell_curl` 3 × 12 at 10 kg, `warmup: "none"` appended: like the row,
+ * a dumbbell line pre-filling its prescribed weight, no plates, no ramp. Its
+ * swaps and its first-time suggestion are the server's
+ * (`test_the_frontend_curl_fixtures_swaps_are_the_servers`).
+ */
+const CURL_LINE: PacketLine = {
+  line_ref: "2.0",
+  group_index: 2,
+  item_index: 0,
+  group_label: null,
+  exercise_id: "dumbbell_curl",
+  exercise_name: "Dumbbell Curl",
+  prescription: {
+    exercise_id: "dumbbell_curl",
+    sets: 3,
+    reps: 12,
+    duration_s: null,
+    per_side: null,
+    load: { kind: "kg", value: 10 },
+    rir: null,
+    rest_s: null,
+    tempo: null,
+    notes: null,
+    set_kind: null,
+    main: null,
+    warmup: "none",
+    progression: null,
+  },
+  main: false,
+  equipment: "dumbbell",
+  prefill: {
+    source: "prescription",
+    load_kg: 10,
+    reps: 12,
+    duration_s: null,
+    starting_flow: false,
+  },
+  warmups: [],
+  plates_per_side: null,
+  swaps: [
+    { exercise_id: "barbell_curl", exercise_name: "Barbell Curl" },
+    { exercise_id: "hammer_curl", exercise_name: "Hammer Curl" },
+  ],
+  avoided: false,
+  ease_back: null,
+  suggestion: firstTime(12, null),
+};
+
+/** The catalogue entry the server sends for it, captured with the line. */
+export const CURL: Exercise = {
+  id: "dumbbell_curl",
+  name: "Dumbbell Curl",
+  category: "pull",
+  unilateral: false,
+  muscles: { biceps: 1.0, brachialis: 0.5, brachioradialis: 0.5 },
+  mechanic: "single_joint",
+  pattern: "elbow_flexion",
+  equipment: ["dumbbell"],
+  load_type: "dumbbell",
+  restrictions: [],
+  created_at: "2026-11-11T11:28:13Z",
+  updated_at: "2026-11-11T11:28:13Z",
+};
+
+/** The planned session id of the copy three days on (`thursday`). */
+export const THURSDAY_ID = "0199c000-0000-7000-8000-00000000a004";
 
 /** A barbell back squat replacing the first line: `sets × reps` at `kg`. */
 export interface BarbellLine {
@@ -55,6 +125,9 @@ export function strengthPacket(
     barbell = null,
     avoided = false,
     barbellRowHistory = null,
+    curl = false,
+    thursday = false,
+    notes = [],
   }: {
     mode?: "simple" | "standard";
     plannedRir?: number | null;
@@ -63,10 +136,17 @@ export function strengthPacket(
     barbell?: BarbellLine | null;
     avoided?: boolean;
     barbellRowHistory?: { loadKg: number; reps: number } | null;
+    /** Append the captured curl line (and its library entry). */
+    curl?: boolean;
+    /** Add the same plan three days on, as a second planned session. */
+    thursday?: boolean;
+    /** Notes the server holds, as `PUT /exercises/{id}/note` stored them. */
+    notes?: Packet["notes"];
   } = {},
 ): Packet {
   const packet = packetFixture(today, generatedAt);
-  const [session] = packet.sessions;
+  const [base] = packet.sessions;
+  const session = curl ? { ...base, lines: [...base.lines, CURL_LINE] } : base;
   const lines = session.lines.map(
     (line): PacketLine => ({
       ...line,
@@ -114,8 +194,22 @@ export function strengthPacket(
           },
         ]
       : packet.last_numbers,
-    sessions: [{ ...session, follow_exactly: followExactly, lines }],
-    // The library names every planned exercise and every swap offered.
+    notes,
+    sessions: (() => {
+      const shaped = { ...session, follow_exactly: followExactly, lines };
+      return thursday
+        ? [
+            shaped,
+            {
+              ...shaped,
+              planned_session_id: THURSDAY_ID,
+              date: addDays(today, 3),
+            },
+          ]
+        : [shaped];
+    })(),
+    // The server sends the whole catalogue; the fixture carries the slice
+    // these lines name — every planned exercise and every swap offered.
     library: barbell
       ? libraryOf([
           "back_squat",
@@ -125,7 +219,9 @@ export function strengthPacket(
           "hollow_body_hold",
           "ab_wheel_rollout",
         ])
-      : packet.library,
+      : curl
+        ? [...packet.library, CURL].sort((a, b) => a.id.localeCompare(b.id))
+        : packet.library,
   };
 }
 

@@ -118,8 +118,10 @@ class SessionLifecycle(StrEnum):
     recorded before that screen existed — a device file, a manual entry, an
     import — is ``FINISHED`` from the moment it is written. Introduced with
     suggestion cards (`app.domain.cards.visible`), which must never appear
-    while it is ``ACTIVE``; the offline sync's ``session_start`` and
-    ``session_finish`` mutations are its writers.
+    while it is ``ACTIVE``; the offline sync's ``session_start``,
+    ``session_finish`` and ``session_reopen`` mutations are its writers, and
+    so is the close of a session abandoned for three hours
+    (`app.domain.sync.auto_close_end`).
     """
 
     ACTIVE = "active"

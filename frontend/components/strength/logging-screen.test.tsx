@@ -337,7 +337,8 @@ describe("numbers and fixes", () => {
   });
 
   it("finishing without a rating leaves it empty", async () => {
-    // No signal: Finish's upload must not empty the outbox before it is read.
+    // No signal, so what Finish wrote is still in the outbox to read: online,
+    // the flush after Finish races the read.
     syncServer().healthy = false;
     await open({ mode: "standard" });
     offline();

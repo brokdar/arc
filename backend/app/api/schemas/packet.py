@@ -12,7 +12,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict
 
 from app.api.schemas.exercise_preferences import EaseBackRead, SwapRead
-from app.api.schemas.exercises import ExerciseRead
+from app.api.schemas.exercises import ExerciseNoteRead, ExerciseRead
 from app.api.schemas.workouts import StrengthSetSchema
 from app.domain.activity import EffortSimple
 from app.domain.loading import Equipment
@@ -232,5 +232,7 @@ class PacketRead(BaseModel):
     gym: GymRead
     sessions: list[PacketSessionRead]
     last_numbers: list[LastNumbersRead]
-    #: The library entries the sessions and the last-numbers table name.
+    #: The whole exercise catalogue, for adding an exercise offline.
     library: list[ExerciseRead]
+    #: Every exercise note the athlete has written; none is empty.
+    notes: list[ExerciseNoteRead]

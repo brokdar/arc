@@ -24,6 +24,7 @@ from app.services.cards import register_card_expiry_job
 from app.services.matching import register_missed_sessions_job
 from app.services.proposals import register_proposal_expiry_job
 from app.services.scoring import register_prompt_expiry_job
+from app.services.sync import register_abandoned_session_job
 from app.services.templates import verify_bundled_resources
 from app.services.wellness import register_wellness_prompt_job
 
@@ -76,6 +77,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The suggestion-card expiry sweep. Hourly and idempotent; reads already
     # hide a card whose seven days since first display are up.
     register_card_expiry_job(app.state.scheduler)
+    # The abandoned-session sweep: a gym session with no set for three hours
+    # is closed at its last set, even when no phone syncs to trigger it.
+    register_abandoned_session_job(app.state.scheduler)
     get_logger(__name__).info("application_started")
     yield
     app.state.scheduler.shutdown(wait=False)

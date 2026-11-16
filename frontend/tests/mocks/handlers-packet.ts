@@ -12,22 +12,6 @@ const http = createOpenApiHttp<paths>({ baseUrl: "http://localhost:8000" });
 type Packet = components["schemas"]["PacketRead"];
 type Exercise = components["schemas"]["ExerciseRead"];
 
-/**
- * Every slug the captured packet's library names: the two planned movements
- * and each line's three swaps — the server's own ranking, pinned by
- * `test_exercise_preferences_api.py::test_the_frontend_packet_fixtures_swaps_are_the_servers`.
- */
-const PACKET_LIBRARY = [
-  "ab_wheel_rollout",
-  "barbell_row",
-  "dead_bug",
-  "front_plank",
-  "hollow_body_hold",
-  "inverted_row",
-  "pendlay_row",
-  "single_arm_dumbbell_row",
-];
-
 const STAMP = "2026-01-01T00:00:00Z";
 
 /** The swaps' catalogue entries, copied from `exercise_catalogue.json`. */
@@ -176,10 +160,13 @@ export const SWAP_LIBRARY: Exercise[] = [
  * itself.
  */
 export function packetFixture(today: string, generatedAt: Date): Packet {
-  // Sorted by slug, as the server sends it.
-  const library = [...EXERCISES, ...SWAP_LIBRARY]
-    .filter((exercise) => PACKET_LIBRARY.includes(exercise.id))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  // The server sends the whole catalogue, sorted by slug; the fixture
+  // carries a slice of it: the entries the tests pick from, and the swaps
+  // the captured lines offer.
+  const library = [
+    ...EXERCISES,
+    ...SWAP_LIBRARY.filter((swap) => !EXERCISES.some((e) => e.id === swap.id)),
+  ].sort((a, b) => a.id.localeCompare(b.id));
   return {
     schema_version: 1,
     generated_at: generatedAt.toISOString(),
@@ -328,6 +315,7 @@ export function packetFixture(today: string, generatedAt: Date): Packet {
     ],
     last_numbers: [],
     library,
+    notes: [],
   };
 }
 

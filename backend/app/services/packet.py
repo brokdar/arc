@@ -4,8 +4,8 @@ The phone renders, it does not decide. A basement gym has no signal, so the
 server prepares each strength session of the next seven days — every line's
 pre-fill, its warm-up ramp and plates, which effort question to ask, whether
 the plan must be followed exactly — together with the last numbers logged for
-every exercise, the library entries those name, and the gym the plates were
-computed for. The phone fetches it on sync and keeps it in IndexedDB
+every exercise, the exercise library, the athlete's exercise notes, and the
+gym the plates were computed for. The phone fetches it on sync and keeps it in IndexedDB
 (`frontend/lib/offline/packet-store.ts`). This module is the only producer of
 offline numbers: a later rule (progression, swaps) changes a number the gym
 sees by changing it here, not by teaching the phone.
@@ -61,6 +61,16 @@ plates for 60.
 
 The window is the athlete-local ``[today, today + 7)``, half-open like every
 range; only sessions still ``planned`` are in it.
+
+**The library is the whole catalogue**, not the entries the window names.
+The gym screen adds an exercise mid-session and starts an unplanned session
+from it, offline, so the picker must hold every movement; a subset made the
+exercise the athlete was most likely to add — one not in this week's plan —
+the one it could not offer. The catalogue is bundled reference data of about
+a hundred entries, a few tens of kilobytes in the packet.
+
+**Every exercise note travels with it**, so a note written on Monday shows on
+that exercise in Thursday's session in a gym with no signal.
 """
 
 import datetime as dt
@@ -114,6 +124,7 @@ from app.services.exercise_preferences import (
     ExercisePreferencesService,
     Library,
 )
+from app.services.exercises import ExerciseNote, ExerciseService
 from app.services.planned_sessions import PlannedSessionService
 from app.services.plans import PlansService
 
@@ -261,6 +272,7 @@ class Packet:
     sessions: list[PacketSession]
     last_numbers: list[LastNumbers]
     library: list[ExerciseRow]
+    notes: list[ExerciseNote]
 
 
 class PacketService:
@@ -274,8 +286,10 @@ class PacketService:
         history: SessionRepository,
         preferences: ExercisePreferencesService,
         records: StrengthHistoryRepository,
+        exercises: ExerciseService,
     ) -> None:
         self._preferences = preferences
+        self._exercises = exercises
         self._planned = planned
         self._plans = plans
         self._settings = settings
@@ -292,6 +306,7 @@ class PacketService:
             SessionRepository(session),
             ExercisePreferencesService.from_session(session),
             StrengthHistoryRepository(session),
+            ExerciseService.from_session(session),
         )
 
     async def build(self, *, now: dt.datetime | None = None) -> Packet:
@@ -332,10 +347,8 @@ class PacketService:
             )
             for slug, (logged, logged_on) in sorted(last.items())
         ]
-        named = {
-            slug for s in sessions for line in s.lines for slug in _named(line)
-        } | set(last)
-        library = [catalogue[slug] for slug in sorted(named) if slug in catalogue]
+        library = [catalogue[slug] for slug in sorted(catalogue)]
+        notes = [note for note in await self._exercises.notes() if note.text]
         return Packet(
             schema_version=SCHEMA_VERSION,
             generated_at=generated_at,
@@ -349,6 +362,7 @@ class PacketService:
             sessions=sessions,
             last_numbers=last_numbers,
             library=library,
+            notes=notes,
         )
 
     async def session(self, planned_session_id: uuid.UUID) -> PacketSession:
@@ -571,14 +585,6 @@ def _session(
         follow_exactly=follow_exactly,
         lines=lines,
     )
-
-
-def _named(line: PacketLine) -> set[str]:
-    """Every slug a line names: its exercise, its swaps, its ease-back steps."""
-    named = {line.exercise_id, *(row.id for row in line.swaps)}
-    if line.ease_back is not None:
-        named |= {row.id for row in line.ease_back.steps}
-    return named
 
 
 def _low(count: int | TargetRange | None) -> int | None:

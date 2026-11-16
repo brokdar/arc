@@ -5,6 +5,10 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Panel } from "@/components/design/panel";
 import { PurposeBadge } from "@/components/design/purpose-badge";
 import { SectionLabel } from "@/components/design/section-label";
+import {
+  RecapLink,
+  UnplannedLink,
+} from "@/components/strength/session-edits/today-links";
 import { StartLink } from "@/components/strength/start-link";
 import type { components } from "@/generated/api/schema";
 import { formatDayMonthYear } from "@/lib/format";
@@ -81,6 +85,9 @@ export function OfflineSessions({
             date: formatDayMonthYear(packet.generated_at.slice(0, 10)),
           })}
         </span>
+        <span className="ml-auto">
+          <UnplannedLink />
+        </span>
         {stale ? (
           <span
             role="status"
@@ -118,10 +125,16 @@ export function OfflineSessions({
               </li>
             ))}
           </ul>
-          <StartLink
-            id={session.planned_session_id}
-            name={purposeLabel(session.purpose)}
-          />
+          <div className="flex flex-wrap gap-2">
+            <StartLink
+              id={session.planned_session_id}
+              name={purposeLabel(session.purpose)}
+            />
+            <RecapLink
+              id={session.planned_session_id}
+              name={purposeLabel(session.purpose)}
+            />
+          </div>
         </Panel>
       ))}
     </section>
