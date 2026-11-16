@@ -25,7 +25,15 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint, func, select
+from sqlalchemy import (
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    delete,
+    func,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -137,6 +145,12 @@ class SyncRepository:
             .order_by(SessionRow.start_time.asc(), SessionRow.id.asc())
         )
         return [(entity, row) for entity, row in result.all()]
+
+    async def delete_session_entities(self, session_id: uuid.UUID) -> None:
+        """Forget the merged state of every entity of a deleted session."""
+        await self._session.execute(
+            delete(SyncEntityRow).where(SyncEntityRow.session_id == session_id)
+        )
 
     async def save(self, row: SyncEntityRow) -> SyncEntityRow:
         """Persist a new or changed entity state.

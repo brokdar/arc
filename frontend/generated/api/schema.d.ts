@@ -5579,6 +5579,7 @@ export interface components {
       | components["schemas"]["DontLearn"]
       | components["schemas"]["NoteUpsert"]
       | components["schemas"]["SessionClaim"]
+      | components["schemas"]["SessionDiscard"]
       | components["schemas"]["SessionReopen"]
       | components["schemas"]["RedFlag"]
       | components["schemas"]["Swap"];
@@ -7408,6 +7409,37 @@ export interface components {
        * @enum {string}
        */
       kind: "session_claim";
+      /**
+       * Mutation Id
+       * Format: uuid
+       */
+      mutation_id: string;
+      /**
+       * Session Client Id
+       * Format: uuid
+       */
+      session_client_id: string;
+    };
+    /**
+     * SessionDiscard
+     * @description End a session with nothing logged: delete it instead of saving it empty.
+     *
+     *     Refused (422) once the session holds a logged set — nothing the athlete
+     *     did is thrown away by this. A session the server never heard of is a
+     *     no-op, so a phone that cannot tell whether its ``session_start`` landed
+     *     can always send this.
+     */
+    SessionDiscard: {
+      /**
+       * Client Edit Time
+       * Format: date-time
+       */
+      client_edit_time: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      kind: "session_discard";
       /**
        * Mutation Id
        * Format: uuid

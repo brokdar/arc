@@ -23,7 +23,10 @@ import { useI18n } from "@/lib/i18n/provider";
  * Two kinds and three bands, no body chart and no free text: the athlete is
  * mid-session, maybe hurting, and the answer has to drive a rule
  * (`safety-model.ts`), not a conversation. The second tap applies it; the
- * screen then offers a one-tap undo.
+ * screen then says what it noted, with a one-tap undo. The dialog is titled
+ * for what it does ("Report pain"), not "Where is the pain?" — it never asks
+ * where — and its first step offers Cancel, since "Back" there closed the
+ * dialog rather than going back (UAT W4).
  */
 export function PainPanel({
   onReport,
@@ -71,7 +74,7 @@ export function PainPanel({
             className="h-[44px]"
             onClick={() => (kind === null ? onClose() : setKind(null))}
           >
-            {t("safety.pain.back")}
+            {kind === null ? t("safety.pain.cancel") : t("safety.pain.back")}
           </Button>
         </div>
       </DialogContent>

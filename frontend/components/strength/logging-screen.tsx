@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EffortRow } from "@/components/strength/effort-row";
 import {
+  DiscardPanel,
   type FinishChoice,
   FinishPanel,
 } from "@/components/strength/finish-panel";
@@ -52,10 +53,14 @@ import {
 } from "@/components/strength/session-edits/handoff";
 import {
   abandonedEnd,
+  discardMutation,
   finishMutation,
   mayReopen,
+  recapMinutes,
   recapSets,
+  recapWindow,
   reopenMutation,
+  toLocalInput,
 } from "@/components/strength/session-edits/lifecycle";
 import {
   type LocalNotes,
@@ -72,6 +77,7 @@ import {
   asksEffort,
   type Draft,
   deleteMutation,
+  describedBy,
   draftFor,
   inStartingFlow,
   type LoggedSet,
@@ -88,6 +94,7 @@ import {
   type Stamp,
   type StartingAnswer,
   setMutation,
+  setsOfExercise,
   settleStarting,
   startingKg,
   startMutation,
@@ -102,6 +109,7 @@ import { nextDraft, stepDownAfter } from "@/components/strength/step-down";
 import { Stepper } from "@/components/strength/stepper";
 import {
   applySwap,
+  keepAvoided,
   linesWithSwaps,
   needsSwapPrompt,
   replacedBy,
@@ -119,14 +127,16 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { useI18n } from "@/lib/i18n/provider";
-import type { Mutation } from "@/lib/offline/db";
+import { type Mutation, putTraining } from "@/lib/offline/db";
 import {
   activeSessions,
   enqueue,
   flush,
+  outboxStatus,
   subscribe,
   watchActiveSessions,
   withdraw,
+  withdrawSession,
 } from "@/lib/offline/outbox";
 import { refreshPacket, storedPacket } from "@/lib/offline/packet-store";
 import { uuid7 } from "@/lib/offline/uuid7";
@@ -196,6 +206,7 @@ export function writesSettled(): Promise<unknown> {
 
 type Phase =
   | "loading"
+  | "discarded"
   | "missing"
   | "handoff"
   | "recap"
@@ -282,6 +293,13 @@ export function LoggingScreen({
   // waits until the outbox has drained: before that the server cannot know.
   const [uploaded, setUploaded] = useState(false);
   const [sheet, setSheet] = useState<"pain" | "redFlag" | "swap" | null>(null);
+  // What a muscle-ache report says back, and the set its undo takes it off.
+  const [ache, setAche] = useState<{ setId: string; exercise: string } | null>(
+    null,
+  );
+  // Set once the finish's own writes are on disk: only then does an empty
+  // outbox mean "uploaded" (before that it just has not been written yet).
+  const finishWritten = useRef(false);
   const opened = useRef(false);
   // Outbox writes and state saves run one after another, in action order.
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -384,6 +402,11 @@ export function LoggingScreen({
           return;
         }
         setSession(existing);
+        if (!existing.finished && existing.sets.length > 0) {
+          // Learn whether another phone holds it before offering "Resume":
+          // the offer would lead to a read-only screen (the render skips it).
+          await flush().catch(() => undefined);
+        }
         if (existing.finished) {
           void flush().then((outcome) => setUploaded(outcome === "drained"));
         }
@@ -432,6 +455,27 @@ export function LoggingScreen({
     const timer = window.setTimeout(() => setUndo(null), UNDO_MS);
     return () => window.clearTimeout(timer);
   }, [undo]);
+
+  useEffect(() => {
+    if (!ache) return;
+    const timer = window.setTimeout(() => setAche(null), UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [ache]);
+
+  // The "saved" screen says what the outbox really holds: the upload that
+  // lands later (the next tick, a reconnect) flips it from waiting to
+  // uploaded, instead of promising a connection that already came (UAT W6).
+  useEffect(() => {
+    if (phase !== "done") return;
+    const check = () => {
+      if (!finishWritten.current) return;
+      void outboxStatus().then((status) => {
+        if (status.pending === 0) setUploaded(true);
+      });
+    };
+    check();
+    return subscribe(check);
+  }, [phase]);
 
   // The session's lines as the athlete shaped them (reordered, sets or
   // exercises added: `session-edits/edits.ts`), and as the screen shows them:
@@ -525,6 +569,11 @@ export function LoggingScreen({
 
   const done = lines.length > 0 && allDone(session, lines);
   const readOnly = handedOver(active, session.sessionClientId, me);
+  // An avoided exercise shows only its swap prompt (`needsSwapPrompt`).
+  const prompting =
+    !readOnly && plannedLine !== undefined
+      ? needsSwapPrompt(session, plannedLine)
+      : false;
   const note = line ? noteFor(line.exercise_id, packet, notes) : null;
   const starting = line !== undefined && inStartingFlow(session, line);
   const weightText = (kg: number | null) =>
@@ -566,7 +615,14 @@ export function LoggingScreen({
     const patches: Mutation[] = [];
     if (rating) {
       sets = sets.map((set) => {
-        if (set.lineRef !== line.line_ref || set.warmup) return set;
+        // Only the sets the answer can truthfully describe (`describedBy`).
+        if (
+          set.lineRef !== line.line_ref ||
+          set.warmup ||
+          !describedBy(created, set)
+        ) {
+          return set;
+        }
         const previous = ratingSnapshot(set, scale);
         const patch = patchMutation(
           session,
@@ -760,8 +816,27 @@ export function LoggingScreen({
       { ...session, finished: true, rest: null, endedAt: st.now },
       mutations,
     )
-      .then(() => flush())
+      .then(() => {
+        finishWritten.current = true;
+        return flush();
+      })
       .then((outcome) => setUploaded(outcome === "drained"));
+  };
+
+  /** End with nothing logged: take the session back, and tell the server. */
+  const discard = () => {
+    const st = stamp();
+    setUndo(null);
+    setPhase("discarded");
+    void later(async () => {
+      const { serverKnows } = await withdrawSession(session.sessionClientId);
+      if (serverKnows) {
+        await enqueue(discardMutation(session, st));
+      }
+      // Forget the screen's memory too, or reopening resumes a dead session.
+      await putTraining(session.plannedSessionId, null).catch(() => undefined);
+      void flush();
+    });
   };
 
   const reopen = () => {
@@ -773,22 +848,27 @@ export function LoggingScreen({
     );
   };
 
-  const logRecap = () => {
+  /** "Log it now" with the start and length the athlete gave. */
+  const logRecap = (startedAt: number, endedAt: number) => {
     const st = stamp();
     const created = recapSets(session, lines, () => uuid7(st.now));
     const started = {
       ...session,
+      startedAt,
       sets: created,
       finished: true,
-      endedAt: st.now,
+      endedAt,
     };
     const mutations: Mutation[] = [
-      startMutation(session, st, me ?? undefined),
-      ...created.map((set, i) => setMutation(session, set, i, scale, st)),
-      finishMutation(session, st.now, st),
+      startMutation(started, st, me ?? undefined),
+      ...created.map((set, i) => setMutation(started, set, i, scale, st)),
+      finishMutation(started, endedAt, st),
     ];
     setPhase("done");
-    void commit(started, mutations).then(() => flush());
+    void commit(started, mutations).then(() => {
+      finishWritten.current = true;
+      return flush();
+    });
   };
 
   const logSetBySet = () => {
@@ -833,10 +913,6 @@ export function LoggingScreen({
     band: PainBand | null,
   ) => {
     const st = stamp();
-    const previous = {
-      pain_kind: target.painKind ?? null,
-      pain_band: target.painBand ?? null,
-    };
     const patch = patchMutation(
       session,
       target.clientId,
@@ -859,22 +935,32 @@ export function LoggingScreen({
       next = advance(next, lines);
       if (allDone(next, lines)) next = { ...next, rest: null };
     }
-    setUndo({
-      before: session,
-      writes: [
-        {
-          mutationId: patch.mutation_id,
-          compensate: () =>
-            patchMutation(session, target.clientId, previous, stamp()),
-        },
-      ],
-    });
+    // No global Undo for a pain note: it has its own, on the "stopped" card
+    // (sharp) or on the acknowledgement (ache). Two Undo buttons side by side
+    // asked the athlete to guess which one took what back (UAT U7).
+    setUndo(null);
     void commit(next, [patch]);
   };
 
   const reportPain = (kind: PainKind, band: PainBand) => {
     setSheet(null);
-    if (painTarget) setPain(painTarget, kind, band);
+    if (!painTarget) return;
+    setPain(painTarget, kind, band);
+    if (kind === "ache") {
+      const owner = lines.find((l) => l.line_ref === painTarget.lineRef);
+      setAche({
+        setId: painTarget.clientId,
+        exercise: owner?.exercise_name ?? "",
+      });
+    } else {
+      setAche(null);
+    }
+  };
+
+  const undoAche = () => {
+    const target = session.sets.find((s) => s.clientId === ache?.setId);
+    setAche(null);
+    if (target) setPain(target, null, null);
   };
 
   /** One tap takes back the sharp-pain note that stopped `stopped`. */
@@ -950,9 +1036,12 @@ export function LoggingScreen({
       <Centered>
         <h1 className="font-semibold text-2xl">{t("train.done")}</h1>
         <p className="text-ink-muted">
-          {t("train.doneBody", {
-            count: String(session.sets.filter((s) => !s.warmup).length),
-          })}
+          {(() => {
+            const count = session.sets.filter((s) => !s.warmup).length;
+            return count === 1
+              ? t("train.doneBodyOne")
+              : t("train.doneBody", { count: String(count) });
+          })()} {uploaded ? t("train.doneUploaded") : t("train.doneWaiting")}
         </p>
         {uploaded ? (
           <FinishSummary
@@ -970,40 +1059,32 @@ export function LoggingScreen({
     );
   }
 
-  if (phase === "recap") {
+  if (phase === "discarded") {
     return (
       <Centered>
-        <h1 className="font-semibold text-2xl">{t("edits.recapTitle")}</h1>
-        <p className="text-ink-muted">{t("edits.recapBody")}</p>
-        <ul className="flex w-full max-w-sm flex-col gap-1 text-left">
-          {lines.map((one) => (
-            <li
-              key={one.line_ref}
-              className="flex items-baseline justify-between gap-3 text-sm"
-            >
-              <span className="text-ink-secondary">{one.exercise_name}</span>
-              <span className="font-mono text-ink text-xs">
-                {summary(draftFor({ ...session, sets: [] }, one))} ×{" "}
-                {one.prescription.sets}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <Button
-          className="h-[64px] w-full max-w-sm text-base"
-          aria-label={t("edits.recapAllLabel")}
-          onClick={logRecap}
-        >
-          {t("edits.recapAll")}
-        </Button>
-        <Button variant="ghost" className="h-[44px]" onClick={logSetBySet}>
-          {t("edits.recapSetBySet")}
-        </Button>
+        <h1 className="font-semibold text-2xl">{t("train.discarded")}</h1>
+        <p className="text-ink-muted">{t("train.discardedBody")}</p>
+        <BackToToday />
       </Centered>
     );
   }
 
-  if (phase === "resume") {
+  if (phase === "recap") {
+    return (
+      <RecapScreen
+        lines={lines}
+        session={session}
+        wall={() => clock.wall()}
+        summary={summary}
+        onLog={logRecap}
+        onSetBySet={logSetBySet}
+      />
+    );
+  }
+
+  // A session this phone handed over opens straight on its read-only view:
+  // "Resume" would lead to a screen that cannot resume anything.
+  if (phase === "resume" && !readOnly) {
     const open = nextOpenLine(session, lines, session.lineIndex);
     const resumeLine = open === null ? null : lines[open];
     return (
@@ -1027,7 +1108,8 @@ export function LoggingScreen({
   }
 
   const counter = {
-    current: String(session.lineIndex + 1),
+    // An unplanned session with nothing added yet is 0 of 0, not 1 of 0.
+    current: String(lines.length === 0 ? 0 : session.lineIndex + 1),
     total: String(lines.length),
   };
 
@@ -1167,7 +1249,14 @@ export function LoggingScreen({
 
       {phase === "finishing" && !readOnly ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <FinishPanel onFinish={finish} onBack={() => setPhase("logging")} />
+          {session.sets.length === 0 ? (
+            <DiscardPanel
+              onDiscard={discard}
+              onBack={() => setPhase("logging")}
+            />
+          ) : (
+            <FinishPanel onFinish={finish} onBack={() => setPhase("logging")} />
+          )}
         </div>
       ) : (
         <>
@@ -1225,13 +1314,32 @@ export function LoggingScreen({
                   )}
                 </div>
               ))}
-            {!readOnly &&
-            plannedLine &&
-            needsSwapPrompt(session, plannedLine) ? (
+            {prompting && plannedLine ? (
               <SwapPrompt
                 line={plannedLine}
                 onPick={(id) => swapLine(id, "session")}
+                onKeep={() => void commit(keepAvoided(session, plannedLine))}
               />
+            ) : null}
+            {ache && !readOnly ? (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-lg border border-hairline-strong bg-raised px-3 py-2 text-sm"
+              >
+                <p className="min-w-0 flex-1">
+                  {t("safety.pain.noted", { exercise: ache.exercise })}
+                </p>
+                <Button
+                  variant="outline"
+                  className="h-[44px]"
+                  aria-label={t("safety.pain.undoLabel", {
+                    exercise: ache.exercise,
+                  })}
+                  onClick={undoAche}
+                >
+                  {t("safety.pain.undo")}
+                </Button>
+              </div>
             ) : null}
             {line?.ease_back ? (
               <p role="note" className="text-ink-secondary text-sm">
@@ -1242,7 +1350,10 @@ export function LoggingScreen({
                 })}
               </p>
             ) : null}
-            {!readOnly && line && starting && line.equipment ? (
+            {prompting ? null : !readOnly &&
+              line &&
+              starting &&
+              line.equipment ? (
               <StartingFlow
                 kg={startingKg(session, line, gym)}
                 equipment={line.equipment}
@@ -1294,7 +1405,7 @@ export function LoggingScreen({
                 {t("train.undo")}
               </Button>
             ) : null}
-            {readOnly || starting ? null : done ? (
+            {readOnly || starting || prompting ? null : done ? (
               <Button
                 className="h-[72px] text-xl"
                 onClick={() => setPhase("finishing")}
@@ -1417,6 +1528,97 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * "Log it now": a session already done, entered in one tap — but with the
+ * athlete's own start and length. Defaults are "just finished": it started
+ * `recapMinutes` ago and took that long. Without them the whole session was
+ * stored as starting now and lasting eleven seconds (UAT U11), which put it
+ * on the wrong day and gave it a duration no score could use.
+ */
+function RecapScreen({
+  lines,
+  session,
+  wall,
+  summary,
+  onLog,
+  onSetBySet,
+}: {
+  lines: readonly PacketLine[];
+  session: ActiveSession;
+  /** The clock's wall time, epoch ms. */
+  wall: () => number;
+  summary: (set: Pick<Draft, "loadKg" | "reps" | "durationS">) => string;
+  onLog: (startedAt: number, endedAt: number) => void;
+  onSetBySet: () => void;
+}) {
+  const { t } = useI18n();
+  const [defaults] = useState(() => {
+    const minutes = recapMinutes(lines);
+    return { minutes, start: toLocalInput(wall() - minutes * 60_000) };
+  });
+  const [start, setStart] = useState(defaults.start);
+  const [minutes, setMinutes] = useState(String(defaults.minutes));
+  const input =
+    "h-[48px] rounded-lg border border-hairline-strong bg-inset px-3 font-mono text-lg text-ink";
+  return (
+    <Centered>
+      <h1 className="font-semibold text-2xl">{t("edits.recapTitle")}</h1>
+      <p className="text-ink-muted">{t("edits.recapBody")}</p>
+      <ul className="flex w-full max-w-sm flex-col gap-1 text-left">
+        {lines.map((one) => (
+          <li
+            key={one.line_ref}
+            className="flex items-baseline justify-between gap-3 text-sm"
+          >
+            <span className="text-ink-secondary">{one.exercise_name}</span>
+            <span className="font-mono text-ink text-xs">
+              {summary(draftFor({ ...session, sets: [] }, one))}
+              {one.prescription.per_side === true
+                ? ` ${t("train.perSide")}`
+                : ""}{" "}
+              × {one.prescription.sets}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex w-full max-w-sm flex-col gap-3 text-left">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-secondary">{t("edits.recapStarted")}</span>
+          <input
+            type="datetime-local"
+            className={input}
+            value={start}
+            max={toLocalInput(wall())}
+            onChange={(event) => setStart(event.target.value)}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-secondary">{t("edits.recapMinutes")}</span>
+          <input
+            inputMode="numeric"
+            className={input}
+            value={minutes}
+            onChange={(event) => setMinutes(event.target.value)}
+          />
+        </label>
+      </div>
+      <Button
+        className="h-[64px] w-full max-w-sm text-base"
+        aria-label={t("edits.recapAllLabel")}
+        onClick={() => {
+          const span = recapWindow(start, Number(minutes), wall());
+          onLog(span.startedAt, span.endedAt);
+        }}
+      >
+        {t("edits.recapAll")}
+      </Button>
+      <Button variant="ghost" className="h-[44px]" onClick={onSetBySet}>
+        {t("edits.recapSetBySet")}
+      </Button>
+    </Centered>
+  );
+}
+
 function BackToToday() {
   const { t } = useI18n();
   return (
@@ -1464,6 +1666,16 @@ function LineBody({
   units: "kg" | "lb";
 }) {
   const { t } = useI18n();
+  // "10 reps" on a one-arm row meant per side; say so (UAT W7). A plural
+  // count of one reads "1 rep" (W5).
+  const repsText = (count: number, perSide: boolean) =>
+    perSide
+      ? count === 1
+        ? t("train.repsPerSideOne")
+        : t("train.repsPerSide", { reps: String(count) })
+      : count === 1
+        ? t("train.repsValueOne")
+        : t("train.repsValue", { reps: String(count) });
   const working = workingSetsOf(session, line.line_ref);
   const warmed = warmupsDone(session, line.line_ref);
   const total = line.prescription.sets;
@@ -1512,17 +1724,71 @@ function LineBody({
   // (Plain logbook, follow-exactly, a line with no loadable weight) the chip
   // says where the pre-fill came from.
   const step = stepDownAfter(session, plannedSession, line, gym);
+  // The suggestion was worked out for the session as planned. Once sets are
+  // logged today at a different weight (a step-down that has since settled,
+  // or the athlete's own change), its chip — "Same weight: on target" over a
+  // 97.5 kg pre-fill it never suggested — describes a number that is not the
+  // one on screen (UAT W3). The chip then names the real source: today's
+  // last set. The Why sheet goes with it; it explains a weight not shown.
+  const doneToday = setsOfExercise(session, line);
+  const suggested = line.suggestion;
+  const offered = suggested?.load_kg ?? line.prefill.load_kg;
+  const movedToday =
+    doneToday.length > 0 &&
+    offered !== null &&
+    draft?.loadKg != null &&
+    draft.loadKg !== offered;
+  const suggestion = step || movedToday ? null : suggested;
   const reason = step
     ? t("train.reasonStepDown", { weight: weightText(step.fromKg - step.toKg) })
-    : line.prefill.source === "prescription"
-      ? t("train.reasonPlan")
-      : line.prefill.source === "blank"
-        ? t("train.reasonBlank")
-        : t("train.reasonLast");
+    : movedToday
+      ? t("train.reasonToday")
+      : line.prefill.source === "prescription"
+        ? t("train.reasonPlan")
+        : line.prefill.source === "blank"
+          ? t("train.reasonBlank")
+          : t("train.reasonLast");
+  const lastText = last
+    ? summary({
+        loadKg: last.load_kg,
+        reps: last.reps,
+        durationS: last.duration_s,
+      })
+    : "";
+  // The chip's "Down 7.5 kg" is measured from the set the suggestion read
+  // (the last session's reference set), which can differ from the final set
+  // "last time" shows (92.5 kg × 3 after a 100 kg × 6 top set). When they
+  // differ the line names the reference too, so the two agree (UAT W3).
+  const reference = suggestion?.explanation.inputs.at(-1);
+  const referenceText =
+    last &&
+    reference &&
+    (reference.load_kg !== last.load_kg || reference.reps !== last.reps)
+      ? summary({
+          loadKg: reference.load_kg,
+          reps: reference.reps,
+          durationS: null,
+        })
+      : null;
   const plates =
     equipment === "barbell" && draft?.loadKg
       ? platesPerSide(draft.loadKg, "barbell", gym)
       : null;
+  // At or under the bar there are no plates to name: "per side: —" read as a
+  // missing number (UAT B7), so the line says what it is.
+  const platesText =
+    plates === null || draft?.loadKg == null
+      ? null
+      : draft.loadKg < gym.barKg
+        ? t("train.platesBelowBar", { weight: weightText(gym.barKg) })
+        : draft.loadKg === gym.barKg
+          ? t("train.platesBarOnly", { weight: weightText(gym.barKg) })
+          : `${t("train.plates", {
+              plates:
+                plates.length > 0
+                  ? plates.map((kg) => weightText(kg)).join(" · ")
+                  : "—",
+            })} · ${t("train.bar", { weight: weightText(gym.barKg) })}`;
 
   const nextText = (() => {
     if (working.length + 1 < total && draft) {
@@ -1541,19 +1807,25 @@ function LineBody({
   return (
     <>
       {line.warmups.length > 0 ? (
-        <div className="flex min-h-[44px] items-center gap-2 text-sm">
+        <div className="flex min-h-[44px] flex-wrap items-center gap-2 text-sm">
           <span className="text-ink-secondary">{t("train.warmup")}</span>
-          <span aria-hidden className="flex gap-1">
+          {/* Each warm-up as the weight × reps it asks for (UAT U4: only dots
+              and "✓ all" showed, so the ramp itself was never visible). A done
+              one carries a ✓, never colour alone. */}
+          <ul className="flex flex-wrap gap-1.5 font-mono text-xs">
             {line.warmups.map((warmup, i) => (
-              <span
+              <li
                 key={`${warmup.kg}-${warmup.reps}`}
                 className={cn(
-                  "size-2.5 rounded-full border border-hairline-strong",
-                  i < warmed && "bg-ink-secondary",
+                  "rounded-md border border-hairline-strong px-1.5 py-0.5",
+                  i < warmed ? "text-ink-muted" : "text-ink-secondary",
                 )}
-              />
+              >
+                {i < warmed ? "✓ " : ""}
+                {weightText(warmup.kg)} × {warmup.reps}
+              </li>
             ))}
-          </span>
+          </ul>
           {warmed >= line.warmups.length ? (
             <span className="text-ink-muted">{t("train.warmupDone")}</span>
           ) : readOnly ? null : (
@@ -1648,7 +1920,10 @@ function LineBody({
           ) : (
             <Stepper
               what={t("train.reps")}
-              display={t("train.repsValue", { reps: String(draft.reps ?? 0) })}
+              display={repsText(
+                draft.reps ?? 0,
+                line.prescription.per_side === true,
+              )}
               value={draft.reps}
               onStep={(d) =>
                 setDraft({ ...draft, reps: Math.max(1, (draft.reps ?? 0) + d) })
@@ -1697,32 +1972,23 @@ function LineBody({
           <div className="flex flex-col gap-1 text-sm">
             {last ? (
               <p className="font-mono text-ink-muted">
-                {t("train.lastTime", {
-                  summary: summary({
-                    loadKg: last.load_kg,
-                    reps: last.reps,
-                    durationS: last.duration_s,
-                  }),
-                })}
+                {referenceText
+                  ? t("train.lastTimeRef", {
+                      summary: lastText,
+                      reference: referenceText,
+                    })
+                  : t("train.lastTime", { summary: lastText })}
               </p>
             ) : null}
             <WhySheet
               // The suggestion is for the session as planned; a step-down
               // after a missed set today is newer, so it speaks instead.
-              suggestion={step ? null : line.suggestion}
+              suggestion={suggestion}
               fallback={reason}
               weightText={weightText}
             />
-            {plates ? (
-              <p className="font-mono text-ink-muted">
-                {t("train.plates", {
-                  plates:
-                    plates.length > 0
-                      ? plates.map((kg) => weightText(kg)).join(" · ")
-                      : "—",
-                })}{" "}
-                · {t("train.bar", { weight: weightText(gym.barKg) })}
-              </p>
+            {platesText ? (
+              <p className="font-mono text-ink-muted">{platesText}</p>
             ) : null}
             <p className="font-mono text-ink-muted">
               {t("train.next", { summary: nextText })}

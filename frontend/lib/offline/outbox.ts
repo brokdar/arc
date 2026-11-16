@@ -52,6 +52,8 @@ export const BATCH_SIZE = 500;
 /** A queue younger than this is normal — a set logged between bars of signal. */
 export const BADGE_AFTER_MS = 60_000;
 export const FLUSH_INTERVAL_MS = 30_000;
+/** Waits between the flushes an `online` event retries (see `startOutbox`). */
+const ONLINE_RETRY_MS = [1_000, 2_000, 4_000, 8_000] as const;
 
 export type FlushOutcome =
   | "drained"
@@ -136,6 +138,35 @@ export async function withdraw(mutationIds: string[]): Promise<string[]> {
   const removed = new Set(await removeQueuedMutations(mutationIds));
   notify();
   return mutationIds.filter((id) => !removed.has(id));
+}
+
+/**
+ * Take a whole session back out of the outbox — "End" with nothing logged
+ * discards it. Waits for a flush in progress, then removes every item still
+ * queued for the session. `serverKnows` is whether its `session_start` had
+ * already uploaded (it was not in the queue): then the server holds an empty
+ * session the caller must discard with a `session_discard`; if the start was
+ * still queued, the server never heard of the session and nothing is owed.
+ */
+export async function withdrawSession(
+  sessionClientId: string,
+): Promise<{ serverKnows: boolean }> {
+  if (inflight) await inflight.catch(() => undefined);
+  const mine = (await queued()).filter(
+    (item) =>
+      "session_client_id" in item.mutation &&
+      item.mutation.session_client_id === sessionClientId,
+  );
+  const removed = new Set(
+    await removeQueuedMutations(mine.map((item) => item.mutation.mutation_id)),
+  );
+  notify();
+  const startRemoved = mine.some(
+    (item) =>
+      item.mutation.kind === "session_start" &&
+      removed.has(item.mutation.mutation_id),
+  );
+  return { serverKnows: !startRemoved };
 }
 
 let again = false;
@@ -344,18 +375,38 @@ export function failedExport(items: FailedItem[]): string {
 export function startOutbox(
   run: () => Promise<FlushOutcome> = flush,
 ): () => void {
+  let retry: number | undefined;
+  let stopped = false;
   const attempt = () => {
     void run();
   };
+  // The browser fires `online` when the interface is up, often a second or
+  // two before the network answers, so the first flush's `/health` probe
+  // fails and the queue then waited for the 30 s tick (UAT U6: about 20 s
+  // after the reconnect). An `online` flush that finds the network still
+  // down tries again after 1, 2, 4 and 8 s; a "signed out" or "update
+  // required" answer is not a network problem and is not retried.
+  const onlineAttempt = (step: number) => {
+    window.clearTimeout(retry);
+    void run().then((outcome) => {
+      if (stopped || (outcome !== "offline" && outcome !== "error")) return;
+      const delay = ONLINE_RETRY_MS[step];
+      if (delay === undefined) return;
+      retry = window.setTimeout(() => onlineAttempt(step + 1), delay);
+    });
+  };
+  const onOnline = () => onlineAttempt(0);
   const onVisible = () => {
     if (document.visibilityState !== "hidden") attempt();
   };
   attempt();
-  window.addEventListener("online", attempt);
+  window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onVisible);
   const timer = window.setInterval(attempt, FLUSH_INTERVAL_MS);
   return () => {
-    window.removeEventListener("online", attempt);
+    stopped = true;
+    window.clearTimeout(retry);
+    window.removeEventListener("online", onOnline);
     document.removeEventListener("visibilitychange", onVisible);
     window.clearInterval(timer);
   };

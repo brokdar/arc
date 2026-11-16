@@ -75,6 +75,23 @@ export function finishMutation(
   };
 }
 
+/**
+ * "End" with nothing logged: the session is thrown away rather than saved
+ * empty (UAT U14). Only for a session the server already holds — one whose
+ * start never uploaded is simply withdrawn (`withdrawSession`).
+ */
+export function discardMutation(
+  session: ActiveSession,
+  stamp: Stamp,
+): Mutation {
+  return {
+    kind: "session_discard",
+    mutation_id: stamp.id(),
+    client_edit_time: new Date(stamp.now).toISOString(),
+    session_client_id: session.sessionClientId,
+  };
+}
+
 export function reopenMutation(session: ActiveSession, stamp: Stamp): Mutation {
   return {
     kind: "session_reopen",
@@ -82,6 +99,54 @@ export function reopenMutation(session: ActiveSession, stamp: Stamp): Mutation {
     client_edit_time: new Date(stamp.now).toISOString(),
     session_client_id: session.sessionClientId,
   };
+}
+
+/** One minute: the least a session that happened can have lasted. */
+const MINUTE_MS = 60_000;
+
+/**
+ * How long "Log it now" assumes the session took, in minutes: about three
+ * minutes a set — lifting plus rest — rounded to five, never under twenty.
+ * It only seeds the field the athlete can change; a recap does not know when
+ * each set was lifted (see `recapSets`), and the whole session was recorded
+ * as starting *now* and lasting eleven seconds before the athlete could say
+ * (UAT U11).
+ */
+export function recapMinutes(lines: readonly PacketLine[]): number {
+  const sets = lines.reduce((n, line) => n + line.prescription.sets, 0);
+  return Math.max(20, Math.round((sets * 3) / 5) * 5);
+}
+
+/**
+ * The start and end a recap sends, from what the athlete entered: when it
+ * started (a `datetime-local` value in the phone's own zone) and how many
+ * minutes it took. A session cannot start or end in the future, so a later
+ * start is held to now and an end past now to now; one unreadable entry falls
+ * back to the default (an hour ago) rather than blocking the log.
+ */
+export function recapWindow(
+  startedInput: string,
+  minutes: number,
+  now: number,
+): { startedAt: number; endedAt: number } {
+  const parsed = new Date(startedInput).getTime();
+  const startedAt = Math.min(
+    Number.isFinite(parsed) ? parsed : now - 60 * MINUTE_MS,
+    now,
+  );
+  const length = Math.max(
+    1,
+    Math.round(Number.isFinite(minutes) ? minutes : 1),
+  );
+  const endedAt = Math.min(startedAt + length * MINUTE_MS, now);
+  return { startedAt, endedAt: Math.max(endedAt, startedAt + MINUTE_MS) };
+}
+
+/** An epoch as a `datetime-local` value, in the phone's own zone. */
+export function toLocalInput(epochMs: number): string {
+  const d = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**

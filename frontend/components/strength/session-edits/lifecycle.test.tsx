@@ -223,9 +223,13 @@ describe("a session with no plan", () => {
     );
   });
 
-  it("an exercise added to a planned session comes after the shown one", async () => {
+  // UAT U15: adding an exercise jumped straight to it and left the half-done
+  // one behind. It now goes in right after the shown exercise, and the screen
+  // stays on the exercise being done.
+  it("an exercise added to a planned session comes after the shown one, and the screen stays", async () => {
     await storePacket();
     await openScreen();
+    await logNext();
     await menu("Add an exercise");
     fireEvent.click(
       within(
@@ -233,7 +237,19 @@ describe("a session with no plan", () => {
       ).getByRole("button", { name: "Add Back Squat" }),
     );
     expect(
-      await screen.findByRole("note", { name: "Exercise 2 of 3" }),
+      await screen.findByRole("note", { name: "Exercise 1 of 3" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", {
+        name: "Single-Arm Dumbbell Row",
+        level: 1,
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Set 2 of 3" })).toBeVisible();
+
+    await menu("Next exercise");
+    expect(
+      await screen.findByRole("heading", { name: "Back Squat", level: 1 }),
     ).toBeVisible();
   });
 });

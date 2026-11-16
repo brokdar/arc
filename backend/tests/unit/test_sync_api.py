@@ -367,6 +367,51 @@ async def test_dont_learn_lands_with_its_reason(
     assert row.dont_learn_reason == "slept badly"
 
 
+def discard(n: int) -> dict[str, Any]:
+    return {
+        "kind": "session_discard",
+        "mutation_id": mid(n),
+        "client_edit_time": edit(2),
+        "session_client_id": SESSION_ID,
+    }
+
+
+async def test_a_session_ended_with_nothing_logged_is_discarded(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # UAT U14: End with 0 sets used to finish the session and store it empty.
+    await sync(client, [start(1)])
+    assert len((await db_session.execute(select(SessionRow))).scalars().all()) == 1
+
+    answer = await sync(client, [discard(2)])
+
+    db_session.expire_all()
+    assert (await db_session.execute(select(SessionRow))).scalars().all() == []
+    assert answer["active_sessions"] == []
+    # A replay is answered from the receipt and recreates nothing.
+    await sync(client, [start(1), discard(2)])
+    assert (await db_session.execute(select(SessionRow))).scalars().all() == []
+
+
+async def test_discarding_a_session_the_server_never_heard_of_is_a_no_op(
+    client: AsyncClient,
+) -> None:
+    answer = await sync(client, [discard(1)])
+    assert [r["status"] for r in answer["results"]] == ["applied"]
+
+
+async def test_a_session_with_a_logged_set_cannot_be_discarded(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    response = await client.post(
+        SYNC,
+        json=batch([start(1), upsert(2, SET_IDS[0], 1, **squat(0)), discard(3)]),
+    )
+    assert response.status_code == 422
+    assert response.json()["mutation_id"] == mid(3)
+    assert (await db_session.execute(select(LoggedSetRow))).scalars().all() == []
+
+
 # --- the contract ------------------------------------------------------------
 
 

@@ -37,15 +37,6 @@ const LIMIT_KEYS: Readonly<Record<string, MessageKey>> = {
   "progression.weight_from_effort.gap_twice": "why.limitOneStep",
 };
 
-/** The reasons that read two sessions, so line one names both. */
-const TWICE = new Set<Suggestion["explanation"]["reason"]>([
-  "easier_twice",
-  "harder_twice",
-  "top_of_range_twice",
-  "simple_good_twice",
-  "simple_hard_twice",
-]);
-
 const WEIGHT_FROM_EFFORT = "progression.weight_from_effort";
 
 /**
@@ -114,7 +105,9 @@ export function WhySheet({
     if (input.reps_left !== null) {
       return input.reps_left_capped
         ? t("why.withLeftCapped")
-        : t("why.withLeft", { left: input.reps_left });
+        : input.reps_left === 1
+          ? t("why.withLeftOne")
+          : t("why.withLeft", { left: input.reps_left });
     }
     if (input.effort_simple !== null) {
       return t("why.rated", {
@@ -128,7 +121,10 @@ export function WhySheet({
   const last = inputs[inputs.length - 1];
   const first = inputs[0];
   let what = "";
-  if (TWICE.has(why.reason) && inputs.length > 1 && first && last) {
+  // Both sessions the explanation read, whatever the reason: the sheet used
+  // to name only the last one unless the reason itself was "twice", so a
+  // suggestion built on two sessions showed one (UAT W11).
+  if (inputs.length > 1 && first && last) {
     const same =
       setText(first) === setText(last) &&
       effortText(first) === effortText(last);

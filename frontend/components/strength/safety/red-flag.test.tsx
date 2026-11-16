@@ -63,6 +63,24 @@ async function kinds(): Promise<string[]> {
 }
 
 describe("Stop — something's wrong", () => {
+  // UAT U8: "Call emergency services now" had nothing to tap. 112 is the
+  // number (`EMERGENCY_NUMBER`): EU-wide, and routed locally on GSM phones.
+  it("an emergency symptom offers a tap-to-call link to 112", async () => {
+    await open();
+    await stop("Trouble breathing");
+
+    const call = await screen.findByRole("link", { name: "Call 112" });
+    expect(call).toHaveAttribute("href", "tel:112");
+  });
+
+  it("an advice symptom offers no call link", async () => {
+    await open();
+    await stop("Dizziness");
+
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("link", { name: /^Call/ })).toBeNull();
+  });
+
   it("chest pain says to call emergency services and ends the session", async () => {
     await open();
 
