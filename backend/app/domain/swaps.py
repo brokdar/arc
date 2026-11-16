@@ -18,8 +18,10 @@ reason to stop trusting the other three.
 
 **The ranking is lexicographic** (:func:`_rank_key`), so each key only breaks
 the previous one's ties and the order can be explained in one sentence per
-key: the remembered pick first; then "less often" sinks below everything
-else; then more shared main groups; the same pattern before a related one;
+key: "less often" sinks below everything else — **even the remembered pick**,
+which would otherwise win the key above it and make the athlete's explicit
+"suggest it less often" do nothing (UAT B12) — then the remembered pick;
+then more shared main groups; the same pattern before a related one;
 the same mechanic; fewer *new* demands (restriction tags the original does
 not already make); an exercise the athlete has logged before; the most
 shared muscle weight; and finally the slug, so the order never depends on
@@ -114,13 +116,20 @@ class SwapScope(StrEnum):
 
 
 def rest_of_block_card(original: str, swap: str) -> tuple[str, str]:
-    """The pending card's headline and "because" sentence for a block-long swap."""
+    """The pending card's headline and "because" sentence for a block-long swap.
+
+    The sentence says only what accepting does — remembers the pick. It used to
+    add "your coach sees the request to change the plan", which was untrue:
+    accepting creates no proposal, so nothing reaches the coach (UAT W12).
+    Raising a real plan proposal from here is a larger design (who it is
+    addressed to, what it rewrites) than a wording fix, and was left out.
+    """
     return (
         f"Keep {plural(swap)} instead of {plural(original)} for the rest of the block?",
         (
             "You swapped them in the gym and asked to keep the swap. Accepting "
-            f"offers {plural(swap)} first whenever {plural(original)} come up; "
-            "your coach sees the request to change the plan."
+            f"offers {plural(swap)} first whenever {plural(original)} come up. "
+            "It does not edit the plan."
         ),
     )
 
@@ -137,7 +146,8 @@ class SwapContext:
         less_often: Slugs offered only after every other valid swap.
         known: Slugs the athlete has logged before.
         remembered: ``{original slug: picked slug}``, the athlete's last pick
-            for each exercise; it ranks first while it stays valid.
+            for each exercise; it ranks first while it stays valid and is
+            not in ``less_often``.
     """
 
     equipment: frozenset[ExerciseEquipment] = DEFAULT_GYM_EQUIPMENT
@@ -183,8 +193,8 @@ def _rank_key(
 ) -> tuple[int, int, int, int, int, int, int, float, str]:
     """The ranking's keys, in order (see the module docstring)."""
     return (
-        0 if context.remembered.get(original.id) == candidate.id else 1,
         1 if candidate.id in context.less_often else 0,
+        0 if context.remembered.get(original.id) == candidate.id else 1,
         -len(main_groups(candidate.muscles) & main_groups(original.muscles)),
         0 if candidate.pattern is original.pattern else 1,
         0 if candidate.mechanic is original.mechanic else 1,
@@ -248,8 +258,41 @@ def pain_swap(
     return found[0] if found else None
 
 
+#: Patterns that move the whole body against gravity when done unloaded: a dip
+#: or a pull-up cannot be made lighter than bodyweight, and for a shoulder or
+#: elbow coming back from trouble it is as heavy a ask as a barbell.
+_FULL_BODYWEIGHT_PATTERNS: Final = frozenset(
+    {MovementPattern.VERTICAL_PUSH, MovementPattern.VERTICAL_PULL}
+)
+
+
+def _load_demand(exercise: Exercise) -> int:
+    """:data:`LOAD_DEMAND`, except that a vertical bodyweight movement is heavy.
+
+    "Bodyweight" is easy for a squat, a push-up or an inverted row, where the
+    body is partly supported, and not for a dip. Rating all of it 1 put Dip
+    first on the Incline Bench ladder, ahead of a landmine press (UAT U10): the
+    ladder is meant to go from least to most demanding, and the athlete's
+    first step back was the one that loads the whole body on the shoulders. It
+    displaced a per-exercise override: the property is stated once, on the
+    pattern.
+    """
+    if (
+        exercise.load_type is LoadType.BODYWEIGHT
+        and exercise.pattern in _FULL_BODYWEIGHT_PATTERNS
+    ):
+        return LOAD_DEMAND[LoadType.BARBELL]
+    return LOAD_DEMAND[exercise.load_type]
+
+
 def _demand(exercise: Exercise) -> tuple[int, int]:
+    """What qualifies a step as easier: tags, then the plain kind of load."""
     return len(exercise.restrictions), LOAD_DEMAND[exercise.load_type]
+
+
+def _climb_key(exercise: Exercise) -> tuple[int, int, str]:
+    """Where a kept step stands on the ladder: tags, honest load, slug."""
+    return len(exercise.restrictions), _load_demand(exercise), exercise.id
 
 
 def ease_back_ladder(
@@ -282,4 +325,4 @@ def ease_back_ladder(
         and _demand(c) < _demand(original)
     ]
     kept = easier[:MAX_EASE_BACK_STEPS]
-    return tuple(sorted(kept, key=lambda c: (_demand(c), c.id)))
+    return tuple(sorted(kept, key=_climb_key))

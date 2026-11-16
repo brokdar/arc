@@ -679,3 +679,35 @@ async def test_sharp_pain_last_time_keeps_the_suggestion_from_rising(
 
     assert squat["prefill"]["load_kg"] == 100.0
     assert squat["suggestion"]["explanation"]["reason"] == "increase_blocked"
+
+
+async def test_an_athlete_in_pounds_gets_a_pound_gym_and_round_pound_weights(
+    client: AsyncClient,
+) -> None:
+    """UAT B5: 100 kg is 220 lb on the pound gym, never 220.5 lb or 44.1 lb."""
+    response = await client.patch(SETTINGS, json={"units": "lb"})
+    assert response.status_code == 200, response.text
+    session_id = await plan(
+        client, lift(item("back_squat", load={"kind": "kg", "value": 100}))
+    )
+
+    body = await packet(client)
+
+    def lb(kg: float) -> float:
+        return round(kg / 0.45359237, 1)
+
+    assert lb(body["gym"]["bar_kg"]) == 45.0
+    assert {lb(pair["kg"]) for pair in body["gym"]["plate_pairs"]} == {
+        45.0,
+        35.0,
+        25.0,
+        10.0,
+        5.0,
+        2.5,
+    }
+    assert lb(body["gym"]["dumbbell_step_kg"]) == 5.0
+    (squat,) = lines_of(body, session_id)
+    assert lb(squat["prefill"]["load_kg"]) == 220.0
+    assert [lb(p) for p in squat["plates_per_side"]] == [45.0, 35.0, 5.0, 2.5]
+    for ramp in squat["warmups"]:
+        assert lb(ramp["kg"]) % 5 == 0

@@ -160,6 +160,47 @@ argument rather than a rewrite.
 """
 
 
+def _lb(pounds: float) -> float:
+    return pounds * KG_PER_LB
+
+
+_LB_BAR: Final = 45.0
+_LB_PLATE_PAIRS: Final = (
+    (45.0, 4),
+    (35.0, 1),
+    (25.0, 2),
+    (10.0, 2),
+    (5.0, 2),
+    (2.5, 2),
+)
+_LB_DUMBBELL_STEP: Final = 5.0
+# Half a step of slack on both ceilings: the gym works in whole grams, and
+# twenty 2268 g steps are a gram heavier than 100 lb's 45359 g, so an exact
+# ceiling would drop the heaviest dumbbell.
+_LB_DUMBBELL_MAX: Final = 102.5
+_LB_STACK_STEP: Final = 10.0
+_LB_STACK_MAX: Final = 305.0
+
+LB_GYM: Final = Gym(
+    bar_kg=_lb(_LB_BAR),
+    plate_pairs=tuple((_lb(plate), pairs) for plate, pairs in _LB_PLATE_PAIRS),
+    dumbbell_step_kg=_lb(_LB_DUMBBELL_STEP),
+    dumbbell_max_kg=_lb(_LB_DUMBBELL_MAX),
+    stack_step_kg=_lb(_LB_STACK_STEP),
+    stack_max_kg=_lb(_LB_STACK_MAX),
+)
+"""The gym of an athlete who counts in pounds: what a US gym is stocked with.
+
+A 45 lb bar, 45/35/25/10/5/2.5 lb plates, dumbbells every 5 lb to 100, a stack
+in 10 lb pins to 300. Weights are still carried in kilograms — storage never
+changed — but they are *chosen* from this inventory, so every loadable weight
+is a round number of pounds (135, 140, 142.5 lb) instead of the kilogram gym's
+literal conversion: 100 kg shown as 220.5 lb, a 20 kg plate as 44.1 lb, steps
+of 5.5 lb (UAT B5). It displaced converting the kg gym at display time, which
+can only ever show what a kilogram gym can make.
+"""
+
+
 class Loading(NamedTuple):
     """The weight to load for a target, and how it is made up.
 
