@@ -328,6 +328,7 @@
     "limitDown": "→ held at the most a lift may drop in one go",
     "limitStep": "→ held to one step, as for a small muscle",
     "limitBigStep": "→ the next step is too big, so one more rep first",
+    "limitOneStep": "→ held to one step: one rep's difference moves one step at most",
     "rounded": "→ nearest loadable weight with your plates = {weight}.",
     "ruleLine": "Rule: {rule} · {basis}",
     "rule": {

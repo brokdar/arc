@@ -43,7 +43,7 @@ export const EASIER_TWICE: Suggestion = {
         trimmed: false,
       },
     ],
-    limit: null,
+    limit: "progression.weight_from_effort.gap_twice",
     reason: "easier_twice",
     rule: "progression.weight_from_effort",
     target_reps: 6,
@@ -101,5 +101,79 @@ export const FIRST_TIME: Suggestion = {
   },
   load_kg: null,
   outcome: "first_time",
+  reps: 8,
+};
+
+/**
+ * Reps then weight, 8-12, on a 40 kg main lift whose next 2.5 kg is over 5 %:
+ * after 3 × 12 → 40 kg × 13, one more rep than was done.
+ */
+export const BIG_STEP_REPS: Suggestion = {
+  change_kg: 0.0,
+  explanation: {
+    computed_kg: 42.5,
+    evidence: "practice",
+    inputs: [
+      {
+        date: "2026-09-04",
+        effort_simple: null,
+        load_kg: 40.0,
+        reps: 12,
+        reps_left: null,
+        reps_left_capped: false,
+        session_id: "0199a1c3-0000-7000-8000-000000000001",
+        trimmed: false,
+      },
+    ],
+    limit: "progression.big_step",
+    reason: "top_of_range",
+    rule: "progression.reps_then_weight",
+    target_reps: 8,
+    target_reps_left: 2.0,
+  },
+  load_kg: 40.0,
+  outcome: "reps",
+  reps: 13,
+};
+
+/**
+ * Target 8 reps with 2 left; two sessions of 150 kg × 8 with 1 left →
+ * computed 146.25 kg, held to one loadable step at 147.5 kg.
+ */
+export const HARDER_TWICE_HEAVY: Suggestion = {
+  change_kg: -2.5,
+  explanation: {
+    computed_kg: 146.25,
+    evidence: "practice",
+    inputs: [
+      {
+        date: "2026-09-04",
+        effort_simple: null,
+        load_kg: 150.0,
+        reps: 8,
+        reps_left: 1.0,
+        reps_left_capped: false,
+        session_id: "0199a1c3-0000-7000-8000-000000000001",
+        trimmed: false,
+      },
+      {
+        date: "2026-09-07",
+        effort_simple: null,
+        load_kg: 150.0,
+        reps: 8,
+        reps_left: 1.0,
+        reps_left_capped: false,
+        session_id: "0199a1c3-0000-7000-8000-000000000002",
+        trimmed: false,
+      },
+    ],
+    limit: "progression.weight_from_effort.gap_twice",
+    reason: "harder_twice",
+    rule: "progression.weight_from_effort",
+    target_reps: 8,
+    target_reps_left: 2.0,
+  },
+  load_kg: 147.5,
+  outcome: "down",
   reps: 8,
 };

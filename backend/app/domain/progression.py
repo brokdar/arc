@@ -32,8 +32,12 @@ displaces asymmetric damping (quicker to drop than to raise), the usual
 "safety" instinct: athletes under-report reps left far more often than they
 over-report, and with a quicker drop a rater one rep cautious would be walked
 down session after session at a weight they lift perfectly well. With the
-same threshold both ways that rater loses one step and then reads as on
-target. Pinned by the simulated-rater property in
+same threshold both ways that rater loses one rep's worth and then reads as
+on target. A "twice in a row" move is one rep's verdict, so it is capped at
+one loadable step (`progression.weight_from_effort.gap_twice`): above ~105 kg
+one rep of Epley is worth more than a 2.5 kg pair, and uncapped 150 kg ×
+39/40 rounded to 145 kg, two pairs in one move. Pinned by the simulated-rater
+property in
 ``tests/unit/test_domain_progression_properties.py`` (AC-71).
 
 **Unrated counts as at target and never raises from effort.** A set logged
@@ -48,7 +52,10 @@ range is itself the evidence. Pinned by AC-69 in
 **Limits** (``app.domain.rules``): a main lift rises at most 5 %, a
 small-muscle (single-joint) exercise at most one loadable step, any other at
 most the larger of the two; nothing drops more than 10 %; a main lift whose
-smallest step is more than 5 % adds a rep instead. Results are rounded to the
+smallest step is more than 5 % adds a rep instead — one more than the
+reference set did, never one more than the target, and a plateau step too big
+to take becomes the next rung (``plateau_reps``), so the reason the athlete
+reads names what the number does. Results are rounded to the
 nearest loadable weight (`app.domain.loading.nearest_loadable`) and then held
 inside the limits, so rounding can never undo a cap.
 
@@ -372,6 +379,12 @@ def _step_above(kg: float, equipment: Equipment, gym: Gym) -> float:
     return heavier[0] if heavier else current
 
 
+def _step_below(kg: float, equipment: Equipment, gym: Gym) -> float:
+    current = nearest_loadable(kg, equipment, gym)
+    lighter = [w for w in loadable_weights(equipment, gym) if _g(w) < _g(current)]
+    return lighter[-1] if lighter else current
+
+
 @dataclass(frozen=True, slots=True)
 class _Limits:
     low: float
@@ -439,6 +452,8 @@ class _Decision:
     computed_kg: float | None = None
     #: The reps-left target the arithmetic used (a range clamped to the report).
     target_left: float | None = None
+    #: The rule that held ``target_kg`` short of the arithmetic, if one did.
+    cap_rule: str | None = None
 
 
 def _prev_same_weight(
@@ -466,7 +481,11 @@ def _gap(ref: PerformedSet, goal: LineGoal) -> tuple[float, float, bool] | None:
 
 
 def _by_effort(
-    learn: Sequence[Exposure], goal: LineGoal, ref: PerformedSet
+    learn: Sequence[Exposure],
+    goal: LineGoal,
+    ref: PerformedSet,
+    equipment: Equipment,
+    gym: Gym,
 ) -> _Decision:
     load = ref.load_kg or 0.0
     target_reps = _low(goal.reps) or ref.reps
@@ -503,15 +522,26 @@ def _by_effort(
     def decided(
         reason: SuggestionReason, *, raise_: bool = False, forced: bool = False
     ) -> _Decision:
+        target, cap = computed, None
+        # One rep's verdict, given twice, moves one loadable step (module doc).
+        if reason is SuggestionReason.EASIER_TWICE:
+            step = _step_above(load, equipment, gym)
+            if _g(computed) > _g(step):
+                target, cap = step, EFFORT_GAP_TWICE.id
+        elif reason is SuggestionReason.HARDER_TWICE:
+            step = _step_below(load, equipment, gym)
+            if _g(computed) < _g(step):
+                target, cap = step, EFFORT_GAP_TWICE.id
         return _Decision(
             WEIGHT_FROM_EFFORT.id,
             reason,
-            computed,
+            target,
             target_reps,
             raise_=raise_,
             forced_limit=forced,
             computed_kg=computed,
             target_left=target_left,
+            cap_rule=cap,
         )
 
     if capped and gap >= twice:
@@ -750,7 +780,7 @@ def suggest(
 
     match goal.rule:
         case Progression.RIR_LOAD | Progression.TOP_BACKOFF:
-            decision = _by_effort(learn, goal, ref)
+            decision = _by_effort(learn, goal, ref, equipment, gym)
         case Progression.DOUBLE_PROGRESSION:
             decision = _by_range(learn, goal, ref, equipment, gym)
         case Progression.SIMPLE:
@@ -814,14 +844,17 @@ def suggest(
             )
 
     if decision.raise_ and _big_step(load, goal, equipment, gym):
+        # One more rep than was done: ``decision.reps`` is the aim after a
+        # weight rise (a range's bottom), which here would read as fewer.
+        plateau = decision.reason is SuggestionReason.PLATEAU_STEP
         return _build(
             goal,
             inputs,
             decision.rule,
-            decision.reason,
+            SuggestionReason.PLATEAU_REPS if plateau else decision.reason,
             current,
             current,
-            (decision.reps or ref.reps or 0) + 1,
+            (ref.reps or decision.reps or 0) + 1,
             decision.computed_kg,
             BIG_STEP.id,
         )
@@ -832,6 +865,8 @@ def suggest(
     kg, limit = _land(target, load, goal, equipment, gym)
     if decision.forced_limit:
         limit = _limits(load, goal, equipment, gym).high_rule
+    elif limit is None and decision.cap_rule is not None:
+        limit = decision.cap_rule
     if decision.raise_ and _g(kg) < _g(current):
         kg = current
     return _build(

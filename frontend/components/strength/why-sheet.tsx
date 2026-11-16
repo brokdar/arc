@@ -34,6 +34,7 @@ const LIMIT_KEYS: Readonly<Record<string, MessageKey>> = {
   "progression.cap.down": "why.limitDown",
   "progression.cap.small_muscle_steps": "why.limitStep",
   "progression.big_step": "why.limitBigStep",
+  "progression.weight_from_effort.gap_twice": "why.limitOneStep",
 };
 
 /** The reasons that read two sessions, so line one names both. */

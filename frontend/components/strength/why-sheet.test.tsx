@@ -5,9 +5,11 @@ import { describe, expect, it } from "vitest";
 import { WhySheet } from "@/components/strength/why-sheet";
 import { LocaleProvider } from "@/lib/i18n/provider";
 import {
+  BIG_STEP_REPS,
   CAPPED_DOWN,
   EASIER_TWICE,
   FIRST_TIME,
+  HARDER_TWICE_HEAVY,
 } from "@/tests/mocks/generated-progression";
 
 /**
@@ -72,6 +74,36 @@ describe("the reason chip", () => {
 });
 
 describe("the Why sheet", () => {
+  it("asks for one rep more than was done when the next step is too big", async () => {
+    const user = userEvent.setup();
+    renderSheet(BIG_STEP_REPS);
+
+    // 3 × 12 at the top of 8-12: the aim is 13, never the range's bottom.
+    expect(
+      screen.getByText("One more rep: top of the range reached"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Why this weight?" }));
+    const sheet = screen.getByRole("dialog", { name: "Why 40 kg?" });
+    expect(
+      within(sheet).getByText("So stay at 40 kg and aim for 13 reps."),
+    ).toBeInTheDocument();
+  });
+
+  it("names the one-step hold on a heavy one-rep streak", async () => {
+    const user = userEvent.setup();
+    renderSheet(HARDER_TWICE_HEAVY);
+
+    await user.click(screen.getByRole("button", { name: "Why this weight?" }));
+    const sheet = screen.getByRole("dialog", { name: "Why 147.5 kg?" });
+    await user.click(within(sheet).getByRole("button", { name: "Details" }));
+
+    expect(
+      within(sheet).getByText(
+        "→ held to one step: one rep's difference moves one step at most",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows the three lines from the explanation", async () => {
     const user = userEvent.setup();
     renderSheet(EASIER_TWICE);

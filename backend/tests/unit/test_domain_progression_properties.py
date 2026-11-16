@@ -8,6 +8,7 @@ don't-learn or trimmed session never causes a rise.
 """
 
 import datetime as dt
+import itertools
 import math
 import uuid
 from dataclasses import replace
@@ -233,21 +234,22 @@ def test_a_rater_one_rep_cautious_loses_at_most_one_step_in_twelve_weeks(
     # performance, on target at the starting weight.
     true_max = start * (1 + (10 + slack) / EPLEY_DIVISOR)
     weights = loadable_weights(Equipment.BARBELL)
-    # "One step" is one rep's worth of load, the unit the rater is wrong by:
-    # the cautious rater's report reaches the target only where the athlete
-    # really has one rep more left (8 reps with 3 left), and since only whole
-    # reps are reported, the loadable weight that reaches it may sit up to
-    # one plate pair below. So the bound is the heaviest loadable weight at
-    # or below ``true_max / (1 + (8 + 3) / 30)`` — at 150 kg that is 145 kg,
-    # more than one 2.5 kg pair, because one rep there is worth 3.75 kg.
-    # The rule's own one-rep adjustment from the start (what it does after a
-    # biased report twice, rounded, a tie going down) can land lower still;
-    # one step is whichever of the two one-rep moves is lower.
+    # Two bounds, because "one step" has two readings and only one can hold.
+    #
+    # Per verdict, one *loadable* step: a "twice in a row" move is one rep's
+    # verdict and is capped at the next plate pair (`_by_effort`), so the
+    # rater is never moved two pairs at once (uncapped, 150 kg × 39/40 rounded
+    # to 145 kg in a single move).
+    #
+    # In total, one *rep's* worth: reports are whole reps, so where a rep is
+    # worth more than a plate pair (above ~105 kg) one pair lighter can leave
+    # the athlete's real reps unchanged — and there a rater one rep cautious
+    # reports exactly what an honest athlete one rep short reports. No rule
+    # that answers an honest one-rep deficit can tell them apart, so the walk
+    # down stops at the heaviest loadable weight that really is one rep
+    # lighter, never below it. At 150 kg that is 145 kg.
     one_rep_lighter = true_max / (1 + 11 / EPLEY_DIVISOR)
-    one_step_down = min(
-        max(w for w in weights if w <= one_rep_lighter),
-        nearest_loadable(start * (1 + 9 / EPLEY_DIVISOR) / (1 + 10 / EPLEY_DIVISOR)),
-    )
+    floor = max(w for w in weights if w <= one_rep_lighter)
 
     honest = twelve_weeks(goal, true_max, start, bias=0)
     cautious = twelve_weeks(goal, true_max, start, bias=1)
@@ -256,7 +258,10 @@ def test_a_rater_one_rep_cautious_loses_at_most_one_step_in_twelve_weeks(
     # Never more than one adjustment below the truth, at any session: the
     # cautious rater may sit there or swing back (one step lighter, the same
     # biased report reads as easier), but is never walked further down.
-    assert min(cautious) >= one_step_down, cautious
+    assert min(cautious) >= floor, cautious
+    for before, after in itertools.pairwise(cautious):
+        below = [w for w in weights if w < before]
+        assert after >= (below[-1] if below else before), cautious
 
 
 # --- phases, don't-learn, trimmed ----------------------------------------------------------

@@ -167,6 +167,25 @@ def test_one_rep_harder_twice_in_a_row_goes_lighter() -> None:
     assert result.explanation.reason is SuggestionReason.HARDER_TWICE
 
 
+# A "twice in a row" move is one rep's verdict, so it moves one loadable step:
+# above ~105 kg one rep of Epley is worth more than a 2.5 kg pair, and the
+# arithmetic alone walked a rater one rep cautious down two pairs (AC-71).
+def test_one_rep_harder_twice_at_a_heavy_weight_drops_one_step_only() -> None:
+    result = suggest(effort(8, 2), [ex(1, s(150.0, 8, 1)), ex(2, s(150.0, 8, 1))])
+
+    assert result.explanation.computed_kg == pytest.approx(146.25)
+    assert result.load_kg == 147.5
+    assert result.explanation.reason is SuggestionReason.HARDER_TWICE
+
+
+def test_one_rep_easier_twice_at_a_heavy_weight_rises_one_step_only() -> None:
+    result = suggest(effort(8, 2), [ex(1, s(150.0, 8, 3)), ex(2, s(150.0, 8, 3))])
+
+    assert result.explanation.computed_kg == pytest.approx(153.75)
+    assert result.load_kg == 152.5
+    assert result.explanation.reason is SuggestionReason.EASIER_TWICE
+
+
 def test_a_streak_needs_the_same_weight_both_times() -> None:
     # The earlier session was at another weight: it says nothing about this one.
     result = suggest(effort(6, 2), [ex(1, s(97.5, 6, 3)), ex(2, s(100.0, 6, 3))])
@@ -197,6 +216,29 @@ def test_a_main_lift_whose_smallest_step_is_over_five_percent_adds_reps_first() 
     assert (result.load_kg, result.reps) == (20.0, 9)
     assert result.outcome is SuggestionOutcome.REPS
     assert result.explanation.limit == BIG_STEP.id
+
+
+# Reps first means one more rep than was done, not one more than the target:
+# after 3 × 12 at the top of an 8-12 range the next aim is 13, never 9.
+def test_a_big_step_at_the_top_of_the_range_asks_one_rep_more_than_was_done() -> None:
+    sets = [s(40.0, 12), s(40.0, 12), s(40.0, 12)]
+
+    result = suggest(RANGE, [ex(1, *sets)])
+
+    assert (result.load_kg, result.reps) == (40.0, 13)
+    assert result.outcome is SuggestionOutcome.REPS
+    assert result.explanation.reason is SuggestionReason.TOP_OF_RANGE
+    assert result.explanation.limit == BIG_STEP.id
+
+
+def test_a_plateau_step_too_big_to_take_becomes_the_add_a_rep_rung() -> None:
+    history = [ex(n, s(40.0, 8, 2)) for n in range(1, 6)]
+
+    result = suggest(effort(8, 2), history, phase=PlanPhase.BASE)
+
+    assert (result.load_kg, result.reps) == (40.0, 9)
+    assert result.outcome is SuggestionOutcome.REPS
+    assert result.explanation.reason is SuggestionReason.PLATEAU_REPS
 
 
 def test_a_range_of_reps_left_counts_only_what_falls_outside_it() -> None:

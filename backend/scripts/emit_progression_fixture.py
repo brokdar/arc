@@ -16,6 +16,11 @@ endpoint serves — so the emitted JSON is a response the API produces.
 * :data:`CAPPED_DOWN` is AC-68's big miss: target 8 with 2 left, 100 kg × 5
   with 0 left → computed 87.5 kg, held at 90 kg by the 10 % limit.
 * :data:`FIRST_TIME` is an exercise never logged.
+* :data:`BIG_STEP_REPS` is reps-then-weight on a 40 kg main lift, where the
+  next 2.5 kg is over 5 %: after 3 × 12 at the top of 8-12 it asks for 13 reps
+  at the same weight — one more than was done.
+* :data:`HARDER_TWICE_HEAVY` is one rep harder twice at 150 kg: computed
+  146.25 kg, held to one loadable step at 147.5 kg.
 
 Run it with ``just progression-fixture`` after changing
 `app/domain/progression.py` or the suggestion read shape, and commit the
@@ -33,7 +38,7 @@ from app.api.schemas.packet import SuggestionRead
 from app.domain.loading import Equipment
 from app.domain.metrics import PerformedSet
 from app.domain.progression import LineGoal, suggest
-from app.domain.strength import Progression
+from app.domain.strength import Progression, TargetRange
 from app.domain.strength_records import Exposure
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +63,26 @@ def _on(n: int, load: float, reps: int, left: int) -> Exposure:
         session_id=uuid.UUID(f"0199a1c3-0000-7000-8000-{n:012d}"),
         date=FIRST_DAY + dt.timedelta(days=3 * n),
         sets=[PerformedSet(load_kg=load, reps=reps, rir=left)],
+    )
+
+
+def _range_goal() -> LineGoal:
+    return LineGoal(
+        rule=Progression.DOUBLE_PROGRESSION,
+        reps=TargetRange(8, 12),
+        reps_left=2,
+        main=True,
+        small_muscle=False,
+        equipment=Equipment.BARBELL,
+        sets=3,
+    )
+
+
+def _sets_on(n: int, load: float, reps: int, count: int) -> Exposure:
+    return Exposure(
+        session_id=uuid.UUID(f"0199a1c3-0000-7000-8000-{n:012d}"),
+        date=FIRST_DAY + dt.timedelta(days=3 * n),
+        sets=[PerformedSet(load_kg=load, reps=reps) for _ in range(count)],
     )
 
 
@@ -101,6 +126,22 @@ FIRST_HEADER = """;
 /** An exercise never logged: no weight, no rule. */
 export const FIRST_TIME: Suggestion = """
 
+BIG_STEP_HEADER = """;
+
+/**
+ * Reps then weight, 8-12, on a 40 kg main lift whose next 2.5 kg is over 5 %:
+ * after 3 × 12 → 40 kg × 13, one more rep than was done.
+ */
+export const BIG_STEP_REPS: Suggestion = """
+
+HEAVY_HEADER = """;
+
+/**
+ * Target 8 reps with 2 left; two sessions of 150 kg × 8 with 1 left →
+ * computed 146.25 kg, held to one loadable step at 147.5 kg.
+ */
+export const HARDER_TWICE_HEAVY: Suggestion = """
+
 
 def render() -> str:
     """The generated module's text."""
@@ -111,6 +152,10 @@ def render() -> str:
         + _json(_goal(8, 2), [_on(1, 100.0, 5, 0)])
         + FIRST_HEADER
         + _json(_goal(8, 2), [])
+        + BIG_STEP_HEADER
+        + _json(_range_goal(), [_sets_on(1, 40.0, 12, 3)])
+        + HEAVY_HEADER
+        + _json(_goal(8, 2), [_on(1, 150.0, 8, 1), _on(2, 150.0, 8, 1)])
         + ";\n"
     )
 
