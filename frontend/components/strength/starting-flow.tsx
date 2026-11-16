@@ -33,6 +33,10 @@ import {
  * only shows the weight and reports the answer. Typing a weight skips the
  * flow: someone who already knows their number is not walked through it.
  *
+ * The weight is the *total* on a barbell or stack, but a dumbbell's weight is
+ * one dumbbell's: "2 kg in total" left open whether that was both hands
+ * together (UAT W13), so a dumbbell line says "per dumbbell".
+ *
  * Every word on it comes from the `starting.*` catalogue keys, so the flow
  * reads as one thing and not as the logging screen's set controls with a
  * question bolted on (`starting-flow.test.tsx` holds this).
@@ -74,7 +78,9 @@ export function StartingFlow({
       <h2 className="font-semibold text-lg">{title}</h2>
       <p>{t("starting.instruction", { reps })}</p>
       <p className="font-mono font-semibold text-3xl">
-        {t("starting.total", { weight: weightText(kg) })}
+        {equipment === "dumbbell"
+          ? t("starting.perDumbbell", { weight: weightText(kg) })
+          : t("starting.total", { weight: weightText(kg) })}
       </p>
       {plates ? (
         <p className="font-mono text-ink-muted text-sm">

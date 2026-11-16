@@ -93,14 +93,17 @@ describe("AC-74: a missed set steps the rest down", () => {
     ).toBeNull();
   });
 
-  it("set 2 at 7 of 8 reps changes nothing", () => {
+  // UAT B11: a set edited to 7 reps (target 8) used to pre-fill the next set
+  // at 7, so one tap logged another short set. The weight stays; the reps go
+  // back to the plan's, as they already did after a 6.
+  it("set 2 at 7 of 8 reps keeps the weight and opens the next set at 8", () => {
     const planned = plan();
     let session = log(fresh(planned), planned);
     session = log(session, planned, { reps: 7 });
 
     expect(draftOf(session, planned)).toEqual({
       loadKg: 100,
-      reps: 7,
+      reps: 8,
       durationS: null,
     });
     expect(

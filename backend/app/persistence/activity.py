@@ -530,6 +530,11 @@ class SessionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def delete(self, row: SessionRow) -> None:
+        """Remove a session and, by cascade, its sets and recordings."""
+        await self._session.delete(row)
+        await self._session.flush()
+
     async def get(self, session_id: uuid.UUID) -> SessionRow | None:
         """Return one completed session with its recordings, or None."""
         return await self._session.get(SessionRow, session_id)

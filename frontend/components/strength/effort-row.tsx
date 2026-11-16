@@ -8,14 +8,19 @@ import { useI18n } from "@/lib/i18n/provider";
  * The effort question, folded into the last working set's ✓: one tap logs
  * the set *and* rates the exercise.
  *
- * **The rating applies to every working set of the exercise.** It is asked
- * once, after the last working set, and the screen writes it onto each of
- * the exercise's working sets (a patch per earlier set, the value on the new
- * one) — never a target, and never a guess for a set nobody asked about.
- * Displaced: a prompt after every set, which costs a tap per set for a
- * number progression reads per exercise (§6.2, "one rating per exercise").
- * The test that holds this is AC-50 in `logging-screen.test.tsx`: rate the
- * third set "4+" and all three sets carry `rir: 4, rir_capped: true`.
+ * **The rating applies to the working sets it can truthfully describe.** It
+ * is asked once, after the last working set, about the effort of the set just
+ * lifted. The screen writes it onto that set and onto each earlier working
+ * set of the exercise lifted at the same load and reps (a patch per earlier
+ * set) — never a target, and never a guess for a set nobody asked about. A
+ * set at other reps or weight (a missed 100 x 6 before a rated 97.5 x 8)
+ * stays unrated: stamping "2 left" on it made the next suggestion read a
+ * miss as an easy set and drop the weight (UAT B2; `describedBy` in
+ * `session-model.ts`). Displaced: one answer stamped on every set, which was
+ * the first reading of "one rating per exercise" (§6.2), and a prompt after
+ * every set, which costs a tap per set. The tests that hold this are AC-50 in
+ * `logging-screen.test.tsx` (three identical sets all carry the rating) and
+ * `logging-screen.uat.test.tsx` (an earlier set at 9 reps stays unrated).
  *
  * Not rating is fine: "log without rating" stores `rir: null` (or no Simple
  * answer) on every set — unrated, never "as planned".
@@ -70,7 +75,9 @@ export function EffortRow({
                     ? t("effort.noneLabel")
                     : value === 4
                       ? t("effort.cappedLabel")
-                      : t("effort.repsLeftLabel", { value: String(value) })
+                      : value === 1
+                        ? t("effort.repsLeftLabelOne")
+                        : t("effort.repsLeftLabel", { value: String(value) })
                 }
                 onClick={() =>
                   onRate({ kind: "reps", rir: value, capped: value === 4 })

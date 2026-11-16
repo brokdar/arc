@@ -15,6 +15,8 @@ type Mutation = Schemas["Mutation"];
  *   `code: "schema_version_unsupported"`;
  * - without a session the answer is a 401 and nothing is applied.
  *
+ * - `session_discard` deletes a session holding no set (422 once it holds
+ *   one; a session never heard of is a no-op), as the server does;
  * - every 200 lists the sessions still active and the device holding each
  *   (`session_start`'s `device_id`, then the latest `session_claim`); a
  *   finish ends it and a reopen brings it back. The sets each session holds
@@ -183,6 +185,9 @@ function fold(mutation: Mutation): void {
     case "set_delete":
       session.sets.delete(mutation.set_client_id);
       return;
+    case "session_discard":
+      state.synced.delete(key);
+      return;
     default:
       return;
   }
@@ -209,6 +214,12 @@ export function syncedSession(id: string): SyncedSession | undefined {
 function refusal(mutation: Mutation, sessions: Set<string>): string | null {
   if (mutation.kind === "note_upsert" || mutation.kind === "session_start") {
     return null;
+  }
+  if (mutation.kind === "session_discard") {
+    // As the server: unknown session is a no-op, one with a set is refused.
+    return (state.synced.get(mutation.session_client_id)?.sets.size ?? 0) > 0
+      ? "a session with logged sets cannot be discarded: finish it instead"
+      : null;
   }
   return sessions.has(mutation.session_client_id)
     ? null

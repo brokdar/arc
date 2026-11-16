@@ -76,6 +76,18 @@ class SessionFinish(_SessionMutation):
     end_time: Instant
 
 
+class SessionDiscard(_SessionMutation):
+    """End a session with nothing logged: delete it instead of saving it empty.
+
+    Refused (422) once the session holds a logged set — nothing the athlete
+    did is thrown away by this. A session the server never heard of is a
+    no-op, so a phone that cannot tell whether its ``session_start`` landed
+    can always send this.
+    """
+
+    kind: Literal["session_discard"]
+
+
 class SessionClaim(_SessionMutation):
     """Continue here, accepted: this device now holds the session.
 
@@ -186,6 +198,7 @@ type Mutation = Annotated[
     | DontLearn
     | NoteUpsert
     | SessionClaim
+    | SessionDiscard
     | SessionReopen
     | RedFlag
     | Swap,

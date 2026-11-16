@@ -170,11 +170,24 @@
     "resume": "Resume — set {n} of {exercise}",
     "resumeFinish": "Resume — finish the session",
     "done": "Session saved",
-    "doneBody": "{count} sets logged. They upload as soon as there is a connection.",
+    "doneBody": "{count} sets logged.",
     "edit": "Edit set {n}",
     "save": "Save",
     "deleteSet": "Delete set",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "doneBodyOne": "1 set logged.",
+    "doneWaiting": "Not uploaded yet. It goes up as soon as there is a connection.",
+    "doneUploaded": "Everything is uploaded.",
+    "repsValueOne": "1 rep",
+    "repsPerSide": "{reps} reps per side",
+    "repsPerSideOne": "1 rep per side",
+    "perSide": "per side",
+    "platesBarOnly": "just the bar · {weight}",
+    "platesBelowBar": "lighter than the bar ({weight})",
+    "reasonToday": "Same as your last set today",
+    "lastTimeRef": "last time: {summary} · based on {reference}",
+    "discarded": "Session discarded",
+    "discardedBody": "Nothing was logged, so nothing was saved."
   },
   "effort": {
     "questionReps": "How many more reps could you have done?",
@@ -189,7 +202,8 @@
     "hard": "Hard",
     "simpleLabel": "{answer} — log the set",
     "withoutRating": "✓ log without rating",
-    "withoutRatingLabel": "Log the set without rating"
+    "withoutRatingLabel": "Log the set without rating",
+    "repsLeftLabelOne": "1 rep left — log the set"
   },
   "starting": {
     "title": "Find your starting weight",
@@ -204,7 +218,8 @@
     "answerLabel": "{answer} — log these {reps} reps",
     "typeHint": "Know your weight already? Type it in.",
     "typeLabel": "Your working weight",
-    "use": "Use this weight"
+    "use": "Use this weight",
+    "perDumbbell": "{weight} per dumbbell"
   },
   "rest": {
     "label": "Rest",
@@ -235,7 +250,10 @@
     "reasonPeriod": "Period",
     "reasonGym": "Chaotic gym",
     "reasonOther": "Other",
-    "back": "Keep training"
+    "back": "Keep training",
+    "discardTitle": "Nothing logged yet",
+    "discardBody": "If you end now, this session is thrown away. Nothing was logged, so nothing is saved.",
+    "discard": "Discard session"
   },
   "edits": {
     "reorder": "Reorder exercises",
@@ -270,7 +288,9 @@
     "unplanned": "Train without a plan",
     "unplannedTitle": "Session without a plan",
     "unplannedEmpty": "Add the first exercise to start logging.",
-    "reopen": "Reopen the session"
+    "reopen": "Reopen the session",
+    "recapStarted": "When did you start?",
+    "recapMinutes": "How long, in minutes?"
   },
   "records": {
     "bestsTitle": "New bests",
@@ -295,7 +315,7 @@
     "menuPain": "Pain",
     "menuStop": "Stop — something's wrong",
     "pain": {
-      "title": "Where is the pain?",
+      "title": "Report pain",
       "which": "How does it feel?",
       "ache": "Muscle ache or burn",
       "sharp": "Sharp, or in a joint",
@@ -306,7 +326,9 @@
       "back": "Back",
       "stopped": "{exercise}: stopped for today because of sharp pain.",
       "undo": "Undo",
-      "undoLabel": "Undo the pain note on {exercise}"
+      "undoLabel": "Undo the pain note on {exercise}",
+      "cancel": "Cancel",
+      "noted": "Noted: muscle ache on {exercise}. The sets stay as planned."
     },
     "redFlag": {
       "title": "What is happening?",
@@ -319,7 +341,8 @@
       "back": "Back",
       "emergency": "Stop. Call emergency services now.",
       "advice": "Stop training and get medical advice today.",
-      "ended": "The session has ended. What you logged is saved."
+      "ended": "The session has ended. What you logged is saved.",
+      "call": "Call {number}"
     }
   },
   "swap": {
@@ -339,7 +362,8 @@
     "step": "Step {n} of {total}: {exercise}",
     "nextStep": "Next step",
     "stopEaseBack": "Stop",
-    "nothingEasier": "Nothing in the library is easier than this one."
+    "nothingEasier": "Nothing in the library is easier than this one.",
+    "doAnyway": "Do it anyway"
   },
   "why": {
     "chipUp": "Up {change}: {because}",
@@ -421,6 +445,7 @@
       "easy": "Easy",
       "good": "Good",
       "hard": "Hard"
-    }
+    },
+    "withLeftOne": ", with 1 rep left"
   }
 }

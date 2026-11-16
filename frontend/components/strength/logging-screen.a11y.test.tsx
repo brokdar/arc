@@ -118,6 +118,11 @@ describe("a screen-reader flow", () => {
 
   it("names every control of the finish panel", async () => {
     render_();
+    // With nothing logged End offers to discard instead (UAT U14).
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Log set 1: 20 kg × 10" }),
+    );
+    await screen.findByRole("heading", { name: "Set 2 of 3" });
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
     expect(
       await screen.findByRole("group", {

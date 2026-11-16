@@ -74,6 +74,27 @@ describe("the reason chip", () => {
 });
 
 describe("the Why sheet", () => {
+  // UAT W11: the explanation carries the last two sessions, but a reason that
+  // is not "twice" (here: effort on target) named only the last one.
+  it("names both sessions the suggestion read, whatever the reason", async () => {
+    const user = userEvent.setup();
+    renderSheet({
+      ...EASIER_TWICE,
+      change_kg: 0,
+      load_kg: 100,
+      outcome: "same",
+      explanation: { ...EASIER_TWICE.explanation, reason: "on_target" },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Why this weight?" }));
+
+    const sheet = screen.getByRole("dialog");
+    expect(
+      within(sheet).getByText(/^Your last two sessions: 100 kg × 6/),
+    ).toBeInTheDocument();
+    expect(within(sheet).queryByText(/^Last session:/)).toBeNull();
+  });
+
   it("asks for one rep more than was done when the next step is too big", async () => {
     const user = userEvent.setup();
     renderSheet(BIG_STEP_REPS);

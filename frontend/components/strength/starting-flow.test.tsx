@@ -54,6 +54,21 @@ async function answer(flow: HTMLElement, word: "Easy" | "Good" | "Hard") {
   await writesSettled();
 }
 
+describe("a dumbbell's weight is per dumbbell (UAT W13)", () => {
+  it("says per dumbbell, not in total", async () => {
+    const packet = startingFlowPacket(today, new Date());
+    packet.sessions[0].lines[0].equipment = "dumbbell";
+    await putPacket({ packet, storedAt: Date.now() });
+    render(<LoggingScreen plannedSessionId={SESSION_ID} />);
+    const flow = await screen.findByRole("region", {
+      name: "Find your starting weight",
+    });
+
+    expect(within(flow).getByText(/per dumbbell$/)).toBeVisible();
+    expect(within(flow).queryByText(/in total/)).toBeNull();
+  });
+});
+
 describe("AC-58: finding a starting weight", () => {
   it("Easy, Good, Hard from the bar steps 20 → 25 → 27.5 and settles 25 kg", async () => {
     const flow = await open();

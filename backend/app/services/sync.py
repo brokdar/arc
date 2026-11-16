@@ -139,6 +139,7 @@ AUDIT_ENTITY = {
     MutationKind.SESSION_REOPEN: "session",
     MutationKind.RED_FLAG: "session",
     MutationKind.SWAP: "exercise_preference",
+    MutationKind.SESSION_DISCARD: "session",
 }
 
 #: LoggedSetRow columns a synced edit may change on an existing row. Not
@@ -491,6 +492,10 @@ class SyncService:
         }
         entity_id: uuid.UUID | None = None
 
+        if mutation.kind is MutationKind.SESSION_DISCARD:
+            await self._discard(mutation, actor=actor, touched=touched)
+            return
+
         if mutation.kind is MutationKind.NOTE_UPSERT:
             changed = await self._note(mutation, stamp=stamp)
             payload["exercise_id"] = mutation.exercise_id
@@ -578,6 +583,43 @@ class SyncService:
         await self._repository.save(entity)
         await self._sessions.add(row)
         return row, merged.changed
+
+    async def _discard(
+        self,
+        mutation: MutationInput,
+        *,
+        actor: Actor,
+        touched: dict[uuid.UUID, _Touched],
+    ) -> None:
+        """Delete a session the athlete ended with nothing logged.
+
+        The session row, its synced state and receipts of its mutations stay
+        consistent: a replay answers ``already_applied`` from the receipt and
+        never recreates it. Audited with the session id it had.
+        """
+        key = str(mutation.session_client_id)
+        entity = await self._repository.entity(SESSION, key)
+        if entity is None or entity.session_id is None:
+            return
+        row = await self._session_service.get(entity.session_id)
+        if row.logged_sets:
+            raise ValidationError(
+                "a session with logged sets cannot be discarded: finish it instead"
+            )
+        touched.pop(row.id, None)
+        await self._audit.record(
+            actor=actor,
+            action="sync.session_discard",
+            entity_type="session",
+            entity_id=row.id,
+            payload={
+                "mutation_id": str(mutation.mutation_id),
+                "kind": mutation.kind.value,
+                "session_client_id": key,
+            },
+        )
+        await self._repository.delete_session_entities(row.id)
+        await self._sessions.delete(row)
 
     async def _intended_plan(self, client_id: uuid.UUID | None) -> uuid.UUID | None:
         """The planned session a synced session was started from, if any."""

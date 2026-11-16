@@ -5888,6 +5888,7 @@
             "note_upsert": "#/components/schemas/NoteUpsert",
             "red_flag": "#/components/schemas/RedFlag",
             "session_claim": "#/components/schemas/SessionClaim",
+            "session_discard": "#/components/schemas/SessionDiscard",
             "session_finish": "#/components/schemas/SessionFinish",
             "session_rating": "#/components/schemas/SessionRating",
             "session_reopen": "#/components/schemas/SessionReopen",
@@ -5922,6 +5923,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionClaim"
+          },
+          {
+            "$ref": "#/components/schemas/SessionDiscard"
           },
           {
             "$ref": "#/components/schemas/SessionReopen"
@@ -9733,6 +9737,40 @@
           "device_id"
         ],
         "title": "SessionClaim",
+        "type": "object"
+      },
+      "SessionDiscard": {
+        "additionalProperties": false,
+        "description": "End a session with nothing logged: delete it instead of saving it empty.\n\nRefused (422) once the session holds a logged set \u2014 nothing the athlete\ndid is thrown away by this. A session the server never heard of is a\nno-op, so a phone that cannot tell whether its ``session_start`` landed\ncan always send this.",
+        "properties": {
+          "client_edit_time": {
+            "format": "date-time",
+            "title": "Client Edit Time",
+            "type": "string"
+          },
+          "kind": {
+            "const": "session_discard",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mutation_id": {
+            "format": "uuid",
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "session_client_id": {
+            "format": "uuid",
+            "title": "Session Client Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mutation_id",
+          "client_edit_time",
+          "session_client_id",
+          "kind"
+        ],
+        "title": "SessionDiscard",
         "type": "object"
       },
       "SessionDiscipline": {

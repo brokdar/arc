@@ -57,6 +57,14 @@ export interface LoggedSet {
   /** Set only on a set entered after the fact ("Log it now"). */
   source?: "recap";
   /**
+   * Set on a set moved here from another exercise (`session-edits/edits.ts`
+   * `moveSets`). It still counts as one of this line's sets, but it says
+   * nothing about what the *next* set here should open with: a 12 kg curl
+   * set moved onto the incline bench made the incline's remaining sets
+   * pre-fill 12 kg, below the bar (UAT B7). `setsOfExercise` skips it.
+   */
+  moved?: boolean;
+  /**
    * The ⋯ → Pain note on this set. Optional: a session stored by an earlier
    * build has none, which reads as no pain.
    */
@@ -112,6 +120,11 @@ export interface ActiveSession {
    * session stored by an earlier build has no swaps.
    */
   swaps?: Record<string, string>;
+  /**
+   * Line refs of avoided exercises the athlete chose to do anyway
+   * (`swap/swap-model.ts` `keepAvoided`). Optional like `swaps`.
+   */
+  keptAvoided?: string[];
 }
 
 /** The store key and `plannedSessionId` of a session with no plan. */
@@ -163,7 +176,25 @@ export function setsOfExercise(
   line: PacketLine,
 ): LoggedSet[] {
   return workingSetsOf(session, line.line_ref).filter(
-    (s) => s.exerciseId === line.exercise_id,
+    (s) => s.exerciseId === line.exercise_id && s.moved !== true,
+  );
+}
+
+/**
+ * Whether a rating given on `rated` can truthfully describe `other`: the same
+ * exercise, load and reps (or seconds). The one per-exercise effort answer is
+ * about the set it was asked after; a set lifted at another weight or for
+ * other reps — a miss before the rated set — was a different effort, and
+ * stamping "2 left" on it taught the next suggestion a lie (UAT B2: rated
+ * after 97.5 × 8, the earlier 100 × 6 also read "2 left" and the next weight
+ * dropped).
+ */
+export function describedBy(rated: LoggedSet, other: LoggedSet): boolean {
+  return (
+    other.exerciseId === rated.exerciseId &&
+    other.loadKg === rated.loadKg &&
+    other.reps === rated.reps &&
+    other.durationS === rated.durationS
   );
 }
 
@@ -213,24 +244,36 @@ export interface Draft {
 }
 
 /**
- * The numbers a line's next set opens with: its last set here, else the
- * weight its starting-weight flow settled on, else the packet's pre-fill.
+ * The numbers a line's next set opens with. The **weight** is the last set's
+ * here, else what the starting-weight flow settled on, else the packet's
+ * pre-fill. The **reps** are always the ones the first set opened with — the
+ * plan's — not the last set's: a set edited down to 7 reps (target 8) left
+ * set 3 pre-filled with 7, so one tap logged another short set (UAT B11),
+ * while a set 6 reps short already re-opened at 8 through the step-down.
+ * Both now behave alike. A line whose plan names no reps (an exercise added
+ * in the gym with no history) has nothing to return to and keeps the last
+ * set's. Timed holds carry their seconds from set to set as before.
  */
 export function draftFor(session: ActiveSession, line: PacketLine): Draft {
   const done = setsOfExercise(session, line);
   const last = done[done.length - 1];
-  if (last) {
-    return { loadKg: last.loadKg, reps: last.reps, durationS: last.durationS };
-  }
   const { prefill, prescription } = line;
   const plannedReps = Array.isArray(prescription.reps)
     ? prescription.reps[1]
     : prescription.reps;
   const durationS = prefill.duration_s ?? prescription.duration_s ?? null;
+  const opening = prefill.reps ?? plannedReps ?? null;
+  if (last) {
+    return {
+      loadKg: last.loadKg,
+      reps: last.durationS !== null ? null : (opening ?? last.reps),
+      durationS: last.durationS,
+    };
+  }
   const started = session.starting?.[line.line_ref];
   return {
     loadKg: started?.settled ? started.kg : prefill.load_kg,
-    reps: durationS !== null ? null : (prefill.reps ?? plannedReps ?? 8),
+    reps: durationS !== null ? null : (opening ?? 8),
     durationS,
   };
 }

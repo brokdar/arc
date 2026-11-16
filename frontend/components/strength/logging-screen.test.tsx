@@ -311,6 +311,7 @@ describe("numbers and fixes", () => {
     syncServer().healthy = false;
     await open({ mode: "standard" });
     offline();
+    await logAsPlanned(1);
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "Don't learn from today" }),
@@ -328,12 +329,13 @@ describe("numbers and fixes", () => {
     const kinds = (await queued()).map((item) => item.mutation);
     expect(kinds.map((m) => m.kind)).toEqual([
       "session_start",
+      "set_upsert",
       "session_rating",
       "dont_learn",
       "session_finish",
     ]);
-    expect(kinds[1]).toMatchObject({ session_rating: 7 });
-    expect(kinds[2]).toMatchObject({ dont_learn: true, reason: "bad sleep" });
+    expect(kinds[2]).toMatchObject({ session_rating: 7 });
+    expect(kinds[3]).toMatchObject({ dont_learn: true, reason: "bad sleep" });
   });
 
   it("finishing without a rating leaves it empty", async () => {
@@ -342,6 +344,7 @@ describe("numbers and fixes", () => {
     syncServer().healthy = false;
     await open({ mode: "standard" });
     offline();
+    await logAsPlanned(1);
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),
@@ -350,6 +353,7 @@ describe("numbers and fixes", () => {
     await writesSettled();
     expect((await queued()).map((item) => item.mutation.kind)).toEqual([
       "session_start",
+      "set_upsert",
       "session_finish",
     ]);
   });
@@ -405,13 +409,14 @@ describe("AC-74: a missed set steps the rest down, on the screen", () => {
     expect(second.set).toMatchObject({ load_kg: 100, reps: 6 });
   });
 
-  it("set 2 at 7 reps changes nothing", async () => {
+  it("set 2 at 7 reps keeps the weight and re-opens at the plan's 8", async () => {
     await openSquat();
     await logSet(1, "100 kg × 8");
     await logSet(2, "100 kg × 7", 7);
 
+    // Weight stays; reps go back to the plan's 8 (UAT B11).
     expect(
-      screen.getByRole("button", { name: "Log set 3: 100 kg × 7" }),
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 8" }),
     ).toBeVisible();
     expect(screen.queryByText(/lighter/)).toBeNull();
     // A squat never logged carries the server's first-time suggestion, so
@@ -424,8 +429,9 @@ describe("AC-74: a missed set steps the rest down, on the screen", () => {
     await logSet(1, "100 kg × 8");
     await logSet(2, "100 kg × 6", 6);
 
+    // The weight stays the plan's; the reps re-open at the plan's 8.
     expect(
-      screen.getByRole("button", { name: "Log set 3: 100 kg × 6" }),
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 8" }),
     ).toBeVisible();
     expect(screen.queryByText(/lighter/)).toBeNull();
   });
@@ -510,6 +516,10 @@ describe("the finish summary", () => {
         <LoggingScreen plannedSessionId={SESSION_ID} />
       </QueryClientProvider>,
     );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Log set 1: 20 kg × 10" }),
+    );
+    await screen.findByRole("heading", { name: "Set 2 of 3" });
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Finish without rating" }),
