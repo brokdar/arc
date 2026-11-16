@@ -17,7 +17,11 @@ import type { Mutation } from "@/lib/offline/db";
  *   schedule (`backend/app/domain/sync.py` `auto_close_end`); the phone
  *   applies it when it opens the session, so an offline phone does not
  *   resume a session from last night. The two agree on the end time because
- *   both read it off the last set.
+ *   both read it off the last set, and on when the three hours start because
+ *   both count the session's own latest edit — a reopen, a claim
+ *   (`touchedAt`) — as a sign of life alongside the sets. Without it a
+ *   session reopened more than three hours after its last set closed again
+ *   on the phone's next open, and that later `session_finish` won.
  * - **A finished session reopens for 24 hours,** to add a set forgotten or
  *   fix one mis-logged; after that it is history, and the server refuses a
  *   later reopen (`may_reopen`).
@@ -40,7 +44,11 @@ export function abandonedEnd(
     .map((set) => set.completedAt)
     .filter((at): at is number => at !== undefined);
   const lastSet = times.length > 0 ? Math.max(...times) : null;
-  const alive = Math.max(session.startedAt, lastSet ?? 0);
+  const alive = Math.max(
+    session.startedAt,
+    lastSet ?? 0,
+    session.touchedAt ?? 0,
+  );
   if (now - alive < AUTO_CLOSE_MS) return null;
   return lastSet ?? session.startedAt;
 }

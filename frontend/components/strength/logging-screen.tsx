@@ -340,7 +340,15 @@ export function LoggingScreen({
       const now = clock.wall();
       const existing = await loadSession(plannedSessionId);
       if (existing && !(unplanned && existing.finished)) {
-        const end = abandonedEnd(existing, now);
+        // A session this phone handed over is the other phone's to close:
+        // its sets are not all here, so the end read off them would be wrong.
+        const end = handedOver(
+          activeSessions(),
+          existing.sessionClientId,
+          device,
+        )
+          ? null
+          : abandonedEnd(existing, now);
         if (end !== null) {
           // Closed at its last set, as the server closes it.
           const closed = {
@@ -439,10 +447,14 @@ export function LoggingScreen({
           setPhase("missing");
           return;
         }
-        const taken = takeOver(data, candidate, planned, packet);
+        const st = stamp();
+        const taken = {
+          ...takeOver(data, candidate, planned, packet),
+          touchedAt: st.now,
+        };
         setCandidate(null);
         setPhase(taken.sets.length > 0 ? "logging" : "logging");
-        await commit(taken, [claimMutation(taken, me, stamp())]);
+        await commit(taken, [claimMutation(taken, me, st)]);
         void flush();
       })();
     };
@@ -686,9 +698,10 @@ export function LoggingScreen({
   const reopen = () => {
     const st = stamp();
     setPhase(session.sets.length > 0 ? "resume" : "logging");
-    void commit({ ...session, finished: false, endedAt: null }, [
-      reopenMutation(session, st),
-    ]);
+    void commit(
+      { ...session, finished: false, endedAt: null, touchedAt: st.now },
+      [reopenMutation(session, st)],
+    );
   };
 
   const logRecap = () => {
@@ -946,14 +959,16 @@ export function LoggingScreen({
     // bottom of the glass, not at the bottom of a page the thumb scrolls.
     <div className="flex h-dvh min-h-0 shrink-0 flex-col bg-canvas">
       <header className="flex shrink-0 items-center gap-2 border-hairline border-b bg-chrome px-2 py-1.5">
-        <Button
-          variant="ghost"
-          className="h-[44px] min-w-[44px] px-2"
-          aria-label={t("train.endLabel")}
-          onClick={() => setPhase("finishing")}
-        >
-          ⏸ {t("train.end")}
-        </Button>
+        {readOnly ? null : (
+          <Button
+            variant="ghost"
+            className="h-[44px] min-w-[44px] px-2"
+            aria-label={t("train.endLabel")}
+            onClick={() => setPhase("finishing")}
+          >
+            ⏸ {t("train.end")}
+          </Button>
+        )}
         <h1 className="min-w-0 flex-1 truncate font-semibold text-lg">
           {line?.exercise_name ?? t("edits.unplannedTitle")}
         </h1>
@@ -1060,7 +1075,7 @@ export function LoggingScreen({
         )}
       </header>
 
-      {phase === "finishing" ? (
+      {phase === "finishing" && !readOnly ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <FinishPanel onFinish={finish} onBack={() => setPhase("logging")} />
         </div>
@@ -1106,16 +1121,18 @@ export function LoggingScreen({
                   <p className="min-w-0 flex-1">
                     {t("safety.pain.stopped", { exercise: l.exercise_name })}
                   </p>
-                  <Button
-                    variant="outline"
-                    className="h-[44px]"
-                    aria-label={t("safety.pain.undoLabel", {
-                      exercise: l.exercise_name,
-                    })}
-                    onClick={() => undoPain(l)}
-                  >
-                    {t("safety.pain.undo")}
-                  </Button>
+                  {readOnly ? null : (
+                    <Button
+                      variant="outline"
+                      className="h-[44px]"
+                      aria-label={t("safety.pain.undoLabel", {
+                        exercise: l.exercise_name,
+                      })}
+                      onClick={() => undoPain(l)}
+                    >
+                      {t("safety.pain.undo")}
+                    </Button>
+                  )}
                 </div>
               ))}
             {line ? (
@@ -1131,6 +1148,7 @@ export function LoggingScreen({
                 summary={summary}
                 onWarmups={logWarmups}
                 onEdit={setEditing}
+                readOnly={readOnly}
                 units={units}
                 lines={lines}
               />
@@ -1148,7 +1166,7 @@ export function LoggingScreen({
                 onSkip={() => void commit({ ...session, rest: null })}
               />
             ) : null}
-            {undo ? (
+            {undo && !readOnly ? (
               <Button
                 variant="outline"
                 className="h-[44px]"
@@ -1186,78 +1204,82 @@ export function LoggingScreen({
         </>
       )}
 
-      {dialog === "reorder" ? (
-        <ReorderDialog
-          lines={lines}
-          onMove={(from, to) => {
-            const result = reorder(session, lines, from, to, stamp());
-            edit(result.session, result.mutations);
-          }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === "addExercise" ? (
-        <AddExerciseDialog
-          packet={packet}
-          onPick={(exercise) => {
-            setDialog(null);
-            const now = clock.wall();
-            edit(
-              addExercise(
-                session,
-                lines,
-                addedLine(packet, exercise, uuid7(now)),
-              ),
-            );
-          }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === "move" && line ? (
-        <MoveSetsDialog
-          sets={session.sets.filter((s) => s.lineRef === line.line_ref)}
-          lines={lines}
-          current={session.lineIndex}
-          summary={summary}
-          onMove={(ids, target) => {
-            setDialog(null);
-            const result = moveSets(session, lines, ids, target, stamp());
-            edit(result.session, result.mutations);
-          }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === "note" && line ? (
-        <NoteDialog
-          exercise={line.exercise_name}
-          text={note ?? ""}
-          onSave={saveNoteText}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {sheet === "pain" ? (
-        <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
-      ) : null}
-      {sheet === "redFlag" ? (
-        <RedFlagPanel
-          onChoose={stopForRedFlag}
-          onClose={() => setSheet(null)}
-        />
-      ) : null}
+      {readOnly ? null : (
+        <>
+          {dialog === "reorder" ? (
+            <ReorderDialog
+              lines={lines}
+              onMove={(from, to) => {
+                const result = reorder(session, lines, from, to, stamp());
+                edit(result.session, result.mutations);
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "addExercise" ? (
+            <AddExerciseDialog
+              packet={packet}
+              onPick={(exercise) => {
+                setDialog(null);
+                const now = clock.wall();
+                edit(
+                  addExercise(
+                    session,
+                    lines,
+                    addedLine(packet, exercise, uuid7(now)),
+                  ),
+                );
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "move" && line ? (
+            <MoveSetsDialog
+              sets={session.sets.filter((s) => s.lineRef === line.line_ref)}
+              lines={lines}
+              current={session.lineIndex}
+              summary={summary}
+              onMove={(ids, target) => {
+                setDialog(null);
+                const result = moveSets(session, lines, ids, target, stamp());
+                edit(result.session, result.mutations);
+              }}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {dialog === "note" && line ? (
+            <NoteDialog
+              exercise={line.exercise_name}
+              text={note ?? ""}
+              onSave={saveNoteText}
+              onClose={() => setDialog(null)}
+            />
+          ) : null}
+          {sheet === "pain" ? (
+            <PainPanel onReport={reportPain} onClose={() => setSheet(null)} />
+          ) : null}
+          {sheet === "redFlag" ? (
+            <RedFlagPanel
+              onChoose={stopForRedFlag}
+              onClose={() => setSheet(null)}
+            />
+          ) : null}
 
-      {editing ? (
-        <EditSet
-          set={editing}
-          n={
-            workingSetsOf(session, editing.lineRef).findIndex(
-              (s) => s.clientId === editing.clientId,
-            ) + 1
-          }
-          units={units}
-          onSave={(changes) => saveEdit(editing, changes)}
-          onClose={() => setEditing(null)}
-        />
-      ) : null}
+          {editing ? (
+            <EditSet
+              set={editing}
+              n={
+                workingSetsOf(session, editing.lineRef).findIndex(
+                  (s) => s.clientId === editing.clientId,
+                ) + 1
+              }
+              units={units}
+              onSave={(changes) => saveEdit(editing, changes)}
+              onClose={() => setEditing(null)}
+            />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -1294,6 +1316,7 @@ function LineBody({
   summary,
   onWarmups,
   onEdit,
+  readOnly,
   units,
   lines,
 }: {
@@ -1309,6 +1332,8 @@ function LineBody({
   summary: (set: Pick<Draft, "loadKg" | "reps" | "durationS">) => string;
   onWarmups: () => void;
   onEdit: (set: LoggedSet) => void;
+  /** Handed over to another phone: the logged rows show, nothing writes. */
+  readOnly: boolean;
   units: "kg" | "lb";
 }) {
   const { t } = useI18n();
@@ -1399,7 +1424,7 @@ function LineBody({
           </span>
           {warmed >= line.warmups.length ? (
             <span className="text-ink-muted">{t("train.warmupDone")}</span>
-          ) : (
+          ) : readOnly ? null : (
             <Button
               variant="outline"
               className="ml-auto h-[44px] min-w-[44px]"
@@ -1423,6 +1448,7 @@ function LineBody({
                   n: String(i + 1),
                   summary: summary(set),
                 })}
+                disabled={readOnly}
                 onClick={() => onEdit(set)}
               >
                 <span className="w-5 text-ink-muted">{i + 1}</span>
@@ -1434,7 +1460,7 @@ function LineBody({
         </ol>
       ) : null}
 
-      {!done && draft && working.length < total ? (
+      {!done && !readOnly && draft && working.length < total ? (
         <section
           ref={current}
           className="flex flex-col gap-2 border-hairline border-t pt-3"

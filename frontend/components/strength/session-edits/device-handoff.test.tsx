@@ -189,6 +189,21 @@ describe("the first phone, once the session moved (AC-56)", () => {
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /^Log set/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+    // Read-only means nothing on this phone writes any more: not End (whose
+    // session_finish would end the session the other phone is training in),
+    // not Undo, not the warm-ups, not an edit of a logged row.
+    expect(screen.queryByRole("button", { name: "End session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Undo/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Log all warm-ups" }),
+    ).toBeNull();
+    const before = (await outbox()).length;
+    const row = screen.getByRole("button", { name: /^Edit set 1:/ });
+    expect(row).toBeDisabled();
+    fireEvent.click(row);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await writesSettled();
+    expect(await outbox()).toHaveLength(before);
   });
 });
 

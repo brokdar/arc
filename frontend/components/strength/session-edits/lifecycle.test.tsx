@@ -142,6 +142,30 @@ describe("reopening a finished session", () => {
     expect((await outbox()).map((m) => m.kind).at(-1)).toBe("session_reopen");
   });
 
+  it("reopened four hours after its last set, it still resumes after a reload", async () => {
+    // The server counts the reopen as a sign of life (`auto_close_end`'s
+    // `last_edit`); a phone that read only the set times would close it
+    // again on the next open, and its later session_finish would win.
+    const last = Date.now() - 4 * HOUR;
+    await storePacket();
+    await putTraining(
+      MONDAY_ID,
+      stored({ sets: [rowSet(1, last)], finished: true, endedAt: last }),
+    );
+    const first = render(<LoggingScreen plannedSessionId={MONDAY_ID} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Reopen the session" }),
+    );
+    await screen.findByRole("heading", { name: "Session in progress" });
+    await writesSettled();
+    first.unmount();
+
+    render(<LoggingScreen plannedSessionId={MONDAY_ID} />);
+
+    await screen.findByRole("heading", { name: "Session in progress" });
+    expect((await outbox()).map((m) => m.kind)).toEqual(["session_reopen"]);
+  });
+
   it("is gone 24 hours after the end", async () => {
     await storePacket();
     await putTraining(

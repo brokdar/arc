@@ -87,6 +87,12 @@ export interface ActiveSession {
   lines?: PacketLine[];
   /** Epoch ms it ended, for the 24-hour reopen window. */
   endedAt?: number | null;
+  /**
+   * Epoch ms of the session's own latest edit — a reopen, or this phone
+   * claiming it — which counts as a sign of life for the three-hour close
+   * (`session-edits/lifecycle.ts` `abandonedEnd`), as it does on the server.
+   */
+  touchedAt?: number;
   /** Set when *Stop — something's wrong* ended the session: which text to show. */
   redFlag?: RedFlagKind;
 }
