@@ -343,6 +343,136 @@ describe("numbers and fixes", () => {
   });
 });
 
+describe("AC-74: a missed set steps the rest down, on the screen", () => {
+  const squat = { kg: 100, sets: 4, reps: 8 };
+
+  async function openSquat(followExactly = false) {
+    await putPacket({
+      packet: strengthPacket(today, new Date(), {
+        barbell: squat,
+        followExactly,
+      }),
+      storedAt: Date.now(),
+    });
+    render(<LoggingScreen plannedSessionId={SESSION_ID} />);
+    await screen.findByRole("heading", { name: "Set 1 of 4" });
+  }
+
+  async function logSet(n: number, summary: string, reps = 8) {
+    for (let r = 8; r > reps; r--) {
+      fireEvent.click(screen.getByRole("button", { name: "Reps: less" }));
+    }
+    fireEvent.click(
+      await screen.findByRole("button", { name: `Log set ${n}: ${summary}` }),
+    );
+    await screen.findByRole("heading", { name: `Set ${n + 1} of 4` });
+  }
+
+  it("set 2 at 6 reps: sets 3 and 4 show 97.5 kg, with the reason", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 97.5 kg × 8" }),
+    ).toBeVisible();
+    expect(screen.getByText("next: set 4 · 97.5 kg × 8")).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+    // The logged rows keep what was lifted.
+    expect(
+      screen.getByRole("button", { name: "Edit set 1: 100 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Edit set 2: 100 kg × 6" }),
+    ).toBeVisible();
+
+    const [first, second] = await setItems();
+    expect(first.set.load_kg).toBe(100);
+    expect(second.set).toMatchObject({ load_kg: 100, reps: 6 });
+  });
+
+  it("set 2 at 7 reps changes nothing", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 7", 7);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 7" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+    expect(screen.getByText("From your plan")).toBeVisible();
+  });
+
+  it("on a follow-exactly plan nothing changes", async () => {
+    await openSquat(true);
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 100 kg × 6" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+  });
+
+  it("a second miss lowers one more step", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 6", 6);
+    await logSet(2, "97.5 kg × 6", 6);
+
+    expect(
+      screen.getByRole("button", { name: "Log set 3: 95 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Edit set 1: 100 kg × 6" }),
+    ).toBeVisible();
+  });
+
+  async function editReps(n: number, summary: string, reps: number) {
+    fireEvent.click(
+      screen.getByRole("button", { name: `Edit set ${n}: ${summary}` }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Reps" }), {
+      target: { value: String(reps) },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  }
+
+  // ✓ always logs the planned reps, so a miss is often entered by editing the
+  // set after the tap: the next set's numbers must follow the edit, not only
+  // the reason line.
+  it("set 2 ticked at 8, then edited to 6: set 3 offers 97.5 kg", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 8");
+    await editReps(2, "100 kg × 8", 6);
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 3: 97.5 kg × 8" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Next sets 2.5 kg lighter: that set was a lot harder"),
+    ).toBeVisible();
+  });
+
+  it("a missed set edited back up to 8 takes the step-down back", async () => {
+    await openSquat();
+    await logSet(1, "100 kg × 8");
+    await logSet(2, "100 kg × 6", 6);
+    await editReps(2, "100 kg × 6", 8);
+
+    expect(
+      await screen.findByRole("button", { name: "Log set 3: 100 kg × 8" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/lighter/)).toBeNull();
+  });
+});
+
 describe("the finish summary", () => {
   it("asks for the session's new bests once its upload has drained", async () => {
     const asked = new Promise<string | null>((resolve) => {

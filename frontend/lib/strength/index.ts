@@ -7,6 +7,10 @@
 // over MCP and the API read them from one place. What lives here is the small
 // arithmetic that turns a number the server already decided into something
 // that can go on the bar, ported line for line from `app/domain/loading.py`.
+// One rule is the phone's own: the step-down after a missed set
+// (`components/strength/step-down.ts`), which answers a set the server has
+// not seen yet and so cannot come prepared in the packet; its docstring says
+// why, and it only uses `stepDown` from here.
 //
 // That displaces porting the rules themselves to TypeScript: two
 // implementations of a progression rule drift, and the drift would show up as

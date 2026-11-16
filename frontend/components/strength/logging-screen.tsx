@@ -61,6 +61,7 @@ import {
 } from "@/components/strength/session-model";
 import { loadSession, saveSession } from "@/components/strength/session-store";
 import { StartingFlow } from "@/components/strength/starting-flow";
+import { nextDraft, stepDownAfter } from "@/components/strength/step-down";
 import { Stepper } from "@/components/strength/stepper";
 import { Button } from "@/components/ui/button";
 import {
@@ -307,17 +308,26 @@ export function LoggingScreen({
   const scale = packet?.effort.scale ?? "reps_left";
   const units = packet?.settings.units ?? "kg";
 
-  // The current set's numbers open with the line's pre-fill or its last set,
-  // and reset whenever the set they are for changes — or the starting-weight
-  // flow settles the weight it opens with.
+  // The current set's numbers open with the line's pre-fill or its last set
+  // (one step lighter after a miss, `step-down.ts`), and reset whenever the
+  // set they are for changes — or the set they are read off does (✓ logs the
+  // planned reps, so a miss is often entered by editing that set afterwards,
+  // and keying on the count alone left the next set at the old weight), or
+  // the starting-weight flow settles the weight it opens with.
+  const lastWorking =
+    session && line ? workingSetsOf(session, line.line_ref) : [];
+  const readOff = lastWorking.at(-1);
+  const settled = line
+    ? session?.starting?.[line.line_ref]?.settled === true
+    : false;
   const draftKey =
     session && line
-      ? `${line.line_ref}:${workingSetsOf(session, line.line_ref).length}:${session.starting?.[line.line_ref]?.settled === true}`
+      ? `${line.line_ref}:${lastWorking.length}:${readOff?.loadKg ?? ""}:${readOff?.reps ?? ""}:${settled}`
       : "";
   const [draftFor_, setDraftFor] = useState("");
-  if (session && line && draftKey !== draftFor_) {
+  if (session && line && planned && gym && draftKey !== draftFor_) {
     setDraftFor(draftKey);
-    setDraft(draftFor(session, line));
+    setDraft(nextDraft(session, planned, line, gym));
   }
 
   if (phase === "loading") {
@@ -850,6 +860,7 @@ export function LoggingScreen({
             ) : line ? (
               <LineBody
                 line={line}
+                planned={planned}
                 session={session}
                 packet={packet}
                 gym={gym}
@@ -964,6 +975,7 @@ function BackToToday() {
 
 function LineBody({
   line,
+  planned: plannedSession,
   session,
   packet,
   gym,
@@ -979,6 +991,7 @@ function LineBody({
 }: {
   lines: readonly PacketLine[];
   line: PacketLine;
+  planned: PacketSession;
   session: ActiveSession;
   packet: Packet;
   gym: Gym;
@@ -1036,8 +1049,10 @@ function LineBody({
   };
 
   const planned = draftFor({ ...session, sets: [] }, line);
-  const reason =
-    line.prefill.source === "prescription"
+  const step = stepDownAfter(session, plannedSession, line, gym);
+  const reason = step
+    ? t("train.reasonStepDown", { weight: weightText(step.fromKg - step.toKg) })
+    : line.prefill.source === "prescription"
       ? t("train.reasonPlan")
       : line.prefill.source === "last_logged"
         ? t("train.reasonLast")
