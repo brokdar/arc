@@ -8541,6 +8541,7 @@ export interface components {
       | "plateau_reps"
       | "plateau_reset"
       | "no_rule"
+      | "nearest_loadable"
       | "first_time";
     /**
      * Swap

@@ -938,3 +938,108 @@ async def test_every_answer_names_the_active_sessions_and_who_holds_them(
 
     finished = await sync(client, [phone.finish(30)])
     assert finished["active_sessions"] == []
+
+
+# --- warm-ups and the plan the phone started from (UAT B1, B6) ---------------------
+
+
+async def _warmup_session(
+    client: AsyncClient, *, planned_id: str | None, series: str
+) -> dict[str, Any]:
+    """Two working squat sets and four warm-ups against a 2 x 5 squat plan."""
+    phone = Phone(SESSION_ID, START, 700, series=series)
+    extra = {} if planned_id is None else {"planned_session_id": planned_id}
+    mutations = [phone.start(**extra)]
+    mutations.extend(
+        phone.upsert(
+            set_id("1.0", n, series),
+            1 + n,
+            exercise_id="back_squat",
+            reps=5,
+            load_kg=20.0 + 20 * n,
+            set_index=n,
+            set_kind="warmup",
+            completed_at=phone.at(1 + n),
+        )
+        for n in range(4)
+    )
+    mutations += [phone.log("0.0", 1, 4, 10), phone.log("0.0", 2, 5, 13)]
+    mutations.append(phone.finish(20))
+    await sync(client, mutations)
+    sessions = (await client.get(SESSIONS)).json()["items"]
+    return (await client.get(f"{SESSIONS}/{sessions[0]['id']}")).json()
+
+
+async def _plan_squats(client: AsyncClient) -> str:
+    response = await client.post(
+        PLANNED,
+        json={
+            "date": "2026-11-09",
+            "purpose": "max_strength",
+            "structure": {
+                "discipline": "strength",
+                "groups": [
+                    {
+                        "items": [
+                            {
+                                "exercise_id": "back_squat",
+                                "sets": 2,
+                                "reps": 5,
+                                "load": {"kind": "kg", "value": 100.0},
+                            }
+                        ]
+                    }
+                ],
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def test_warm_ups_do_not_count_toward_the_plan_match(
+    client: AsyncClient,
+) -> None:
+    """UAT B1: 4 warm-ups + 2 working sets is 2 sets against a 2-set plan."""
+    await _plan_squats(client)
+
+    stored = await _warmup_session(client, planned_id=None, series="d")
+
+    assert stored["match"]["similarity"] == 1.0
+    assert stored["match"]["status"] == "auto_high"
+
+
+async def test_warm_ups_do_not_count_in_sets_completed(
+    client: AsyncClient,
+) -> None:
+    """UAT B6: the metric's set count and volume are the working sets'."""
+    stored = await _warmup_session(client, planned_id=None, series="e")
+
+    strength = stored["metrics"]["strength"]
+    assert strength["sets_completed"] == 2
+    assert strength["volume_load_kg"] == 2 * 5 * 100.0
+
+
+async def test_a_session_started_from_a_plan_is_linked_to_it(
+    client: AsyncClient,
+) -> None:
+    """UAT B1: the phone's `planned_session_id` is the athlete's own answer."""
+    planned_id = await _plan_squats(client)
+    other = await _plan_squats(client)
+    assert other != planned_id
+
+    # Far from the plan: similarity alone would only propose it.
+    phone = Phone(SESSION_ID, START, 800, series="f")
+    await sync(
+        client,
+        [
+            phone.start(planned_session_id=planned_id),
+            phone.log("0.0", 1, 0, 5),
+            phone.finish(20),
+        ],
+    )
+    sessions = (await client.get(SESSIONS)).json()["items"]
+    stored = (await client.get(f"{SESSIONS}/{sessions[0]['id']}")).json()
+
+    assert stored["match"]["planned_session_id"] == planned_id
+    assert stored["match"]["status"] == "confirmed"

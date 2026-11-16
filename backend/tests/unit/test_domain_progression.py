@@ -627,3 +627,29 @@ def test_a_range_target_explains_the_end_it_held_the_report_to() -> None:
     # 100 × (1 + 8/30) / (1 + (8 + 1)/30): held to the range's low end, 1.
     assert result.explanation.target_reps_left == 1
     assert result.explanation.computed_kg == pytest.approx(100 * (38 / 30) / (39 / 30))
+
+
+# --- UAT B13: the change is against what was lifted --------------------------------------
+
+
+def test_a_weight_the_gym_cannot_make_reports_the_real_change_and_why() -> None:
+    row = effort(10, 2, main=False, small_muscle=True, equipment=Equipment.DUMBBELL)
+
+    # 22.5 kg is not on the 2 kg dumbbell grid; on target holds it, so the
+    # suggestion snaps to 22.0 and must say it went down by half a kilo.
+    result = suggest(row, [ex(1, s(22.5, 10, 2))])
+
+    assert result.load_kg == 22.0
+    assert result.change_kg == pytest.approx(-0.5)
+    assert result.outcome is SuggestionOutcome.DOWN
+    assert result.explanation.reason is SuggestionReason.NEAREST_LOADABLE
+
+
+def test_a_loadable_weight_held_is_still_the_same() -> None:
+    row = effort(10, 2, main=False, small_muscle=True, equipment=Equipment.DUMBBELL)
+
+    result = suggest(row, [ex(1, s(22.0, 10, 2))])
+
+    assert (result.load_kg, result.change_kg) == (22.0, 0.0)
+    assert result.outcome is SuggestionOutcome.SAME
+    assert result.explanation.reason is SuggestionReason.ON_TARGET

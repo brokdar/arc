@@ -471,6 +471,11 @@ class LoggedSetRow(Base):
 def logged_working_sets(row: LoggedSetRow) -> float:
     """How many sets one logged row counts as: a lone side is ½, else 1.
 
+    **A warm-up counts as 0.** The plan prescribes working sets, so putting
+    warm-ups in the logged count made a session with 7 warm-ups and 10 working
+    sets look 70 % over-structured to the matcher (UAT: 59 % similarity, a
+    finished session left "Proposed") and padded the scorer's completion.
+
     The rule itself is `app.domain.strength.logged_set_units` — a left-right
     pair is one set.
 
@@ -482,6 +487,8 @@ def logged_working_sets(row: LoggedSetRow) -> float:
     of this rule is `app.domain.strength.StrengthSet.working_sets`, and the
     two exist to be the same number.
     """
+    if row.set_kind is LoggedSetKind.WARMUP:
+        return 0.0
     return logged_set_units(row.side)
 
 

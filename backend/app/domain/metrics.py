@@ -1997,8 +1997,8 @@ class PerformedSet:
     duration_s: int | None = None
     per_side: bool = False
     side: SetSide = SetSide.BOTH
-    #: What the set was for. Volume ignores it (its callers pass what they
-    #: count); `app.domain.strength_records` drops warm-ups from every record.
+    #: What the set was for. `strength_volume` and `strength_records` both drop
+    #: warm-ups; the callers pass every row and this field says which to skip.
     kind: LoggedSetKind = LoggedSetKind.WORKING
     #: The effort the athlete **reported** — never the target — as the logged
     #: row stores it: reps left (``rir``, with ``rir_capped`` for "4+") or a
@@ -2081,10 +2081,17 @@ def strength_volume(sets: Sequence[PerformedSet]) -> StrengthVolume | NotAssesse
     Sets are counted in the unit
     `app.domain.prediction.predict_strength_volume` prescribes in — a
     left-right pair is one set, a lone side ½ — and the kilograms and seconds
-    over every side worked.
+    over every side worked. **Warm-up sets are not counted** — not in the sets,
+    the kilograms nor the seconds.
     """
+    # A warm-up is preparation, not the work the plan prescribed or the athlete
+    # is credited with: counting it made a session with 7 warm-ups and 10
+    # working sets report 17 "sets completed" and a volume load 22 % high.
     if not sets:
         return NotAssessed("no sets were logged")
+    sets = [entry for entry in sets if entry.kind is not LoggedSetKind.WARMUP]
+    if not sets:
+        return NotAssessed("only warm-up sets were logged")
     worked = sum((entry.working_sets for entry in sets), 0.0)
     counted = [
         entry for entry in sets if entry.load_kg is not None and entry.reps is not None

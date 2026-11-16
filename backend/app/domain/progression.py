@@ -83,6 +83,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 
 from app.domain.activity import EffortSimple, LoggedSetKind
 from app.domain.loading import (
@@ -173,6 +174,9 @@ class SuggestionReason(StrEnum):
     PLATEAU_REPS = "plateau_reps"
     PLATEAU_RESET = "plateau_reset"
     NO_RULE = "no_rule"
+    #: The rule held the weight, but the last load is not one the gym can make:
+    #: the nearest loadable weight is a different number.
+    NEAREST_LOADABLE = "nearest_loadable"
     FIRST_TIME = "first_time"
 
 
@@ -765,11 +769,14 @@ def suggest(
     equipment = goal.equipment
     load = ref.load_kg
     current = nearest_loadable(load, equipment, gym)
+    # Every verdict below is reported against what was lifted, not against
+    # `current`: see `_build`.
+    build = partial(_build, lifted=load)
 
     if goal.rule is Progression.TOP_BACKOFF and goal.set_kind is SetKind.BACKOFF:
         lighter = load * (1 - BACKOFF_DROP.value)
         kg = nearest_loadable(lighter, equipment, gym)
-        return _build(
+        return build(
             goal,
             inputs,
             BACKOFF_DROP.id,
@@ -797,7 +804,7 @@ def suggest(
             )
 
     if decision.raise_ and (last.trimmed or goal.increase_blocked):
-        return _build(
+        return build(
             goal,
             inputs,
             decision.rule,
@@ -829,7 +836,7 @@ def suggest(
                 computed_kg=step,
             )
         elif rung is SuggestionReason.PLATEAU_REPS:
-            return _build(
+            return build(
                 goal,
                 inputs,
                 PLATEAU_WINDOW_SHORT.id,
@@ -850,7 +857,7 @@ def suggest(
         # One more rep than was done: ``decision.reps`` is the aim after a
         # weight rise (a range's bottom), which here would read as fewer.
         plateau = decision.reason is SuggestionReason.PLATEAU_STEP
-        return _build(
+        return build(
             goal,
             inputs,
             decision.rule,
@@ -872,7 +879,7 @@ def suggest(
         limit = decision.cap_rule
     if decision.raise_ and _g(kg) < _g(current):
         kg = current
-    return _build(
+    return build(
         goal,
         inputs,
         decision.rule,
@@ -898,17 +905,37 @@ def _build(
     limit: str | None,
     *,
     target_left: float | None = None,
+    lifted: float | None = None,
 ) -> Suggestion:
-    if kg is None or current is None:
+    """Assemble the suggestion; ``change_kg`` is against ``lifted``.
+
+    ``current`` is the loadable weight nearest the last one lifted — what the
+    rules compare to, so a rule that holds the weight still means "no move".
+    The **number the athlete sees** is against what they actually lifted:
+    22.5 kg on a 2 kg dumbbell grid lands on 22.0 kg, and reporting that as
+    "same, change 0" (UAT B13) contradicted the weights on screen. The
+    outcome follows the real change, and a rule that held the weight but
+    could not land on it says so with ``nearest_loadable`` rather than
+    "effort was on target" next to a number that moved. It displaced
+    reporting the rounding as no change at all.
+    """
+    lifted = current if lifted is None else lifted
+    if kg is None or current is None or lifted is None:
         outcome, change = SuggestionOutcome.SAME, None
     else:
-        change = (_g(kg) - _g(current)) / GRAMS_PER_KG
+        change = (_g(kg) - _g(lifted)) / GRAMS_PER_KG
         if _g(kg) > _g(current):
             outcome = SuggestionOutcome.UP
         elif _g(kg) < _g(current):
             outcome = SuggestionOutcome.DOWN
         elif limit == BIG_STEP.id or reason is SuggestionReason.PLATEAU_REPS:
             outcome = SuggestionOutcome.REPS
+        elif _g(kg) != _g(lifted):
+            outcome = (
+                SuggestionOutcome.UP if _g(kg) > _g(lifted) else SuggestionOutcome.DOWN
+            )
+            if reason in _STEADY or reason is SuggestionReason.UNRATED:
+                reason = SuggestionReason.NEAREST_LOADABLE
         else:
             outcome = SuggestionOutcome.SAME
     return Suggestion(

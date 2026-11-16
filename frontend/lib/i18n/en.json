@@ -400,6 +400,7 @@
       "plateau_reps": "holding steady, try one more rep",
       "plateau_reset": "holding steady, step back and rebuild",
       "no_rule": "same as last time",
+      "nearest_loadable": "the nearest weight you can load",
       "first_time": "no history yet"
     },
     "lastTwo": "Your last two sessions: {set}{effort} each time.",

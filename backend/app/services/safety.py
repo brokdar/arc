@@ -6,7 +6,7 @@ note (`app.services.sync`) or the card answer (`app.services.cards`) or the
 profile edit (`app.services.athlete`), and that use-case commits once.
 
 * **Sharp pain** on a set queues one priority-1 swap offer naming the
-  exercise, the joint and a swap; taking the note back (or deleting the set)
+  exercise and a swap (never a joint: the athlete was not asked where); taking the note back (or deleting the set)
   withdraws that card again — deleted, not dismissed, because the athlete
   never said it, and audited as ``card.withdrawn``. Today's remaining sets
   are the phone's to drop (it may have no signal); the server never edits the
@@ -34,7 +34,6 @@ from app.domain.safety import (
     SYMPTOM_TEXT,
     RedFlagSymptom,
     follow_up_card,
-    joint_of,
     pain_card_text,
     stops_exercise,
 )
@@ -47,6 +46,15 @@ from app.services.exercise_preferences import ExercisePreferencesService
 
 ATHLETE_ENTITY = "athlete"
 CARD_ENTITY = "card"
+
+
+def _set_ids(payload: dict[str, object]) -> list[str]:
+    """The painful sets an offer stands on; cards queued before this held one."""
+    ids = payload.get("set_client_ids")
+    if isinstance(ids, list):
+        return [str(one) for one in ids]
+    one = payload.get("set_client_id")
+    return [] if one is None else [str(one)]
 
 
 class SafetyService:
@@ -130,20 +138,21 @@ class SafetyService:
     ) -> None:
         library = await self._preferences.library()
         exercise = None if exercise_id is None else library.domain.get(exercise_id)
-        joint: str | None = None
         swap_id: str | None = None
         swap_name: str | None = None
         name = exercise_name or exercise_id or "this exercise"
         if exercise is not None:
             name = exercise.name
-            found = joint_of(exercise)
-            joint = None if found is None else found[0]
             # The same ranking the packet and the coach's tool use, so the
             # card never offers what the athlete avoids or cannot do today.
             swap = pain_swap(exercise, library.domain.values(), library.context)
             if swap is not None:
                 swap_id, swap_name = swap.id, swap.name
-        headline, because = pain_card_text(name, joint=joint, swap_name=swap_name)
+        headline, because = pain_card_text(name, swap_name=swap_name)
+        if exercise_id is not None and await self._join_open_offer(
+            exercise_id, set_client_id
+        ):
+            return
         await self._cards.queue(
             actor=actor,
             kind=SWAP_OFFER,
@@ -152,17 +161,51 @@ class SafetyService:
             because=because,
             payload={
                 "set_client_id": str(set_client_id),
+                "set_client_ids": [str(set_client_id)],
                 "session_id": str(session_id),
                 "exercise_id": exercise_id,
                 "swap_exercise_id": swap_id,
-                "joint": joint,
                 "pain_band": None if band is None else band.value,
             },
         )
 
+    async def _join_open_offer(
+        self, exercise_id: str, set_client_id: uuid.UUID
+    ) -> bool:
+        """Fold a second sharp set into the offer already open for its exercise.
+
+        A second report while the card is queued, shown or snoozed used to
+        queue an identical twin, so "Not now" seemed to do nothing: the copy
+        appeared at once (UAT B9). The offer is about the exercise, so one open
+        card is the answer; the new set's id is added to it so that taking
+        back the *first* set's note does not withdraw a card another painful
+        set still stands behind. A card answered or expired no longer
+        counts: pain after that is news.
+        """
+        for card in await self._card_rows.open_of_kind(SWAP_OFFER):
+            if card.payload.get("exercise_id") != exercise_id:
+                continue
+            ids = _set_ids(card.payload)
+            if str(set_client_id) not in ids:
+                card.payload = {
+                    **card.payload,
+                    "set_client_ids": [*ids, str(set_client_id)],
+                }
+                await self._card_rows.add(card)
+            return True
+        return False
+
     async def _withdraw_swap(self, *, set_client_id: uuid.UUID, actor: Actor) -> None:
         for card in await self._card_rows.open_of_kind(SWAP_OFFER):
-            if card.payload.get("set_client_id") != str(set_client_id):
+            ids = _set_ids(card.payload)
+            if str(set_client_id) not in ids:
+                continue
+            if len(ids) > 1:
+                card.payload = {
+                    **card.payload,
+                    "set_client_ids": [one for one in ids if one != str(set_client_id)],
+                }
+                await self._card_rows.add(card)
                 continue
             await self._audit.record(
                 actor=actor,

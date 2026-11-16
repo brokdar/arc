@@ -427,6 +427,7 @@ class SessionAnalyser:
                         duration_s=logged.duration_s,
                         per_side=logged.per_side,
                         side=logged.side,
+                        kind=logged.set_kind,
                     )
                     for logged in session_row.logged_sets
                 ],
