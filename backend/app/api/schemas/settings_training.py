@@ -35,6 +35,9 @@ class TrainingSettingsRead(BaseModel):
     first_run_seen: bool
     #: Null until answered — skipping the question leaves it null.
     lifted_before: LiftedBefore | None
+    #: No max efforts are asked for or planned: set from the before-you-start
+    #: screen's "I'm under 18".
+    no_max_efforts: bool
 
 
 class TrainingSettingsUpdate(BaseModel):
@@ -60,3 +63,4 @@ class TrainingSettingsUpdate(BaseModel):
     before_you_start_seen: bool | SkipJsonSchema[None] = None
     first_run_seen: bool | SkipJsonSchema[None] = None
     lifted_before: LiftedBefore | SkipJsonSchema[None] = None
+    no_max_efforts: bool | SkipJsonSchema[None] = None

@@ -73,6 +73,13 @@ class MutationKind(StrEnum):
     SESSION_RATING = "session_rating"
     DONT_LEARN = "dont_learn"
     NOTE_UPSERT = "note_upsert"
+    #: *Stop — something's wrong*: raises the athlete's red flag
+    #: (`app.domain.safety`). Through the outbox like everything else on the
+    #: gym floor, so it is recorded with no signal and lands, in order, before
+    #: the ``session_finish`` the phone writes right after it. A new kind adds
+    #: to the batch shape without changing any existing mutation's meaning, so
+    #: the schema version stays.
+    RED_FLAG = "red_flag"
 
 
 class MutationStatus(StrEnum):

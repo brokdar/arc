@@ -23,6 +23,7 @@ import uuid
 from typing import Final
 
 from sqlalchemy import Boolean, String, UniqueConstraint, func, select
+from sqlalchemy import false as sa_false
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,6 +61,11 @@ class AthleteSettingsRow(Base):
     high_contrast: Mapped[bool] = mapped_column(Boolean)
     before_you_start_seen: Mapped[bool] = mapped_column(Boolean)
     first_run_seen: Mapped[bool] = mapped_column(Boolean)
+    #: Added by migration 0031 to a table that already held its row, hence the
+    #: `server_default`: an athlete who never saw the question has no flag.
+    no_max_efforts: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_false()
+    )
     #: Null until the first-run question is answered; skipping leaves it null.
     lifted_before: Mapped[LiftedBefore | None] = mapped_column(
         enum_column(LiftedBefore)
@@ -83,6 +89,7 @@ class AthleteSettingsRow(Base):
             before_you_start_seen=self.before_you_start_seen,
             first_run_seen=self.first_run_seen,
             lifted_before=self.lifted_before,
+            no_max_efforts=self.no_max_efforts,
         )
 
 
@@ -118,5 +125,6 @@ class AthleteSettingsRepository:
         row.before_you_start_seen = settings.before_you_start_seen
         row.first_run_seen = settings.first_run_seen
         row.lifted_before = settings.lifted_before
+        row.no_max_efforts = settings.no_max_efforts
         await flush(self._session)
         return row

@@ -191,6 +191,16 @@ E1RM_MAX_REPS = Rule(
     certainty=Certainty.MODERATE,
     dois=(_REYNOLDS_2006,),
 )
+E1RM_LINE_WINDOW = Rule(
+    id="estimate.e1rm_line_window",
+    value=3,
+    summary=(
+        "The estimated-max line is the median of the last three sessions that "
+        "produced an estimate; with fewer there is not enough data to draw it."
+    ),
+    evidence=Evidence.DEFAULT,
+    certainty=Certainty.LOW,
+)
 
 
 # --- rest ----------------------------------------------------------------------
@@ -284,6 +294,7 @@ REGISTRY: Mapping[str, Rule[object]] = build_registry(
     PLATEAU_WINDOW_LONG,
     HARD_SET_MAX_RIR,
     E1RM_MAX_REPS,
+    E1RM_LINE_WINDOW,
     REST_MAIN_SECONDS,
     REST_ACCESSORY_SECONDS,
     REST_ISOLATION_SECONDS,

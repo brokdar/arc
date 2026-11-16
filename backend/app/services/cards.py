@@ -50,6 +50,8 @@ from app.domain.cards import (
     mark_shown,
     visible,
 )
+from app.domain.safety import RED_FLAG_FOLLOW_UP, SWAP_OFFER, card_allowed
+from app.persistence.athlete import AthleteRepository
 from app.persistence.audit import AuditRepository
 from app.persistence.cards import CardRepository, CardRow
 from app.persistence.db import commit, session_scope
@@ -90,6 +92,20 @@ def card_kinds() -> Mapping[str, CardKind]:
 NOTE = "note"
 register_card_kind(WELCOME_BACK)
 register_card_kind(NOTE)
+
+
+async def _resolve_red_flag(session: AsyncSession, row: CardRow, actor: Actor) -> None:
+    """Accepting the red flag's follow-up says "I am well again": lower it."""
+    # Imported here: `app.services.safety` queues cards through this module.
+    from app.services.safety import SafetyService  # noqa: PLC0415
+
+    await SafetyService.from_session(session).resolve_red_flag(actor=actor)
+
+
+#: The safety kinds (`app.domain.safety`). A swap offer's answer is only
+#: recorded until swaps can act on it; the red flag's follow-up lowers the flag.
+register_card_kind(SWAP_OFFER)
+register_card_kind(RED_FLAG_FOLLOW_UP, on_accept=_resolve_red_flag)
 
 
 def as_card(row: CardRow) -> Card:
@@ -140,6 +156,32 @@ class CardService:
         payload: dict[str, Any] | None = None,
     ) -> CardRow:
         """Queue one card. It is shown when the budget and the queue allow."""
+        row = await self.queue(
+            actor=actor,
+            kind=kind,
+            priority=priority,
+            headline=headline,
+            because=because,
+            payload=payload,
+        )
+        await commit(self._session)
+        return row
+
+    async def queue(
+        self,
+        *,
+        actor: Actor,
+        kind: str,
+        priority: CardPriority,
+        headline: str,
+        because: str,
+        payload: dict[str, Any] | None = None,
+    ) -> CardRow:
+        """:meth:`create` without the commit, for a use-case that commits once.
+
+        The outbox (`app.services.sync`) queues a swap offer in the middle of
+        a batch that must stay all-or-nothing.
+        """
         if kind not in _REGISTRY:
             raise ValidationError(f"Unknown card kind {kind!r}.")
         row = await self._repository.add(
@@ -160,7 +202,6 @@ class CardService:
             entity_id=row.id,
             payload={"kind": kind, "priority": int(priority)},
         )
-        await commit(self._session)
         return row
 
     async def show(
@@ -273,8 +314,19 @@ class CardService:
         rows = {
             row.id: row for row in await self._repository.budget_relevant(now=moment)
         }
+        # A red flag blocks every card but its own follow-up until it is
+        # resolved (`app.domain.safety`). Filtered before `visible`: under the
+        # flag the one candidate kind is priority 1 and outside the budget, and
+        # without it only follow-ups — also outside the budget — are dropped,
+        # so the budget's count is never the poorer for the filter.
+        athlete = await AthleteRepository(self._session).get()
+        flagged = athlete is not None and athlete.red_flag_active
         chosen = visible(
-            [as_card(row) for row in rows.values()],
+            [
+                as_card(row)
+                for row in rows.values()
+                if card_allowed(row.kind, red_flag_active=flagged)
+            ],
             now=moment,
             zone=athlete_zone(),
             training_active=await self._repository.training_active(),

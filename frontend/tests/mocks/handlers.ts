@@ -84,6 +84,7 @@ import { exportHandlers } from "@/tests/mocks/handlers-exports";
 import { fitnessHandlers } from "@/tests/mocks/handlers-fitness";
 import { packetHandlers } from "@/tests/mocks/handlers-packet";
 import { powerHandlers } from "@/tests/mocks/handlers-power";
+import { strengthRecordHandlers } from "@/tests/mocks/handlers-strength-records";
 import { syncHandlers } from "@/tests/mocks/handlers-sync";
 import {
   patchTrainingSettings,
@@ -1842,3 +1843,4 @@ handlers.push(...cardHandlers);
 handlers.push(...exportHandlers);
 handlers.push(...syncHandlers);
 handlers.push(...packetHandlers);
+handlers.push(...strengthRecordHandlers);

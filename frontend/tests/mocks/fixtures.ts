@@ -3658,6 +3658,7 @@ function seedAthlete(): Schemas["AthleteRead"] {
     red_flag_active: false,
     red_flag_note: null,
     red_flag_severity: null,
+    red_flag_kind: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };
@@ -3797,16 +3798,23 @@ export function patchAthlete(
     updated_at: AGENT_NOW,
   };
   if (!active) {
-    if (body.red_flag_note != null || body.red_flag_severity != null) {
+    if (
+      body.red_flag_note != null ||
+      body.red_flag_severity != null ||
+      body.red_flag_kind != null
+    ) {
       return {
         detail:
-          "red_flag_note and red_flag_severity may only be set while " +
-          "red_flag_active is set",
+          "red_flag_note, red_flag_severity and red_flag_kind may only be " +
+          "set while red_flag_active is set",
       };
     }
     next.red_flag_note = null;
     next.red_flag_severity = null;
+    next.red_flag_kind = null;
   } else {
+    // Raised without a kind, a flag is `advice` (`AthleteService.update`).
+    next.red_flag_kind = body.red_flag_kind ?? next.red_flag_kind ?? "advice";
     if (body.red_flag_severity !== undefined) {
       next.red_flag_severity = body.red_flag_severity;
     }

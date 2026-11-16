@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
-from app.domain.activity import SessionDiscipline, SetSide
+from app.domain.activity import LoggedSetKind, SessionDiscipline, SetSide
 from app.domain.anchors import AnchorVersion, describe_anchor
 from app.domain.athlete import Sex
 from app.domain.streams import MOVING_SPEED_MS
@@ -1992,6 +1992,15 @@ class PerformedSet:
     duration_s: int | None = None
     per_side: bool = False
     side: SetSide = SetSide.BOTH
+    #: What the set was for. Volume ignores it (its callers pass what they
+    #: count); `app.domain.strength_records` drops warm-ups from every record.
+    kind: LoggedSetKind = LoggedSetKind.WORKING
+    #: The effort the athlete **reported** — never the target — as the logged
+    #: row stores it: reps left (``rir``, with ``rir_capped`` for "4+") or a
+    #: set RPE. Read only by `app.domain.strength_records`.
+    rir: int | None = None
+    rir_capped: bool = False
+    rpe: float | None = None
 
     def __post_init__(self) -> None:
         """Reject a set that is both reps and a hold, or neither.
